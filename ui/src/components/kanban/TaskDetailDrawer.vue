@@ -183,48 +183,12 @@
     :title="currentConversationTitle"
     style="width: 800px; max-width: 90vw; max-height: 85vh"
   >
-    <n-spin :show="conversationLoading">
-      <div class="conversation-container" style="max-height: 60vh; overflow-y: auto">
-        <template v-if="currentConversation && currentConversation.messages.length > 0">
-          <div
-            v-for="(msg, index) in currentConversation.messages"
-            :key="index"
-            class="message-item"
-            :class="msg.role"
-          >
-            <div class="message-header">
-              <span class="message-role">{{ msg.role === 'user' ? t('terminal.user') : t('terminal.assistant') }}</span>
-              <span v-if="msg.timestamp" class="message-time">{{ formatDate(msg.timestamp) }}</span>
-            </div>
-            <div class="message-content">{{ msg.content }}</div>
-          </div>
-        </template>
-        <n-empty v-else-if="!conversationLoading" :description="t('terminal.noMessages')" />
-      </div>
-    </n-spin>
-    <template #footer>
-      <div v-if="currentConversationSession" class="conversation-footer">
-        <div class="conversation-footer__info">
-          <n-tag size="small" :type="currentConversationSession.type === 'claude_code' ? 'info' : 'success'">
-            <template #icon>
-              <n-icon size="12">
-                <svg v-if="currentConversationSession.type === 'claude_code'" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                </svg>
-                <LogoGithub v-else />
-              </n-icon>
-            </template>
-            {{ currentConversationSession.type === 'claude_code' ? 'Claude Code' : 'Codex' }}
-          </n-tag>
-          <code class="session-id-code">{{ currentConversationSession.sessionId }}</code>
-          <n-button size="tiny" quaternary @click="copySessionId(currentConversationSession)">
-            <template #icon>
-              <n-icon size="12"><CopyOutline /></n-icon>
-            </template>
-          </n-button>
-        </div>
-      </div>
-    </template>
+    <ConversationViewer
+      :messages="currentConversation?.messages ?? []"
+      :loading="conversationLoading"
+      :session-info="currentSessionInfo"
+      :use-relative-time="false"
+    />
   </n-modal>
 
   <!-- 关联 AI Session 模态框 -->
@@ -275,7 +239,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
-import { CloseOutline, AddOutline, CopyOutline, LogoGithub } from '@vicons/ionicons5';
+import { CloseOutline, AddOutline, CopyOutline } from '@vicons/ionicons5';
 import dayjs from 'dayjs';
 import { useTaskStore } from '@/stores/task';
 import { useProjectStore } from '@/stores/project';
@@ -291,6 +255,7 @@ import type {
 } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
+import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
 
 const { t } = useLocale();
 
@@ -346,6 +311,14 @@ const conversationLoading = ref(false);
 const currentConversation = ref<ConversationResponse | null>(null);
 const currentConversationTitle = ref('');
 const currentConversationSession = ref<TaskAISessionWithDetails | null>(null);
+
+const currentSessionInfo = computed<SessionInfo | null>(() => {
+  if (!currentConversationSession.value) return null;
+  return {
+    sessionId: currentConversationSession.value.sessionId,
+    type: currentConversationSession.value.type as 'claude_code' | 'codex',
+  };
+});
 
 // 关联 AI Session 模态框状态
 const showLinkSessionModal = ref(false);
@@ -730,78 +703,6 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
   color: var(--n-text-color-3);
 }
 
-/* 对话查看器样式 */
-.conversation-container {
-  padding: 8px 0;
-}
-
-.message-item {
-  margin-bottom: 16px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--n-color-embedded);
-}
-
-.message-item.user {
-  border-left: 3px solid var(--n-primary-color);
-}
-
-.message-item.assistant {
-  border-left: 3px solid var(--n-success-color);
-}
-
-.message-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.message-role {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.message-item.user .message-role {
-  color: var(--n-primary-color);
-}
-
-.message-item.assistant .message-role {
-  color: var(--n-success-color);
-}
-
-.message-time {
-  font-size: 12px;
-  color: var(--n-text-color-3);
-}
-
-.message-content {
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 对话模态框底部 */
-.conversation-footer {
-  padding-top: 8px;
-}
-
-.conversation-footer__info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.session-id-code {
-  font-size: 12px;
-  font-family: monospace;
-  background: var(--n-color-embedded);
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: var(--n-text-color-2);
-  user-select: all;
-}
 
 /* 可用 AI Session 列表 */
 .available-sessions-list {

@@ -14,6 +14,7 @@ declare module 'vue' {
     AISessionHistoryDialog: typeof import('./src/components/terminal/AISessionHistoryDialog.vue')['default']
     AppInitializer: typeof import('./src/components/common/AppInitializer.vue')['default']
     BranchListItem: typeof import('./src/components/branch/BranchListItem.vue')['default']
+    ConversationViewer: typeof import('./src/components/common/ConversationViewer.vue')['default']
     ConversationViewerDialog: typeof import('./src/components/terminal/ConversationViewerDialog.vue')['default']
     GitStatusBadge: typeof import('./src/components/common/GitStatusBadge.vue')['default']
     GuideContentEnUS: typeof import('./src/components/guide/GuideContentEnUS.vue')['default']

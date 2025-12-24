@@ -466,6 +466,9 @@ export default {
     assistant: 'Assistant',
     searchSessions: 'Search sessions...',
     refresh: 'Refresh',
+    showUserMessagesOnly: 'Show my messages only',
+    prevUserMessage: 'Previous message',
+    nextUserMessage: 'Next message',
   },
   notepad: {
     global: 'Global',

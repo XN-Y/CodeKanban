@@ -466,6 +466,9 @@ export default {
     assistant: '助手',
     searchSessions: '搜索会话...',
     refresh: '刷新',
+    showUserMessagesOnly: '只看我的发言',
+    prevUserMessage: '上一条发言',
+    nextUserMessage: '下一条发言',
   },
   notepad: {
     global: '全局',

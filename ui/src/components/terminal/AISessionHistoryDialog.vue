@@ -190,58 +190,22 @@
     :closable="true"
     @close="closeConversationModal"
   >
-    <n-spin :show="conversationLoading">
-      <div class="conversation-container">
-        <template v-if="currentConversation && currentConversation.messages.length > 0">
-          <div
-            v-for="(msg, index) in currentConversation.messages"
-            :key="index"
-            class="message-item"
-            :class="msg.role"
-          >
-            <div class="message-header">
-              <span class="message-role">{{ msg.role === 'user' ? t('terminal.user') : t('terminal.assistant') }}</span>
-              <span v-if="msg.timestamp" class="message-time">{{ getTimeAgo(msg.timestamp) }}</span>
-            </div>
-            <div class="message-content">{{ msg.content }}</div>
-          </div>
-        </template>
-        <n-empty v-else-if="!conversationLoading" :description="t('terminal.noMessages')" />
-      </div>
-    </n-spin>
-    <template #footer>
-      <div v-if="currentSession" class="conversation-footer">
-        <div class="conversation-footer__info">
-          <n-tag size="small" :type="currentSession.type === 'claude_code' ? 'info' : 'success'">
-            <template #icon>
-              <n-icon size="12">
-                <svg v-if="currentSession.type === 'claude_code'" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-                </svg>
-                <LogoGithub v-else />
-              </n-icon>
-            </template>
-            {{ currentSession.type === 'claude_code' ? 'Claude Code' : 'Codex' }}
-          </n-tag>
-          <code class="session-id-code">{{ currentSession.sessionId }}</code>
-          <n-button size="tiny" quaternary @click="copySessionId(currentSession)">
-            <template #icon>
-              <n-icon size="12"><CopyOutline /></n-icon>
-            </template>
-          </n-button>
-        </div>
-      </div>
-    </template>
+    <ConversationViewer
+      :messages="currentConversation?.messages ?? []"
+      :loading="conversationLoading"
+      :session-info="currentSessionInfo"
+    />
   </n-modal>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { ChevronForwardOutline, ChatboxOutline, PlayOutline, CopyOutline, RefreshOutline, SearchOutline, LogoGithub } from '@vicons/ionicons5';
+import { ChevronForwardOutline, ChatboxOutline, PlayOutline, CopyOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { useTimeAgo } from '@vueuse/core';
+import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
 
 type ScanPhase = 'recent' | 'extended' | 'complete';
 
@@ -334,6 +298,14 @@ const conversationLoading = ref(false);
 const currentConversation = ref<ConversationResponse | null>(null);
 const currentSessionTitle = ref('');
 const currentSession = ref<AISessionSummary | null>(null);
+
+const currentSessionInfo = computed<SessionInfo | null>(() => {
+  if (!currentSession.value) return null;
+  return {
+    sessionId: currentSession.value.sessionId,
+    type: currentSession.value.type as 'claude_code' | 'codex',
+  };
+});
 
 const isScanning = computed(() =>
   claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete'
@@ -520,15 +492,6 @@ async function viewConversation(session: AISessionSummary) {
   }
 }
 
-async function copySessionId(session: AISessionSummary) {
-  try {
-    await navigator.clipboard.writeText(session.sessionId);
-    message.success(t('task.sessionIdCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
-}
-
 function closeConversationModal() {
   showConversationModal.value = false;
   currentConversation.value = null;
@@ -692,80 +655,4 @@ function closeConversationModal() {
   opacity: 1;
 }
 
-/* Conversation viewer styles */
-.conversation-container {
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.message-item {
-  margin-bottom: 16px;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--n-color-embedded);
-}
-
-.message-item.user {
-  background: var(--n-color-embedded);
-  border-left: 3px solid var(--n-primary-color);
-}
-
-.message-item.assistant {
-  background: var(--n-color-embedded);
-  border-left: 3px solid var(--n-success-color);
-}
-
-.message-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.message-role {
-  font-weight: 600;
-  font-size: 13px;
-}
-
-.message-item.user .message-role {
-  color: var(--n-primary-color);
-}
-
-.message-item.assistant .message-role {
-  color: var(--n-success-color);
-}
-
-.message-time {
-  font-size: 12px;
-  color: var(--n-text-color-3);
-}
-
-.message-content {
-  font-size: 14px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 对话模态框底部 */
-.conversation-footer {
-  padding-top: 8px;
-}
-
-.conversation-footer__info {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.session-id-code {
-  font-size: 12px;
-  font-family: monospace;
-  background: var(--n-color-embedded);
-  padding: 2px 8px;
-  border-radius: 4px;
-  color: var(--n-text-color-2);
-  user-select: all;
-}
 </style>
