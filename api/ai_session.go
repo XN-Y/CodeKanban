@@ -76,7 +76,7 @@ func registerAISessionRoutes(group *huma.Group) {
 		op.Tags = []string{aiSessionTag}
 	})
 
-	// Get conversation for a session
+	// Get conversation for a session by database ID
 	huma.Get(group, "/ai-sessions/{id}/conversation", func(ctx context.Context, input *struct {
 		ID string `path:"id" doc:"会话ID（数据库ID）"`
 	}) (*h.ItemResponse[service.ConversationResponse], error) {
@@ -94,7 +94,29 @@ func registerAISessionRoutes(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "ai-session-get-conversation"
 		op.Summary = "获取AI会话的对话内容"
-		op.Description = "返回指定会话的完整对话记录（用户消息和助手回复）"
+		op.Description = "返回指定会话的完整对话记录（用户消息和助手回复），使用数据库ID"
+		op.Tags = []string{aiSessionTag}
+	})
+
+	// Get conversation for a session by session ID (UUID)
+	huma.Get(group, "/ai-sessions/by-session-id/{sessionId}/conversation", func(ctx context.Context, input *struct {
+		SessionID string `path:"sessionId" doc:"会话ID（AI助手生成的UUID）"`
+	}) (*h.ItemResponse[service.ConversationResponse], error) {
+		conversation, err := svc.GetSessionConversationBySessionID(ctx, input.SessionID)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("session not found or failed to load conversation")
+		}
+
+		resp := h.NewItemResponse(*conversation)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-get-conversation-by-session-id"
+		op.Summary = "通过Session ID获取AI会话的对话内容"
+		op.Description = "返回指定会话的完整对话记录（用户消息和助手回复），使用AI助手生成的Session ID"
 		op.Tags = []string{aiSessionTag}
 	})
 

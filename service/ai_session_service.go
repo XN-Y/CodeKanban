@@ -1432,8 +1432,18 @@ type ConversationResponse struct {
 	Messages  []*ConversationMessage `json:"messages"`
 }
 
-// GetSessionConversation retrieves the full conversation for a given session ID.
-func (s *AISessionService) GetSessionConversation(ctx context.Context, sessionID string) (*ConversationResponse, error) {
+// GetSessionConversation retrieves the full conversation for a given database ID.
+func (s *AISessionService) GetSessionConversation(ctx context.Context, dbID string) (*ConversationResponse, error) {
+	return s.getConversationByQuery(ctx, "id = ?", dbID)
+}
+
+// GetSessionConversationBySessionID retrieves the full conversation for a given session ID (UUID).
+func (s *AISessionService) GetSessionConversationBySessionID(ctx context.Context, sessionID string) (*ConversationResponse, error) {
+	return s.getConversationByQuery(ctx, "session_id = ?", sessionID)
+}
+
+// getConversationByQuery retrieves conversation using a custom where clause.
+func (s *AISessionService) getConversationByQuery(ctx context.Context, query string, args ...interface{}) (*ConversationResponse, error) {
 	ctx = ensureContext(ctx)
 	logger := s.logger(ctx)
 
@@ -1444,9 +1454,9 @@ func (s *AISessionService) GetSessionConversation(ctx context.Context, sessionID
 
 	// Find the session in database
 	var session tables.AISessionTable
-	err := db.WithContext(ctx).Where("id = ?", sessionID).First(&session).Error
+	err := db.WithContext(ctx).Where(query, args...).First(&session).Error
 	if err != nil {
-		logger.Debug("session not found", zap.String("sessionId", sessionID), zap.Error(err))
+		logger.Debug("session not found", zap.String("query", query), zap.Error(err))
 		return nil, err
 	}
 

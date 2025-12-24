@@ -264,6 +264,121 @@
             </n-space>
           </n-form-item>
 
+          <n-divider style="margin: 16px 0">{{ t('settings.terminalFontSettings') }}</n-divider>
+
+          <n-form-item :label="t('settings.terminalFontFamily')">
+            <n-space vertical size="small">
+              <n-space>
+                <n-select
+                  v-model:value="terminalFontFamilyValue"
+                  :options="fontFamilyOptions"
+                  style="width: 200px"
+                  filterable
+                  tag
+                  :placeholder="t('settings.terminalFontFamilyPlaceholder')"
+                />
+                <n-button
+                  size="small"
+                  text
+                  :disabled="!terminalFontFamilyValue"
+                  @click="handleResetFontFamily"
+                >
+                  {{ t('settings.restoreDefault') }}
+                </n-button>
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalFontFamilyTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item :label="t('settings.terminalFontSize')">
+            <n-space vertical size="small">
+              <n-space align="center">
+                <n-slider
+                  v-model:value="terminalFontSizeValue"
+                  :min="8"
+                  :max="32"
+                  :step="1"
+                  style="width: 180px"
+                />
+                <n-input-number
+                  v-model:value="terminalFontSizeValue"
+                  :min="8"
+                  :max="32"
+                  :step="1"
+                  size="small"
+                  style="width: 80px"
+                />
+                <span class="unit-label">px</span>
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalFontSizeTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item :label="t('settings.terminalFontWeight')">
+            <n-space vertical size="small">
+              <n-space>
+                <n-select
+                  v-model:value="terminalFontWeightValue"
+                  :options="fontWeightOptions"
+                  style="width: 160px"
+                />
+                <n-select
+                  v-model:value="terminalFontWeightBoldValue"
+                  :options="fontWeightOptions"
+                  style="width: 160px"
+                />
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalFontWeightTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item :label="t('settings.terminalLineHeight')">
+            <n-space vertical size="small">
+              <n-space align="center">
+                <n-slider
+                  v-model:value="terminalLineHeightValue"
+                  :min="1.0"
+                  :max="2.0"
+                  :step="0.1"
+                  style="width: 180px"
+                />
+                <n-input-number
+                  v-model:value="terminalLineHeightValue"
+                  :min="1.0"
+                  :max="2.0"
+                  :step="0.1"
+                  size="small"
+                  style="width: 80px"
+                />
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalLineHeightTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item :label="t('settings.terminalLetterSpacing')">
+            <n-space vertical size="small">
+              <n-space align="center">
+                <n-slider
+                  v-model:value="terminalLetterSpacingValue"
+                  :min="-2"
+                  :max="5"
+                  :step="0.5"
+                  style="width: 180px"
+                />
+                <n-input-number
+                  v-model:value="terminalLetterSpacingValue"
+                  :min="-2"
+                  :max="5"
+                  :step="0.5"
+                  size="small"
+                  style="width: 80px"
+                />
+                <span class="unit-label">px</span>
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalLetterSpacingTip') }}</span>
+            </n-space>
+          </n-form-item>
+
           <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
 
           <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
@@ -363,8 +478,11 @@ import {
   useSettingsStore,
   DEFAULT_TERMINAL_SHORTCUT,
   DEFAULT_NOTEPAD_SHORTCUT,
+  TERMINAL_FONT_OPTIONS,
+  FONT_WEIGHT_OPTIONS,
   type PanelShortcutSetting,
   type EditorPreference,
+  type FontWeight,
 } from '@/stores/settings';
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
@@ -403,6 +521,7 @@ const {
   editorSettings,
   confirmBeforeTerminalClose,
   terminalThemeId,
+  terminalFont,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
 
@@ -875,6 +994,60 @@ const terminalThemeValue = computed({
   set: (value: string) => settingsStore.updateTerminalTheme(value),
 });
 
+// 终端字体设置
+const fontFamilyOptions = computed(() => {
+  const options = TERMINAL_FONT_OPTIONS.map(opt => ({
+    label: opt.value === '' ? t('settings.terminalFontDefault') : opt.label,
+    value: opt.value,
+  }));
+  // 添加自定义输入提示
+  options.push({
+    label: `── ${t('settings.terminalFontCustomHint')} ──`,
+    value: '__custom_hint__',
+    disabled: true,
+  } as any);
+  return options;
+});
+
+const terminalFontFamilyValue = computed({
+  get: () => terminalFont.value.fontFamily,
+  set: (value: string) => settingsStore.updateTerminalFont({ fontFamily: value ?? '' }),
+});
+
+const terminalFontSizeValue = computed({
+  get: () => terminalFont.value.fontSize,
+  set: (value: number) => settingsStore.updateTerminalFont({ fontSize: value ?? 14 }),
+});
+
+const fontWeightOptions = FONT_WEIGHT_OPTIONS.map(opt => ({
+  label: opt.label,
+  value: opt.value,
+}));
+
+const terminalFontWeightValue = computed({
+  get: () => terminalFont.value.fontWeight,
+  set: (value: FontWeight) => settingsStore.updateTerminalFont({ fontWeight: value ?? 'normal' }),
+});
+
+const terminalFontWeightBoldValue = computed({
+  get: () => terminalFont.value.fontWeightBold,
+  set: (value: FontWeight) => settingsStore.updateTerminalFont({ fontWeightBold: value ?? 'bold' }),
+});
+
+const terminalLineHeightValue = computed({
+  get: () => terminalFont.value.lineHeight,
+  set: (value: number) => settingsStore.updateTerminalFont({ lineHeight: value ?? 1.1 }),
+});
+
+const terminalLetterSpacingValue = computed({
+  get: () => terminalFont.value.letterSpacing,
+  set: (value: number) => settingsStore.updateTerminalFont({ letterSpacing: value ?? 0 }),
+});
+
+function handleResetFontFamily() {
+  settingsStore.updateTerminalFont({ fontFamily: '' });
+}
+
 const terminalShortcutValue = computed(
   () => terminalShortcut.value.display || terminalShortcut.value.code,
 );
@@ -1025,5 +1198,11 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .shortcut-hint {
   font-size: 12px;
   color: var(--n-text-color-3, #8a8fa3);
+}
+
+.unit-label {
+  font-size: 12px;
+  color: var(--n-text-color-3, #8a8fa3);
+  margin-left: 4px;
 }
 </style>

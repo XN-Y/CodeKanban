@@ -364,6 +364,10 @@
     :project-id="projectIdRef"
     @resume="handleResumeSession"
   />
+  <ConversationViewerDialog
+    v-model:show="showConversationViewer"
+    :session-id="conversationSessionId"
+  />
 </template>
 
 <script setup lang="ts">
@@ -398,9 +402,11 @@ import {
   LinkOutline,
   FolderOpenOutline,
   TimeOutline,
+  ChatbubblesOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
+import ConversationViewerDialog from './ConversationViewerDialog.vue';
 import {
   useTerminalClient,
   type TerminalCreateOptions,
@@ -464,6 +470,8 @@ const showLinkTaskModal = ref(false);
 
 // AI 会话历史对话框状态
 const showAISessionHistory = ref(false);
+const showConversationViewer = ref(false);
+const conversationSessionId = ref<string | null>(null);
 const linkTaskTargetTab = ref<TerminalTabState | null>(null);
 
 // 空终端标签状态
@@ -582,9 +590,19 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
     },
     {
+      type: 'divider',
+      key: 'ai-session-divider',
+    },
+    {
       label: t('terminal.copyAISessionId'),
       key: 'copy-ai-session-id',
       icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
+      disabled: !tab?.aiSessionId,
+    },
+    {
+      label: t('terminal.viewConversation'),
+      key: 'view-conversation',
+      icon: () => h(NIcon, null, { default: () => h(ChatbubblesOutline) }),
       disabled: !tab?.aiSessionId,
     },
     {
@@ -2326,6 +2344,16 @@ async function copyAISessionId(tab: TerminalTabState) {
   }
 }
 
+function viewConversation(tab: TerminalTabState) {
+  const sessionId = tab.aiSessionId;
+  if (!sessionId) {
+    message.warning(t('terminal.noAISession'));
+    return;
+  }
+  conversationSessionId.value = sessionId;
+  showConversationViewer.value = true;
+}
+
 function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
   event.preventDefault();
   contextMenuX.value = event.clientX;
@@ -2364,6 +2392,10 @@ async function handleContextMenuSelect(key: string) {
   }
   if (key === 'copy-ai-session-id') {
     copyAISessionId(tab);
+    return;
+  }
+  if (key === 'view-conversation') {
+    viewConversation(tab);
     return;
   }
   if (key === 'link-task') {

@@ -25,7 +25,7 @@ import {
   saveTerminalSnapshot,
   clearTerminalSnapshot,
 } from '@/utils/terminalSnapshotCache';
-import { useSettingsStore } from '@/stores/settings';
+import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/settings';
 import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
 import { hexToRgba } from '@/utils/color';
 
@@ -37,7 +37,7 @@ const props = defineProps<{
 }>();
 
 const settingsStore = useSettingsStore();
-const { effectiveTerminalThemeId } = storeToRefs(settingsStore);
+const { effectiveTerminalThemeId, terminalFont } = storeToRefs(settingsStore);
 
 const activeTerminalTheme = computed(() => {
   return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
@@ -78,6 +78,24 @@ watch(activeTerminalTheme, newTheme => {
     terminal.options.theme = newTheme.theme;
   }
 });
+
+// 监听终端字体设置变化，动态更新终端字体
+watch(terminalFont, newFont => {
+  if (terminal) {
+    terminal.options.fontFamily = newFont.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
+    terminal.options.fontSize = newFont.fontSize;
+    terminal.options.fontWeight = newFont.fontWeight;
+    terminal.options.fontWeightBold = newFont.fontWeightBold;
+    terminal.options.lineHeight = newFont.lineHeight;
+    terminal.options.letterSpacing = newFont.letterSpacing;
+    // 字体变化后需要重新 fit 以适应新的尺寸
+    if (fitAddon) {
+      setTimeout(() => {
+        handleResize();
+      }, 50);
+    }
+  }
+}, { deep: true });
 
 const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
@@ -268,6 +286,8 @@ function handleTerminalResizeAll() {
 onMounted(() => {
   // 获取当前选择的终端主题
   const selectedTheme = activeTerminalTheme.value;
+  // 获取当前的字体设置
+  const fontSettings = terminalFont.value;
 
   terminal = new Terminal({
     allowProposedApi: true,
@@ -275,11 +295,12 @@ onMounted(() => {
     rows: props.tab.rows || 24,
     cols: props.tab.cols || 80,
     cursorBlink: true,
-    fontSize: 14,
-    fontWeight: 'bold',
-    fontWeightBold: 'bold',
-    lineHeight: 1.1,
-    letterSpacing: 0,
+    fontFamily: fontSettings.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
+    fontSize: fontSettings.fontSize,
+    fontWeight: fontSettings.fontWeight,
+    fontWeightBold: fontSettings.fontWeightBold,
+    lineHeight: fontSettings.lineHeight,
+    letterSpacing: fontSettings.letterSpacing,
     theme: selectedTheme.theme,
   });
   // terminal = new Terminal(terminalOptions);

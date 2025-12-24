@@ -39,6 +39,78 @@ export interface ThemeSettings {
   kanbanBorderEnabled?: boolean;
 }
 
+/**
+ * 终端字体设置
+ */
+export interface TerminalFontSettings {
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: FontWeight;
+  fontWeightBold: FontWeight;
+  lineHeight: number;
+  letterSpacing: number;
+}
+
+/**
+ * 字体粗细选项
+ */
+export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+
+export const FONT_WEIGHT_OPTIONS = [
+  { value: 'normal', label: 'Normal (400)' },
+  { value: '100', label: '100 - Thin' },
+  { value: '200', label: '200 - Extra Light' },
+  { value: '300', label: '300 - Light' },
+  { value: '400', label: '400 - Regular' },
+  { value: '500', label: '500 - Medium' },
+  { value: '600', label: '600 - Semi Bold' },
+  { value: '700', label: '700 - Bold' },
+  { value: 'bold', label: 'Bold (700)' },
+  { value: '800', label: '800 - Extra Bold' },
+  { value: '900', label: '900 - Black' },
+] as const;
+
+/**
+ * 默认字体回退链（考虑中英文显示）
+ * 顺序：流行英文等宽字体 -> Windows中文 -> macOS中文 -> Linux中文 -> 通用回退
+ */
+export const DEFAULT_TERMINAL_FONT_FAMILY =
+  'Cascadia Mono, JetBrains Mono, Consolas, Microsoft YaHei, PingFang SC, Noto Sans SC, monospace';
+
+/**
+ * 常用等宽字体列表
+ */
+export const TERMINAL_FONT_OPTIONS = [
+  { value: '', label: '系统默认' },
+  // 推荐字体（排在最前）
+  { value: 'Cascadia Mono, Microsoft YaHei, PingFang SC, monospace', label: 'Cascadia Mono' },
+  { value: 'JetBrains Mono, Microsoft YaHei, PingFang SC, monospace', label: 'JetBrains Mono' },
+  { value: 'Consolas, Microsoft YaHei, PingFang SC, monospace', label: 'Consolas' },
+  // 专为中英文设计的等宽字体
+  { value: 'Sarasa Mono SC, monospace', label: 'Sarasa Mono SC (更纱黑体)' },
+  { value: 'Source Han Mono SC, monospace', label: 'Source Han Mono (思源等宽)' },
+  // 其他流行的英文等宽字体
+  { value: 'Cascadia Code, Microsoft YaHei, PingFang SC, monospace', label: 'Cascadia Code' },
+  { value: 'Fira Code, Microsoft YaHei, PingFang SC, monospace', label: 'Fira Code' },
+  { value: 'Monaco, PingFang SC, monospace', label: 'Monaco (macOS)' },
+  { value: 'Menlo, PingFang SC, monospace', label: 'Menlo (macOS)' },
+  { value: 'Source Code Pro, Microsoft YaHei, PingFang SC, monospace', label: 'Source Code Pro' },
+  { value: 'Ubuntu Mono, Noto Sans SC, monospace', label: 'Ubuntu Mono' },
+  { value: 'Roboto Mono, Noto Sans SC, monospace', label: 'Roboto Mono' },
+  { value: 'IBM Plex Mono, IBM Plex Sans SC, monospace', label: 'IBM Plex Mono' },
+  { value: 'Hack, Microsoft YaHei, PingFang SC, monospace', label: 'Hack' },
+  { value: 'Inconsolata, Microsoft YaHei, PingFang SC, monospace', label: 'Inconsolata' },
+] as const;
+
+export const DEFAULT_TERMINAL_FONT: TerminalFontSettings = {
+  fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
+  fontSize: 14,
+  fontWeight: 'normal',
+  fontWeightBold: 'bold',
+  lineHeight: 1.1,
+  letterSpacing: 0,
+};
+
 export interface PanelShortcutSetting {
   code: string;
   display: string;
@@ -68,6 +140,7 @@ interface GeneralSettings {
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
   terminalThemeId: string;
+  terminalFont: TerminalFontSettings;
 }
 
 const STORAGE_KEY = 'general_settings';
@@ -107,6 +180,7 @@ const defaultSettings: GeneralSettings = {
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
+  terminalFont: { ...DEFAULT_TERMINAL_FONT },
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -124,6 +198,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
+  const terminalFont = computed(() => settings.value.terminalFont);
 
   /**
    * 获取有效的终端主题 ID
@@ -240,6 +315,17 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalThemeId = themeId;
   }
 
+  function updateTerminalFont(partial: Partial<TerminalFontSettings>) {
+    settings.value.terminalFont = {
+      ...settings.value.terminalFont,
+      ...partial,
+    };
+  }
+
+  function resetTerminalFont() {
+    settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
+  }
+
   function selectPreset(presetId: string) {
     const preset = getPresetById(presetId);
     if (preset) {
@@ -307,6 +393,7 @@ export const useSettingsStore = defineStore('settings', () => {
     editorSettings,
     confirmBeforeTerminalClose,
     terminalThemeId,
+    terminalFont,
     effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
@@ -320,6 +407,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
     updateTerminalTheme,
+    updateTerminalFont,
+    resetTerminalFont,
     selectPreset,
     applySystemThemePreset,
     toggleFollowSystemTheme,
@@ -361,6 +450,7 @@ function loadSettings(): GeneralSettings {
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
+        terminalFont: sanitizeTerminalFont(parsed.terminalFont),
       };
     }
   } catch (error) {
@@ -392,6 +482,7 @@ function cloneDefaultSettings(): GeneralSettings {
     },
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
+    terminalFont: { ...defaultSettings.terminalFont },
   };
 }
 
@@ -479,4 +570,51 @@ function deriveDisplayFromCode(code?: string) {
     return code.replace('Numpad', 'Num ');
   }
   return code;
+}
+
+function sanitizeTerminalFont(value?: Partial<TerminalFontSettings>): TerminalFontSettings {
+  if (!value) {
+    return { ...DEFAULT_TERMINAL_FONT };
+  }
+  return {
+    fontFamily: typeof value.fontFamily === 'string' ? value.fontFamily : DEFAULT_TERMINAL_FONT.fontFamily,
+    fontSize: sanitizeFontSize(value.fontSize),
+    fontWeight: sanitizeFontWeight(value.fontWeight, DEFAULT_TERMINAL_FONT.fontWeight),
+    fontWeightBold: sanitizeFontWeight(value.fontWeightBold, DEFAULT_TERMINAL_FONT.fontWeightBold),
+    lineHeight: sanitizeLineHeight(value.lineHeight),
+    letterSpacing: sanitizeLetterSpacing(value.letterSpacing),
+  };
+}
+
+const VALID_FONT_WEIGHTS: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+
+function sanitizeFontWeight(value: FontWeight | undefined, fallback: FontWeight): FontWeight {
+  if (value && VALID_FONT_WEIGHTS.includes(value)) {
+    return value;
+  }
+  return fallback;
+}
+
+function sanitizeFontSize(value: number | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TERMINAL_FONT.fontSize;
+  }
+  return Math.min(Math.max(Math.round(parsed), 8), 32);
+}
+
+function sanitizeLineHeight(value: number | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TERMINAL_FONT.lineHeight;
+  }
+  return Math.min(Math.max(parsed, 1.0), 2.0);
+}
+
+function sanitizeLetterSpacing(value: number | undefined): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_TERMINAL_FONT.letterSpacing;
+  }
+  return Math.min(Math.max(parsed, -2), 5);
 }
