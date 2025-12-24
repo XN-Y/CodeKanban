@@ -38,7 +38,7 @@
     <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
 
     <div class="panel-header">
-      <div v-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
+          <div v-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
         <n-tabs
           v-model:value="activeId"
           type="card"
@@ -177,12 +177,22 @@
             </template>
           </n-button>
         </n-dropdown>
-        <n-button text size="small" class="toggle-button" @click="toggleExpanded">
-          <span>{{ expanded ? t('terminal.collapse') : t('terminal.expand') }}</span>
-          <n-icon class="toggle-icon" :class="{ 'is-expanded': expanded }">
-            <component :is="expanded ? ChevronDownOutline : ChevronUpOutline" />
-          </n-icon>
-        </n-button>
+        <n-tooltip
+          trigger="hover"
+          placement="bottom"
+          :disabled="!expanded"
+          :delay="100"
+        >
+          <template #trigger>
+            <n-button text size="small" class="toggle-button" @click="toggleExpanded">
+              <span>{{ expanded ? t('terminal.collapse') : t('terminal.expand') }}</span>
+              <n-icon class="toggle-icon" :class="{ 'is-expanded': expanded }">
+                <component :is="expanded ? ChevronDownOutline : ChevronUpOutline" />
+              </n-icon>
+            </n-button>
+          </template>
+          {{ t('terminal.shortcutHint2', { key: terminalShortcut.display }) }}
+        </n-tooltip>
       </div>
     </div>
 
@@ -385,7 +395,7 @@ import {
 } from 'vue';
 import type { HTMLAttributes } from 'vue';
 import { storeToRefs } from 'pinia';
-import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace } from 'naive-ui';
+import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
   ChevronDownOutline,

@@ -345,6 +345,8 @@ export default {
     // Terminal Panel
     collapse: '折叠',
     expand: '展开',
+    shortcutHint: '按 {key} 展开',
+    shortcutHint2: '快捷键 {key}',
     duplicateTab: '复制标签',
     rename: '重命名',
     autoResize: '缩放时自动改变终端大小',
