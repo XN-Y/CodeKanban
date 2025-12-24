@@ -19,6 +19,7 @@ type systemTerminalManager interface {
 	UpdateScrollbackEnabled(bool)
 	UpdateRenameTitleEachCommand(bool)
 	UpdateAutoCreateTaskOnStartWork(bool)
+	UpdateShellConfig(utils.TerminalShellConfig)
 }
 
 type versionResponse struct {
@@ -209,6 +210,89 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 		op.OperationID = "system-developer-config-update"
 		op.Summary = "更新开发者调试配置"
 		op.Description = "更新开发者相关设置，例如终端 scrollback 是否启用，并实时应用到活动终端"
+		op.Tags = []string{systemTag}
+	})
+
+	// Terminal Shell Settings
+	huma.Get(group, "/system/terminal-shells", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.AvailableShellsResponse], error) {
+		shells := utils.GetAvailableShells(cfg.Terminal.Shell)
+		resp := h.NewItemResponse(shells)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-terminal-shells-get"
+		op.Summary = "获取可用终端Shell列表"
+		op.Description = "返回当前平台可用的终端Shell选项，包括检测状态"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/terminal-shells/update", func(ctx context.Context, input *struct {
+		Body struct {
+			Shell string `json:"shell" doc:"Shell命令，空值表示使用自动选择"`
+		} `json:"body"`
+	}) (*h.MessageResponse, error) {
+		// Validate the shell command if provided
+		if err := utils.ValidateShellCommand(input.Body.Shell); err != nil {
+			return nil, huma.Error400BadRequest("Invalid shell command: " + err.Error())
+		}
+
+		// Update config based on current platform
+		switch utils.GetAvailableShells(cfg.Terminal.Shell).Platform {
+		case "windows":
+			cfg.Terminal.Shell.Windows = input.Body.Shell
+		case "darwin":
+			cfg.Terminal.Shell.Darwin = input.Body.Shell
+		default:
+			cfg.Terminal.Shell.Linux = input.Body.Shell
+		}
+
+		// Persist to config file
+		utils.WriteConfig(cfg)
+
+		// Hot-reload: update terminal manager's shell config for new sessions
+		if terminalManager != nil {
+			terminalManager.UpdateShellConfig(cfg.Terminal.Shell)
+		}
+
+		resp := h.NewMessageResponse("Terminal shell updated. New terminals will use the selected shell.")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-terminal-shells-update"
+		op.Summary = "更新终端Shell设置"
+		op.Description = "更新当前平台的默认终端Shell，新建终端时生效"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/terminal-shells/validate", func(ctx context.Context, input *struct {
+		Body struct {
+			Shell string `json:"shell" doc:"要验证的Shell命令"`
+		} `json:"body"`
+	}) (*struct {
+		Body struct {
+			Valid   bool   `json:"valid" doc:"命令是否有效"`
+			Message string `json:"message,omitempty" doc:"错误信息"`
+		} `json:"body"`
+	}, error) {
+		resp := &struct {
+			Body struct {
+				Valid   bool   `json:"valid" doc:"命令是否有效"`
+				Message string `json:"message,omitempty" doc:"错误信息"`
+			} `json:"body"`
+		}{}
+
+		if err := utils.ValidateShellCommand(input.Body.Shell); err != nil {
+			resp.Body.Valid = false
+			resp.Body.Message = err.Error()
+		} else {
+			resp.Body.Valid = true
+		}
+
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-terminal-shells-validate"
+		op.Summary = "验证Shell命令"
+		op.Description = "检查指定的Shell命令是否有效可用"
 		op.Tags = []string{systemTag}
 	})
 }

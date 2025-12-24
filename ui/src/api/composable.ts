@@ -2,9 +2,14 @@ import type { WatchSource, Ref, ComputedRef } from 'vue';
 import { onBeforeRouteUpdate } from 'vue-router';
 import { watch, onActivated, computed, watchEffect } from 'vue';
 // import { makeOnError } from '@/utils/request';
-import { useRequest } from 'alova/client';
+import { useRequest, useAutoRequest } from 'alova/client';
 import { useNotification } from 'naive-ui';
-import type { AlovaMethodHandler, RequestHookConfig, UseHookExposure } from 'alova/client';
+import type {
+  AlovaMethodHandler,
+  RequestHookConfig,
+  UseHookExposure,
+  AutoRequestHookConfig,
+} from 'alova/client';
 import type { AlovaGenerics, Method } from 'alova';
 
 export const FORCE = Symbol('request force reload');
@@ -105,4 +110,42 @@ export function useInit(
   onActivated(() => init());
 
   init();
+}
+
+type UseAutoReqConfig<AG extends AlovaGenerics, Args extends any[]> = AutoRequestHookConfig<
+  AG,
+  Args
+> & {
+  skipShowError?: boolean;
+};
+
+// 自动请求 hook，支持轮询、页面可见性刷新、聚焦刷新等
+// methodHandler: 一个带参的 Apis 请求
+// config.pollingTime: 轮询时间（毫秒），默认 0 不轮询
+// config.enableVisibility: 页面可见性变化时刷新，默认 true
+// config.enableFocus: 页面聚焦时刷新，默认 true
+// config.enableNetwork: 网络重连时刷新，默认 true
+// config.throttle: 节流时间（毫秒），默认 1000
+// config.skipShowError: 设为 true 时，不会显示错误通知
+export function useAutoReq<AG extends AlovaGenerics, Args extends any[] = any[]>(
+  methodHandler: Method<AG> | AlovaMethodHandler<AG, Args>,
+  config?: UseAutoReqConfig<AG, Args>
+): UseHookExposure<AG, Args> {
+  const notification = useNotification();
+
+  const r = useAutoRequest(methodHandler, {
+    immediate: true,
+    // 默认关闭缓存，因为自动请求需要获取最新数据
+    cacheFor: 0,
+    ...config,
+  });
+
+  if (!config?.skipShowError) {
+    r.onError(error => {
+      // TODO: 搞个错误处理类
+      // makeOnError(notification, undefined, error)
+    });
+  }
+
+  return r;
 }

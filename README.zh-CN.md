@@ -24,7 +24,7 @@
 ```bash
 npx codekanban
 # 或
-npm install -g codekanban
+npm install -g codekanban@latest
 ```
 
 ## 核心特性

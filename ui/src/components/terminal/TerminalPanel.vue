@@ -38,7 +38,7 @@
     <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
 
     <div class="panel-header">
-      <div v-if="tabs.length" ref="tabsContainerRef" class="tabs-container">
+      <div v-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
         <n-tabs
           v-model:value="activeId"
           type="card"
@@ -54,49 +54,56 @@
             :tab-props="createTabProps(tab)"
           >
             <template #tab>
-              <span class="tab-label" :title="getTabTooltip(tab)">
-                <span v-if="!hideStatusDots" class="status-dot" :class="tab.clientStatus" />
+              <!-- 空标签的简化显示 -->
+              <span v-if="isEmptyTabItem(tab)" class="tab-label">
+                <span class="tab-title" :style="tabTitleStyle">
+                  {{ tab.title }}
+                </span>
+              </span>
+              <!-- 正常终端标签的完整显示 -->
+              <span v-else class="tab-label" :title="getTabTooltip(tab)">
+                <span v-if="!hideStatusDots" class="status-dot" :class="(tab as TerminalTabState).clientStatus" />
                 <span class="tab-title" :style="tabTitleStyle">
                   {{ tab.title }}
                 </span>
                 <!-- 任务图标：独立显示，不依赖 AI 助手状态 -->
                 <span
-                  v-if="resolveTabTaskId(tab) && !showAssistantStatus(tab)"
+                  v-if="resolveTabTaskId(tab as TerminalTabState) && !showAssistantStatus(tab as TerminalTabState)"
                   class="standalone-task-icon"
                   role="button"
                   tabindex="0"
                   :title="t('terminal.viewLinkedTask')"
-                  @click.stop="handleViewTask(tab)"
-                  @keydown.enter.prevent.stop="handleViewTask(tab)"
-                  @keydown.space.prevent.stop="handleViewTask(tab)"
+                  @click.stop="handleViewTask(tab as TerminalTabState)"
+                  @keydown.enter.prevent.stop="handleViewTask(tab as TerminalTabState)"
+                  @keydown.space.prevent.stop="handleViewTask(tab as TerminalTabState)"
                 >
                   <n-icon size="12">
                     <ClipboardOutline />
                   </n-icon>
                 </span>
                 <span
-                  v-if="showAssistantStatus(tab)"
+                  v-if="showAssistantStatus(tab as TerminalTabState)"
                   class="ai-status-pill"
-                  :class="[`state-${getAssistantStateClass(tab)}`, getAssistantPillSizeClass(tab)]"
-                  :title="getAssistantTooltip(tab)"
+                  :class="[`state-${getAssistantStateClass(tab as TerminalTabState)}`, getAssistantPillSizeClass(tab as TerminalTabState)]"
+                  :title="getAssistantTooltip(tab as TerminalTabState)"
                 >
                   <span
-                    v-if="resolveTabTaskId(tab)"
+                    v-if="resolveTabTaskId(tab as TerminalTabState)"
                     class="ai-status-icon task-icon"
                     role="button"
                     tabindex="0"
                     :title="t('terminal.viewLinkedTask')"
-                    @click.stop="handleViewTask(tab)"
-                    @keydown.enter.prevent.stop="handleViewTask(tab)"
-                    @keydown.space.prevent.stop="handleViewTask(tab)"
+                    @click.stop="handleViewTask(tab as TerminalTabState)"
+                    @keydown.enter.prevent.stop="handleViewTask(tab as TerminalTabState)"
+                    @keydown.space.prevent.stop="handleViewTask(tab as TerminalTabState)"
                   >
                     <n-icon size="12">
                       <ClipboardOutline />
                     </n-icon>
                   </span>
-                  <span class="ai-status-icon" v-html="getAssistantIcon(tab)"></span>
-                  <span class="ai-status-text">{{ getAssistantStatusLabel(tab) }}</span>
-                  <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab) }}</span>
+                  <span class="ai-status-icon" v-html="getAssistantIcon(tab as TerminalTabState)"></span>
+                  <span class="ai-status-text">{{ getAssistantStatusLabel(tab as TerminalTabState) }}</span>
+                  <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab as TerminalTabState) }}</span>
                 </span>
               </span>
             </template>
@@ -141,6 +148,19 @@
             </n-icon>
           </template>
         </n-button>
+        <n-button
+          v-if="projectIdRef"
+          text
+          size="small"
+          :title="t('terminal.viewAISessions')"
+          @click="showAISessionHistory = true"
+        >
+          <template #icon>
+            <n-icon>
+              <TimeOutline />
+            </n-icon>
+          </template>
+        </n-button>
         <n-dropdown
           trigger="click"
           placement="bottom-end"
@@ -167,7 +187,8 @@
     </div>
 
     <div v-if="expanded" class="panel-body">
-      <div v-if="!tabs.length" class="empty-guide">
+      <!-- 全局空状态：没有任何标签（包括空标签）时显示 -->
+      <div v-if="!tabs.length && !emptyTabs.length" class="empty-guide">
         <div class="empty-guide-content">
           <n-icon :size="48" class="empty-guide-icon">
             <TerminalOutline />
@@ -192,13 +213,63 @@
           <n-button v-else type="primary" @click="handleCreateTerminalClick">
             {{ t('terminal.createNewTerminal') }}
           </n-button>
+          <n-button
+            v-if="projectIdRef"
+            quaternary
+            class="view-sessions-btn"
+            @click="showAISessionHistory = true"
+          >
+            {{ t('terminal.viewAISessions') }}
+          </n-button>
         </div>
       </div>
+      <!-- 空标签内容：当激活的是空标签时显示 -->
+      <div
+        v-for="emptyTab in emptyTabs"
+        v-show="emptyTab.id === activeId"
+        :key="emptyTab.id"
+        class="empty-guide"
+      >
+        <div class="empty-guide-content">
+          <n-icon :size="48" class="empty-guide-icon">
+            <TerminalOutline />
+          </n-icon>
+          <h3 class="empty-guide-title">{{ t('terminal.emptyGuideTitle') }}</h3>
+          <p class="empty-guide-description">{{ t('terminal.emptyGuideDescription') }}</p>
+          <n-dropdown
+            v-if="worktrees.length > 1"
+            trigger="click"
+            :options="createTerminalOptions"
+            @select="handleCreateTerminalSelect"
+          >
+            <n-button type="primary" icon-placement="right">
+              {{ t('terminal.createNewTerminal') }}
+              <template #icon>
+                <n-icon>
+                  <ChevronDownOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
+          <n-button v-else type="primary" @click="handleCreateTerminalClick">
+            {{ t('terminal.createNewTerminal') }}
+          </n-button>
+          <n-button
+            v-if="projectIdRef"
+            quaternary
+            class="view-sessions-btn"
+            @click="showAISessionHistory = true"
+          >
+            {{ t('terminal.viewAISessions') }}
+          </n-button>
+        </div>
+      </div>
+      <!-- 正常终端视图：只渲染非空标签 -->
       <TerminalViewport
-        v-for="tab in visibleTabs"
+        v-for="tab in visibleTabs.filter(t => !isEmptyTabItem(t))"
         v-show="tab.id === activeId"
         :key="tab.id"
-        :tab="tab"
+        :tab="(tab as TerminalTabState)"
         :emitter="emitter"
         :send="send"
         :should-auto-focus="shouldAutoFocusTerminal"
@@ -285,6 +356,14 @@
       </n-space>
     </template>
   </n-modal>
+
+  <!-- AI 会话历史对话框 -->
+  <AISessionHistoryDialog
+    v-if="projectIdRef"
+    v-model:show="showAISessionHistory"
+    :project-id="projectIdRef"
+    @resume="handleResumeSession"
+  />
 </template>
 
 <script setup lang="ts">
@@ -318,12 +397,15 @@ import {
   ClipboardOutline,
   LinkOutline,
   FolderOpenOutline,
+  TimeOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
+import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
 import {
   useTerminalClient,
   type TerminalCreateOptions,
   type TerminalTabState,
+  type ServerMessage,
 } from '@/composables/useTerminalClient';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
@@ -379,7 +461,50 @@ const contextMenuY = ref(0);
 
 // 关联任务对话框相关状态
 const showLinkTaskModal = ref(false);
+
+// AI 会话历史对话框状态
+const showAISessionHistory = ref(false);
 const linkTaskTargetTab = ref<TerminalTabState | null>(null);
+
+// 空终端标签状态
+const EMPTY_TAB_PREFIX = 'empty-';
+let emptyTabCounter = 0;
+
+interface EmptyTab {
+  id: string;
+  title: string;
+  isEmpty: true;
+}
+
+const emptyTabs = ref<EmptyTab[]>([]);
+
+function createEmptyTab() {
+  emptyTabCounter += 1;
+  const newTab: EmptyTab = {
+    id: `${EMPTY_TAB_PREFIX}${emptyTabCounter}`,
+    title: t('terminal.emptyGuideTitle'),
+    isEmpty: true,
+  };
+  emptyTabs.value.push(newTab);
+  expanded.value = true;
+  activeId.value = newTab.id;
+}
+
+function closeEmptyTab(tabId: string) {
+  const index = emptyTabs.value.findIndex(tab => tab.id === tabId);
+  if (index !== -1) {
+    emptyTabs.value.splice(index, 1);
+    // 如果当前激活的是被关闭的空标签，切换到其他标签
+    if (activeId.value === tabId) {
+      const nextTab = tabs.value[0] || emptyTabs.value[0];
+      activeId.value = nextTab?.id || '';
+    }
+  }
+}
+
+function isEmptyTab(tabId: string): boolean {
+  return tabId.startsWith(EMPTY_TAB_PREFIX);
+}
 const linkTaskLoading = ref(false);
 const selectedTaskId = ref<string | null>(null);
 
@@ -455,6 +580,12 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       label: t('terminal.browseDirectory'),
       key: 'browse-directory',
       icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
+    },
+    {
+      label: t('terminal.copyAISessionId'),
+      key: 'copy-ai-session-id',
+      icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
+      disabled: !tab?.aiSessionId,
     },
     {
       type: 'divider',
@@ -632,6 +763,8 @@ const createTerminalOptions = computed<DropdownOption[]>(() => {
 });
 
 // 创建终端下拉菜单选项（带提示头）
+const EMPTY_TAB_KEY = '__empty_tab__';
+
 const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
   return [
     {
@@ -661,6 +794,14 @@ const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
       label: worktree.branchName,
       key: worktree.id,
     })),
+    {
+      key: 'divider',
+      type: 'divider',
+    },
+    {
+      label: t('terminal.emptyTab'),
+      key: EMPTY_TAB_KEY,
+    },
   ];
 });
 
@@ -837,12 +978,24 @@ const shouldShowBranchFilter = computed(
   () => showBranchFilter.value && branchFilterOptions.value.length > 1
 );
 
-const visibleTabs = computed(() => {
+// 合并真实终端标签和空标签
+type CombinedTab = TerminalTabState | EmptyTab;
+
+const visibleTabs = computed<CombinedTab[]>(() => {
+  let realTabs: TerminalTabState[];
   if (branchFilter.value === 'all') {
-    return tabs.value;
+    realTabs = tabs.value;
+  } else {
+    realTabs = tabs.value.filter(tab => tab.worktreeId === branchFilter.value);
   }
-  return tabs.value.filter(tab => tab.worktreeId === branchFilter.value);
+  // 将空标签和真实标签合并，空标签放在最后
+  return [...realTabs, ...emptyTabs.value];
 });
+
+// 检查是否是空标签
+function isEmptyTabItem(tab: CombinedTab): tab is EmptyTab {
+  return 'isEmpty' in tab && tab.isEmpty === true;
+}
 
 function resolveWorktreeBranchName(worktreeId: string) {
   const label = worktreeBranchMap.value.get(worktreeId)?.trim();
@@ -952,10 +1105,26 @@ function updateActiveTabIndicator() {
   });
 }
 
+// 本地激活的空终端 ID
+const localActiveEmptyTabId = ref<string>('');
+
 const activeId = computed({
-  get: () => activeTabId.value,
+  get: () => {
+    // 如果有本地激活的空终端，优先返回
+    if (localActiveEmptyTabId.value && emptyTabs.value.some(t => t.id === localActiveEmptyTabId.value)) {
+      return localActiveEmptyTabId.value;
+    }
+    return activeTabId.value;
+  },
   set: value => {
-    activeTabId.value = value;
+    // 检查是否是空终端 ID
+    if (isEmptyTab(value)) {
+      localActiveEmptyTabId.value = value;
+    } else {
+      // 切换到真实终端时，清除空终端激活状态
+      localActiveEmptyTabId.value = '';
+      activeTabId.value = value;
+    }
   },
 });
 
@@ -1663,8 +1832,12 @@ function handleCreateTerminalClick() {
 }
 
 // 处理创建终端下拉菜单选择
-function handleCreateTerminalSelect(worktreeId: string) {
-  openTerminal({ worktreeId });
+function handleCreateTerminalSelect(key: string) {
+  if (key === EMPTY_TAB_KEY) {
+    createEmptyTab();
+    return;
+  }
+  openTerminal({ worktreeId: key });
 }
 
 async function openTerminal(options: TerminalCreateOptions) {
@@ -1677,6 +1850,8 @@ async function openTerminal(options: TerminalCreateOptions) {
   }
   shouldAutoFocusTerminal.value = true;
   expanded.value = true;
+  // 创建真实终端时，清除空终端激活状态
+  localActiveEmptyTabId.value = '';
   try {
     await createSession(options);
     // 创建成功后，等待面板展开动画完成（200ms）+ 缓冲时间，再触发 resize
@@ -1689,7 +1864,77 @@ async function openTerminal(options: TerminalCreateOptions) {
   }
 }
 
+// Handle resume session from AI Session History dialog
+async function handleResumeSession(claudeSessionId: string, sessionType: string) {
+  if (!props.projectId) {
+    message.warning(t('terminal.pleaseSelectProject'));
+    return;
+  }
+  if (!ensureTerminalCapacity()) {
+    return;
+  }
+
+  // Get the first worktree (default)
+  const worktreeId = worktrees.value[0]?.id;
+  if (!worktreeId) {
+    message.error(t('terminal.createFailed'));
+    return;
+  }
+
+  shouldAutoFocusTerminal.value = true;
+  expanded.value = true;
+  localActiveEmptyTabId.value = '';
+
+  try {
+    await createSession({ worktreeId });
+
+    // Get the newly created terminal session ID
+    const newSessionId = activeId.value;
+    if (!newSessionId) {
+      return;
+    }
+
+    // Build the resume command
+    const resumeCommand = `claude --resume ${claudeSessionId}`;
+
+    // Listen for the terminal ready event, then send the command
+    const handleReady = (payload: ServerMessage) => {
+      if (payload.type === 'ready') {
+        // Remove listener after handling
+        emitter.off(newSessionId, handleReady);
+
+        // Send the resume command after a small delay to ensure terminal is fully ready
+        setTimeout(() => {
+          send(newSessionId, { type: 'data', data: resumeCommand + '\r' });
+        }, 100);
+      }
+    };
+
+    // Subscribe to terminal events
+    emitter.on(newSessionId, handleReady);
+
+    // Fallback: if ready event was already fired, try sending after delay
+    setTimeout(() => {
+      emitter.off(newSessionId, handleReady);
+      const tab = tabs.value.find(t => t.id === newSessionId);
+      if (tab && tab.clientStatus === 'ready') {
+        send(newSessionId, { type: 'data', data: resumeCommand + '\r' });
+      }
+    }, 1500);
+
+    scheduleResizeAll();
+  } catch (error: any) {
+    message.error(error?.message ?? t('terminal.createFailed'));
+  }
+}
+
 async function handleClose(sessionId: string) {
+  // 处理空标签的关闭
+  if (isEmptyTab(sessionId)) {
+    closeEmptyTab(sessionId);
+    return;
+  }
+
   // 如果开启了关闭确认，先弹出确认对话框
   if (confirmBeforeTerminalClose.value) {
     const tab = tabs.value.find(t => t.id === sessionId);
@@ -1750,14 +1995,38 @@ const approvalColors = computed(() => {
   };
 });
 
-function createTabProps(tab: TerminalTabState): HTMLAttributes {
-  const props: HTMLAttributes = {
-    onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, tab),
-  };
-
+function createTabProps(tab: CombinedTab): HTMLAttributes {
   const isActive = activeId.value === tab.id;
   const theme = activeTheme.value;
   const preset = getPresetById(currentPresetId.value);
+
+  // 空标签的简化处理
+  if (isEmptyTabItem(tab)) {
+    const props: HTMLAttributes = {};
+    // 检查是否需要隐藏边框
+    const hideHeaderBorder = theme.terminalHeaderBorder === false;
+    // 设置空标签的背景色（根据激活状态）
+    if (isActive) {
+      const bgColor =
+        theme.terminalTabActiveBg || preset?.colors.terminalTabActiveBg || theme.surfaceColor;
+      props.style = {
+        backgroundColor: bgColor,
+        ...(hideHeaderBorder ? { borderBottom: 'none' } : {}),
+      };
+    } else {
+      const bgColor = theme.terminalTabBg || preset?.colors.terminalTabBg || theme.bodyColor;
+      props.style = {
+        backgroundColor: bgColor,
+      };
+    }
+    return props;
+  }
+
+  // 真实终端标签的完整处理
+  const realTab = tab as TerminalTabState;
+  const props: HTMLAttributes = {
+    onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, realTab),
+  };
 
   // 检查是否需要隐藏边框
   const hideHeaderBorder = theme.terminalHeaderBorder === false;
@@ -1766,14 +2035,14 @@ function createTabProps(tab: TerminalTabState): HTMLAttributes {
   const classes: string[] = [];
 
   // 优先级: 审批提醒 > 完成提醒 > 激活/非激活状态的默认颜色
-  if (hasUnviewedApproval(tab)) {
+  if (hasUnviewedApproval(realTab)) {
     classes.push('has-unviewed-approval');
     props.style = {
       backgroundColor: approvalColors.value.bg,
       borderColor: approvalColors.value.border,
       ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
     };
-  } else if (hasUnviewedCompletion(tab)) {
+  } else if (hasUnviewedCompletion(realTab)) {
     classes.push('has-unviewed-completion');
     props.style = {
       backgroundColor: completionColors.value.bg,
@@ -2042,6 +2311,21 @@ async function browseDirectory(tab: TerminalTabState) {
   }
 }
 
+async function copyAISessionId(tab: TerminalTabState) {
+  const sessionId = tab.aiSessionId;
+  if (!sessionId) {
+    message.warning(t('terminal.noAISession'));
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(sessionId);
+    message.success(t('terminal.aiSessionIdCopied'));
+  } catch (error) {
+    console.error('Failed to copy AI session ID:', error);
+    message.error(t('terminal.copyFailed'));
+  }
+}
+
 function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
   event.preventDefault();
   contextMenuX.value = event.clientX;
@@ -2076,6 +2360,10 @@ async function handleContextMenuSelect(key: string) {
   }
   if (key === 'browse-directory') {
     browseDirectory(tab);
+    return;
+  }
+  if (key === 'copy-ai-session-id') {
+    copyAISessionId(tab);
     return;
   }
   if (key === 'link-task') {
@@ -2896,6 +3184,16 @@ defineExpose({
   color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.8));
   opacity: 0.8;
   margin: 0 0 24px 0;
+}
+
+.view-sessions-btn {
+  margin-top: 12px;
+  color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.7));
+  opacity: 0.8;
+}
+
+.view-sessions-btn:hover {
+  opacity: 1;
 }
 
 /* 空标签页占位符 */

@@ -13,6 +13,7 @@ import (
 
 	"code-kanban/utils"
 	"code-kanban/utils/ai_assistant2"
+	"code-kanban/utils/ai_assistant2/log_watcher"
 	"code-kanban/utils/ai_assistant2/types"
 )
 
@@ -142,13 +143,23 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		return nil, err
 	}
 
-	if err := session.Start(startCtx); err != nil {
+	// 在 session.Start() 之前同步订阅，确保 monitorAssistantRecords
+	// 在 PTY 输出开始之前就订阅好，避免错过早期的状态变化事件
+	stream, err := session.Subscribe(startCtx)
+	if err != nil {
 		m.sessions.Delete(session.ID())
 		_ = session.Close()
 		return nil, err
 	}
 
-	go m.watchSession(session)
+	if err := session.Start(startCtx); err != nil {
+		stream.Close()
+		m.sessions.Delete(session.ID())
+		_ = session.Close()
+		return nil, err
+	}
+
+	go m.watchSessionWithStream(session, stream)
 
 	return session, nil
 }
@@ -228,6 +239,21 @@ func (m *Manager) ListSessions(projectID string) []SessionSnapshot {
 	return results
 }
 
+// ListSessionsByTask enumerates sessions associated with a specific task.
+func (m *Manager) ListSessionsByTask(taskID string) []SessionSnapshot {
+	results := make([]SessionSnapshot, 0)
+	if taskID == "" {
+		return results
+	}
+	m.sessions.Range(func(_ string, session *Session) bool {
+		if session.TaskID() == taskID {
+			results = append(results, session.Snapshot())
+		}
+		return true
+	})
+	return results
+}
+
 // GetSessionDebugInfo returns comprehensive debug information for a session.
 func (m *Manager) GetSessionDebugInfo(id string) (*DebugInfo, error) {
 	session, err := m.GetSession(id)
@@ -235,6 +261,16 @@ func (m *Manager) GetSessionDebugInfo(id string) (*DebugInfo, error) {
 		return nil, err
 	}
 	return session.GetDebugInfo(), nil
+}
+
+// GetLogWatcherInfo returns the LogWatcher info for a session.
+func (m *Manager) GetLogWatcherInfo(id string) (*log_watcher.WatcherInfo, error) {
+	session, err := m.GetSession(id)
+	if err != nil {
+		return nil, err
+	}
+	info := session.GetLogWatcherInfo()
+	return info, nil
 }
 
 // CaptureChunk triggers a resize and captures the next output chunk from a session.
@@ -252,6 +288,13 @@ func (m *Manager) shellCommand() ([]string, error) {
 
 func (m *Manager) watchSession(session *Session) {
 	go m.monitorAssistantRecords(session)
+	<-session.Closed()
+	m.recordManager.ClearSessionRecords(session.ID())
+	m.sessions.Delete(session.ID())
+}
+
+func (m *Manager) watchSessionWithStream(session *Session, stream *SessionStream) {
+	go m.monitorAssistantRecordsWithStream(session, stream)
 	<-session.Closed()
 	m.recordManager.ClearSessionRecords(session.ID())
 	m.sessions.Delete(session.ID())
@@ -410,6 +453,13 @@ func (m *Manager) UpdateAutoCreateTaskOnStartWork(enabled bool) {
 	})
 }
 
+// UpdateShellConfig updates the shell configuration for new terminal sessions.
+func (m *Manager) UpdateShellConfig(shellConfig utils.TerminalShellConfig) {
+	m.sessionMu.Lock()
+	m.cfg.Shell = shellConfig
+	m.sessionMu.Unlock()
+}
+
 // GetRecordManager 返回记录管理器实例
 func (m *Manager) GetRecordManager() *RecordManager {
 	return m.recordManager
@@ -423,6 +473,11 @@ func (m *Manager) monitorAssistantRecords(session *Session) {
 	if err != nil {
 		return
 	}
+
+	m.monitorAssistantRecordsWithStream(session, stream)
+}
+
+func (m *Manager) monitorAssistantRecordsWithStream(session *Session, stream *SessionStream) {
 	defer stream.Close()
 
 	lastState := string(types.StateUnknown)

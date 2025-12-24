@@ -76,5 +76,11 @@ export default {
   'worktree.delete': ['POST', '/api/v1/worktrees/{id}'],
   'worktree.commit': ['POST', '/api/v1/worktrees/{id}/commit'],
   'branch.merge': ['POST', '/api/v1/worktrees/{id}/merge'],
-  'worktree.refreshStatus': ['POST', '/api/v1/worktrees/{id}/refresh-status']
+  'worktree.refreshStatus': ['POST', '/api/v1/worktrees/{id}/refresh-status'],
+  // AI Session routes
+  'aiSession.listByProject': ['GET', '/api/v1/projects/{id}/ai-sessions'],
+  'aiSession.getConversation': ['GET', '/api/v1/ai-sessions/{id}/conversation'],
+  'taskAiSession.list': ['GET', '/api/v1/tasks/{taskId}/ai-sessions'],
+  'taskAiSession.link': ['POST', '/api/v1/tasks/{taskId}/ai-sessions/link'],
+  'taskAiSession.unlink': ['POST', '/api/v1/tasks/{taskId}/ai-sessions/unlink']
 };

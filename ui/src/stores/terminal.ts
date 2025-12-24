@@ -31,6 +31,7 @@ export type ServerMessage = {
     runningCommand?: string;
     aiAssistantRecentInput?: string;
     taskId?: string;
+    aiSessionId?: string;
     aiAssistant?: {
       type: string;
       name: string;
@@ -769,6 +770,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       runningCommand: metadata.runningCommand,
       aiAssistant: metadata.aiAssistant,
       taskId: nextTaskId,
+      aiSessionId: metadata.aiSessionId || bucket[index].aiSessionId,
       title: typeof nextTitle === 'string' ? nextTitle : bucket[index].title,
       lastAgentCommand: latestCommand || bucket[index].lastAgentCommand,
     };

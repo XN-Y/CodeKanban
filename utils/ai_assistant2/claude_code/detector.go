@@ -12,8 +12,10 @@ import (
 
 // StatusDetector implements state detection for Claude Code
 type StatusDetector struct {
-	recentInput  string
-	recentInput2 string
+	recentInput   string
+	recentInput2  string
+	grayHintText  string // 灰色提示文字（Mode 128 或光标位置的 Mode 1）
+	grayHintText2 string // 上一次的灰色提示文字
 }
 
 // NewStatusDetector creates a new Claude Code state detector
@@ -26,7 +28,7 @@ func NewStatusDetector() *StatusDetector {
 func (d *StatusDetector) DetectStateFromLines(lines []string, raw [][]vt10x.Glyph, cols int, timestamp time.Time, currentState types.State, lastDetectedAt time.Time, cursorX int, cursorY int) (types.State, bool) {
 	// Claude Code doesn't need stability checking like Codex
 	// Its UI is more stable and reliable
-	s := d.detectStateWorkingAndWaiting(lines, cols)
+	s := d.detectStateWorkingAndWaiting(lines, raw, cols)
 	if s == types.StateUnknown {
 		s = d.detectStateApproval(lines, cols)
 	}
@@ -63,4 +65,11 @@ func (d *StatusDetector) GetRecentInput() string {
 		return d.recentInput2
 	}
 	return d.recentInput
+}
+
+func (d *StatusDetector) GetGrayHintText() string {
+	if d.grayHintText == "" {
+		return d.grayHintText2
+	}
+	return d.grayHintText
 }

@@ -24,7 +24,7 @@ Try it instantly:
 ```bash
 npx codekanban
 # or
-npm install -g codekanban
+npm install -g codekanban@latest
 codekanban
 ```
 

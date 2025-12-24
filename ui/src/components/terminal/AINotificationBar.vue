@@ -4,6 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
+import { useAutoReq } from '@/api/composable';
 import { useTerminalStore } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
@@ -245,8 +246,98 @@ const worktreeBranchCache = new Map<string, { branchName: string; projectId?: st
 const router = useRouter();
 const currentRoute = useRoute();
 const notifications = ref<NotificationItem[]>([]);
-const isFetchingCompletions = ref(false);
-const isFetchingApprovals = ref(false);
+
+// 使用 useAutoReq 实现自动请求：页面激活时刷新、聚焦刷新、网络重连刷新、30秒轮询
+const completionsReq = useAutoReq(
+  () => Apis.terminalSession.terminalCompletionRecordsList({ cacheFor: 0 }),
+  {
+    enableVisibility: true,
+    enableFocus: true,
+    enableNetwork: true,
+    pollingTime: 30000,
+    throttle: 1000,
+    skipShowError: true,
+  }
+);
+
+const approvalsReq = useAutoReq(
+  () => Apis.terminalSession.terminalApprovalRecordsList({ cacheFor: 0 }),
+  {
+    enableVisibility: true,
+    enableFocus: true,
+    enableNetwork: true,
+    pollingTime: 30000,
+    throttle: 1000,
+    skipShowError: true,
+  }
+);
+
+// 跟踪已有的完成通知 ID，用于检测新通知并播放声音
+const existingCompletionIds = ref<Set<string>>(new Set());
+
+// 监听完成记录数据变化
+watch(
+  () => completionsReq.data.value,
+  response => {
+    if (!response) return;
+    const records = (response?.items ?? []) as CompletionRecordResponse[];
+    const items = records.filter(record => !record.dismissed).map(mapCompletionRecord);
+
+    // 检测是否有新通知，播放提示音
+    const hasNewNotification = items.some(item => !existingCompletionIds.value.has(item.recordId));
+    if (hasNewNotification && existingCompletionIds.value.size > 0) {
+      playCompletionSound();
+    }
+
+    // 更新已知 ID 集合
+    existingCompletionIds.value = new Set(items.map(item => item.recordId));
+
+    setNotificationsForType('completion', items);
+  }
+);
+
+// 监听审批记录数据变化
+watch(
+  () => approvalsReq.data.value,
+  async response => {
+    if (!response) return;
+    const records = (response?.items ?? []) as ApprovalRecordResponse[];
+    const items = records.filter(record => !record.dismissed).map(mapApprovalRecord);
+
+    // 获取所有审批通知的 sessionId 集合
+    const approvalSessionIds = new Set(items.map(item => item.sessionId));
+
+    // 找到需要被顶掉的完成通知
+    const completionsToRemove = notifications.value.filter(
+      item => item.type === 'completion' && approvalSessionIds.has(item.sessionId)
+    );
+
+    // 真正地 dismiss 这些完成通知（调用后端 API）
+    for (const completion of completionsToRemove) {
+      try {
+        await Apis.terminalSession
+          .terminalCompletionRecordDismiss({
+            pathParams: { recordId: completion.recordId },
+            cacheFor: 0,
+          })
+          .send();
+      } catch (error) {
+        console.error(
+          '[AI Notification] Failed to dismiss completion record',
+          completion.recordId,
+          error
+        );
+      }
+    }
+
+    // 从前端列表中移除这些完成通知
+    notifications.value = notifications.value.filter(
+      item => !(item.type === 'completion' && approvalSessionIds.has(item.sessionId))
+    );
+
+    setNotificationsForType('approval', items);
+  }
+);
 
 function getDisplayModeLabel(mode: NotificationDisplayMode) {
   if (mode === 'idle-only') {
@@ -438,6 +529,31 @@ function getCompactDisplayText(notification: NotificationItem) {
   return parts.join(' ');
 }
 
+// 格式化通知时间
+function formatNotificationTime(timestamp: Date): string {
+  const now = new Date();
+  const diff = now.getTime() - timestamp.getTime();
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (seconds < 60) {
+    return t('terminal.timeJustNow');
+  } else if (minutes < 60) {
+    return t('terminal.timeMinutesAgo', { n: minutes });
+  } else if (hours < 24) {
+    return t('terminal.timeHoursAgo', { n: hours });
+  } else {
+    // 显示具体时间
+    return timestamp.toLocaleString();
+  }
+}
+
+// 判断是否在项目列表页
+const isOnProjectListPage = computed(() => {
+  return currentRoute.name === 'projects';
+});
+
 function getAssistantName(info?: AssistantInfo) {
   return info?.displayName || info?.name || 'AI';
 }
@@ -619,78 +735,14 @@ function handleAIWorking(event: any) {
   }
 }
 
-async function fetchCompletionRecords(options?: { playSound?: boolean }) {
-  if (isFetchingCompletions.value) {
-    return;
-  }
-  isFetchingCompletions.value = true;
-  const existingIds = new Set(
-    notifications.value.filter(item => item.type === 'completion').map(item => item.recordId)
-  );
-  try {
-    const response = await Apis.terminalSession
-      .terminalCompletionRecordsList({ cacheFor: 0 })
-      .send();
-    const records = (response?.items ?? []) as CompletionRecordResponse[];
-    const items = records.filter(record => !record.dismissed).map(mapCompletionRecord);
-    setNotificationsForType('completion', items);
-    if (options?.playSound && items.some(item => !existingIds.has(item.recordId))) {
-      playCompletionSound();
-    }
-  } catch (error) {
-    console.error('[AI Notification] Failed to load completion records', error);
-  } finally {
-    isFetchingCompletions.value = false;
-  }
+// 手动刷新完成记录（事件触发时使用）
+function fetchCompletionRecords() {
+  void completionsReq.send();
 }
 
-async function fetchApprovalRecords() {
-  if (isFetchingApprovals.value) {
-    return;
-  }
-  isFetchingApprovals.value = true;
-  try {
-    const response = await Apis.terminalSession.terminalApprovalRecordsList({ cacheFor: 0 }).send();
-    const records = (response?.items ?? []) as ApprovalRecordResponse[];
-    const items = records.filter(record => !record.dismissed).map(mapApprovalRecord);
-
-    // 获取所有审批通知的 sessionId 集合
-    const approvalSessionIds = new Set(items.map(item => item.sessionId));
-
-    // 找到需要被顶掉的完成通知
-    const completionsToRemove = notifications.value.filter(
-      item => item.type === 'completion' && approvalSessionIds.has(item.sessionId)
-    );
-
-    // 真正地 dismiss 这些完成通知（调用后端 API）
-    for (const completion of completionsToRemove) {
-      try {
-        await Apis.terminalSession
-          .terminalCompletionRecordDismiss({
-            pathParams: { recordId: completion.recordId },
-            cacheFor: 0,
-          })
-          .send();
-      } catch (error) {
-        console.error(
-          '[AI Notification] Failed to dismiss completion record',
-          completion.recordId,
-          error
-        );
-      }
-    }
-
-    // 从前端列表中移除这些完成通知
-    notifications.value = notifications.value.filter(
-      item => !(item.type === 'completion' && approvalSessionIds.has(item.sessionId))
-    );
-
-    setNotificationsForType('approval', items);
-  } catch (error) {
-    console.error('[AI Notification] Failed to load approval records', error);
-  } finally {
-    isFetchingApprovals.value = false;
-  }
+// 手动刷新审批记录（事件触发时使用）
+function fetchApprovalRecords() {
+  void approvalsReq.send();
 }
 
 // 播放完成提示音
@@ -719,7 +771,8 @@ function playCompletionSound() {
 // 处理完成事件
 function handleAICompletion() {
   window.setTimeout(() => {
-    void fetchCompletionRecords({ playSound: true });
+    // 播放声音的逻辑已移到 watch 中，检测到新通知时自动播放
+    void fetchCompletionRecords();
   }, 150);
 }
 
@@ -899,8 +952,8 @@ onMounted(() => {
   terminalStore.emitter.on('ai:closed', handleAIClosed);
   terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
 
-  void fetchCompletionRecords();
-  void fetchApprovalRecords();
+  // useAutoReq 已设置 immediate: true，会自动发起首次请求
+  // 同时也会自动处理页面可见性变化、聚焦、网络重连时的刷新
 
   // 订阅所有终端的状态变化
   subscribeToAllSessions();
@@ -936,10 +989,16 @@ watch(
     subscribeToAllSessions();
   }
 );
+
+// 注：页面可见性变化、聚焦、网络重连时的刷新已由 useAutoReq 自动处理
 </script>
 
 <template>
-  <div class="notification-bar-container" :class="{ 'compact-mode': compactModeEnabled }">
+  <div
+    v-show="!isOnProjectListPage"
+    class="notification-bar-container"
+    :class="{ 'compact-mode': compactModeEnabled }"
+  >
     <div class="notification-toolbar">
       <button
         type="button"
@@ -1135,8 +1194,13 @@ watch(
                 {{ getNotificationDescription(notification) }}
               </div>
             </n-popover>
-            <div class="notification-action-hint">
-              {{ t('terminal.clickToJumpTerminal') }}
+            <div class="notification-footer">
+              <span class="notification-action-hint">
+                {{ t('terminal.clickToJumpTerminal') }}
+              </span>
+              <span class="notification-time" :title="notification.timestamp.toLocaleString()">
+                {{ formatNotificationTime(notification.timestamp) }}
+              </span>
             </div>
           </div>
         </div>
@@ -1445,13 +1509,26 @@ watch(
   gap: 4px;
 }
 
+.notification-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .notification-action-hint {
   font-size: 12px;
   color: var(--n-color-primary, #3b82f6);
   font-weight: 500;
 }
 
-.notification-list.is-compact .notification-action-hint {
+.notification-time {
+  font-size: 11px;
+  color: var(--text-color-secondary, #999);
+  flex-shrink: 0;
+}
+
+.notification-list.is-compact .notification-footer {
   display: none;
 }
 

@@ -93,6 +93,75 @@ export interface TerminalSession {
     };
   };
   taskId?: string;
+  aiSessionId?: string;
+  aiAssistantRecentInput?: string;
+}
+
+export interface AISessionMessage {
+  timestamp: string;
+  message: string;
+}
+
+export interface AISessionMessages {
+  sessionId?: string;
+  model?: string;
+  cliVersion?: string;
+  filePath?: string;
+  messageCount: number;
+  messages: AISessionMessage[];
+}
+
+// AI Session 摘要信息（用于列表显示）
+export interface AISessionSummary {
+  id: string;
+  sessionId: string;
+  type: 'claude_code' | 'codex';
+  model: string;
+  title: string;
+  sessionStartedAt: string;
+  lastMessageAt?: string | null;
+  messageCount: number;
+  filePath: string;
+}
+
+// 扫描阶段类型
+export type ScanPhase = 'recent' | 'extended' | 'complete';
+
+// 项目的 AI Sessions
+export interface ProjectAISessions {
+  hasClaudeCode: boolean;
+  hasCodex: boolean;
+  claudeSessions: AISessionSummary[];
+  codexSessions: AISessionSummary[];
+  claudeScanPhase?: ScanPhase;  // 扫描阶段：recent=24小时内, extended=1-15天, complete=完成
+  codexScanPhase?: ScanPhase;
+}
+
+// 任务关联的 AI Session（包含详情）
+export interface TaskAISessionWithDetails {
+  id: string;
+  taskId: string;
+  sessionId: string;
+  aiSessionDbId: string;
+  type: 'claude_code' | 'codex';
+  model: string;
+  title: string;
+  sessionStartedAt: string;
+  lastMessageAt?: string | null;
+  messageCount: number;
+}
+
+// AI Session 对话内容
+export interface ConversationMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+}
+
+export interface ConversationResponse {
+  sessionId: string;
+  title: string;
+  messages: ConversationMessage[];
 }
 
 export interface BranchInfo {
@@ -138,4 +207,21 @@ export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
   autoCreateTaskOnStartWork: boolean;
+}
+
+export interface ShellOption {
+  id: string;
+  name: string;
+  command: string;
+  available: boolean;
+  description: string;
+  warning?: string; // Optional warning key for i18n translation
+}
+
+export interface AvailableShellsResponse {
+  platform: 'windows' | 'darwin' | 'linux';
+  currentShell: string;
+  defaultShell: string;
+  options: ShellOption[];
+  customAllowed: boolean;
 }

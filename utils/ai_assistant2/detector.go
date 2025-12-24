@@ -59,7 +59,9 @@ func (r *DetectionRule) Match(command string) bool {
 	}
 
 	// Normalize command for case-insensitive matching
+	// Also normalize path separators (Windows uses \, patterns use /)
 	normalizedCmd := strings.ToLower(command)
+	normalizedCmd = strings.ReplaceAll(normalizedCmd, "\\", "/")
 
 	for _, pattern := range r.Patterns {
 		normalizedPattern := strings.ToLower(pattern)

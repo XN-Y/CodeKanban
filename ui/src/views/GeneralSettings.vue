@@ -127,6 +127,32 @@
               </span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.terminalShell')">
+            <n-space vertical size="small">
+              <n-spin :show="shellsLoading" size="small">
+                <n-select
+                  v-model:value="selectedShellValue"
+                  :options="shellSelectOptions"
+                  :loading="shellsLoading"
+                  style="max-width: 320px"
+                  :disabled="shellsLoading"
+                />
+              </n-spin>
+              <n-collapse-transition :show="showCustomShellInput">
+                <n-input
+                  v-model:value="customShellCommand"
+                  :placeholder="t('settings.customShellPlaceholder')"
+                  :status="customShellStatus"
+                  style="max-width: 320px; margin-top: 8px;"
+                  @blur="handleCustomShellBlur"
+                />
+              </n-collapse-transition>
+              <span class="form-tip">{{ t('settings.terminalShellTip') }}</span>
+              <span v-if="shellsData?.platform" class="form-tip">
+                {{ t('settings.currentPlatform') }}: {{ platformDisplayName }}
+              </span>
+            </n-space>
+          </n-form-item>
         </n-form>
       </n-card>
 
@@ -347,9 +373,12 @@ import { lightenColor, darkenColor, ensureHexWithHash, isDarkHex, getReadableTex
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
-import type { AIAssistantStatusConfig, DeveloperConfig } from '@/types/models';
+import type { AIAssistantStatusConfig, DeveloperConfig, AvailableShellsResponse } from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
+
+const SHELL_AUTO_VALUE = '__auto__';
+const SHELL_CUSTOM_VALUE = '__custom__';
 
 type ItemResponse<T> = {
   item?: T;
@@ -510,10 +539,164 @@ async function handleSaveDeveloperConfig() {
   }
 }
 
+// Terminal Shell Settings
+const shellsData = ref<AvailableShellsResponse | null>(null);
+const selectedShellId = ref<string>(SHELL_AUTO_VALUE);
+const customShellCommand = ref('');
+const customShellValid = ref(true);
+
+const { send: fetchShells, loading: shellsLoading } = useReq(
+  () => http.Get<ItemResponse<AvailableShellsResponse>>('/system/terminal-shells')
+);
+
+const { send: updateShell } = useReq(
+  (shell: string) => http.Post('/system/terminal-shells/update', { shell })
+);
+
+const { send: validateShell } = useReq(
+  (shell: string) => http.Post<{ valid: boolean; message?: string }>('/system/terminal-shells/validate', { shell })
+);
+
+async function loadShellsConfig() {
+  try {
+    const resp = await fetchShells();
+    const data = resp?.item;
+    if (data) {
+      shellsData.value = data;
+      // Determine selected shell ID based on current config
+      if (!data.currentShell || data.currentShell === '') {
+        selectedShellId.value = SHELL_AUTO_VALUE;
+      } else {
+        const matchedOption = data.options.find(opt => opt.command === data.currentShell);
+        if (matchedOption) {
+          selectedShellId.value = matchedOption.id;
+        } else {
+          selectedShellId.value = SHELL_CUSTOM_VALUE;
+          customShellCommand.value = data.currentShell;
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load shell config:', error);
+  }
+}
+
 useInit(() => {
   loadAIStatus();
   loadDeveloperConfig();
+  loadShellsConfig();
 });
+
+const shellSelectOptions = computed(() => {
+  const options: Array<{ label: string; value: string; disabled?: boolean }> = [];
+
+  // Auto option
+  options.push({
+    label: t('settings.shellAuto'),
+    value: SHELL_AUTO_VALUE,
+  });
+
+  // Platform-specific options
+  if (shellsData.value?.options) {
+    for (const opt of shellsData.value.options) {
+      let label = opt.available
+        ? `${opt.name} - ${opt.description}`
+        : `${opt.name} (${t('settings.shellNotInstalled')})`;
+
+      // Add warning if present (translate using i18n key)
+      if (opt.warning) {
+        const warningText = t(`settings.${opt.warning}`);
+        label += ` ⚠️ ${warningText}`;
+      }
+
+      options.push({
+        label,
+        value: opt.id,
+        disabled: !opt.available,
+      });
+    }
+  }
+
+  // Custom option
+  if (shellsData.value?.customAllowed) {
+    options.push({
+      label: t('settings.shellCustom'),
+      value: SHELL_CUSTOM_VALUE,
+    });
+  }
+
+  return options;
+});
+
+const showCustomShellInput = computed(() => selectedShellId.value === SHELL_CUSTOM_VALUE);
+
+const customShellStatus = computed(() => {
+  if (!customShellCommand.value) return undefined;
+  return customShellValid.value ? undefined : 'error';
+});
+
+const platformDisplayName = computed(() => {
+  const platform = shellsData.value?.platform;
+  switch (platform) {
+    case 'windows': return 'Windows';
+    case 'darwin': return 'macOS';
+    case 'linux': return 'Linux';
+    default: return platform || '';
+  }
+});
+
+const selectedShellValue = computed({
+  get: () => selectedShellId.value,
+  set: async (value: string) => {
+    selectedShellId.value = value;
+
+    if (value === SHELL_AUTO_VALUE) {
+      // Save empty string for auto
+      await saveShellConfig('');
+    } else if (value === SHELL_CUSTOM_VALUE) {
+      // Don't save yet, wait for custom input
+      customShellCommand.value = '';
+      customShellValid.value = true;
+    } else {
+      // Find the command for this shell ID
+      const opt = shellsData.value?.options.find(o => o.id === value);
+      if (opt) {
+        await saveShellConfig(opt.command);
+      }
+    }
+  },
+});
+
+async function handleCustomShellBlur() {
+  if (!customShellCommand.value.trim()) {
+    customShellValid.value = true;
+    return;
+  }
+
+  try {
+    const resp = await validateShell(customShellCommand.value);
+    customShellValid.value = resp?.valid ?? false;
+    if (customShellValid.value) {
+      await saveShellConfig(customShellCommand.value);
+    } else {
+      message.error(resp?.message || t('settings.shellInvalid'));
+    }
+  } catch (error) {
+    console.error('Failed to validate shell:', error);
+    customShellValid.value = false;
+  }
+}
+
+async function saveShellConfig(shell: string) {
+  try {
+    await updateShell(shell);
+    message.success(t('settings.shellSaveSuccess'));
+  } catch (error) {
+    console.error('Failed to save shell config:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
+
 const primaryColor = computed({
   get: () => theme.value.primaryColor,
   set: value => {

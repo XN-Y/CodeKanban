@@ -17,6 +17,8 @@ func GetAllModels() []any {
 		&tables.TaskTable{},
 		&tables.TaskCommentTable{},
 		&tables.NotePadTable{},
+		&tables.AISessionTable{},
+		&tables.TaskAISessionTable{},
 	}
 }
 
