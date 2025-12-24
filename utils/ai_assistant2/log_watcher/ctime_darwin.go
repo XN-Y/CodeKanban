@@ -1,4 +1,4 @@
-//go:build linux
+//go:build darwin
 
 package log_watcher
 
@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// getWindowsCreationTime on Linux returns ctime (status change time) as a proxy for creation time
+// getWindowsCreationTime on macOS returns the file's birth time (true creation time)
 func getWindowsCreationTime(path string, info os.FileInfo) time.Time {
 	if info == nil {
 		return time.Time{}
@@ -24,7 +24,6 @@ func getWindowsCreationTime(path string, info os.FileInfo) time.Time {
 		return info.ModTime()
 	}
 
-	// Use ctime (status change time) as a proxy
-	// Note: ctime is updated when file metadata changes, not true creation time
-	return time.Unix(stat.Ctim.Sec, stat.Ctim.Nsec)
+	// macOS supports Birthtimespec which is the true file creation time
+	return time.Unix(stat.Birthtimespec.Sec, stat.Birthtimespec.Nsec)
 }
