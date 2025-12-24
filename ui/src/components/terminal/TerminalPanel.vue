@@ -410,6 +410,7 @@ import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '
 import {
   ChevronDownOutline,
   ChevronUpOutline,
+  ChevronForwardOutline,
   TerminalOutline,
   CopyOutline,
   CreateOutline,
@@ -646,6 +647,16 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       key: 'unlink-task',
       icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
       disabled: !hasLinkedTask,
+    },
+    {
+      type: 'divider',
+      key: 'close-tabs-divider',
+    },
+    {
+      label: t('terminal.closeRightTabs'),
+      key: 'close-right-tabs',
+      icon: () => h(NIcon, null, { default: () => h(ChevronForwardOutline) }),
+      disabled: !tab || tabs.value.indexOf(tab) >= tabs.value.length - 1,
     },
   ];
 
@@ -2442,6 +2453,10 @@ async function handleContextMenuSelect(key: string) {
     promptUnlinkTask(tab);
     return;
   }
+  if (key === 'close-right-tabs') {
+    promptCloseRightTabs(tab);
+    return;
+  }
 }
 
 function handleViewTask(tab: TerminalTabState) {
@@ -2477,6 +2492,36 @@ function promptUnlinkTask(tab: TerminalTabState) {
       } catch (error: any) {
         message.error(error?.message ?? t('terminal.taskUnlinkFailed'));
       }
+    },
+  });
+}
+
+function promptCloseRightTabs(tab: TerminalTabState) {
+  const tabIndex = tabs.value.indexOf(tab);
+  if (tabIndex < 0 || tabIndex >= tabs.value.length - 1) {
+    return;
+  }
+  const rightTabs = tabs.value.slice(tabIndex + 1);
+  const count = rightTabs.length;
+  if (count === 0) {
+    return;
+  }
+  dialog.warning({
+    title: t('terminal.closeRightTabs'),
+    content: t('terminal.closeRightTabsConfirm', { count }),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    showIcon: false,
+    maskClosable: false,
+    onPositiveClick: async () => {
+      for (const rightTab of rightTabs) {
+        try {
+          await closeSession(rightTab.id);
+        } catch (error: any) {
+          console.error('Failed to close tab:', rightTab.id, error);
+        }
+      }
+      message.success(t('terminal.closeRightTabsSuccess', { count }));
     },
   });
 }
