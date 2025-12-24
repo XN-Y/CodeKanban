@@ -260,6 +260,11 @@ func getLinuxShellOptionsEnhanced() []ShellOption {
 	return options
 }
 
+// getWindowsShellOptionsEnhanced stub for Unix platforms (not needed, Windows-only)
+func getWindowsShellOptionsEnhanced() []ShellOption {
+	return nil
+}
+
 // getUnixShellOptionsEnhanced dispatches to the appropriate platform-specific function
 func getUnixShellOptionsEnhanced() []ShellOption {
 	switch runtime.GOOS {

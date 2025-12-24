@@ -172,5 +172,13 @@ func equalPath(a, b string) bool {
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(cleanA, cleanB)
 	}
+	// On macOS/Linux, try to resolve symlinks for accurate comparison.
+	// Common macOS symlinks: /tmp -> /private/tmp, /var -> /private/var
+	if evalA, err := filepath.EvalSymlinks(cleanA); err == nil {
+		cleanA = evalA
+	}
+	if evalB, err := filepath.EvalSymlinks(cleanB); err == nil {
+		cleanB = evalB
+	}
 	return cleanA == cleanB
 }
