@@ -12,7 +12,6 @@ require (
 	github.com/gofiber/fiber/v2 v2.52.9
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/gorilla/websocket v1.5.3
-	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/jessevdk/go-flags v1.6.1
 	github.com/kardianos/service v1.2.4
 	github.com/knadh/koanf/parsers/yaml v1.1.0
@@ -27,6 +26,7 @@ require (
 	github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188
 	github.com/valyala/fasthttp v1.62.0
 	go.uber.org/zap v1.27.0
+	golang.org/x/sys v0.37.0
 	golang.org/x/text v0.28.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/sqlite v1.6.0
@@ -42,6 +42,7 @@ require (
 	github.com/charmbracelet/x/errors v0.0.0-20240508181413-e8d8b6e2de86 // indirect
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/cloudflare/circl v1.3.7 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/cyphar/filepath-securejoin v0.3.6 // indirect
@@ -66,13 +67,12 @@ require (
 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/mattn/go-runewidth v0.0.16 // indirect
+	github.com/mattn/go-runewidth v0.0.19 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/pjbgf/sha1cd v0.3.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.0 // indirect
@@ -87,7 +87,6 @@ require (
 	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/sys v0.37.0 // indirect
 	golang.org/x/tools v0.35.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
 	modernc.org/libc v1.22.5 // indirect
@@ -98,4 +97,4 @@ require (
 
 replace github.com/danielgtaylor/huma/v2 => github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c
 
-replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20251129150011-c2f2317a3188
+replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20251224191154-4bc538e9f6c2
