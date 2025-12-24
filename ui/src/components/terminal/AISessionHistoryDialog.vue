@@ -59,7 +59,12 @@
                       </div>
                     </div>
                     <div class="session-meta">
-                      <n-tag size="small" type="info">
+                      <n-tag
+                        size="small"
+                        type="info"
+                        class="message-count-tag"
+                        @click.stop="viewConversation(session)"
+                      >
                         {{ t('terminal.messageCount', { count: session.messageCount }) }}
                       </n-tag>
                       <n-icon
@@ -139,7 +144,12 @@
                       </div>
                     </div>
                     <div class="session-meta">
-                      <n-tag size="small" type="success">
+                      <n-tag
+                        size="small"
+                        type="success"
+                        class="message-count-tag"
+                        @click.stop="viewConversation(session)"
+                      >
                         {{ t('terminal.messageCount', { count: session.messageCount }) }}
                       </n-tag>
                       <n-icon
@@ -653,6 +663,15 @@ function closeConversationModal() {
 
 .copy-command-btn:hover {
   opacity: 1;
+}
+
+.message-count-tag {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.message-count-tag:hover {
+  opacity: 0.8;
 }
 
 </style>

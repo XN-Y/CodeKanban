@@ -101,9 +101,19 @@
                       <ClipboardOutline />
                     </n-icon>
                   </span>
-                  <span class="ai-status-icon" v-html="getAssistantIcon(tab as TerminalTabState)"></span>
-                  <span class="ai-status-text">{{ getAssistantStatusLabel(tab as TerminalTabState) }}</span>
-                  <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab as TerminalTabState) }}</span>
+                  <span
+                    class="ai-status-clickable"
+                    :class="{ active: tab.id === activeTabId && (tab as TerminalTabState).aiSessionId }"
+                    role="button"
+                    :tabindex="(tab as TerminalTabState).aiSessionId ? 0 : -1"
+                    :title="(tab as TerminalTabState).aiSessionId ? t('terminal.viewConversation') : undefined"
+                    @click.stop="handleStatusClick(tab as TerminalTabState)"
+                    @keydown.enter.prevent.stop="handleStatusClick(tab as TerminalTabState)"
+                  >
+                    <span class="ai-status-icon" v-html="getAssistantIcon(tab as TerminalTabState)"></span>
+                    <span class="ai-status-text">{{ getAssistantStatusLabel(tab as TerminalTabState) }}</span>
+                    <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab as TerminalTabState) }}</span>
+                  </span>
                 </span>
               </span>
             </template>
@@ -2364,6 +2374,18 @@ function viewConversation(tab: TerminalTabState) {
   showConversationViewer.value = true;
 }
 
+function handleStatusClick(tab: TerminalTabState) {
+  if (tab.id === activeTabId.value) {
+    // 激活状态：打开对话记录
+    if (tab.aiSessionId) {
+      viewConversation(tab);
+    }
+  } else {
+    // 未激活状态：只切换到该标签
+    activeTabId.value = tab.id;
+  }
+}
+
 function handleTabContextMenu(event: MouseEvent, tab: TerminalTabState) {
   event.preventDefault();
   contextMenuX.value = event.clientX;
@@ -2995,6 +3017,25 @@ defineExpose({
 .ai-status-emoji {
   font-size: 10px;
   line-height: 1;
+}
+
+/* 可点击的状态区域 */
+.ai-status-clickable {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.15s;
+}
+
+.ai-status-clickable:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.ai-status-clickable:focus-visible {
+  outline: 2px solid var(--n-color-primary);
+  border-radius: 4px;
 }
 
 /* Tab with unviewed completion - green background */
