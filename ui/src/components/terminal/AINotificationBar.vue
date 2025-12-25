@@ -18,9 +18,26 @@ const NOTIFICATIONS_STORAGE_KEY = 'kanban-ai-notifications-enabled';
 const CLICKED_NOTIFICATIONS_STORAGE_KEY = 'kanban-ai-notifications-clicked';
 const COMPACT_MODE_STORAGE_KEY = 'kanban-ai-notifications-compact';
 const DISPLAY_MODE_STORAGE_KEY = 'kanban-ai-notifications-mode';
+const CURRENT_PROJECT_ONLY_STORAGE_KEY = 'kanban-ai-notifications-current-project-only';
 const notificationsEnabled = ref(true);
 const clickedNotifications = ref<Set<string>>(new Set());
 const compactModeEnabled = ref(false);
+const currentProjectOnly = ref(false);
+
+// 项目序号过滤（不存储到 localStorage）
+const projectIndexFilter = ref<string | null>(null);
+
+// 项目序号颜色表
+const PROJECT_INDEX_COLORS = [
+  '#10b981', // 绿色
+  '#3b82f6', // 蓝色
+  '#f59e0b', // 橙色
+  '#8b5cf6', // 紫色
+  '#ec4899', // 粉色
+  '#14b8a6', // 青色
+  '#ef4444', // 红色
+  '#6366f1', // 靛蓝色
+];
 
 type NotificationDisplayMode = 'standard' | 'idle-only' | 'exclude-idle';
 const DISPLAY_MODE_SEQUENCE: NotificationDisplayMode[] = ['standard', 'idle-only', 'exclude-idle'];
@@ -110,6 +127,25 @@ function saveDisplayModeSetting() {
   }
 }
 
+function loadCurrentProjectOnlySetting() {
+  try {
+    const stored = localStorage.getItem(CURRENT_PROJECT_ONLY_STORAGE_KEY);
+    if (stored !== null) {
+      currentProjectOnly.value = stored === 'true';
+    }
+  } catch (error) {
+    console.warn('[AI Notification] Failed to load current project only setting', error);
+  }
+}
+
+function saveCurrentProjectOnlySetting() {
+  try {
+    localStorage.setItem(CURRENT_PROJECT_ONLY_STORAGE_KEY, String(currentProjectOnly.value));
+  } catch (error) {
+    console.warn('[AI Notification] Failed to save current project only setting', error);
+  }
+}
+
 function markNotificationsAsRead(notificationIds: string[]) {
   let changed = false;
   notificationIds.forEach(id => {
@@ -176,6 +212,12 @@ function cycleDisplayMode() {
 
 function handleNotificationModeSelect(key: string | number) {
   if (typeof key !== 'string') {
+    return;
+  }
+  // 处理"仅当前项目" checkbox
+  if (key === 'current-project-only') {
+    currentProjectOnly.value = !currentProjectOnly.value;
+    saveCurrentProjectOnlySetting();
     return;
   }
   setDisplayMode(key as NotificationDisplayMode);
@@ -350,21 +392,97 @@ function getDisplayModeLabel(mode: NotificationDisplayMode) {
   return t('terminal.notificationModeAll');
 }
 
-const notificationModeOptions = computed<DropdownOption[]>(() =>
-  DISPLAY_MODE_SEQUENCE.map(mode => ({
+const notificationModeOptions = computed<DropdownOption[]>(() => [
+  ...DISPLAY_MODE_SEQUENCE.map(mode => ({
     label: getDisplayModeLabel(mode),
     key: mode,
-  }))
-);
+  })),
+  { type: 'divider', key: 'd1' },
+  {
+    label: `${currentProjectOnly.value ? '✓ ' : ''}${t('terminal.notificationModeCurrentProjectOnly')}`,
+    key: 'current-project-only',
+  },
+]);
 
 const currentDisplayModeLabel = computed(() => getDisplayModeLabel(notificationDisplayMode.value));
+
+// 计算项目序号映射（基于 projectId 分配序号和颜色）
+const projectIndexMap = computed(() => {
+  const map = new Map<string, { index: number; color: string }>();
+  const seenProjects: string[] = [];
+
+  // 按时间顺序遍历通知，收集唯一的 projectId
+  for (const notification of notifications.value) {
+    if (notification.projectId && !seenProjects.includes(notification.projectId)) {
+      seenProjects.push(notification.projectId);
+    }
+  }
+
+  // 为每个项目分配序号和颜色
+  seenProjects.forEach((projectId, idx) => {
+    map.set(projectId, {
+      index: idx + 1,
+      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
+    });
+  });
+
+  return map;
+});
+
+// 获取通知的项目序号信息
+function getProjectIndex(notification: NotificationItem) {
+  return projectIndexMap.value.get(notification.projectId);
+}
+
+// 点击项目序号切换过滤
+function toggleProjectFilter(projectId: string, event: MouseEvent) {
+  event.stopPropagation();
+  if (projectIndexFilter.value === projectId) {
+    projectIndexFilter.value = null;
+  } else {
+    projectIndexFilter.value = projectId;
+  }
+}
+
+const currentProjectId = computed(() => {
+  const id = currentRoute.params.id;
+  return typeof id === 'string' ? id : '';
+});
 
 const filteredNotifications = computed(() => {
   if (!notificationsEnabled.value) {
     return [];
   }
-  return notifications.value.filter(notification => matchesDisplayMode(notification));
+  return notifications.value.filter(notification => {
+    // 先检查显示模式过滤
+    if (!matchesDisplayMode(notification)) {
+      return false;
+    }
+    // 如果启用了"仅当前项目"，过滤非当前项目的通知
+    if (currentProjectOnly.value && currentProjectId.value) {
+      if (notification.projectId !== currentProjectId.value) {
+        return false;
+      }
+    }
+    // 如果启用了项目序号过滤，只显示该项目的通知
+    if (projectIndexFilter.value !== null) {
+      if (notification.projectId !== projectIndexFilter.value) {
+        return false;
+      }
+    }
+    return true;
+  });
 });
+
+// 监听过滤后的通知数量，如果为0则自动取消项目序号过滤
+watch(
+  () => filteredNotifications.value.length,
+  (newLength) => {
+    if (newLength === 0 && projectIndexFilter.value !== null) {
+      projectIndexFilter.value = null;
+    }
+  }
+);
 
 function matchesDisplayMode(notification: NotificationItem) {
   if (notificationDisplayMode.value === 'idle-only') {
@@ -1051,6 +1169,7 @@ onMounted(() => {
   loadClickedNotifications();
   loadCompactModeSetting();
   loadDisplayModeSetting();
+  loadCurrentProjectOnlySetting();
 
   terminalStore.emitter.on('ai:completed', handleAICompletion);
   terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
@@ -1245,13 +1364,33 @@ watch(
       <div
         v-for="notification in filteredNotifications"
         :key="notification.id"
-        :class="[
-          'notification-item',
-          getNotificationClass(notification),
-          { 'notification-clicked': isNotificationClicked(notification.id) },
-        ]"
-        @click="handleNotificationClick(notification)"
+        class="notification-row"
       >
+        <!-- 项目序号标签（在卡片外面，仅多个项目时显示） -->
+        <button
+          v-if="projectIndexMap.size > 1 && getProjectIndex(notification)"
+          class="project-index-badge"
+          :class="{ 'is-filtered': projectIndexFilter === notification.projectId }"
+          :style="{
+            '--badge-color': getProjectIndex(notification)?.color,
+          }"
+          @click="toggleProjectFilter(notification.projectId, $event)"
+          :title="
+            projectIndexFilter === notification.projectId
+              ? t('terminal.clearProjectFilter')
+              : t('terminal.filterByProject')
+          "
+        >
+          {{ getProjectIndex(notification)?.index }}
+        </button>
+        <div
+          :class="[
+            'notification-item',
+            getNotificationClass(notification),
+            { 'notification-clicked': isNotificationClicked(notification.id) },
+          ]"
+          @click="handleNotificationClick(notification)"
+        >
         <div class="notification-content">
           <div v-if="!compactModeEnabled" class="notification-header">
             <span
@@ -1316,6 +1455,7 @@ watch(
         >
           ×
         </button>
+        </div>
       </div>
     </transition-group>
   </div>
@@ -1460,8 +1600,8 @@ watch(
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: min(320px, calc(100vw - 32px));
-  max-width: 360px;
+  width: min(345px, calc(100vw - 32px));
+  max-width: 380px;
 }
 
 .notification-list.is-compact {
@@ -1477,14 +1617,13 @@ watch(
   border-radius: 12px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
   cursor: pointer;
-  pointer-events: auto;
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease;
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-left: 4px solid transparent;
-  min-width: 320px;
-  width: 100%;
+  min-width: 280px;
+  flex: 1;
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }
@@ -1492,7 +1631,7 @@ watch(
 .notification-list.is-compact .notification-item {
   padding: 6px 10px;
   border-radius: 6px;
-  min-width: 280px;
+  min-width: 240px;
   gap: 6px;
   align-items: center;
 }
@@ -1702,6 +1841,55 @@ watch(
   border-radius: 4px;
   background: rgba(59, 130, 246, 0.08);
   line-height: 1.2;
+}
+
+/* 通知行容器（包含序号和卡片） */
+.notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+/* 项目序号标签样式（在卡片外部） */
+.project-index-badge {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background-color: var(--badge-color, #3b82f6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    border-color 0.15s ease;
+  margin-top: 10px;
+}
+
+.project-index-badge:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.project-index-badge.is-filtered {
+  border-color: #fff;
+  box-shadow:
+    0 0 0 2px var(--badge-color, #3b82f6),
+    0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.notification-list.is-compact .project-index-badge {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  margin-top: 4px;
 }
 
 .notification-close {

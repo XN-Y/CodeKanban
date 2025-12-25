@@ -444,6 +444,7 @@ export default {
     notificationModeAll: 'All',
     notificationModeIdleOnly: 'Idle Only',
     notificationModeExcludeIdle: 'Exclude Idle',
+    notificationModeCurrentProjectOnly: 'Current Project Only',
     notificationModeCycleTooltip: 'Click to cycle through modes',
     notificationModeMenuTooltip: 'Select mode from dropdown',
     timeJustNow: 'just now',
@@ -473,6 +474,8 @@ export default {
     showUserMessagesOnly: 'Show my messages only',
     prevUserMessage: 'Previous message',
     nextUserMessage: 'Next message',
+    filterByProject: 'Click to filter by this project',
+    clearProjectFilter: 'Click to clear filter',
   },
   notepad: {
     global: 'Global',

@@ -444,6 +444,7 @@ export default {
     notificationModeAll: '全部',
     notificationModeIdleOnly: '仅空闲',
     notificationModeExcludeIdle: '排除空闲',
+    notificationModeCurrentProjectOnly: '仅当前项目',
     notificationModeCycleTooltip: '点击在模式间切换',
     notificationModeMenuTooltip: '从下拉菜单选择模式',
     timeJustNow: '刚刚',
@@ -473,6 +474,8 @@ export default {
     showUserMessagesOnly: '只看我的发言',
     prevUserMessage: '上一条发言',
     nextUserMessage: '下一条发言',
+    filterByProject: '点击筛选该项目',
+    clearProjectFilter: '点击取消筛选',
   },
   notepad: {
     global: '全局',
