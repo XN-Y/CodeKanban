@@ -125,15 +125,7 @@ function handleMessage(payload: ServerMessage) {
   switch (payload.type) {
     case 'data':
       if (payload.data) {
-        // 检查写入前是否在底部附近（允许5行误差）
-        const isNearBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY - 5;
-        terminal.write(decodeChunk(payload.data), () => {
-          // 只有之前在底部附近时才滚动到底部
-          // 解决 Claude Code 等程序使用 \u001b[3J 清除滚动缓冲区导致的视口重置问题
-          if (isNearBottom) {
-            terminal?.scrollToBottom();
-          }
-        });
+        terminal.write(decodeChunk(payload.data));
       }
       break;
     case 'exit':
@@ -266,15 +258,51 @@ function handleResize() {
     if (resizeScrollRestoreTimer) {
       clearTimeout(resizeScrollRestoreTimer);
     }
+
+    // 等待数据写入完成（length 稳定）后恢复滚动位置
+    let lastLength = terminal.buffer.active.length;
+    let stableCount = 0;
+    let totalChecks = 0;
+    const maxChecks = 50; // 最多等待 1 秒 (50 * 20ms)
     const positionToRestore = scrollPositionBeforeResize;
-    // 延迟恢复滚动位置
-    resizeScrollRestoreTimer = setTimeout(() => {
-      if (terminal && positionToRestore !== null) {
-        terminal.scrollToLine(positionToRestore);
+
+    const checkStable = () => {
+      if (!terminal) {
+        scrollPositionBeforeResize = null;
+        return;
       }
-      scrollPositionBeforeResize = null;
-      resizeScrollRestoreTimer = null;
-    }, 200);
+      totalChecks++;
+      // 超时放弃
+      if (totalChecks >= maxChecks) {
+        scrollPositionBeforeResize = null;
+        resizeScrollRestoreTimer = null;
+        return;
+      }
+      const currentLength = terminal.buffer.active.length;
+      if (currentLength === lastLength) {
+        stableCount++;
+        // length 稳定 3 次（60ms）认为写入完成
+        if (stableCount >= 3) {
+          if (positionToRestore !== null) {
+            // 如果原位置超出新 buffer，则滚动到底部
+            if (positionToRestore > terminal.buffer.active.baseY) {
+              terminal.scrollToBottom();
+            } else {
+              terminal.scrollToLine(positionToRestore);
+            }
+          }
+          scrollPositionBeforeResize = null;
+          resizeScrollRestoreTimer = null;
+          return;
+        }
+      } else {
+        stableCount = 0;
+        lastLength = currentLength;
+      }
+      resizeScrollRestoreTimer = setTimeout(checkStable, 20);
+    };
+
+    resizeScrollRestoreTimer = setTimeout(checkStable, 20);
 
     props.tab.cols = terminal.cols;
     props.tab.rows = terminal.rows;
@@ -327,7 +355,7 @@ onMounted(() => {
     rows: props.tab.rows || 24,
     cols: props.tab.cols || 80,
     cursorBlink: true,
-    scrollOnUserInput: false, // 禁用用户输入时自动滚动
+    scrollOnUserInput: true,
     fontFamily: fontSettings.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
     fontSize: fontSettings.fontSize,
     fontWeight: fontSettings.fontWeight,
@@ -397,10 +425,31 @@ onMounted(() => {
 
       fitAddon.fit();
 
-      // 初始化后滚动到底部
-      setTimeout(() => {
-        terminal?.scrollToBottom();
-      }, 200);
+      // 等待数据写入完成后滚动到底部
+      let lastLength = terminal.buffer.active.length;
+      let stableCount = 0;
+      let totalChecks = 0;
+      const maxChecks = 50;
+
+      const checkStableAndScroll = () => {
+        if (!terminal) return;
+        totalChecks++;
+        if (totalChecks >= maxChecks) return;
+
+        const currentLength = terminal.buffer.active.length;
+        if (currentLength === lastLength) {
+          stableCount++;
+          if (stableCount >= 3) {
+            terminal.scrollToBottom();
+            return;
+          }
+        } else {
+          stableCount = 0;
+          lastLength = currentLength;
+        }
+        setTimeout(checkStableAndScroll, 20);
+      };
+      setTimeout(checkStableAndScroll, 20);
 
       const cols = terminal.cols;
       const rows = terminal.rows;
