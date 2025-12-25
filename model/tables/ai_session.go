@@ -47,6 +47,9 @@ type AISessionTable struct {
 	// MessageCount is the number of user messages in the session
 	MessageCount int `gorm:"type:integer;default:0" json:"messageCount"`
 
+	// AssistantMessageCount is the number of assistant messages in the session
+	AssistantMessageCount int `gorm:"type:integer;default:0" json:"assistantMessageCount"`
+
 	// FileModTime is the last modification time of the log file (for cache invalidation)
 	FileModTime time.Time `gorm:"type:datetime;not null" json:"fileModTime"`
 

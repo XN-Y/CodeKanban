@@ -452,7 +452,7 @@ export default {
     // AI Session History
     viewAISessions: 'View AI Session History',
     aiSessionHistory: 'AI Assistant Session History',
-    messageCount: '{count} messages',
+    messageCount: '{count}/{replyCount} msgs',
     lastActivity: 'Last Activity',
     logFile: 'Log File',
     noClaudeSessions: 'No Claude Code sessions found',

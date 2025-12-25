@@ -128,15 +128,16 @@ type ProjectAISessions struct {
 
 // AISessionSummary contains summary information about an AI session.
 type AISessionSummary struct {
-	ID               string     `json:"id"`
-	SessionID        string     `json:"sessionId"`
-	Type             string     `json:"type"`
-	Model            string     `json:"model,omitempty"`
-	Title            string     `json:"title,omitempty"`
-	SessionStartedAt time.Time  `json:"sessionStartedAt"`
-	LastMessageAt    *time.Time `json:"lastMessageAt,omitempty"`
-	MessageCount     int        `json:"messageCount"`
-	FilePath         string     `json:"filePath"`
+	ID                    string     `json:"id"`
+	SessionID             string     `json:"sessionId"`
+	Type                  string     `json:"type"`
+	Model                 string     `json:"model,omitempty"`
+	Title                 string     `json:"title,omitempty"`
+	SessionStartedAt      time.Time  `json:"sessionStartedAt"`
+	LastMessageAt         *time.Time `json:"lastMessageAt,omitempty"`
+	MessageCount          int        `json:"messageCount"`
+	AssistantMessageCount int        `json:"assistantMessageCount"`
+	FilePath              string     `json:"filePath"`
 }
 
 // GetProjectAISessions returns AI session information for a project path.
@@ -284,15 +285,16 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 			if err == nil && cached.FileModTime.Equal(info.ModTime()) && cached.FileSize == info.Size() {
 				// Cache hit - use cached data
 				sessions = append(sessions, &AISessionSummary{
-					ID:               cached.ID,
-					SessionID:        cached.SessionID,
-					Type:             string(cached.Type),
-					Model:            cached.Model,
-					Title:            cached.Title,
-					SessionStartedAt: cached.SessionStartedAt,
-					LastMessageAt:    cached.LastMessageAt,
-					MessageCount:     cached.MessageCount,
-					FilePath:         cached.FilePath,
+					ID:                    cached.ID,
+					SessionID:             cached.SessionID,
+					Type:                  string(cached.Type),
+					Model:                 cached.Model,
+					Title:                 cached.Title,
+					SessionStartedAt:      cached.SessionStartedAt,
+					LastMessageAt:         cached.LastMessageAt,
+					MessageCount:          cached.MessageCount,
+					AssistantMessageCount: cached.AssistantMessageCount,
+					FilePath:              cached.FilePath,
 				})
 			} else {
 				// Need to scan - add to extended queue
@@ -636,15 +638,16 @@ func (s *AISessionService) getOrUpdateClaudeSession(
 		// Check if cache is still valid (file hasn't changed)
 		if cached.FileModTime.Equal(fileInfo.ModTime()) && cached.FileSize == fileInfo.Size() {
 			return &AISessionSummary{
-				ID:               cached.ID,
-				SessionID:        cached.SessionID,
-				Type:             string(cached.Type),
-				Model:            cached.Model,
-				Title:            cached.Title,
-				SessionStartedAt: cached.SessionStartedAt,
-				LastMessageAt:    cached.LastMessageAt,
-				MessageCount:     cached.MessageCount,
-				FilePath:         cached.FilePath,
+				ID:                    cached.ID,
+				SessionID:             cached.SessionID,
+				Type:                  string(cached.Type),
+				Model:                 cached.Model,
+				Title:                 cached.Title,
+				SessionStartedAt:      cached.SessionStartedAt,
+				LastMessageAt:         cached.LastMessageAt,
+				MessageCount:          cached.MessageCount,
+				AssistantMessageCount: cached.AssistantMessageCount,
+				FilePath:              cached.FilePath,
 			}, nil
 		}
 	}
@@ -658,17 +661,18 @@ func (s *AISessionService) getOrUpdateClaudeSession(
 	// Create or update cache entry
 	now := time.Now()
 	record := tables.AISessionTable{
-		SessionID:        sessionID,
-		Type:             tables.AISessionTypeClaudeCode,
-		ProjectPath:      projectPath,
-		FilePath:         filePath,
-		Model:            sessionData.Model,
-		Title:            sessionData.Title,
-		SessionStartedAt: sessionData.StartedAt,
-		LastMessageAt:    sessionData.LastMessageAt,
-		MessageCount:     sessionData.MessageCount,
-		FileModTime:      fileInfo.ModTime(),
-		FileSize:         fileInfo.Size(),
+		SessionID:             sessionID,
+		Type:                  tables.AISessionTypeClaudeCode,
+		ProjectPath:           projectPath,
+		FilePath:              filePath,
+		Model:                 sessionData.Model,
+		Title:                 sessionData.Title,
+		SessionStartedAt:      sessionData.StartedAt,
+		LastMessageAt:         sessionData.LastMessageAt,
+		MessageCount:          sessionData.MessageCount,
+		AssistantMessageCount: sessionData.AssistantMessageCount,
+		FileModTime:           fileInfo.ModTime(),
+		FileSize:              fileInfo.Size(),
 	}
 
 	if cached.ID != "" {
@@ -690,25 +694,27 @@ func (s *AISessionService) getOrUpdateClaudeSession(
 	}
 
 	return &AISessionSummary{
-		ID:               record.ID,
-		SessionID:        record.SessionID,
-		Type:             string(record.Type),
-		Model:            record.Model,
-		Title:            record.Title,
-		SessionStartedAt: record.SessionStartedAt,
-		LastMessageAt:    record.LastMessageAt,
-		MessageCount:     record.MessageCount,
-		FilePath:         record.FilePath,
+		ID:                    record.ID,
+		SessionID:             record.SessionID,
+		Type:                  string(record.Type),
+		Model:                 record.Model,
+		Title:                 record.Title,
+		SessionStartedAt:      record.SessionStartedAt,
+		LastMessageAt:         record.LastMessageAt,
+		MessageCount:          record.MessageCount,
+		AssistantMessageCount: record.AssistantMessageCount,
+		FilePath:              record.FilePath,
 	}, nil
 }
 
 // claudeSessionData holds parsed data from a Claude Code session file.
 type claudeSessionData struct {
-	Model         string
-	Title         string
-	StartedAt     time.Time
-	LastMessageAt *time.Time
-	MessageCount  int
+	Model                 string
+	Title                 string
+	StartedAt             time.Time
+	LastMessageAt         *time.Time
+	MessageCount          int
+	AssistantMessageCount int
 }
 
 // parseClaudeCodeSessionFile parses a Claude Code session file to extract metadata.
@@ -762,16 +768,21 @@ func (s *AISessionService) parseClaudeCodeSessionFile(filePath string) (*claudeS
 			}
 		}
 
-		// Try to extract model information
+		// Try to extract model information and count assistant messages
 		var entry struct {
 			Type    string `json:"type"`
 			Message struct {
 				Model string `json:"model"`
+				Role  string `json:"role"`
 			} `json:"message"`
 		}
 		if json.Unmarshal([]byte(line), &entry) == nil {
 			if entry.Message.Model != "" {
 				data.Model = entry.Message.Model
+			}
+			// Count assistant messages
+			if entry.Type == "assistant" && entry.Message.Role == "assistant" {
+				data.AssistantMessageCount++
 			}
 		}
 	}
@@ -896,15 +907,16 @@ func (s *AISessionService) getCodexSessionsPhased(ctx context.Context, projectPa
 					if dbCached.FileModTime.Equal(info.ModTime()) && dbCached.FileSize == info.Size() {
 						if dbCached.ProjectPath == projectPath {
 							sessions = append(sessions, &AISessionSummary{
-								ID:               dbCached.ID,
-								SessionID:        dbCached.SessionID,
-								Type:             string(dbCached.Type),
-								Model:            dbCached.Model,
-								Title:            dbCached.Title,
-								SessionStartedAt: dbCached.SessionStartedAt,
-								LastMessageAt:    dbCached.LastMessageAt,
-								MessageCount:     dbCached.MessageCount,
-								FilePath:         dbCached.FilePath,
+								ID:                    dbCached.ID,
+								SessionID:             dbCached.SessionID,
+								Type:                  string(dbCached.Type),
+								Model:                 dbCached.Model,
+								Title:                 dbCached.Title,
+								SessionStartedAt:      dbCached.SessionStartedAt,
+								LastMessageAt:         dbCached.LastMessageAt,
+								MessageCount:          dbCached.MessageCount,
+								AssistantMessageCount: dbCached.AssistantMessageCount,
+								FilePath:              dbCached.FilePath,
 							})
 						}
 						continue
@@ -968,15 +980,16 @@ func (s *AISessionService) getCodexSessionsPhased(ctx context.Context, projectPa
 				if err == nil && dbCached.FileModTime.Equal(info.ModTime()) && dbCached.FileSize == info.Size() {
 					if dbCached.ProjectPath == projectPath {
 						sessions = append(sessions, &AISessionSummary{
-							ID:               dbCached.ID,
-							SessionID:        dbCached.SessionID,
-							Type:             string(dbCached.Type),
-							Model:            dbCached.Model,
-							Title:            dbCached.Title,
-							SessionStartedAt: dbCached.SessionStartedAt,
-							LastMessageAt:    dbCached.LastMessageAt,
-							MessageCount:     dbCached.MessageCount,
-							FilePath:         dbCached.FilePath,
+							ID:                    dbCached.ID,
+							SessionID:             dbCached.SessionID,
+							Type:                  string(dbCached.Type),
+							Model:                 dbCached.Model,
+							Title:                 dbCached.Title,
+							SessionStartedAt:      dbCached.SessionStartedAt,
+							LastMessageAt:         dbCached.LastMessageAt,
+							MessageCount:          dbCached.MessageCount,
+							AssistantMessageCount: dbCached.AssistantMessageCount,
+							FilePath:              dbCached.FilePath,
 						})
 					}
 					continue
@@ -1152,15 +1165,16 @@ func (s *AISessionService) scanCodexExtendedPhase(ctx context.Context, projectPa
 			if err == nil && cached.FileModTime.Equal(info.ModTime()) && cached.FileSize == info.Size() {
 				if cached.ProjectPath == projectPath {
 					newSessions = append(newSessions, &AISessionSummary{
-						ID:               cached.ID,
-						SessionID:        cached.SessionID,
-						Type:             string(cached.Type),
-						Model:            cached.Model,
-						Title:            cached.Title,
-						SessionStartedAt: cached.SessionStartedAt,
-						LastMessageAt:    cached.LastMessageAt,
-						MessageCount:     cached.MessageCount,
-						FilePath:         cached.FilePath,
+						ID:                    cached.ID,
+						SessionID:             cached.SessionID,
+						Type:                  string(cached.Type),
+						Model:                 cached.Model,
+						Title:                 cached.Title,
+						SessionStartedAt:      cached.SessionStartedAt,
+						LastMessageAt:         cached.LastMessageAt,
+						MessageCount:          cached.MessageCount,
+						AssistantMessageCount: cached.AssistantMessageCount,
+						FilePath:              cached.FilePath,
 					})
 				}
 				continue
@@ -1234,12 +1248,13 @@ func (s *AISessionService) getCodexSessions(ctx context.Context, projectPath str
 
 // codexSessionData holds parsed data from a Codex session file.
 type codexSessionData struct {
-	Cwd           string
-	Model         string
-	Title         string
-	StartedAt     time.Time
-	LastMessageAt *time.Time
-	MessageCount  int
+	Cwd                   string
+	Model                 string
+	Title                 string
+	StartedAt             time.Time
+	LastMessageAt         *time.Time
+	MessageCount          int
+	AssistantMessageCount int
 }
 
 // parseCodexSessionFile parses a Codex session file to extract metadata.
@@ -1295,7 +1310,8 @@ func (s *AISessionService) parseCodexSessionFile(filePath string) (*codexSession
 			if !ok {
 				continue
 			}
-			if msgType, ok := payload["type"].(string); ok && msgType == "user_message" {
+			msgType, _ := payload["type"].(string)
+			if msgType == "user_message" {
 				data.MessageCount++
 				if ts, err := time.Parse(time.RFC3339, entry.Timestamp); err == nil {
 					data.LastMessageAt = &ts
@@ -1310,6 +1326,8 @@ func (s *AISessionService) parseCodexSessionFile(filePath string) (*codexSession
 						data.Title = title
 					}
 				}
+			} else if msgType == "assistant_message" {
+				data.AssistantMessageCount++
 			}
 		}
 	}
@@ -1335,17 +1353,18 @@ func (s *AISessionService) saveCodexSession(
 		First(&existing).Error
 
 	record := tables.AISessionTable{
-		SessionID:        sessionID,
-		Type:             tables.AISessionTypeCodex,
-		ProjectPath:      data.Cwd,
-		FilePath:         filePath,
-		Model:            data.Model,
-		Title:            data.Title,
-		SessionStartedAt: data.StartedAt,
-		LastMessageAt:    data.LastMessageAt,
-		MessageCount:     data.MessageCount,
-		FileModTime:      fileInfo.ModTime(),
-		FileSize:         fileInfo.Size(),
+		SessionID:             sessionID,
+		Type:                  tables.AISessionTypeCodex,
+		ProjectPath:           data.Cwd,
+		FilePath:              filePath,
+		Model:                 data.Model,
+		Title:                 data.Title,
+		SessionStartedAt:      data.StartedAt,
+		LastMessageAt:         data.LastMessageAt,
+		MessageCount:          data.MessageCount,
+		AssistantMessageCount: data.AssistantMessageCount,
+		FileModTime:           fileInfo.ModTime(),
+		FileSize:              fileInfo.Size(),
 	}
 
 	if err == nil {
@@ -1367,15 +1386,16 @@ func (s *AISessionService) saveCodexSession(
 	}
 
 	return &AISessionSummary{
-		ID:               record.ID,
-		SessionID:        record.SessionID,
-		Type:             string(record.Type),
-		Model:            record.Model,
-		Title:            record.Title,
-		SessionStartedAt: record.SessionStartedAt,
-		LastMessageAt:    record.LastMessageAt,
-		MessageCount:     record.MessageCount,
-		FilePath:         record.FilePath,
+		ID:                    record.ID,
+		SessionID:             record.SessionID,
+		Type:                  string(record.Type),
+		Model:                 record.Model,
+		Title:                 record.Title,
+		SessionStartedAt:      record.SessionStartedAt,
+		LastMessageAt:         record.LastMessageAt,
+		MessageCount:          record.MessageCount,
+		AssistantMessageCount: record.AssistantMessageCount,
+		FilePath:              record.FilePath,
 	}, nil
 }
 
@@ -1475,6 +1495,34 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 	if err != nil {
 		logger.Error("failed to parse conversation", zap.String("filePath", session.FilePath), zap.Error(err))
 		return nil, err
+	}
+
+	// Update message counts in database (opportunistic update when viewing conversation)
+	var userCount, assistantCount int
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			userCount++
+		} else if msg.Role == "assistant" {
+			assistantCount++
+		}
+	}
+	if userCount != session.MessageCount || assistantCount != session.AssistantMessageCount {
+		db.WithContext(ctx).Model(&session).Updates(map[string]interface{}{
+			"message_count":           userCount,
+			"assistant_message_count": assistantCount,
+		})
+		// Also update in-memory cache
+		dirCacheMu.Lock()
+		for _, entry := range dirCache {
+			for _, s := range entry.sessions {
+				if s.ID == session.ID {
+					s.MessageCount = userCount
+					s.AssistantMessageCount = assistantCount
+					break
+				}
+			}
+		}
+		dirCacheMu.Unlock()
 	}
 
 	return &ConversationResponse{

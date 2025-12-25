@@ -65,7 +65,7 @@
                         class="message-count-tag"
                         @click.stop="viewConversation(session)"
                       >
-                        {{ t('terminal.messageCount', { count: session.messageCount }) }}
+                        {{ t('terminal.messageCount', { count: session.messageCount, replyCount: session.assistantMessageCount }) }}
                       </n-tag>
                       <n-icon
                         :size="16"
@@ -150,7 +150,7 @@
                         class="message-count-tag"
                         @click.stop="viewConversation(session)"
                       >
-                        {{ t('terminal.messageCount', { count: session.messageCount }) }}
+                        {{ t('terminal.messageCount', { count: session.messageCount, replyCount: session.assistantMessageCount }) }}
                       </n-tag>
                       <n-icon
                         :size="16"
@@ -228,6 +228,7 @@ interface AISessionSummary {
   sessionStartedAt: string;
   lastMessageAt: string | null;
   messageCount: number;
+  assistantMessageCount: number;
   filePath: string;
 }
 

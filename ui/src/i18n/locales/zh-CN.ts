@@ -452,7 +452,7 @@ export default {
     // AI Session History
     viewAISessions: '查看 AI 会话历史',
     aiSessionHistory: 'AI 助手会话历史',
-    messageCount: '{count} 条消息',
+    messageCount: '{count}/{replyCount} 条消息',
     lastActivity: '最后活动',
     logFile: '日志文件',
     noClaudeSessions: '暂无 Claude Code 会话记录',
