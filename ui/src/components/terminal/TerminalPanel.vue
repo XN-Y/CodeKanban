@@ -1547,10 +1547,10 @@ function handleTabDragEnd(event: SortableEvent) {
   });
 }
 
-// 节流的终端 resize 函数
+// 节流的终端 resize 函数 - 只 resize 当前活动的终端，避免影响隐藏标签的滚动位置
 const scheduleResizeAll = useDebounceFn(() => {
-  if (autoResize.value && expanded.value && tabs.value.length > 0) {
-    emitter.emit('terminal-resize-all');
+  if (autoResize.value && expanded.value && activeId.value) {
+    emitter.emit(`terminal-resize-${activeId.value}`);
   }
 }, 150);
 

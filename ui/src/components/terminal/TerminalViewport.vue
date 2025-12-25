@@ -60,6 +60,10 @@ let dropHandler: ((event: DragEvent) => void) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const SNAPSHOT_SCROLLBACK = 1200;
 
+// resize 前的滚动位置（用于连续 resize 时只记录第一次的位置）
+let scrollPositionBeforeResize: number | null = null;
+let resizeScrollRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+
 // 监听 clientStatus 变化
 watch(
   () => props.tab.clientStatus,
@@ -121,7 +125,15 @@ function handleMessage(payload: ServerMessage) {
   switch (payload.type) {
     case 'data':
       if (payload.data) {
-        terminal.write(decodeChunk(payload.data));
+        // 检查写入前是否在底部附近（允许5行误差）
+        const isNearBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY - 5;
+        terminal.write(decodeChunk(payload.data), () => {
+          // 只有之前在底部附近时才滚动到底部
+          // 解决 Claude Code 等程序使用 \u001b[3J 清除滚动缓冲区导致的视口重置问题
+          if (isNearBottom) {
+            terminal?.scrollToBottom();
+          }
+        });
       }
       break;
     case 'exit':
@@ -243,7 +255,27 @@ function handleResize() {
   }
 
   try {
+    // 只在第一次 resize 时记录滚动位置
+    if (scrollPositionBeforeResize === null) {
+      scrollPositionBeforeResize = terminal.buffer.active.viewportY;
+    }
+
     fitAddon.fit();
+
+    // 取消之前的恢复定时器
+    if (resizeScrollRestoreTimer) {
+      clearTimeout(resizeScrollRestoreTimer);
+    }
+    const positionToRestore = scrollPositionBeforeResize;
+    // 延迟恢复滚动位置
+    resizeScrollRestoreTimer = setTimeout(() => {
+      if (terminal && positionToRestore !== null) {
+        terminal.scrollToLine(positionToRestore);
+      }
+      scrollPositionBeforeResize = null;
+      resizeScrollRestoreTimer = null;
+    }, 200);
+
     props.tab.cols = terminal.cols;
     props.tab.rows = terminal.rows;
     console.log('[Terminal Resize]', {
@@ -295,6 +327,7 @@ onMounted(() => {
     rows: props.tab.rows || 24,
     cols: props.tab.cols || 80,
     cursorBlink: true,
+    scrollOnUserInput: false, // 禁用用户输入时自动滚动
     fontFamily: fontSettings.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
     fontSize: fontSettings.fontSize,
     fontWeight: fontSettings.fontWeight,
@@ -363,6 +396,12 @@ onMounted(() => {
       }
 
       fitAddon.fit();
+
+      // 初始化后滚动到底部
+      setTimeout(() => {
+        terminal?.scrollToBottom();
+      }, 200);
+
       const cols = terminal.cols;
       const rows = terminal.rows;
 
