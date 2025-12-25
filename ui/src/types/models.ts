@@ -84,6 +84,7 @@ export interface TerminalSession {
     command?: string;
     state?: string;
     stateUpdatedAt?: string;
+    interrupted?: boolean;
     stats?: {
       thinkingDuration: number;
       executingDuration: number;

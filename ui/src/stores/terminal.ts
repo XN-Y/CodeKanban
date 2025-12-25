@@ -272,6 +272,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   const cachedCounts = reactive(new Map<string, number>());
   // Track AI assistant state for each session to detect state changes
   const aiPreviousStates = new Map<string, string>();
+  // Track whether AI agent has been detected for each session (to emit ai:detected only once)
+  const aiDetectedSessions = new Set<string>();
   // Get project store for looking up project names
   const projectStore = useProjectStore();
   const taskStore = useTaskStore();
@@ -565,6 +567,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
       sessionIndex.delete(sessionId);
       aiPreviousStates.delete(sessionId); // Clean up AI state tracking
+      aiDetectedSessions.delete(sessionId); // Clean up AI detected tracking
       updateSessionTaskMapping(sessionId);
       if (activeTabByProject.get(record.projectId) === sessionId) {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
@@ -830,10 +833,35 @@ export const useTerminalStore = defineStore('terminal', () => {
           const currentState = payload.metadata.aiAssistant?.state;
           const previousState = aiPreviousStates.get(tab.id);
 
-          // 🔍 Detect AI assistant closure (detected: false)
-          // When agent is closed, clear any existing notifications
+          // 🔍 Detect AI assistant detection/closure
           const isAgentDetected = payload.metadata.aiAssistant?.detected;
+
+          // Detect AI agent first appearance - emit ai:detected only once per session
+          if (isAgentDetected === true && !aiDetectedSessions.has(tab.id)) {
+            aiDetectedSessions.add(tab.id);
+            console.log(
+              `[Terminal] AI Agent Detected: ${payload.metadata.aiAssistant?.displayName || 'AI'} detected in session ${tab.id}`,
+              {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                assistant: payload.metadata.aiAssistant,
+              }
+            );
+            emitter.emit('ai:detected', {
+              sessionId: tab.id,
+              sessionTitle: tab.title,
+              projectId: tab.projectId,
+              projectName: getProjectName(tab.projectId),
+              worktreeId: tab.worktreeId,
+              detectedAt: new Date(),
+              assistantName: payload.metadata.aiAssistant?.displayName || payload.metadata.aiAssistant?.name,
+              assistantType: payload.metadata.aiAssistant?.type,
+            });
+          }
+
+          // When agent is closed, clear any existing notifications
           if (isAgentDetected === false) {
+            aiDetectedSessions.delete(tab.id);
             console.log(
               `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
               {

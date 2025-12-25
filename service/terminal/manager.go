@@ -486,8 +486,8 @@ func (m *Manager) monitorAssistantRecordsWithStream(session *Session, stream *Se
 		switch event.Type {
 		case StreamEventMetadata:
 			metadata := event.Metadata
-			if metadata == nil || metadata.AIAssistant == nil {
-				// AI 助手 detach 时，清除该 session 的所有记录
+			if metadata == nil || metadata.AIAssistant == nil || !metadata.AIAssistant.Detected {
+				// AI 助手 detach 或关闭时，清除该 session 的所有记录
 				if lastState != string(types.StateUnknown) {
 					m.recordManager.ClearSessionRecords(session.ID())
 					lastState = string(types.StateUnknown)

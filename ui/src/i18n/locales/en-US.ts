@@ -425,6 +425,7 @@ export default {
     statusLabel: 'Status',
     aiCompleted: 'AI Execution Completed',
     aiWorking: 'AI Working',
+    aiIdle: 'Idle',
     hasCompletedExecution: 'has completed execution',
     aiNeedsApproval: 'AI Needs Approval',
     isWaitingForApproval: 'is waiting for your approval',

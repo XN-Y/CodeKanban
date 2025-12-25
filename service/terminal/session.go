@@ -519,11 +519,12 @@ func (s *Session) checkAndBroadcastMetadata() {
 	}
 
 	metadata := &SessionMetadata{
-		ProcessPID:         pid,
-		ProcessStatus:      process.GetProcessStatus(pid),
-		ProcessHasChildren: process.IsProcessBusy(pid),
-		TaskID:             s.TaskID(),
-		Title:              s.Title(),
+		ProcessPID:             pid,
+		ProcessStatus:          process.GetProcessStatus(pid),
+		ProcessHasChildren:     process.IsProcessBusy(pid),
+		TaskID:                 s.TaskID(),
+		Title:                  s.Title(),
+		AIAssistantRecentInput: s.LastRecentInput(),
 	}
 
 	tracker := s.assistantTracker
@@ -599,7 +600,8 @@ func (s *Session) metadataChanged(old, new *SessionMetadata) bool {
 		old.ProcessHasChildren != new.ProcessHasChildren ||
 		old.RunningCommand != new.RunningCommand ||
 		old.TaskID != new.TaskID ||
-		old.AISessionID != new.AISessionID {
+		old.AISessionID != new.AISessionID ||
+		old.AIAssistantRecentInput != new.AIAssistantRecentInput {
 		return true
 	}
 

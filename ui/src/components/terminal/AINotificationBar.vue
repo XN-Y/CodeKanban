@@ -189,7 +189,7 @@ function isNotificationClicked(notificationId: string): boolean {
 interface NotificationItem {
   id: string;
   recordId: string;
-  type: 'completion' | 'approval';
+  type: 'completion' | 'approval' | 'idle';
   sessionId: string;
   projectId: string;
   projectName?: string;
@@ -206,9 +206,10 @@ interface NotificationItem {
   lastUserInput?: string;
   assistantState?: string;
   processStatus?: 'idle' | 'busy' | 'unknown';
+  interrupted?: boolean;
 }
 
-type NotificationType = 'completion' | 'approval';
+type NotificationType = 'completion' | 'approval' | 'idle';
 
 interface AssistantInfo {
   type?: string;
@@ -376,6 +377,11 @@ function matchesDisplayMode(notification: NotificationItem) {
 }
 
 function isIdleNotification(notification: NotificationItem) {
+  // idle 类型通知始终是空闲状态
+  if (notification.type === 'idle') {
+    return true;
+  }
+
   if (notification.type === 'approval') {
     return true;
   }
@@ -462,7 +468,15 @@ function getProjectBranchLabel(notification: NotificationItem) {
 
 function getCompletionHeader(notification: NotificationItem) {
   const projectLabel = getProjectBranchLabel(notification);
-  const titleKey = notification.state === 'working' ? 'terminal.aiWorking' : 'terminal.aiCompleted';
+  let titleKey: string;
+  if (notification.state === 'working') {
+    titleKey = 'terminal.aiWorking';
+  } else if (notification.interrupted || isNotificationClicked(notification.id)) {
+    // 被中断或用户已看过的完成通知显示"空闲"
+    titleKey = 'terminal.aiIdle';
+  } else {
+    titleKey = 'terminal.aiCompleted';
+  }
   const baseTitle = t(titleKey);
   return projectLabel ? `${baseTitle} - ${projectLabel}` : baseTitle;
 }
@@ -474,10 +488,20 @@ function getApprovalHeader(notification: NotificationItem) {
     : t('terminal.aiNeedsApproval');
 }
 
+function getIdleHeader(notification: NotificationItem) {
+  const projectLabel = getProjectBranchLabel(notification);
+  const baseTitle = t('terminal.aiIdle');
+  return projectLabel ? `${baseTitle} - ${projectLabel}` : baseTitle;
+}
+
 function getNotificationHeader(notification: NotificationItem) {
-  return notification.type === 'completion'
-    ? getCompletionHeader(notification)
-    : getApprovalHeader(notification);
+  if (notification.type === 'completion') {
+    return getCompletionHeader(notification);
+  }
+  if (notification.type === 'idle') {
+    return getIdleHeader(notification);
+  }
+  return getApprovalHeader(notification);
 }
 
 function formatCompletionBody(notification: NotificationItem) {
@@ -485,14 +509,11 @@ function formatCompletionBody(notification: NotificationItem) {
 }
 
 function getNotificationDescription(notification: NotificationItem) {
-  const body =
-    notification.type === 'completion'
-      ? formatCompletionBody(notification)
-      : `${t('terminal.isWaitingForApproval')} - ${notification.title}`;
-  // 工作中和任务完成的卡片第二行不显示分支名
-  if (notification.type === 'completion') {
-    return body;
+  // 工作中、任务完成和空闲的卡片第二行不显示分支名
+  if (notification.type === 'completion' || notification.type === 'idle') {
+    return notification.title;
   }
+  const body = `${t('terminal.isWaitingForApproval')} - ${notification.title}`;
   const location = getLocationLabel(notification);
   return location ? `[${location}] ${body}` : body;
 }
@@ -573,6 +594,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
   const assistantType = record.assistant?.type;
   const processStatus = session?.processStatus as 'idle' | 'busy' | 'unknown' | undefined;
   const assistantState = session?.aiAssistant?.state;
+  const interrupted = session?.aiAssistant?.interrupted === true;
   // 直接使用后端返回的 lastUserInput，不回退到前端数据
   const lastUserInput = record.lastUserInput?.trim() || '';
 
@@ -595,6 +617,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantState,
     processStatus,
     lastUserInput: lastUserInput || undefined,
+    interrupted,
   };
 }
 
@@ -633,7 +656,18 @@ function sortNotifications(list: NotificationItem[]) {
 }
 
 function setNotificationsForType(type: NotificationType, items: NotificationItem[]) {
-  const others = notifications.value.filter(item => item.type !== type);
+  // 移除与新通知相同 session 的 idle 通知
+  const sessionIdsWithNewNotifications = new Set(items.map(item => item.sessionId));
+  const others = notifications.value.filter(item => {
+    if (item.type === type) {
+      return false; // 移除旧的同类型通知
+    }
+    // 移除与新通知相同 session 的 idle 通知
+    if (item.type === 'idle' && sessionIdsWithNewNotifications.has(item.sessionId)) {
+      return false;
+    }
+    return true;
+  });
   notifications.value = sortNotifications([...others, ...items]);
   if (type === 'completion') {
     autoMarkActiveCompletionNotifications();
@@ -683,6 +717,9 @@ function getNotificationClass(notification: NotificationItem) {
   if (notification.type === 'completion') {
     return notification.state === 'working' ? 'notification-working' : 'notification-completion';
   }
+  if (notification.type === 'idle') {
+    return 'notification-idle';
+  }
   return 'notification-approval';
 }
 
@@ -691,6 +728,11 @@ function handleAIWorking(event: any) {
   if (!sessionId) {
     return;
   }
+
+  // AI 开始工作时，移除该 session 的 idle 通知
+  notifications.value = notifications.value.filter(
+    n => !(n.sessionId === sessionId && n.type === 'idle')
+  );
 
   const eventCommand =
     typeof event?.latestCommand === 'string' && event.latestCommand.trim()
@@ -785,12 +827,66 @@ function handleAIApproval() {
 
 // 处理 AI 关闭事件
 function handleAIClosed(data: { sessionId: string }) {
-  console.log('[AI Notification] AI closed, refreshing records', data);
-  // 刷新通知列表以移除该 session 的通知
+  const { sessionId } = data;
+  console.log('[AI Notification] AI closed, removing all notifications for session', { sessionId });
+
+  // 移除该 session 的所有通知（idle、completion、approval）
+  notifications.value = notifications.value.filter(n => n.sessionId !== sessionId);
+
+  // 刷新通知列表以确保后端状态同步
   window.setTimeout(() => {
     void fetchCompletionRecords();
     void fetchApprovalRecords();
   }, 150);
+}
+
+// 处理 AI Agent 检测事件
+interface AIDetectedEvent {
+  sessionId: string;
+  sessionTitle: string;
+  projectId: string;
+  projectName?: string;
+  worktreeId?: string;
+  detectedAt: Date;
+  assistantName?: string;
+  assistantType?: string;
+}
+
+function handleAIDetected(event: AIDetectedEvent) {
+  const { sessionId, sessionTitle, projectId, projectName, worktreeId, detectedAt, assistantName, assistantType } = event;
+
+  // 检查是否已存在该 session 的通知
+  const existingNotification = notifications.value.find(
+    n => n.sessionId === sessionId && n.type === 'idle'
+  );
+  if (existingNotification) {
+    return;
+  }
+
+  // 解析分支名
+  const branchName = resolveBranchName(projectId, worktreeId);
+
+  // 创建空闲通知
+  const idleNotification: NotificationItem = {
+    id: `idle-${sessionId}`,
+    recordId: `idle-${sessionId}`,
+    type: 'idle',
+    sessionId,
+    projectId,
+    projectName: projectName || getProjectNameById(projectId),
+    worktreeId,
+    branchName,
+    title: sessionTitle || 'Terminal',
+    assistantName: assistantName || '',
+    assistantType,
+    assistantIcon: getAssistantIconByType(assistantType),
+    assistantColor: getAssistantColorByType(assistantType),
+    timestamp: detectedAt,
+    processStatus: 'idle',
+  };
+
+  notifications.value = sortNotifications([...notifications.value, idleNotification]);
+  console.log('[AI Notification] AI Agent detected, adding idle notification', { sessionId, projectId, assistantName });
 }
 
 // 点击通知，切换到对应的终端
@@ -826,6 +922,11 @@ async function handleNotificationClick(notification: NotificationItem) {
 // 关闭通知
 async function dismissNotification(notification: NotificationItem) {
   try {
+    if (notification.type === 'idle') {
+      // idle 类型通知只是本地的，直接移除
+      removeNotificationLocally(notification.recordId);
+      return;
+    }
     if (notification.type === 'completion') {
       await Apis.terminalSession
         .terminalCompletionRecordDismiss({
@@ -883,6 +984,11 @@ function handleMetadataUpdate(payload: any) {
 function handleSessionClose(sessionId: string) {
   // 清理状态跟踪
   sessionHasAI.delete(sessionId);
+
+  // 移除该 session 的 idle 通知
+  notifications.value = notifications.value.filter(
+    n => !(n.sessionId === sessionId && n.type === 'idle')
+  );
 
   void fetchCompletionRecords();
   void fetchApprovalRecords();
@@ -950,6 +1056,7 @@ onMounted(() => {
   terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
   terminalStore.emitter.on('ai:working', handleAIWorking);
   terminalStore.emitter.on('ai:closed', handleAIClosed);
+  terminalStore.emitter.on('ai:detected', handleAIDetected);
   terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
 
   // useAutoReq 已设置 immediate: true，会自动发起首次请求
@@ -964,6 +1071,7 @@ onUnmounted(() => {
   terminalStore.emitter.off('ai:approval-needed', handleAIApproval);
   terminalStore.emitter.off('ai:working', handleAIWorking);
   terminalStore.emitter.off('ai:closed', handleAIClosed);
+  terminalStore.emitter.off('ai:detected', handleAIDetected);
   terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
 
   // 取消订阅所有终端
@@ -1173,9 +1281,6 @@ watch(
                   </template>
                   <!-- 普通模式：保持原有显示逻辑 -->
                   <template v-else>
-                    <span v-if="notification.type !== 'completion' && getLocationLabel(notification)" class="project-badge">
-                      [{{ getLocationLabel(notification) }}]
-                    </span>
                     <span class="notification-text">
                       <span class="notification-tab-label">
                         {{ getTabLabel(notification) }}
@@ -1414,6 +1519,20 @@ watch(
   border-left-color: #9ca3af !important;
   background: #ffffff !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+}
+
+/* 空闲通知样式 - 灰色边框，白色背景 */
+.notification-idle {
+  --notification-idle-fill: rgba(156, 163, 175, 0.15);
+  --notification-idle-accent: rgba(156, 163, 175, 0.8);
+  background: #ffffff;
+  border-color: rgba(156, 163, 175, 0.3);
+  border-left-color: #9ca3af;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.notification-idle .notification-icon {
+  color: var(--notification-idle-accent, #9ca3af);
 }
 
 /* 工作中 / 审批通知在已读后保持原样 */

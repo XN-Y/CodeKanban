@@ -425,6 +425,7 @@ export default {
     statusLabel: '状态',
     aiCompleted: 'AI 执行完成',
     aiWorking: 'AI 正在工作',
+    aiIdle: '空闲',
     hasCompletedExecution: '已完成执行',
     aiNeedsApproval: 'AI 需要批准',
     isWaitingForApproval: '正在等待您的批准',
