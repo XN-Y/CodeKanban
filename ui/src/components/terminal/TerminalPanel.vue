@@ -139,11 +139,13 @@
         <!-- 创建终端按钮 - 始终显示 -->
         <n-dropdown
           v-if="worktrees.length > 1"
-          trigger="click"
+          trigger="manual"
+          :show="showCreateTerminalMenu"
           :options="createTerminalOptionsWithHeader"
           @select="handleCreateTerminalSelect"
+          @clickoutside="handleCreateTerminalMenuClose"
         >
-          <n-button text size="small">
+          <n-button text size="small" @click="handleCreateTerminalButtonClick">
             <template #icon>
               <n-icon>
                 <Add />
@@ -662,6 +664,10 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
 
   return options;
 });
+
+// 创建终端下拉菜单相关状态
+const showCreateTerminalMenu = ref(false);
+const createTerminalMenuClosedAt = ref(0); // 记录菜单关闭时间
 
 // 设置菜单相关状态
 const showSettingsMenu = ref(false);
@@ -1880,8 +1886,44 @@ function handleCreateTerminalClick() {
   // 如果有多个分支，下拉菜单会自动显示
 }
 
+// 处理创建终端下拉菜单关闭
+function handleCreateTerminalMenuClose() {
+  showCreateTerminalMenu.value = false;
+  createTerminalMenuClosedAt.value = Date.now();
+}
+
+// 处理创建终端按钮点击（双击逻辑）
+function handleCreateTerminalButtonClick() {
+  // 如果菜单刚刚关闭（150ms内），说明是点击按钮导致的clickoutside关闭
+  // 这种情况视为"双击"，应该创建终端
+  const justClosed = Date.now() - createTerminalMenuClosedAt.value < 150;
+
+  if (justClosed) {
+    // 双击：创建和当前激活终端一样分支的终端
+    const activeTab = tabs.value.find(tab => tab.id === activeTabId.value);
+    let targetWorktreeId: string | undefined;
+
+    if (activeTab?.worktreeId) {
+      // 使用当前激活终端的分支
+      targetWorktreeId = activeTab.worktreeId;
+    } else {
+      // 没有激活终端或没有分支，使用默认分支（isMain为true或第一个）
+      const mainWorktree = worktrees.value.find(w => w.isMain);
+      targetWorktreeId = mainWorktree?.id ?? worktrees.value[0]?.id;
+    }
+
+    if (targetWorktreeId) {
+      openTerminal({ worktreeId: targetWorktreeId });
+    }
+  } else if (!showCreateTerminalMenu.value) {
+    // 菜单关闭状态，打开菜单
+    showCreateTerminalMenu.value = true;
+  }
+}
+
 // 处理创建终端下拉菜单选择
 function handleCreateTerminalSelect(key: string) {
+  showCreateTerminalMenu.value = false;
   if (key === EMPTY_TAB_KEY) {
     createEmptyTab();
     return;
@@ -1902,7 +1944,12 @@ async function openTerminal(options: TerminalCreateOptions) {
   // 创建真实终端时，清除空终端激活状态
   localActiveEmptyTabId.value = '';
   try {
-    await createSession(options);
+    // 如果没有指定插入位置，默认插入到当前激活标签之后
+    const finalOptions = { ...options };
+    if (!finalOptions.insertAfterSessionId && activeTabId.value) {
+      finalOptions.insertAfterSessionId = activeTabId.value;
+    }
+    await createSession(finalOptions);
     // 创建成功后，等待面板展开动画完成（200ms）+ 缓冲时间，再触发 resize
     // 确保终端尺寸计算时容器已经是最终尺寸
     setTimeout(() => {

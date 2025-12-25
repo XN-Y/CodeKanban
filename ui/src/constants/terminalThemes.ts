@@ -1,5 +1,52 @@
 import type { ITheme } from '@xterm/xterm';
 
+/**
+ * 生成 xterm 256 色调色板中的扩展 ANSI 颜色（16-255）
+ * - 颜色 16-231：6×6×6 RGB 立方体
+ * - 颜色 232-255：24 级灰度
+ *
+ * @param color16Override 可选，用于覆盖颜色 16（标准值为 #000000），避免在暗色背景上不可见
+ * @param grayStartOverride 可选，用于覆盖灰度起始颜色 232（标准值为 #080808），避免在暗色背景上不可见
+ */
+function generateExtendedAnsi(color16Override?: string, grayStartOverride?: string): string[] {
+  const colors: string[] = [];
+  // RGB 立方体的分量值：0, 95, 135, 175, 215, 255
+  const cubeValues = [0, 95, 135, 175, 215, 255];
+
+  // 颜色 16-231：6×6×6 RGB 立方体
+  for (let r = 0; r < 6; r++) {
+    for (let g = 0; g < 6; g++) {
+      for (let b = 0; b < 6; b++) {
+        const red = cubeValues[r].toString(16).padStart(2, '0');
+        const green = cubeValues[g].toString(16).padStart(2, '0');
+        const blue = cubeValues[b].toString(16).padStart(2, '0');
+        colors.push(`#${red}${green}${blue}`);
+      }
+    }
+  }
+
+  // 颜色 232-255：24 级灰度（从 #080808 到 #eeeeee）
+  for (let i = 0; i < 24; i++) {
+    const gray = (8 + i * 10).toString(16).padStart(2, '0');
+    colors.push(`#${gray}${gray}${gray}`);
+  }
+
+  // 覆盖颜色 16（索引 0）
+  if (color16Override) {
+    colors[0] = color16Override;
+  }
+
+  // 覆盖灰度起始颜色 232（索引 216）
+  if (grayStartOverride) {
+    colors[216] = grayStartOverride;
+  }
+
+  return colors;
+}
+
+// 为暗色主题预生成 extendedAnsi 数组，将颜色 16 和灰度起始色调整为可见值
+const DARK_THEME_EXTENDED_ANSI = generateExtendedAnsi('#4a4a4a', '#3a3a3a');
+
 export interface TerminalThemePreset {
   id: string;
   name: string;
@@ -36,6 +83,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#B48EAD',
       brightCyan: '#8FBCBB',
       brightWhite: '#ECEFF4',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -66,6 +114,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#FF92DF',
       brightCyan: '#A4FFFF',
       brightWhite: '#FFFFFF',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -96,6 +145,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#AE81FF',
       brightCyan: '#A1EFE4',
       brightWhite: '#F9F8F5',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -124,6 +174,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#6c71c4',
       brightCyan: '#93a1a1',
       brightWhite: '#fdf6e3',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -152,6 +203,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#C678DD',
       brightCyan: '#56B6C2',
       brightWhite: '#FFFFFF',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -180,6 +232,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#BB9AF7',
       brightCyan: '#7DCFFF',
       brightWhite: '#C0CAF5',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -208,6 +261,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#D2A8FF',
       brightCyan: '#56D4DD',
       brightWhite: '#F0F6FC',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -236,6 +290,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#D3869B',
       brightCyan: '#8EC07C',
       brightWhite: '#EBDBB2',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -264,6 +319,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#F5C2E7',
       brightCyan: '#94E2D5',
       brightWhite: '#A6ADC8',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -292,6 +348,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#FF80AB',
       brightCyan: '#84FFFF',
       brightWhite: '#FFFFFF',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -320,6 +377,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#DA8FFF',
       brightCyan: '#70D7FF',
       brightWhite: '#FFFFFF',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {
@@ -348,6 +406,7 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
       brightMagenta: '#A90D91',
       brightCyan: '#3E8A8A',
       brightWhite: '#F5F5F5',
+      extendedAnsi: DARK_THEME_EXTENDED_ANSI,
     },
   },
   {

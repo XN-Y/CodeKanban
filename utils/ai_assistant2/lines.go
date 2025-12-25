@@ -63,6 +63,10 @@ func renderLinesFromTerminal(term vt10x.Terminal, raw [][]vt10x.Glyph, rows, col
 			if raw != nil {
 				rowRaw[col] = cell
 			}
+			// Skip wide character dummy cells (second cell of double-width characters)
+			if cell.Mode&vt10x.AttrWideDummy != 0 {
+				continue
+			}
 			if cell.Char != 0 {
 				runes = append(runes, cell.Char)
 			}
