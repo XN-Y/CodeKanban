@@ -142,10 +142,12 @@ func (rm *RecordManager) ClearApprovalsBySession(sessionID string) {
 }
 
 // UpdateCompletionStateBySession 更新 session 对应的完成记录状态（例如切回 working）
+// 同时更新 CompletedAt 时间戳，使记录在排序时提升到最顶部
 func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state string) bool {
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
 			record.State = state
+			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
 			return true
 		}
 	}
@@ -154,10 +156,12 @@ func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state 
 
 // UpdateCompletionBySession 更新 session 对应的完成记录状态和用户输入
 // 如果 userInput 非空，则同时更新 LastUserInput 字段
+// 同时更新 CompletedAt 时间戳，使记录在排序时提升到最顶部
 func (rm *RecordManager) UpdateCompletionBySession(sessionID string, state string, userInput string) bool {
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
 			record.State = state
+			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
 			if userInput != "" {
 				record.LastUserInput = userInput
 			}

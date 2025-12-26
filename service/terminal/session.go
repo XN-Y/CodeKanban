@@ -177,8 +177,9 @@ type Session struct {
 	lastLogWatcherMessage string
 	aiProcessStartTime    time.Time // AI process creation time (from proc.CreateTime)
 	aiProcessWorkingDir   string    // AI process working directory (from proc.Cwd)
-	currentAISessionID    string    // Current AI session ID (found synchronously)
-	currentAISessionFile  string    // Current AI session file path
+	currentAISessionID    string // Current AI session ID (found synchronously)
+	currentAISessionFile  string // Current AI session file path
+	linkedAISessionID     string // The session ID that has been linked to task (to avoid repeated linking)
 
 	mu sync.RWMutex
 
@@ -1742,6 +1743,8 @@ func (s *Session) stopLogWatcher() {
 	s.aiProcessWorkingDir = ""
 	s.currentAISessionID = ""
 	s.currentAISessionFile = ""
+	// Note: linkedAISessionID is NOT reset here, so if the same session is restarted,
+	// it won't be linked again. It will only be linked again if a NEW session is created.
 
 	if s.logger != nil {
 		s.logger.Debug("log watcher stopped")
@@ -1833,6 +1836,15 @@ func (s *Session) autoLinkAISession(sessionID, filePath string) {
 		return
 	}
 
+	// Check if this specific session has already been linked
+	s.logWatcherMu.RLock()
+	alreadyLinked := s.linkedAISessionID == sessionID
+	s.logWatcherMu.RUnlock()
+
+	if alreadyLinked {
+		return
+	}
+
 	// Get the associated task ID
 	s.mu.RLock()
 	taskID := s.associatedTaskID
@@ -1875,12 +1887,82 @@ func (s *Session) autoLinkAISession(sessionID, filePath string) {
 		return
 	}
 
+	// Mark this session as linked to avoid repeated logging
+	s.logWatcherMu.Lock()
+	s.linkedAISessionID = sessionID
+	s.logWatcherMu.Unlock()
+
 	if s.logger != nil {
 		s.logger.Info("auto-linked AI session to task",
 			zap.String("sessionId", sessionID),
 			zap.String("taskId", taskID),
 			zap.String("filePath", filePath))
 	}
+}
+
+// AISessionLinkInfo contains current AI session link information for recheck
+type AISessionLinkInfo struct {
+	SessionID       string
+	TaskID          string
+	FilePath        string
+	LinkedSessionID string // The session ID that was previously linked
+}
+
+// GetAISessionLinkInfo returns the current AI session link information
+func (s *Session) GetAISessionLinkInfo() AISessionLinkInfo {
+	s.logWatcherMu.RLock()
+	currentSessionID := s.currentAISessionID
+	currentFilePath := s.currentAISessionFile
+	linkedSessionID := s.linkedAISessionID
+	s.logWatcherMu.RUnlock()
+
+	s.mu.RLock()
+	taskID := s.associatedTaskID
+	s.mu.RUnlock()
+
+	return AISessionLinkInfo{
+		SessionID:       currentSessionID,
+		TaskID:          taskID,
+		FilePath:        currentFilePath,
+		LinkedSessionID: linkedSessionID,
+	}
+}
+
+// RecheckAISessionLink checks if the current AI session link is valid and triggers re-linking if needed.
+// This can be called when anomalies are detected (e.g., session file deleted, task changed, etc.)
+// Returns true if re-linking was triggered, false otherwise.
+func (s *Session) RecheckAISessionLink(info AISessionLinkInfo) bool {
+	// TODO: Implement recheck logic
+	// Possible checks:
+	// 1. Session file no longer exists
+	// 2. Task association changed
+	// 3. Session ID mismatch
+	// 4. Database link record is missing/invalid
+
+	needRelink := s.checkNeedRelink(info)
+	if !needRelink {
+		return false
+	}
+
+	// Reset linked session ID to trigger re-linking
+	s.logWatcherMu.Lock()
+	s.linkedAISessionID = ""
+	s.logWatcherMu.Unlock()
+
+	// Trigger re-link if we have current session info
+	if info.SessionID != "" && info.FilePath != "" {
+		go s.autoLinkAISession(info.SessionID, info.FilePath)
+	}
+
+	return true
+}
+
+// checkNeedRelink checks if re-linking is needed based on the provided info.
+// Override this method to implement custom recheck logic.
+func (s *Session) checkNeedRelink(info AISessionLinkInfo) bool {
+	// TODO: Implement actual checks
+	// For now, always return false (no recheck needed)
+	return false
 }
 
 // findAISessionSync synchronously finds the AI session file and returns session ID and file path.

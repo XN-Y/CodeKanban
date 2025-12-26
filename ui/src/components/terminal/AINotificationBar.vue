@@ -787,9 +787,8 @@ function setNotificationsForType(type: NotificationType, items: NotificationItem
     return true;
   });
   notifications.value = sortNotifications([...others, ...items]);
-  if (type === 'completion') {
-    autoMarkActiveCompletionNotifications();
-  }
+  // 注意：不再自动标记通知为已读
+  // 通知只应在用户真正点击或查看终端时才被标记，这样"已完成"状态才能正确显示
 }
 
 function getActiveSessionIds() {

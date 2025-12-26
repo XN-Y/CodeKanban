@@ -355,6 +355,18 @@ func (w *LogWatcher) checkForChanges() {
 	}
 
 	if err := w.processFile(file, false); err != nil {
+		// If line is too long (>4MB), skip it and update offset to continue
+		if err == bufio.ErrTooLong {
+			if w.logger != nil {
+				w.logger.Warn("line too long, skipping", zap.Error(err))
+			}
+			// Update offset to current position to skip the problematic content
+			newOffset, _ := file.Seek(0, io.SeekCurrent)
+			w.mu.Lock()
+			w.fileOffset = newOffset
+			w.mu.Unlock()
+			return
+		}
 		if w.logger != nil {
 			w.logger.Warn("error processing file, resetting", zap.Error(err))
 		}
@@ -381,9 +393,9 @@ func (w *LogWatcher) resetAndReread(file *os.File) {
 // processFile reads and processes lines from the file
 func (w *LogWatcher) processFile(file *os.File, isInitial bool) error {
 	scanner := bufio.NewScanner(file)
-	// Increase buffer size for large lines
+	// Increase buffer size for large lines (4MB max, skip larger lines)
 	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 1024*1024)
+	scanner.Buffer(buf, 4*1024*1024) // 4MB max line size
 
 	var newMessages []*UserMessage
 	linesProcessed := 0

@@ -280,6 +280,10 @@ export const useTerminalStore = defineStore('terminal', () => {
   const sessionToTaskMap = reactive(new Map<string, string>());
   const taskToSessionMap = reactive(new Map<string, string>());
   const pendingTaskFetch = new Set<string>();
+  // Buffer for WebSocket messages when no listener is attached
+  // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
+  const messageBuffers = new Map<string, ServerMessage[]>();
+  const MESSAGE_BUFFER_MAX_SIZE = 5000; // Limit buffer size to prevent memory issues
 
   // Helper function to get project name by ID
   function getProjectName(projectId: string): string | undefined {
@@ -574,7 +578,26 @@ export const useTerminalStore = defineStore('terminal', () => {
         setActiveTab(record.projectId, nextId);
       }
       clearTerminalSnapshot(sessionId);
+      messageBuffers.delete(sessionId); // Clean up message buffer
     }
+  }
+
+  /**
+   * Replay buffered messages for a session and clear the buffer.
+   * Called when TerminalViewport remounts after being unmounted (e.g., project switch).
+   */
+  function replayBufferedMessages(sessionId: string) {
+    const buffer = messageBuffers.get(sessionId);
+    if (!buffer || buffer.length === 0) {
+      return;
+    }
+    // Emit all buffered messages
+    for (const message of buffer) {
+      emitter.emit(sessionId, message);
+    }
+    // Clear the buffer after replay
+    messageBuffers.delete(sessionId);
+    console.log(`[Terminal] Replayed ${buffer.length} buffered messages for session:`, sessionId);
   }
 
   function ensureBucket(projectId: string) {
@@ -963,7 +986,24 @@ export const useTerminalStore = defineStore('terminal', () => {
             aiPreviousStates.set(tab.id, currentState);
           }
         }
-        emitter.emit(tab.id, payload);
+        // Check if there are any listeners for this session
+        // If not, buffer the message for later replay when component remounts
+        if (emitter.listenerCount(tab.id) > 0) {
+          emitter.emit(tab.id, payload);
+        } else if (payload.type === 'data') {
+          // Only buffer 'data' type messages (terminal output)
+          // Other types (metadata, etc.) are not needed for terminal content recovery
+          let buffer = messageBuffers.get(tab.id);
+          if (!buffer) {
+            buffer = [];
+            messageBuffers.set(tab.id, buffer);
+          }
+          buffer.push(payload);
+          // Limit buffer size to prevent memory issues
+          if (buffer.length > MESSAGE_BUFFER_MAX_SIZE) {
+            buffer.shift();
+          }
+        }
       } catch {
         // ignore malformed payloads
       }
@@ -1138,5 +1178,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     focusSession,
     getSessionByTask,
     getLinkedTaskId,
+    replayBufferedMessages,
   };
 });

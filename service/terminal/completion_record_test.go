@@ -100,6 +100,54 @@ func TestRecordManager_UpdateCompletionBySession_NotFound(t *testing.T) {
 	}
 }
 
+func TestRecordManager_UpdateCompletionBySession_UpdatesTimestamp(t *testing.T) {
+	rm := NewRecordManager()
+
+	// 创建两条记录，sess2 比 sess1 新
+	oldTime := time.Now().Add(-time.Hour)
+	newTime := time.Now().Add(-time.Minute) // sess2 比 sess1 新，但比当前时间早一分钟
+
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec1",
+		SessionID:   "sess1",
+		ProjectID:   "proj1",
+		State:       "completed",
+		CompletedAt: oldTime,
+	})
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec2",
+		SessionID:   "sess2",
+		ProjectID:   "proj1",
+		State:       "completed",
+		CompletedAt: newTime,
+	})
+
+	// 验证初始排序：sess2 在前（更新）
+	completions := rm.GetCompletions()
+	if completions[0].SessionID != "sess2" {
+		t.Fatalf("expected sess2 to be first initially, got %s", completions[0].SessionID)
+	}
+
+	// 记录更新前 sess1 的时间戳
+	oldSess1Time := completions[1].CompletedAt
+
+	// 更新 sess1 的状态，应该刷新时间戳使其排到最前
+	rm.UpdateCompletionBySession("sess1", "working", "")
+
+	// 验证更新后排序：sess1 应该在前（因为时间戳被更新为 now）
+	completions = rm.GetCompletions()
+	if completions[0].SessionID != "sess1" {
+		t.Fatalf("expected sess1 to be first after update, got %s", completions[0].SessionID)
+	}
+	if completions[0].State != "working" {
+		t.Fatalf("expected state 'working', got %s", completions[0].State)
+	}
+	// 验证时间戳确实被更新了
+	if !completions[0].CompletedAt.After(oldSess1Time) {
+		t.Fatalf("expected CompletedAt to be updated, old=%v, new=%v", oldSess1Time, completions[0].CompletedAt)
+	}
+}
+
 func TestRecordManager_DismissCompletion(t *testing.T) {
 	rm := NewRecordManager()
 

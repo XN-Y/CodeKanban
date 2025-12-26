@@ -26,6 +26,7 @@ import {
   clearTerminalSnapshot,
 } from '@/utils/terminalSnapshotCache';
 import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/settings';
+import { useTerminalStore } from '@/stores/terminal';
 import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
 import { hexToRgba } from '@/utils/color';
 
@@ -37,6 +38,7 @@ const props = defineProps<{
 }>();
 
 const settingsStore = useSettingsStore();
+const terminalStore = useTerminalStore();
 const { effectiveTerminalThemeId, terminalFont } = storeToRefs(settingsStore);
 
 const activeTerminalTheme = computed(() => {
@@ -59,6 +61,21 @@ let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const SNAPSHOT_SCROLLBACK = 1200;
+
+/**
+ * 替换 True Color #000000 为可见颜色
+ * xterm.js 的 extendedAnsi 只对 256 色索引模式生效，
+ * 但很多程序使用 True Color (24-bit RGB) 直接输出颜色，绕过了映射表。
+ * 这里对 True Color 前景色 RGB(0,0,0) 进行替换，避免在深色背景上不可见。
+ *
+ * True Color 前景色格式: \x1b[38;2;R;G;Bm 或 \x1b[38;2;R;G;B;...m
+ */
+const TRUE_COLOR_BLACK_REGEX = /\x1b\[38;2;0;0;0([;m])/g;
+const TRUE_COLOR_BLACK_REPLACEMENT = '\x1b[38;2;74;74;74$1'; // #4a4a4a
+
+function remapInvisibleColors(data: string): string {
+  return data.replace(TRUE_COLOR_BLACK_REGEX, TRUE_COLOR_BLACK_REPLACEMENT);
+}
 
 // resize 前的滚动位置（用于连续 resize 时只记录第一次的位置）
 let scrollPositionBeforeResize: number | null = null;
@@ -125,7 +142,7 @@ function handleMessage(payload: ServerMessage) {
   switch (payload.type) {
     case 'data':
       if (payload.data) {
-        terminal.write(decodeChunk(payload.data));
+        terminal.write(remapInvisibleColors(decodeChunk(payload.data)));
       }
       break;
     case 'exit':
@@ -188,7 +205,7 @@ function restoreSnapshotIfAvailable() {
   }
   try {
     terminal.reset();
-    terminal.write(snapshot.serialized);
+    terminal.write(remapInvisibleColors(snapshot.serialized));
     console.log('[Terminal Snapshot] Restored cache for session:', props.tab.id);
     return true;
   } catch (error) {
@@ -611,6 +628,10 @@ onMounted(() => {
   props.emitter.on(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
   props.emitter.on('terminal-blur-all', handleTerminalBlurEvent);
   window.addEventListener('resize', debouncedResize);
+
+  // Replay any buffered messages that were received while this component was unmounted
+  // This ensures no data is lost when switching between projects
+  terminalStore.replayBufferedMessages(props.tab.id);
 });
 
 function handleTerminalBlurEvent() {
