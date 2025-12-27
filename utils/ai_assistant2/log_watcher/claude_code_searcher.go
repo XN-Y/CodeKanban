@@ -139,6 +139,9 @@ func encodePathForClaude(path string) string {
 	// Replace / with -
 	path = strings.ReplaceAll(path, "/", "-")
 
+	// Replace _ with - (Claude Code also replaces underscores)
+	path = strings.ReplaceAll(path, "_", "-")
+
 	return path
 }
 

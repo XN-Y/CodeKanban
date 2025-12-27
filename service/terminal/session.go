@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -327,7 +326,8 @@ func (s *Session) Start(ctx context.Context) error {
 
 	env := append([]string{}, s.env...)
 	env = append(env, "TERM=xterm-256color")
-	cmd.Env = append(os.Environ(), env...)
+	// Use GetFreshEnviron to pick up newly installed tools (e.g., updated PATH from registry on Windows)
+	cmd.Env = append(utils.GetFreshEnviron(), env...)
 
 	if err := ptyDevice.Start(cmd); err != nil {
 		cancel()
