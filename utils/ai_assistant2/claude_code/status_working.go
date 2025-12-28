@@ -2,7 +2,6 @@ package claude_code
 
 import (
 	"code-kanban/utils/ai_assistant2/types"
-	"fmt"
 	"strings"
 
 	"github.com/tuzig/vt10x"
@@ -17,6 +16,8 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 
 	// Step 1: Find the input text box by locating two separator lines
 	// Search from bottom to top for lines filled with '─' characters
+	// Note: vt10x may render wide characters as two cells, causing a single
+	// separator line to appear as multiple consecutive rows
 	firstSepIdx := -1
 	secondSepIdx := -1
 
@@ -27,8 +28,19 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 		if d.isSeparatorLine(line, cols) {
 			if firstSepIdx == -1 {
 				firstSepIdx = currentLine
+				// Skip any consecutive separator lines (due to wide char rendering)
+				for currentLine > 0 && d.isSeparatorLine(lines[currentLine-1], cols) {
+					currentLine--
+				}
 			} else {
+				// For second separator, we want secondSepIdx to point to the TOPMOST
+				// row of the separator block so that secondSepIdx-1 is above all separators
 				secondSepIdx = currentLine
+				// Skip any consecutive separator lines for the second separator too
+				for currentLine > 0 && d.isSeparatorLine(lines[currentLine-1], cols) {
+					currentLine--
+					secondSepIdx = currentLine
+				}
 				break
 			}
 		}
@@ -104,22 +116,36 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 	// The text box is located, which means the interface is active
 	// Now search upward from the second separator to determine the state
 
-	// Step 2: Look for "  ⎿  Tip: " above the text box
+	// Step 2: Look for "  ⎿  Tip: " or working task line above the text box
 	currentLine = secondSepIdx - 1
 	for ; currentLine >= 0; currentLine-- {
 		line := lines[currentLine]
-		if d.containsTipLine(line) {
-			fmt.Println(firstSepIdx, secondSepIdx, d.isWorkingTaskLine(lines[currentLine-1]))
 
+		// Skip empty lines
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			continue
+		}
+
+		// Check for Tip/Next line - if found, the working line should be right above it
+		if d.containsTipLine(line) {
 			if currentLine > 0 && d.isWorkingTaskLine(lines[currentLine-1]) {
 				return types.StateWorking
 			}
+			// Found Tip/Next but no working line above, so not in working state
+			return types.StateWaitingInput
 		}
+
+		// Check if current line is a working task line
 		if d.isWorkingTaskLine(line) {
 			return types.StateWorking
 		}
+
+		// Found a non-empty, non-tip, non-working line - stop searching
+		// This is likely normal output content
+		break
 	}
 
-	// No Tip line found = waiting for input
+	// No working task line found = waiting for input
 	return types.StateWaitingInput
 }
