@@ -449,6 +449,14 @@ const currentProjectId = computed(() => {
   return typeof id === 'string' ? id : '';
 });
 
+// 当前激活的终端 session ID
+const currentActiveSessionId = computed(() => {
+  if (!currentProjectId.value) {
+    return '';
+  }
+  return terminalStore.getActiveTabId(currentProjectId.value) || '';
+});
+
 const filteredNotifications = computed(() => {
   if (!notificationsEnabled.value) {
     return [];
@@ -1364,7 +1372,19 @@ watch(
         v-for="notification in filteredNotifications"
         :key="notification.id"
         class="notification-row"
+        :class="{ 'is-current-session': notification.sessionId === currentActiveSessionId }"
       >
+        <!-- 当前激活 tab 指示器（眼睛图标） -->
+        <span
+          v-if="notification.sessionId === currentActiveSessionId"
+          class="current-session-indicator"
+          :title="t('terminal.currentActiveSession')"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+          </svg>
+        </span>
         <!-- 项目序号标签（在卡片外面，仅多个项目时显示） -->
         <button
           v-if="projectIndexMap.size > 1 && getProjectIndex(notification)"
@@ -1848,6 +1868,7 @@ watch(
   align-items: flex-start;
   gap: 6px;
   pointer-events: auto;
+  position: relative;
 }
 
 /* 项目序号标签样式（在卡片外部） */
@@ -1889,6 +1910,55 @@ watch(
   height: 18px;
   font-size: 10px;
   margin-top: 4px;
+}
+
+/* 当前激活 tab 指示器样式 - 绝对定位不占宽度 */
+.current-session-indicator {
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  animation: pulse-glow 2s ease-in-out infinite;
+  z-index: 10;
+}
+
+.current-session-indicator svg {
+  width: 10px;
+  height: 10px;
+}
+
+.notification-list.is-compact .current-session-indicator {
+  width: 18px;
+  height: 18px;
+  left: -23px;
+  margin-top: -13px;
+}
+
+.notification-list.is-compact .current-session-indicator svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* 当前激活 tab 行高亮效果 */
+.notification-row.is-current-session .notification-item {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  }
+  50% {
+    box-shadow: 0 2px 12px rgba(59, 130, 246, 0.6);
+  }
 }
 
 .notification-close {
