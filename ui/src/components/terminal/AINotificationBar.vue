@@ -1389,11 +1389,14 @@ watch(
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
         </span>
-        <!-- 项目序号标签（在卡片外面，仅多个项目时显示） -->
+        <!-- 项目序号标签（在卡片外面，始终占位） -->
         <button
-          v-if="projectIndexMap.size > 1 && getProjectIndex(notification)"
+          v-if="getProjectIndex(notification)"
           class="project-index-badge"
-          :class="{ 'is-filtered': projectIndexFilter === notification.projectId }"
+          :class="{
+            'is-filtered': projectIndexFilter === notification.projectId,
+            'is-single-project': projectIndexMap.size <= 1
+          }"
           :style="{
             '--badge-color': getProjectIndex(notification)?.color,
           }"
@@ -1916,6 +1919,12 @@ watch(
   margin-top: 4px;
 }
 
+/* 单项目时序号不可见但占位 */
+.project-index-badge.is-single-project {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* 当前激活 tab 指示器样式 - 绝对定位不占宽度 */
 .current-session-indicator {
   position: absolute;
@@ -1934,6 +1943,11 @@ watch(
   z-index: 10;
 }
 
+/* 单项目时（无序号）普通模式调整 top */
+.notification-row:has(.project-index-badge.is-single-project) .current-session-indicator {
+  top: 15%;
+}
+
 .current-session-indicator svg {
   width: 10px;
   height: 10px;
@@ -1944,6 +1958,11 @@ watch(
   height: 18px;
   left: -23px;
   margin-top: -13px;
+}
+
+/* 单项目时（无序号）紧凑模式调整 left */
+.notification-list.is-compact .notification-row:has(.project-index-badge.is-single-project) .current-session-indicator {
+  left: 0;
 }
 
 .notification-list.is-compact .current-session-indicator svg {

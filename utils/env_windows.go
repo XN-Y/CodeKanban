@@ -68,6 +68,45 @@ func GetFreshPath() string {
 	}
 
 	return strings.Join(paths, ";")
+
+	// TODO: 暂时注释掉，排查 Alt+V 贴图问题
+	// combinedPath := strings.Join(paths, ";")
+	//
+	// // Ensure critical system directories are included.
+	// // These are normally added by Windows when creating a process, but may be missing
+	// // if the registry PATH doesn't include them.
+	// systemRoot := os.Getenv("SystemRoot")
+	// if systemRoot == "" {
+	// 	systemRoot = `C:\Windows`
+	// }
+	//
+	// criticalPaths := []string{
+	// 	systemRoot + `\System32`,
+	// 	systemRoot,
+	// 	systemRoot + `\System32\Wbem`,
+	// 	systemRoot + `\System32\WindowsPowerShell\v1.0`,
+	// }
+	//
+	// // Build a set of existing path segments for exact matching (case-insensitive)
+	// existingPaths := make(map[string]bool)
+	// for _, p := range strings.Split(combinedPath, ";") {
+	// 	// Normalize: trim spaces and trailing backslash
+	// 	p = strings.TrimSpace(p)
+	// 	p = strings.TrimRight(p, `\`)
+	// 	if p != "" {
+	// 		existingPaths[strings.ToUpper(p)] = true
+	// 	}
+	// }
+	//
+	// for _, criticalPath := range criticalPaths {
+	// 	normalizedCritical := strings.ToUpper(strings.TrimRight(criticalPath, `\`))
+	// 	if !existingPaths[normalizedCritical] {
+	// 		combinedPath = combinedPath + ";" + criticalPath
+	// 		existingPaths[normalizedCritical] = true
+	// 	}
+	// }
+	//
+	// return combinedPath
 }
 
 // getRegistryPath reads a string value from the Windows registry.

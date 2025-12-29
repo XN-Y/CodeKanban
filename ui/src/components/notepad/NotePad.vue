@@ -532,8 +532,7 @@ onMounted(() => {
 .notepad-toggle {
   position: absolute;
   left: -28px;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 20px;
   width: 28px;
   height: 56px;
   background: var(--app-surface-color, #fafafa);
@@ -544,8 +543,13 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, top 0.3s ease;
   box-shadow: -2px 0 4px var(--n-box-shadow-color, rgba(0, 0, 0, 0.05));
+}
+
+.notepad-container.collapsed .notepad-toggle {
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .notepad-toggle:hover {
