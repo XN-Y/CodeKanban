@@ -43,8 +43,11 @@ func (d *StatusDetector) DetectStateFromLines(lines []string, raw [][]vt10x.Glyp
 
 // containsTipLine checks if a line contains the Tip/Next indicator
 func (d *StatusDetector) containsTipLine(line string) bool {
-	// Match both old "Tip:" and new "Next:" patterns
-	return strings.HasPrefix(line, "  ⎿  Tip: ") || strings.HasPrefix(line, "  ⎿  Next: ")
+	// Use regex to flexibly match whitespace (including NBSP \u00a0)
+	// Note: Go's \s does NOT match NBSP, so we explicitly include it in character class
+	const ws = `[\s\x{00a0}]` // whitespace including NBSP
+	pattern := regexp.MustCompile(`^` + ws + `*⎿` + ws + `+(?:Tip|Next):` + ws)
+	return pattern.MatchString(line)
 }
 
 // isWorkingTaskLine checks if a line represents a working task

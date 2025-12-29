@@ -884,6 +884,8 @@ function handleAIWorking(event: any) {
           ...notification,
           state: 'working',
           lastAgentCommand: shouldUpdateCommand ? latestCommand : notification.lastAgentCommand,
+          // 更新时间戳，使活动会话排在通知列表顶部
+          timestamp: new Date(),
         };
       }
     }
@@ -895,6 +897,8 @@ function handleAIWorking(event: any) {
   }
 
   if (changed) {
+    // 重新排序，让刚转入工作状态的通知排到顶部
+    notifications.value = sortNotifications(notifications.value);
     console.log('[AI Notification] Updated working completion', { sessionId, latestCommand });
   } else {
     // 如果当前列表里没有对应记录（可能是第一次就进入 working 状态），主动刷新
