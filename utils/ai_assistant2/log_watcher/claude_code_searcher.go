@@ -121,9 +121,9 @@ func (s *ClaudeCodeFileSearcher) GetSessionDir() string {
 	return s.projectsDir
 }
 
-// encodePathForClaude converts a path to Claude Code's folder naming convention
+// EncodePathForClaude converts a path to Claude Code's folder naming convention.
 // Example: D:\codes\2025\aicode-kanban -> D--codes-2025-aicode-kanban
-func encodePathForClaude(path string) string {
+func EncodePathForClaude(path string) string {
 	// Clean the path first (removes trailing slashes, normalizes separators)
 	path = filepath.Clean(path)
 
@@ -143,6 +143,10 @@ func encodePathForClaude(path string) string {
 	path = strings.ReplaceAll(path, "_", "-")
 
 	return path
+}
+
+func encodePathForClaude(path string) string {
+	return EncodePathForClaude(path)
 }
 
 // FindSessionFile searches for a session file that is actively being used
@@ -181,7 +185,7 @@ func (s *ClaudeCodeFileSearcher) FindSessionFileWithResult(ctx context.Context, 
 		ctime   time.Time
 	}
 
-	var newSessionCandidates []fileWithTime    // Files created after afterTime (new sessions)
+	var newSessionCandidates []fileWithTime     // Files created after afterTime (new sessions)
 	var resumedSessionCandidates []fileWithTime // Files modified after afterTime (resumed sessions)
 
 	tolerance := 5 * time.Second

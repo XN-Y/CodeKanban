@@ -40,8 +40,8 @@ const (
 
 // Time thresholds for phased scanning
 const (
-	recentThreshold   = 24 * time.Hour // Files within 24 hours
-	maxAgeThreshold   = 15 * 24 * time.Hour // Ignore files older than 15 days
+	recentThreshold = 24 * time.Hour      // Files within 24 hours
+	maxAgeThreshold = 15 * 24 * time.Hour // Ignore files older than 15 days
 )
 
 // scanState tracks the scanning progress for a project
@@ -118,12 +118,12 @@ func NewAISessionService() *AISessionService {
 
 // ProjectAISessions contains AI session information for a project.
 type ProjectAISessions struct {
-	HasClaudeCode      bool                `json:"hasClaudeCode"`
-	HasCodex           bool                `json:"hasCodex"`
-	ClaudeSessions     []*AISessionSummary `json:"claudeSessions,omitempty"`
-	CodexSessions      []*AISessionSummary `json:"codexSessions,omitempty"`
-	ClaudeScanPhase    string              `json:"claudeScanPhase,omitempty"`    // "recent", "extended", "complete"
-	CodexScanPhase     string              `json:"codexScanPhase,omitempty"`     // "recent", "extended", "complete"
+	HasClaudeCode   bool                `json:"hasClaudeCode"`
+	HasCodex        bool                `json:"hasCodex"`
+	ClaudeSessions  []*AISessionSummary `json:"claudeSessions,omitempty"`
+	CodexSessions   []*AISessionSummary `json:"codexSessions,omitempty"`
+	ClaudeScanPhase string              `json:"claudeScanPhase,omitempty"` // "recent", "extended", "complete"
+	CodexScanPhase  string              `json:"codexScanPhase,omitempty"`  // "recent", "extended", "complete"
 }
 
 // AISessionSummary contains summary information about an AI session.
@@ -197,7 +197,7 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 	}
 
 	// Get the project-specific session directory
-	encodedPath := encodePathForClaude(projectPath)
+	encodedPath := log_watcher.EncodePathForClaude(projectPath)
 	projectDir := filepath.Join(searcher.GetSessionDir(), encodedPath)
 
 	// Check if directory exists and get its mod time
@@ -512,7 +512,7 @@ func (s *AISessionService) getClaudeCodeSessionsLegacy(ctx context.Context, proj
 	}
 
 	// Get the project-specific session directory
-	encodedPath := encodePathForClaude(projectPath)
+	encodedPath := log_watcher.EncodePathForClaude(projectPath)
 	projectDir := filepath.Join(searcher.GetSessionDir(), encodedPath)
 
 	// Check if directory exists and get its mod time
@@ -1689,15 +1689,4 @@ func (s *AISessionService) parseCodexConversation(filePath string) ([]*Conversat
 	}
 
 	return messages, scanner.Err()
-}
-
-// encodePathForClaude converts a path to Claude Code's folder naming convention.
-// Example: D:\codes\2025\aicode-kanban -> D--codes-2025-aicode-kanban
-func encodePathForClaude(path string) string {
-	path = filepath.Clean(path)
-	path = filepath.ToSlash(path)
-	path = strings.TrimRight(path, "/\\")
-	path = strings.ReplaceAll(path, ":", "-")
-	path = strings.ReplaceAll(path, "/", "-")
-	return path
 }

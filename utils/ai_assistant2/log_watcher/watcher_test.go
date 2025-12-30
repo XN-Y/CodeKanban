@@ -287,6 +287,14 @@ func TestEncodePathForClaude(t *testing.T) {
 			input:    "/home/user/projects/my-app",
 			expected: "-home-user-projects-my-app",
 		},
+		{
+			input:    "D:\\codes\\2025\\game_system2\\next",
+			expected: "D--codes-2025-game-system2-next",
+		},
+		{
+			input:    "/home/user/game_system2/next",
+			expected: "-home-user-game-system2-next",
+		},
 	}
 
 	for _, tt := range tests {

@@ -176,9 +176,9 @@ type Session struct {
 	lastLogWatcherMessage string
 	aiProcessStartTime    time.Time // AI process creation time (from proc.CreateTime)
 	aiProcessWorkingDir   string    // AI process working directory (from proc.Cwd)
-	currentAISessionID    string // Current AI session ID (found synchronously)
-	currentAISessionFile  string // Current AI session file path
-	linkedAISessionID     string // The session ID that has been linked to task (to avoid repeated linking)
+	currentAISessionID    string    // Current AI session ID (found synchronously)
+	currentAISessionFile  string    // Current AI session file path
+	linkedAISessionID     string    // The session ID that has been linked to task (to avoid repeated linking)
 
 	mu sync.RWMutex
 
@@ -568,6 +568,13 @@ func (s *Session) checkAndBroadcastMetadata() {
 		tracker.Deactivate()
 		s.stopLogWatcher()
 	}
+
+	// Populate cached AI session ID (LogWatcher found it asynchronously).
+	s.logWatcherMu.RLock()
+	if metadata.AISessionID == "" && s.currentAISessionID != "" {
+		metadata.AISessionID = s.currentAISessionID
+	}
+	s.logWatcherMu.RUnlock()
 
 	// Check if metadata changed
 	s.metaMu.RLock()
@@ -1155,8 +1162,8 @@ func (s *Session) applyAssistantState(event ai_assistant2.StateChangeEvent) {
 	if s.lastMetadata == nil {
 		// 第一次状态变化时 lastMetadata 可能为 nil，创建新的
 		metadata = &SessionMetadata{
-			Title:      s.Title(),
-			TaskID:     s.TaskID(),
+			Title:       s.Title(),
+			TaskID:      s.TaskID(),
 			AIAssistant: &ai_assistant2.AIAssistantInfo{},
 		}
 	} else if s.lastMetadata.AIAssistant == nil {
@@ -1766,14 +1773,50 @@ func (s *Session) handleLogWatcherEvent(event log_watcher.WatcherEvent) {
 
 		if watcher != nil {
 			info := watcher.Info()
+			sessionID := info.SessionID
+			filePath := info.FilePath
+			metaCwd := ""
+			if info.SessionMeta != nil {
+				metaCwd = info.SessionMeta.Cwd
+			}
+
+			if sessionID == "" && filePath != "" {
+				base := filepath.Base(filePath)
+				if strings.HasPrefix(base, log_watcher.CodexRolloutPrefix) && strings.HasSuffix(base, log_watcher.CodexRolloutSuffix) {
+					sessionID = log_watcher.ExtractSessionIDFromFilename(base)
+				} else if strings.HasSuffix(base, ".jsonl") {
+					sessionID = strings.TrimSuffix(base, ".jsonl")
+				} else {
+					sessionID = strings.TrimSuffix(base, filepath.Ext(base))
+				}
+			}
+
+			if sessionID != "" || filePath != "" || metaCwd != "" {
+				s.logWatcherMu.Lock()
+				if sessionID != "" {
+					s.currentAISessionID = sessionID
+				}
+				if filePath != "" {
+					s.currentAISessionFile = filePath
+				}
+				// Fill working dir from session_meta when process introspection is limited.
+				if s.aiProcessWorkingDir == "" && metaCwd != "" {
+					s.aiProcessWorkingDir = metaCwd
+				}
+				s.logWatcherMu.Unlock()
+			}
+
 			if s.logger != nil {
 				s.logger.Info("log watcher found session",
-					zap.String("sessionId", info.SessionID),
-					zap.String("filePath", info.FilePath))
+					zap.String("sessionId", sessionID),
+					zap.String("filePath", filePath),
+					zap.String("metaCwd", metaCwd))
 			}
 
 			// Auto-link AI session to associated task
-			go s.autoLinkAISession(info.SessionID, info.FilePath)
+			go s.autoLinkAISession(sessionID, filePath)
+			// Trigger a metadata refresh so UI can pick up `aiSessionId` even if status tracking is disabled.
+			go s.checkAndBroadcastMetadata()
 		}
 
 	case log_watcher.EventTypeError:
@@ -1968,13 +2011,13 @@ func (s *Session) checkNeedRelink(info AISessionLinkInfo) bool {
 // findAISessionSync synchronously finds the AI session file and returns session ID and file path.
 // This is called when AI assistant is detected to immediately get the session ID for metadata.
 func (s *Session) findAISessionSync(assistantType types.AssistantType, workingDir string, processStartTime time.Time) (string, string) {
-	if workingDir == "" {
+	if assistantType == types.AssistantTypeClaudeCode && workingDir == "" {
 		return "", ""
 	}
 
 	s.logWatcherMu.Lock()
 	// Check if we already have the session ID cached
-	if s.currentAISessionID != "" && s.aiProcessWorkingDir == workingDir {
+	if s.currentAISessionID != "" && (assistantType == types.AssistantTypeCodex || s.aiProcessWorkingDir == workingDir) {
 		sessionID := s.currentAISessionID
 		sessionFile := s.currentAISessionFile
 		s.logWatcherMu.Unlock()
@@ -2015,7 +2058,33 @@ func (s *Session) findAISessionSync(assistantType types.AssistantType, workingDi
 		baseName := filepath.Base(filePath)
 		sessionID = strings.TrimSuffix(baseName, ".jsonl")
 
-	// TODO: Add support for other assistant types (Codex, etc.)
+	case types.AssistantTypeCodex:
+		searcher, err := log_watcher.NewCodexFileSearcher()
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Debug("failed to create Codex file searcher", zap.Error(err))
+			}
+			return "", ""
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		filePath, err := searcher.FindSessionFile(ctx, processStartTime)
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Debug("failed to find Codex session file", zap.Error(err))
+			}
+			return "", ""
+		}
+
+		if filePath == "" {
+			return "", ""
+		}
+
+		sessionFile = filePath
+		sessionID = log_watcher.ExtractSessionIDFromFilename(filepath.Base(filePath))
+
 	default:
 		return "", ""
 	}
