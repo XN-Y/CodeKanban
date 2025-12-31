@@ -46,6 +46,12 @@
               <span class="form-tip">{{ t('settings.confirmTerminalCloseTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.sendResizeOnSwitch')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="sendResizeOnSwitchValue" />
+              <span class="form-tip">{{ t('settings.sendResizeOnSwitchTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -482,7 +488,7 @@
 import { computed, ref, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { useTitle, useEventListener, useDebounceFn } from '@vueuse/core';
+import { useTitle, useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
 import { useMessage } from 'naive-ui';
 import { ColorPaletteOutline, SettingsOutline, RefreshOutline } from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
@@ -1002,6 +1008,9 @@ const confirmTerminalCloseValue = computed({
   get: () => confirmBeforeTerminalClose.value,
   set: value => settingsStore.updateConfirmBeforeTerminalClose(value),
 });
+
+// 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）
+const sendResizeOnSwitchValue = useStorage('terminal-send-resize-on-switch', true);
 
 const terminalThemeValue = computed({
   get: () => terminalThemeId.value,

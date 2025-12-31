@@ -89,9 +89,9 @@ function remapInvisibleColors(data: string): string {
   return data.replace(TRUE_COLOR_BLACK_REGEX, TRUE_COLOR_BLACK_REPLACEMENT);
 }
 
-// resize 前的滚动位置（用于连续 resize 时只记录第一次的位置）
-let scrollPositionBeforeResize: number | null = null;
-let resizeScrollRestoreTimer: ReturnType<typeof setTimeout> | null = null;
+// 内存中记录已经访问过的终端（刷新后清空）
+// 用于检测刷新后首次切换到终端时滚动到底部
+const visitedTerminals = new Set<string>();
 
 // 监听 clientStatus 变化
 watch(
@@ -277,62 +277,7 @@ function handleResize() {
   }
 
   try {
-    // 只在第一次 resize 时记录滚动位置
-    if (scrollPositionBeforeResize === null) {
-      scrollPositionBeforeResize = terminal.buffer.active.viewportY;
-    }
-
     fitAddon.fit();
-
-    // 取消之前的恢复定时器
-    if (resizeScrollRestoreTimer) {
-      clearTimeout(resizeScrollRestoreTimer);
-    }
-
-    // 等待数据写入完成（length 稳定）后恢复滚动位置
-    let lastLength = terminal.buffer.active.length;
-    let stableCount = 0;
-    let totalChecks = 0;
-    const maxChecks = 50; // 最多等待 1 秒 (50 * 20ms)
-    const positionToRestore = scrollPositionBeforeResize;
-
-    const checkStable = () => {
-      if (!terminal) {
-        scrollPositionBeforeResize = null;
-        return;
-      }
-      totalChecks++;
-      // 超时放弃
-      if (totalChecks >= maxChecks) {
-        scrollPositionBeforeResize = null;
-        resizeScrollRestoreTimer = null;
-        return;
-      }
-      const currentLength = terminal.buffer.active.length;
-      if (currentLength === lastLength) {
-        stableCount++;
-        // length 稳定 3 次（60ms）认为写入完成
-        if (stableCount >= 3) {
-          if (positionToRestore !== null) {
-            // 如果原位置超出新 buffer，则滚动到底部
-            if (positionToRestore > terminal.buffer.active.baseY) {
-              terminal.scrollToBottom();
-            } else {
-              terminal.scrollToLine(positionToRestore);
-            }
-          }
-          scrollPositionBeforeResize = null;
-          resizeScrollRestoreTimer = null;
-          return;
-        }
-      } else {
-        stableCount = 0;
-        lastLength = currentLength;
-      }
-      resizeScrollRestoreTimer = setTimeout(checkStable, 20);
-    };
-
-    resizeScrollRestoreTimer = setTimeout(checkStable, 20);
 
     props.tab.cols = terminal.cols;
     props.tab.rows = terminal.rows;
@@ -486,7 +431,9 @@ onMounted(() => {
       const checkStableAndScroll = () => {
         if (!terminal) return;
         totalChecks++;
-        if (totalChecks >= maxChecks) return;
+        if (totalChecks >= maxChecks) {
+          return;
+        }
 
         const currentLength = terminal.buffer.active.length;
         if (currentLength === lastLength) {
@@ -527,6 +474,9 @@ onMounted(() => {
         setTimeout(() => performFit(false), 200);
         return;
       }
+
+      // 标记为已访问（初始化时就可见的终端）
+      visitedTerminals.add(props.tab.id);
 
       // 更新状态并通知服务器
       props.tab.cols = cols;
@@ -661,6 +611,7 @@ onMounted(() => {
   props.emitter.on(props.tab.id, handleMessage);
   props.emitter.on('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.on(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
+  props.emitter.on(`terminal-activated-${props.tab.id}`, handleTerminalActivated);
   props.emitter.on('terminal-blur-all', handleTerminalBlurEvent);
   window.addEventListener('resize', debouncedResize);
 
@@ -673,11 +624,38 @@ function handleTerminalBlurEvent() {
   terminal?.blur();
 }
 
+// 处理终端激活事件，首次访问时滚动到底部
+function handleTerminalActivated() {
+  if (!terminal || !fitAddon) return;
+
+  const isFirstVisit = !visitedTerminals.has(props.tab.id);
+  if (isFirstVisit) {
+    visitedTerminals.add(props.tab.id);
+    // 先 fit 确保终端尺寸正确，然后滚动到底部
+    try {
+      fitAddon.fit();
+    } catch (e) {
+      // ignore
+    }
+    // 延迟执行滚动，确保 fit 完成
+    setTimeout(() => {
+      if (!terminal) return;
+      // 先滚动到顶部，再滚动到底部，确保滚动生效
+      terminal.scrollToTop();
+      setTimeout(() => {
+        terminal?.scrollToBottom();
+        console.log('[Terminal] First visit after refresh, scrolled to bottom:', props.tab.id);
+      }, 100);
+    }, 50);
+  }
+}
+
 onBeforeUnmount(() => {
   persistSnapshot();
   props.emitter.off(props.tab.id, handleMessage);
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.off(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
+  props.emitter.off(`terminal-activated-${props.tab.id}`, handleTerminalActivated);
   props.emitter.off('terminal-blur-all', handleTerminalBlurEvent);
   window.removeEventListener('resize', debouncedResize);
   if (containerRef.value) {

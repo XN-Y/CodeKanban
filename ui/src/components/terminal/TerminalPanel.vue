@@ -519,6 +519,7 @@ const panelLeft = useStorage('terminal-panel-left', 220);
 const panelRight = useStorage('terminal-panel-right', 170);
 const mobilePanelTop = useStorage('terminal-panel-mobile-top', 15); // 移动端顶部位置 (vh)
 const autoResize = useStorage('terminal-auto-resize', true);
+const sendResizeOnSwitch = useStorage('terminal-send-resize-on-switch', true);
 const showBranchFilter = useStorage('terminal-show-branch-filter', true);
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
@@ -726,6 +727,13 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
     label: t('terminal.autoResize'),
     key: 'auto-resize',
     icon: autoResize.value
+      ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+      : undefined,
+  },
+  {
+    label: t('terminal.sendResizeOnSwitch'),
+    key: 'send-resize-on-switch',
+    icon: sendResizeOnSwitch.value
       ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
       : undefined,
   },
@@ -1657,6 +1665,13 @@ const scheduleActiveTabResize = useDebounceFn((tabId: string) => {
   }
 }, 150);
 
+// 切换标签时强制发送 resize，不受 autoResize 设置影响
+const forceResizeTab = (tabId: string) => {
+  if (expanded.value && tabId) {
+    emitter.emit(`terminal-resize-${tabId}`);
+  }
+};
+
 // 移除自动收缩逻辑，让用户手动控制展开/收缩状态
 // 这样切换项目时不会自动收缩面板
 
@@ -1711,10 +1726,18 @@ watch(
     // Update active tab indicator
     updateActiveTabIndicator();
 
+    // 通知终端已激活（用于首次访问时滚动到底部）
     nextTick(() => {
-      console.log('[Terminal Panel] Queued resize for active terminal:', newId);
-      scheduleActiveTabResize(newId);
+      emitter.emit(`terminal-activated-${newId}`);
     });
+
+    // 根据设置决定是否在切换标签时发送 resize 指令
+    if (sendResizeOnSwitch.value) {
+      nextTick(() => {
+        console.log('[Terminal Panel] Forcing resize for switched terminal:', newId);
+        forceResizeTab(newId);
+      });
+    }
   },
   { flush: 'post' }
 );
@@ -2838,6 +2861,8 @@ function handleSettingsMenuSelect(key: string) {
   showSettingsMenu.value = false;
   if (key === 'auto-resize') {
     autoResize.value = !autoResize.value;
+  } else if (key === 'send-resize-on-switch') {
+    sendResizeOnSwitch.value = !sendResizeOnSwitch.value;
   } else if (key === 'confirm-close') {
     settingsStore.updateConfirmBeforeTerminalClose(!confirmBeforeTerminalClose.value);
   } else if (key === 'branch-filter-toggle') {
