@@ -141,6 +141,7 @@ interface GeneralSettings {
   confirmBeforeTerminalClose: boolean;
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
+  terminalWebGLRenderer: 'auto' | 'force' | 'disable';
 }
 
 const STORAGE_KEY = 'general_settings';
@@ -181,6 +182,7 @@ const defaultSettings: GeneralSettings = {
   confirmBeforeTerminalClose: true,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
+  terminalWebGLRenderer: 'auto',
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -199,6 +201,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
+  const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
 
   /**
    * 获取有效的终端主题 ID
@@ -322,6 +325,10 @@ export const useSettingsStore = defineStore('settings', () => {
     };
   }
 
+  function updateTerminalWebGLRenderer(mode: 'auto' | 'force' | 'disable') {
+    settings.value.terminalWebGLRenderer = mode;
+  }
+
   function resetTerminalFont() {
     settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
   }
@@ -394,6 +401,7 @@ export const useSettingsStore = defineStore('settings', () => {
     confirmBeforeTerminalClose,
     terminalThemeId,
     terminalFont,
+    terminalWebGLRenderer,
     effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
@@ -408,6 +416,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateConfirmBeforeTerminalClose,
     updateTerminalTheme,
     updateTerminalFont,
+    updateTerminalWebGLRenderer,
     resetTerminalFont,
     selectPreset,
     applySystemThemePreset,
@@ -451,6 +460,7 @@ function loadSettings(): GeneralSettings {
         confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
+        terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
       };
     }
   } catch (error) {
@@ -483,6 +493,7 @@ function cloneDefaultSettings(): GeneralSettings {
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     terminalFont: { ...defaultSettings.terminalFont },
+    terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
   };
 }
 
@@ -617,4 +628,13 @@ function sanitizeLetterSpacing(value: number | undefined): number {
     return DEFAULT_TERMINAL_FONT.letterSpacing;
   }
   return Math.min(Math.max(parsed, -2), 5);
+}
+
+const VALID_WEBGL_MODES = ['auto', 'force', 'disable'] as const;
+
+function sanitizeWebGLRenderer(value: string | undefined): 'auto' | 'force' | 'disable' {
+  if (value && VALID_WEBGL_MODES.includes(value as 'auto' | 'force' | 'disable')) {
+    return value as 'auto' | 'force' | 'disable';
+  }
+  return defaultSettings.terminalWebGLRenderer;
 }

@@ -1,13 +1,14 @@
 <template>
   <n-drawer
-    width="520"
-    placement="right"
+    :width="drawerPlacement === 'right' ? drawerWidth : undefined"
+    :height="drawerPlacement === 'bottom' ? '85vh' : undefined"
+    :placement="drawerPlacement"
     :show="show"
     :on-after-enter="handleAfterEnter"
     @update:show="emit('update:show', $event as boolean)"
     @after-leave="emit('closed')"
   >
-    <n-drawer-content :title="t('task.taskDetail')">
+    <n-drawer-content :title="t('task.taskDetail')" :native-scrollbar="false">
       <n-spin :show="detailLoading">
         <n-empty v-if="!task" :description="t('task.pleaseSelectTask')" />
         <div v-else class="task-detail">
@@ -243,6 +244,7 @@ import { CloseOutline, AddOutline, CopyOutline } from '@vicons/ionicons5';
 import dayjs from 'dayjs';
 import { useTaskStore } from '@/stores/task';
 import { useProjectStore } from '@/stores/project';
+import { useResponsive } from '@/composables/useResponsive';
 import { taskActions } from '@/composables/useTaskActions';
 import { extractItem, extractItems } from '@/api/response';
 import type {
@@ -258,6 +260,18 @@ import { http } from '@/api/http';
 import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
 
 const { t } = useLocale();
+const { isMobile, windowWidth } = useResponsive();
+
+// 动态计算抽屉宽度
+const drawerWidth = computed(() => {
+  if (isMobile.value) {
+    return '100%';
+  }
+  return Math.min(520, windowWidth.value * 0.9);
+});
+
+// 移动端从底部弹出
+const drawerPlacement = computed(() => isMobile.value ? 'bottom' : 'right');
 
 const props = defineProps<{
   show: boolean;
@@ -756,5 +770,26 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
   gap: 8px;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+/* 移动端样式 */
+@media (max-width: 767px) {
+  .task-detail {
+    padding-bottom: 80px; /* 为底部按钮留出空间 */
+  }
+
+  .linked-session-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .linked-session-meta {
+    flex-wrap: wrap;
+  }
+
+  .available-session-meta {
+    flex-wrap: wrap;
+  }
 }
 </style>

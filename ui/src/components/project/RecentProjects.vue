@@ -236,6 +236,7 @@ interface ContextMenuState {
 const emit = defineEmits<{ editCurrent: []; toggleTerminal: [] }>();
 const props = defineProps<{
   currentProjectId: string;
+  isMobile?: boolean;
 }>();
 
 const router = useRouter();

@@ -45,6 +45,40 @@
     <div class="board-body">
       <n-spin :show="boardLoading">
         <n-empty v-if="!projectId" :description="t('task.noProject')" />
+
+        <!-- 移动端标签切换视图 -->
+        <div v-else-if="isMobile" class="board-tabs-view">
+          <n-tabs v-model:value="activeColumn" type="line" animated>
+            <n-tab-pane
+              v-for="column in columns"
+              :key="column.key"
+              :name="column.key"
+              :tab="column.title"
+            >
+              <div class="mobile-column-container">
+                <KanbanColumn
+                  :title="column.title"
+                  :status="column.key"
+                  :tasks="filteredTasksByStatus[column.key] ?? []"
+                  :show-add-button="projectId ? column.allowQuickAdd : false"
+                  :add-disabled="!projectId"
+                  :linked-terminals="linkedTerminals"
+                  :is-mobile="true"
+                  @task-moved="handleTaskMoved"
+                  @task-clicked="handleTaskClicked"
+                  @task-edit="handleTaskEdit"
+                  @task-delete="handleTaskDeleteRequest"
+                  @task-copy="handleTaskCopy"
+                  @task-start-work="handleTaskStartWork"
+                  @view-terminal="handleTaskViewTerminal"
+                  @add-click="handleColumnQuickAdd(column.key)"
+                />
+              </div>
+            </n-tab-pane>
+          </n-tabs>
+        </div>
+
+        <!-- 桌面端网格视图 -->
         <div v-else class="board-columns">
           <KanbanColumn
             v-for="column in columns"
@@ -82,6 +116,7 @@ import { RouterLink } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
 import { AddOutline, RefreshOutline } from '@vicons/ionicons5';
+import { useResponsive } from '@/composables/useResponsive';
 import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
 import TaskDetailDrawer from './TaskDetailDrawer.vue';
@@ -95,6 +130,10 @@ import type { Task } from '@/types/models';
 import type TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 
 const { t } = useLocale();
+const { isMobile, isDesktop } = useResponsive();
+
+// 移动端标签切换
+const activeColumn = ref<Task['status']>('in_progress');
 
 const props = defineProps<{
   projectId?: string;
@@ -448,7 +487,44 @@ function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
   overflow: hidden;
 }
 
-@media (max-width: 1200px) {
+/* 移动端标签视图样式 */
+.board-tabs-view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.board-tabs-view :deep(.n-tabs) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.board-tabs-view :deep(.n-tabs-nav) {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--app-surface-color, #ffffff);
+}
+
+.board-tabs-view :deep(.n-tabs-pane-wrapper) {
+  flex: 1;
+  overflow: hidden;
+}
+
+.board-tabs-view :deep(.n-tab-pane) {
+  height: 100%;
+  padding: 0;
+}
+
+.mobile-column-container {
+  height: calc(100vh - 240px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 平板端响应式 */
+@media (max-width: 1200px) and (min-width: 768px) {
   .board-body {
     overflow-y: auto;
   }
@@ -458,6 +534,36 @@ function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
     grid-template-rows: auto;
     height: auto;
     min-height: 100%;
+  }
+}
+
+/* 移动端头部适配 */
+@media (max-width: 767px) {
+  .board-header {
+    padding: 12px 16px;
+  }
+
+  .board-header__actions {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .board-header__actions .n-breadcrumb {
+    width: 100%;
+    order: -1;
+  }
+
+  .board-header__actions .n-select {
+    flex: 1;
+    min-width: 120px;
+  }
+
+  .board-body {
+    padding: 8px;
+  }
+
+  .mobile-column-container {
+    height: calc(100vh - 280px);
   }
 }
 </style>

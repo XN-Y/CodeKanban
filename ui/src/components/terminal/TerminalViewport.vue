@@ -35,11 +35,23 @@ const props = defineProps<{
   emitter: EventEmitter;
   send: (sessionId: string, payload: any) => void;
   shouldAutoFocus?: boolean;
+  isMobile?: boolean;
 }>();
+
+// 移动端使用较小的字体
+// 移动端固定使用 11px，桌面端使用用户设置
+const MOBILE_FONT_SIZE = 11;
+
+function getTerminalFontSize(baseFontSize: number): number {
+  if (props.isMobile) {
+    return MOBILE_FONT_SIZE;
+  }
+  return baseFontSize;
+}
 
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
-const { effectiveTerminalThemeId, terminalFont } = storeToRefs(settingsStore);
+const { effectiveTerminalThemeId, terminalFont, terminalWebGLRenderer } = storeToRefs(settingsStore);
 
 const activeTerminalTheme = computed(() => {
   return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
@@ -103,8 +115,9 @@ watch(activeTerminalTheme, newTheme => {
 // 监听终端字体设置变化，动态更新终端字体
 watch(terminalFont, newFont => {
   if (terminal) {
+    const actualFontSize = getTerminalFontSize(newFont.fontSize);
     terminal.options.fontFamily = newFont.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
-    terminal.options.fontSize = newFont.fontSize;
+    terminal.options.fontSize = actualFontSize;
     terminal.options.fontWeight = newFont.fontWeight;
     terminal.options.fontWeightBold = newFont.fontWeightBold;
     terminal.options.lineHeight = newFont.lineHeight;
@@ -366,6 +379,9 @@ onMounted(() => {
   // 获取当前的字体设置
   const fontSettings = terminalFont.value;
 
+  // 移动端使用固定较小字体
+  const actualFontSize = getTerminalFontSize(fontSettings.fontSize);
+
   terminal = new Terminal({
     allowProposedApi: true,
     convertEol: true,
@@ -374,31 +390,50 @@ onMounted(() => {
     cursorBlink: true,
     scrollOnUserInput: true,
     fontFamily: fontSettings.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
-    fontSize: fontSettings.fontSize,
+    fontSize: actualFontSize,
     fontWeight: fontSettings.fontWeight,
     fontWeightBold: fontSettings.fontWeightBold,
     lineHeight: fontSettings.lineHeight,
     letterSpacing: fontSettings.letterSpacing,
     theme: selectedTheme.theme,
   });
-  // terminal = new Terminal(terminalOptions);
-  console.log('[Terminal] Created terminal object:', terminal);
+  console.log('[Terminal] Created:', {
+    isMobile: props.isMobile,
+    fontSize: actualFontSize,
+    baseFontSize: fontSettings.fontSize,
+    dpr: window.devicePixelRatio,
+    screenWidth: window.screen.width,
+    innerWidth: window.innerWidth,
+    visualViewportWidth: window.visualViewport?.width,
+  });
 
   fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
-  const webglAddon = new WebglAddon();
   serializeAddon = new SerializeAddon();
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinksAddon);
   terminal.loadAddon(searchAddon);
   terminal.loadAddon(serializeAddon);
-  try {
-    terminal.loadAddon(webglAddon);
-    console.log('[Terminal] WebGL renderer loaded successfully');
-  } catch (error) {
-    console.warn('[Terminal] WebGL renderer failed to load, using Canvas fallback', error);
+
+  // 根据设置决定是否使用 WebGL 渲染器
+  // - auto: 桌面端使用 WebGL，移动端使用 Canvas（避免 DPR 缩放问题）
+  // - force: 强制使用 WebGL
+  // - disable: 强制禁用 WebGL
+  const webglMode = terminalWebGLRenderer.value;
+  const shouldUseWebGL = webglMode === 'force' || (webglMode === 'auto' && !props.isMobile);
+
+  if (shouldUseWebGL) {
+    try {
+      const webglAddon = new WebglAddon();
+      terminal.loadAddon(webglAddon);
+      console.log('[Terminal] WebGL renderer loaded successfully', { webglMode, isMobile: props.isMobile });
+    } catch (error) {
+      console.warn('[Terminal] WebGL renderer failed to load, using Canvas fallback', error);
+    }
+  } else {
+    console.log('[Terminal] Using Canvas renderer', { webglMode, isMobile: props.isMobile });
   }
 
   const restoredFromCache = restoreSnapshotIfAvailable();

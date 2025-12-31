@@ -1,5 +1,5 @@
 <template>
-  <div class="kanban-column">
+  <div class="kanban-column" :class="{ 'is-mobile': isMobile }">
     <div class="column-header">
       <div class="column-header__title">
         <h3>{{ title }}</h3>
@@ -26,6 +26,9 @@
         item-key="id"
         :animation="200"
         :group="{ name: 'kanban-tasks', pull: true, put: true }"
+        :delay="isMobile ? 200 : 0"
+        :delay-on-touch-only="true"
+        :touch-start-threshold="10"
         @change="handleChange"
       >
         <template #item="{ element }">
@@ -65,6 +68,7 @@ const props = defineProps<{
   showAddButton?: boolean;
   addDisabled?: boolean;
   linkedTerminals?: Record<string, LinkedTerminalSummary>;
+  isMobile?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -156,5 +160,24 @@ function handleChange(event: any) {
   gap: 12px;
   flex: 1;
   min-height: 100%;
+}
+
+/* 移动端样式 */
+.kanban-column.is-mobile {
+  border: none;
+  border-radius: 0;
+  background-color: transparent;
+}
+
+.kanban-column.is-mobile .column-header {
+  display: none; /* 移动端隐藏列标题，因为标签已显示 */
+}
+
+.kanban-column.is-mobile .column-body {
+  padding: 8px 0;
+}
+
+.kanban-column.is-mobile .task-list {
+  gap: 8px;
 }
 </style>

@@ -1,8 +1,8 @@
 <template>
   <div
     class="terminal-panel"
-    :class="{ 'is-collapsed': !expanded }"
-    :style="panelStyle"
+    :class="{ 'is-collapsed': !expanded && !isMobile, 'is-mobile': isMobile, 'is-hidden': hidden }"
+    :style="isMobile ? undefined : panelStyle"
     @pointerdown.capture="handlePanelPointerDown"
   >
     <div v-if="shouldShowBranchFilter" class="branch-filter-strip">
@@ -38,7 +38,50 @@
     <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
 
     <div class="panel-header">
-          <div v-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
+      <!-- 移动端：下拉选择终端 + 上一个/下一个 -->
+      <div v-if="isMobile && (tabs.length || emptyTabs.length)" class="mobile-tab-selector">
+        <button
+          type="button"
+          class="mobile-nav-btn"
+          :disabled="!hasPrevTab"
+          @click="goToPrevTab"
+        >
+          <n-icon size="18">
+            <ChevronBackOutline />
+          </n-icon>
+        </button>
+        <n-dropdown
+          trigger="manual"
+          placement="bottom-start"
+          :show="showMobileTabSelector"
+          :options="mobileTabOptions"
+          @select="handleMobileTabSelect"
+          @clickoutside="showMobileTabSelector = false"
+        >
+          <button
+            type="button"
+            class="mobile-tab-trigger"
+            @click="showMobileTabSelector = !showMobileTabSelector"
+          >
+            <span class="mobile-tab-title">{{ activeTabTitle }}</span>
+            <n-icon size="16" class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
+              <ChevronDownOutline />
+            </n-icon>
+          </button>
+        </n-dropdown>
+        <button
+          type="button"
+          class="mobile-nav-btn"
+          :disabled="!hasNextTab"
+          @click="goToNextTab"
+        >
+          <n-icon size="18">
+            <ChevronForwardOutline />
+          </n-icon>
+        </button>
+      </div>
+      <!-- 桌面端：标签页切换 -->
+      <div v-else-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
         <n-tabs
           v-model:value="activeId"
           type="card"
@@ -295,6 +338,7 @@
         :emitter="emitter"
         :send="send"
         :should-auto-focus="shouldAutoFocusTerminal"
+        :is-mobile="isMobile"
       />
     </div>
   </div>
@@ -410,6 +454,7 @@ import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
+  ChevronBackOutline,
   ChevronDownOutline,
   ChevronUpOutline,
   ChevronForwardOutline,
@@ -454,9 +499,13 @@ type ItemResponse<T> = {
 
 const props = defineProps<{
   projectId: string;
+  isMobile?: boolean;
+  hidden?: boolean;
 }>();
 
 const projectIdRef = toRef(props, 'projectId');
+const isMobile = computed(() => props.isMobile);
+const hidden = computed(() => props.hidden);
 const message = useMessage();
 const dialog = useDialog();
 const { t } = useLocale();
@@ -468,6 +517,7 @@ const expanded = useStorage('terminal-panel-expanded', true);
 const panelHeight = useStorage('terminal-panel-height', 470);
 const panelLeft = useStorage('terminal-panel-left', 220);
 const panelRight = useStorage('terminal-panel-right', 170);
+const mobilePanelTop = useStorage('terminal-panel-mobile-top', 15); // 移动端顶部位置 (vh)
 const autoResize = useStorage('terminal-auto-resize', true);
 const showBranchFilter = useStorage('terminal-show-branch-filter', true);
 const isResizing = ref(false);
@@ -1047,6 +1097,47 @@ const visibleTabs = computed<CombinedTab[]>(() => {
   return [...realTabs, ...emptyTabs.value];
 });
 
+// 移动端下拉选择终端的选项
+const mobileTabOptions = computed<DropdownOption[]>(() => {
+  return visibleTabs.value.map(tab => ({
+    label: tab.title,
+    key: tab.id,
+  }));
+});
+
+// 当前激活的终端标题
+const activeTabTitle = computed(() => {
+  const tab = visibleTabs.value.find(t => t.id === activeId.value);
+  return tab?.title || t('terminal.emptyGuideTitle');
+});
+
+// 移动端下拉选中处理
+const showMobileTabSelector = ref(false);
+function handleMobileTabSelect(key: string) {
+  activeId.value = key;
+  showMobileTabSelector.value = false;
+}
+
+// 移动端上一个/下一个终端
+const currentTabIndex = computed(() => {
+  return visibleTabs.value.findIndex(t => t.id === activeId.value);
+});
+
+const hasPrevTab = computed(() => currentTabIndex.value > 0);
+const hasNextTab = computed(() => currentTabIndex.value < visibleTabs.value.length - 1);
+
+function goToPrevTab() {
+  if (hasPrevTab.value) {
+    activeId.value = visibleTabs.value[currentTabIndex.value - 1].id;
+  }
+}
+
+function goToNextTab() {
+  if (hasNextTab.value) {
+    activeId.value = visibleTabs.value[currentTabIndex.value + 1].id;
+  }
+}
+
 // 检查是否是空标签
 function isEmptyTabItem(tab: CombinedTab): tab is EmptyTab {
   return 'isEmpty' in tab && tab.isEmpty === true;
@@ -1187,6 +1278,12 @@ const panelStyle = computed(() => ({
   height: expanded.value ? `${panelHeight.value}px` : 'auto',
   left: `${panelLeft.value}px`,
   right: `${panelRight.value}px`,
+  zIndex: terminalPanelZIndex.value,
+}));
+
+// 移动端面板样式
+const mobilePanelStyle = computed(() => ({
+  top: expanded.value ? `${mobilePanelTop.value}vh` : '100vh',
   zIndex: terminalPanelZIndex.value,
 }));
 
@@ -1664,6 +1761,20 @@ function ensureExpanded(options?: ToggleOptions) {
   toggleExpanded(options);
 }
 
+function expand(options?: ToggleOptions) {
+  if (!expanded.value) {
+    toggleExpanded(options);
+  } else {
+    bringTerminalPanelToFront();
+  }
+}
+
+function collapse() {
+  if (expanded.value) {
+    toggleExpanded();
+  }
+}
+
 type EnsureExpandedEvent = ToggleOptions & { projectId?: string };
 
 function handleEnsureExpandedEvent(payload?: EnsureExpandedEvent) {
@@ -1754,6 +1865,36 @@ function startResize(event: MouseEvent) {
   document.addEventListener('mouseup', handleMouseUp);
   document.body.style.cursor = 'ns-resize';
   document.body.style.userSelect = 'none';
+}
+
+// 移动端触摸拖动调整高度
+function startMobileResize(event: TouchEvent) {
+  if (!expanded.value || !isMobile.value) return;
+
+  const touch = event.touches[0];
+  const startY = touch.clientY;
+  const startTop = mobilePanelTop.value;
+  const windowHeight = window.innerHeight;
+
+  const handleTouchMove = (e: TouchEvent) => {
+    const currentTouch = e.touches[0];
+    const deltaY = currentTouch.clientY - startY;
+    // 计算新的顶部位置 (vh)
+    const deltaVh = (deltaY / windowHeight) * 100;
+    // 限制范围: 10vh - 70vh
+    const newTop = Math.max(10, Math.min(70, startTop + deltaVh));
+    mobilePanelTop.value = newTop;
+    scheduleResizeAll();
+  };
+
+  const handleTouchEnd = () => {
+    document.removeEventListener('touchmove', handleTouchMove);
+    document.removeEventListener('touchend', handleTouchEnd);
+    scheduleResizeAll();
+  };
+
+  document.addEventListener('touchmove', handleTouchMove, { passive: true });
+  document.addEventListener('touchend', handleTouchEnd);
 }
 
 function startResizeLeft(event: MouseEvent) {
@@ -2739,6 +2880,8 @@ defineExpose({
   reloadSessions,
   toggleExpanded,
   ensureExpanded,
+  expand,
+  collapse,
   focusTerminal,
 });
 </script>
@@ -3431,6 +3574,135 @@ defineExpose({
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+}
+
+/* ========================================
+   移动端样式
+   ======================================== */
+
+/* 隐藏状态 - 用于移动端视图切换 */
+.terminal-panel.is-hidden {
+  display: none !important;
+}
+
+.terminal-panel.is-mobile {
+  position: fixed;
+  left: 0 !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 60px !important; /* 为底部导航留出空间 */
+  width: 100% !important;
+  height: auto !important;
+  min-width: unset;
+  border-radius: 0;
+  border: none;
+  z-index: 100;
+}
+
+/* 移动端不使用折叠动画 */
+.terminal-panel.is-mobile.is-collapsed {
+  display: block; /* 移动端通过父组件 v-show 控制 */
+}
+
+.terminal-panel.is-mobile .resize-handle {
+  display: none;
+}
+
+.terminal-panel.is-mobile .panel-header {
+  padding: 8px 12px;
+}
+
+.terminal-panel.is-mobile .panel-body {
+  width: 100%;
+}
+
+.terminal-panel.is-mobile .tabs-container {
+  max-width: calc(100vw - 120px);
+}
+
+.terminal-panel.is-mobile .header-actions {
+  gap: 4px;
+}
+
+/* 移动端隐藏折叠按钮 */
+.terminal-panel.is-mobile .toggle-button {
+  display: none;
+}
+
+/* 移动端终端选择下拉 */
+.mobile-tab-selector {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mobile-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--n-text-color, #333);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mobile-nav-btn:active:not(:disabled) {
+  background: var(--n-color-hover, rgba(0, 0, 0, 0.05));
+}
+
+.mobile-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.mobile-tab-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--n-color-hover, rgba(0, 0, 0, 0.05));
+  border: 1px solid var(--n-border-color, #e0e0e0);
+  border-radius: 6px;
+  font-size: 14px;
+  color: var(--n-text-color, #333);
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.mobile-tab-trigger:active {
+  opacity: 0.7;
+}
+
+.mobile-tab-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.mobile-tab-arrow {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+
+.mobile-tab-arrow.is-open {
+  transform: rotate(180deg);
+}
+
+/* 移动端隐藏浮动按钮 */
+@media (max-width: 767px) {
+  .terminal-floating-button {
+    display: none !important;
+  }
 }
 </style>
 

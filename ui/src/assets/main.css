@@ -10,3 +10,103 @@
 main {
   width: 100%;
 }
+
+/* ========================================
+   响应式工具类
+   断点与 Tailwind CSS 标准一致:
+   - xs: < 640px (小屏手机)
+   - sm: 640px - 767px (大屏手机)
+   - md: 768px - 1023px (平板竖屏)
+   - lg: 1024px - 1199px (平板横屏/小桌面)
+   - xl: >= 1200px (桌面)
+   ======================================== */
+
+/* 显示/隐藏工具类 - 移动端 */
+@media (max-width: 767px) {
+  .hide-mobile { display: none !important; }
+  .show-mobile-only { display: block !important; }
+  .show-mobile-flex { display: flex !important; }
+}
+@media (min-width: 768px) {
+  .show-mobile-only { display: none !important; }
+  .show-mobile-flex { display: none !important; }
+}
+
+/* 显示/隐藏工具类 - 平板端 */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .hide-tablet { display: none !important; }
+  .show-tablet-only { display: block !important; }
+  .show-tablet-flex { display: flex !important; }
+}
+@media (max-width: 767px), (min-width: 1024px) {
+  .show-tablet-only { display: none !important; }
+  .show-tablet-flex { display: none !important; }
+}
+
+/* 显示/隐藏工具类 - 桌面端 */
+@media (min-width: 1024px) {
+  .hide-desktop { display: none !important; }
+  .show-desktop-only { display: block !important; }
+  .show-desktop-flex { display: flex !important; }
+}
+@media (max-width: 1023px) {
+  .show-desktop-only { display: none !important; }
+  .show-desktop-flex { display: none !important; }
+}
+
+/* 触摸设备优化 */
+@media (pointer: coarse) {
+  /* Apple HIG 推荐最小触摸目标 44x44px */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* 增加可点击元素的内边距 */
+  .touch-friendly {
+    padding: 12px 16px;
+  }
+}
+
+/* 安全区域适配 (iPhone X 等设备的刘海/底部横条) */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* 移动端底部导航栏预留空间 */
+.has-bottom-nav {
+  padding-bottom: 60px;
+}
+
+/* 移动端滚动容器优化 */
+.mobile-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* 移动端全屏面板基础样式 */
+.mobile-fullscreen-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--app-surface-color, #ffffff);
+  z-index: 100;
+  border-top-left-radius: 16px;
+  border-top-right-radius: 16px;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* 拖动条 (用于移动端面板) */
+.drag-handle {
+  width: 40px;
+  height: 4px;
+  background-color: var(--n-border-color, #e0e0e0);
+  border-radius: 2px;
+  margin: 8px auto;
+}

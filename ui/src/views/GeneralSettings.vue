@@ -379,6 +379,19 @@
             </n-space>
           </n-form-item>
 
+          <n-form-item :label="t('settings.terminalWebGLRenderer')">
+            <n-space vertical size="small">
+              <n-radio-group v-model:value="terminalWebGLRendererValue">
+                <n-space>
+                  <n-radio value="auto">{{ t('settings.webglAuto') }}</n-radio>
+                  <n-radio value="force">{{ t('settings.webglForce') }}</n-radio>
+                  <n-radio value="disable">{{ t('settings.webglDisable') }}</n-radio>
+                </n-space>
+              </n-radio-group>
+              <span class="form-tip">{{ webglRendererTip }}</span>
+            </n-space>
+          </n-form-item>
+
           <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
 
           <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
@@ -522,6 +535,7 @@ const {
   confirmBeforeTerminalClose,
   terminalThemeId,
   terminalFont,
+  terminalWebGLRenderer,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
 
@@ -1044,6 +1058,22 @@ const terminalLetterSpacingValue = computed({
   set: (value: number) => settingsStore.updateTerminalFont({ letterSpacing: value ?? 0 }),
 });
 
+const terminalWebGLRendererValue = computed({
+  get: () => terminalWebGLRenderer.value,
+  set: (value: 'auto' | 'force' | 'disable') => settingsStore.updateTerminalWebGLRenderer(value),
+});
+
+const webglRendererTip = computed(() => {
+  switch (terminalWebGLRendererValue.value) {
+    case 'force':
+      return t('settings.webglForceTip');
+    case 'disable':
+      return t('settings.webglDisableTip');
+    default:
+      return t('settings.webglAutoTip');
+  }
+});
+
 function handleResetFontFamily() {
   settingsStore.updateTerminalFont({ fontFamily: '' });
 }
@@ -1204,5 +1234,65 @@ function formatShortcutLabel(event: KeyboardEvent) {
   font-size: 12px;
   color: var(--n-text-color-3, #8a8fa3);
   margin-left: 4px;
+}
+
+/* ========================================
+   移动端响应式样式
+   ======================================== */
+@media (max-width: 767px) {
+  .general-settings-page {
+    padding: 16px;
+    padding-bottom: 32px;
+  }
+
+  /* 表单标签置顶 */
+  .general-settings-page :deep(.n-form-item) {
+    --n-label-width: auto !important;
+  }
+
+  .general-settings-page :deep(.n-form-item-label) {
+    text-align: left;
+    padding-bottom: 8px;
+  }
+
+  .general-settings-page :deep(.n-form-item-blank) {
+    min-width: 0;
+  }
+
+  /* 卡片内容紧凑 */
+  .general-settings-page :deep(.n-card) {
+    margin-bottom: 12px;
+  }
+
+  .general-settings-page :deep(.n-card-header) {
+    padding: 12px 16px;
+  }
+
+  .general-settings-page :deep(.n-card__content) {
+    padding: 12px 16px;
+  }
+
+  /* 预览面板 */
+  .preview-content {
+    padding: 16px;
+  }
+
+  .preview-banner {
+    padding: 12px;
+    font-size: 14px;
+  }
+
+  /* 表单项间距 */
+  .general-settings-page :deep(.n-form-item) {
+    margin-bottom: 16px;
+  }
+}
+
+/* 平板端响应式 */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .general-settings-page {
+    padding: 20px;
+    max-width: 100%;
+  }
 }
 </style>

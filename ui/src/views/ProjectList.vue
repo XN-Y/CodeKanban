@@ -737,4 +737,77 @@ function getPriorityLabel(priority: number): string {
 .path-text {
   margin-left: 8px;
 }
+
+/* ========================================
+   移动端响应式样式
+   ======================================== */
+@media (max-width: 767px) {
+  .project-list-page {
+    padding: 16px;
+  }
+
+  /* 页面头部简化 */
+  .project-list-page :deep(.n-page-header) {
+    padding: 0;
+  }
+
+  .project-list-page :deep(.n-page-header-content) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .title-wrapper {
+    flex-wrap: wrap;
+  }
+
+  /* 搜索工具栏纵向堆叠 */
+  .search-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .search-toolbar .n-input {
+    max-width: none;
+    width: 100%;
+  }
+
+  .search-toolbar .n-space {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  /* 项目网格单列 */
+  .project-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* 项目卡片优化 */
+  .project-card :deep(.n-card-header) {
+    padding: 12px;
+  }
+
+  .project-card :deep(.n-card__content) {
+    padding: 12px;
+    padding-top: 0;
+  }
+
+  /* 空状态容器 */
+  .empty-container {
+    min-height: 300px;
+  }
+}
+
+/* 平板端响应式 */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .project-list-page {
+    padding: 20px;
+  }
+
+  .project-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
 </style>

@@ -9,6 +9,16 @@ import { useTerminalStore } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
 
+// Props
+const props = withDefaults(
+  defineProps<{
+    isMobile?: boolean;
+  }>(),
+  {
+    isMobile: false,
+  }
+);
+
 const { t } = useI18n();
 const terminalStore = useTerminalStore();
 const projectStore = useProjectStore();
@@ -1232,8 +1242,130 @@ watch(
 </script>
 
 <template>
+  <!-- 移动端：全屏列表布局 -->
   <div
-    v-show="!isOnProjectListPage"
+    v-if="props.isMobile"
+    class="mobile-notification-container"
+  >
+    <div class="mobile-notification-header">
+      <h3 class="mobile-notification-title">{{ t('terminal.notifications') }}</h3>
+      <div class="mobile-notification-actions">
+        <button
+          type="button"
+          class="mobile-action-btn"
+          :class="{ 'is-active': compactModeEnabled }"
+          @click="toggleCompactMode"
+          :title="compactModeEnabled ? t('terminal.disableCompactMode') : t('terminal.enableCompactMode')"
+        >
+          <svg v-if="!compactModeEnabled" width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M4 8h16M7 12h10M9 16h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <n-dropdown
+          trigger="click"
+          placement="bottom-end"
+          :options="notificationModeOptions"
+          @select="handleNotificationModeSelect"
+        >
+          <button
+            type="button"
+            class="mobile-action-btn"
+            :class="{ 'is-active': notificationDisplayMode !== 'standard' }"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path d="M4 7h16M4 12h10M4 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </n-dropdown>
+        <button
+          type="button"
+          class="mobile-action-btn"
+          @click="toggleNotifications"
+          :title="notificationsEnabled ? t('terminal.disableNotifications') : t('terminal.enableNotifications')"
+        >
+          <svg v-if="notificationsEnabled" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+          </svg>
+          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
+            <path d="m21.7 18.7-1.6-1.6"></path>
+            <path d="M2 2l20 20"></path>
+            <path d="M8.7 3a6 6 0 0 1 10.3 5c0 1-.1 1.9-.4 2.7"></path>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div v-if="filteredNotifications.length === 0" class="mobile-empty-state">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+      </svg>
+      <p>{{ t('terminal.noNotifications') }}</p>
+    </div>
+
+    <div v-else class="mobile-notification-list" :class="{ 'is-compact': compactModeEnabled }">
+      <div
+        v-for="notification in filteredNotifications"
+        :key="notification.id"
+        class="mobile-notification-row"
+        :class="{ 'is-current-session': notification.sessionId === currentActiveSessionId }"
+      >
+        <button
+          v-if="getProjectIndex(notification)"
+          class="mobile-project-badge"
+          :class="{
+            'is-filtered': projectIndexFilter === notification.projectId,
+            'is-single-project': projectIndexMap.size <= 1
+          }"
+          :style="{ '--badge-color': getProjectIndex(notification)?.color }"
+          @click="toggleProjectFilter(notification.projectId, $event)"
+        >
+          {{ getProjectIndex(notification)?.index }}
+        </button>
+        <div
+          :class="['mobile-notification-item', getNotificationClass(notification), { 'notification-clicked': isNotificationClicked(notification.id) }]"
+          @click="handleNotificationClick(notification)"
+        >
+          <div class="mobile-notification-content">
+            <div v-if="!compactModeEnabled" class="mobile-notification-header-row">
+              <span class="notification-icon" :style="{ color: notification.assistantColor || defaultAssistantColor }" v-html="notification.assistantIcon || defaultAssistantIcon"></span>
+              <span class="mobile-notification-header-title">{{ getNotificationHeader(notification) }}</span>
+            </div>
+            <div class="mobile-notification-body" :class="{ 'compact-body': compactModeEnabled }">
+              <div class="mobile-notification-description" :class="{ compact: compactModeEnabled }">
+                <template v-if="compactModeEnabled">
+                  <span class="notification-text compact-text">{{ getCompactDisplayText(notification) }}</span>
+                </template>
+                <template v-else>
+                  <span class="notification-text">
+                    <span class="notification-tab-label">{{ getTabLabel(notification) }}</span>
+                    <template v-if="getLatestAgentCommand(notification)">
+                      <span class="notification-text-separator">·</span>
+                      <span class="notification-command-text">{{ getLatestAgentCommand(notification) }}</span>
+                    </template>
+                  </span>
+                </template>
+              </div>
+              <div v-if="!compactModeEnabled" class="mobile-notification-footer">
+                <span class="notification-action-hint">{{ t('terminal.clickToJumpTerminal') }}</span>
+                <span class="notification-time" :title="notification.timestamp.toLocaleString()">{{ formatNotificationTime(notification.timestamp) }}</span>
+              </div>
+            </div>
+          </div>
+          <button class="mobile-notification-close" @click.stop="dismissNotification(notification)" :title="t('common.close')">×</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 桌面端：右上角固定定位通知栏 -->
+  <div
+    v-else-if="!isOnProjectListPage"
     class="notification-bar-container"
     :class="{ 'compact-mode': compactModeEnabled }"
   >
@@ -2044,5 +2176,271 @@ watch(
     opacity: 0;
     transform: translateX(100%);
   }
+}
+
+/* ==================== 移动端样式 ==================== */
+.mobile-notification-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-surface-color, #ffffff);
+}
+
+.mobile-notification-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--n-border-color, #e0e0e0);
+  margin-bottom: 12px;
+}
+
+.mobile-notification-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-color, #000);
+  margin: 0;
+}
+
+.mobile-notification-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.mobile-action-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--n-border-color, #e0e0e0);
+  background: var(--app-surface-color, #ffffff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-color-secondary, #666);
+  transition: all 0.2s ease;
+}
+
+.mobile-action-btn:active {
+  background: var(--n-hover-color, #f5f5f5);
+}
+
+.mobile-action-btn.is-active {
+  background: var(--n-primary-color, #18a058);
+  border-color: var(--n-primary-color, #18a058);
+  color: #fff;
+}
+
+.mobile-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--text-color-secondary, #999);
+  padding: 40px 20px;
+}
+
+.mobile-empty-state svg {
+  opacity: 0.5;
+}
+
+.mobile-empty-state p {
+  margin: 0;
+  font-size: 14px;
+}
+
+.mobile-notification-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-notification-list.is-compact {
+  gap: 6px;
+}
+
+.mobile-notification-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.mobile-project-badge {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--badge-color, #3b82f6);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.15s ease;
+  margin-top: 12px;
+}
+
+.mobile-project-badge:active {
+  transform: scale(0.95);
+}
+
+.mobile-project-badge.is-filtered {
+  border-color: #fff;
+  box-shadow: 0 0 0 2px var(--badge-color, #3b82f6), 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.mobile-project-badge.is-single-project {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mobile-notification-list.is-compact .mobile-project-badge {
+  width: 20px;
+  height: 20px;
+  font-size: 10px;
+  margin-top: 6px;
+}
+
+.mobile-notification-item {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--app-surface-color, #ffffff);
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-left: 4px solid transparent;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.mobile-notification-item:active {
+  transform: scale(0.98);
+}
+
+.mobile-notification-list.is-compact .mobile-notification-item {
+  padding: 8px 12px;
+  border-radius: 8px;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 移动端通知类型样式 */
+.mobile-notification-item.notification-completion {
+  background: #d1fae5;
+  border-color: rgba(16, 185, 129, 0.3);
+  border-left-color: #10b981;
+}
+
+.mobile-notification-item.notification-completion.notification-clicked {
+  border-left-color: #9ca3af !important;
+  background: #ffffff !important;
+}
+
+.mobile-notification-item.notification-idle {
+  background: #ffffff;
+  border-color: rgba(156, 163, 175, 0.3);
+  border-left-color: #9ca3af;
+}
+
+.mobile-notification-item.notification-approval {
+  background: #fed7aa;
+  border-color: rgba(247, 144, 9, 0.3);
+  border-left-color: #f79009;
+}
+
+.mobile-notification-item.notification-working {
+  background: var(--kanban-terminal-tab-working-bg, rgba(237, 233, 254, 1));
+  border-color: rgba(139, 92, 246, 0.3);
+  border-left-color: var(--kanban-terminal-tab-working-border, rgba(139, 92, 246, 1));
+}
+
+.mobile-notification-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.mobile-notification-header-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mobile-notification-header-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-color, #000);
+}
+
+.mobile-notification-body {
+  font-size: 13px;
+  color: var(--text-color-secondary, #666);
+  line-height: 1.4;
+}
+
+.mobile-notification-body.compact-body {
+  display: flex;
+  align-items: center;
+}
+
+.mobile-notification-description {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: nowrap;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+}
+
+.mobile-notification-description.compact {
+  gap: 8px;
+  align-items: center;
+}
+
+.mobile-notification-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.mobile-notification-close {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-color-secondary, #666);
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-notification-close:active {
+  opacity: 1;
+}
+
+/* 移动端当前激活行高亮 */
+.mobile-notification-row.is-current-session .mobile-notification-item {
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 2px 8px rgba(15, 23, 42, 0.08);
 }
 </style>

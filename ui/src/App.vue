@@ -8,6 +8,7 @@ import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import { useSettingsStore } from '@/stores/settings';
+import { useResponsive } from '@/composables/useResponsive';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
 import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
@@ -15,6 +16,7 @@ import { getPresetById } from '@/constants/themes';
 const settingsStore = useSettingsStore();
 const { activeTheme: theme, followSystemTheme, currentPresetId } = storeToRefs(settingsStore);
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
+const { isMobile } = useResponsive();
 
 // 获取预设主题中的终端标签颜色（用于 fallback）
 // 当 followSystemTheme 为 true 时，根据系统主题选择预设
@@ -199,7 +201,7 @@ onBeforeUnmount(() => {
               <AppInitializer />
               <RouterView />
               <NotePad />
-              <AINotificationBar />
+              <AINotificationBar v-if="!isMobile" />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>
