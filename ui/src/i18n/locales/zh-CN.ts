@@ -349,6 +349,9 @@ export default {
     // Terminal Panel
     collapse: '折叠',
     expand: '展开',
+    dragPanel: '按住拖动',
+    fullscreen: '全屏',
+    exitFullscreen: '退出全屏',
     shortcutHint: '按 {key} 展开',
     shortcutHint2: '快捷键 {key}',
     duplicateTab: '复制标签',

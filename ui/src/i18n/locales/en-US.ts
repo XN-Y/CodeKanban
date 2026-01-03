@@ -349,6 +349,9 @@ export default {
     // Terminal Panel
     collapse: 'Collapse',
     expand: 'Expand',
+    dragPanel: 'Hold to Drag',
+    fullscreen: 'Fullscreen',
+    exitFullscreen: 'Exit Fullscreen',
     shortcutHint: 'Press {key} to expand',
     shortcutHint2: 'Shortcut {key}',
     duplicateTab: 'Duplicate Tab',

@@ -1,7 +1,7 @@
 <template>
   <div
     class="terminal-panel"
-    :class="{ 'is-collapsed': !expanded && !isMobile, 'is-mobile': isMobile, 'is-hidden': hidden }"
+    :class="{ 'is-collapsed': !expanded && !isMobile, 'is-mobile': isMobile, 'is-hidden': hidden, 'is-resizing': isResizing || isDragging, 'is-fullscreen': isFullscreen }"
     :style="isMobile ? undefined : panelStyle"
     @pointerdown.capture="handlePanelPointerDown"
   >
@@ -27,15 +27,20 @@
     </div>
 
     <!-- 拖动调整高度的手柄 -->
-    <div class="resize-handle resize-handle-top" @mousedown="startResize">
+    <div v-if="!isFullscreen" class="resize-handle resize-handle-top" @mousedown="startResize">
       <div class="resize-indicator"></div>
     </div>
 
     <!-- 左侧拖动手柄 -->
-    <div class="resize-handle resize-handle-left" @mousedown="startResizeLeft"></div>
+    <div v-if="!isFullscreen" class="resize-handle resize-handle-left" @mousedown="startResizeLeft"></div>
 
     <!-- 右侧拖动手柄 -->
-    <div class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
+    <div v-if="!isFullscreen" class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
+
+    <!-- 底部拖动手柄 -->
+    <div v-if="!isFullscreen" class="resize-handle resize-handle-bottom" @mousedown="startResizeBottom">
+      <div class="resize-indicator"></div>
+    </div>
 
     <div class="panel-header">
       <!-- 移动端：下拉选择终端 + 上一个/下一个 -->
@@ -178,7 +183,46 @@
         @select="handleContextMenuSelect"
         @clickoutside="contextMenuTab = null"
       />
+      <n-dropdown
+        trigger="manual"
+        placement="bottom-start"
+        :show="showDragHandleMenu"
+        :options="dragHandleMenuOptions"
+        :x="dragHandleMenuX"
+        :y="dragHandleMenuY"
+        @select="handleDragHandleMenuSelect"
+        @clickoutside="showDragHandleMenu = false"
+      />
       <div class="header-actions">
+        <!-- 拖动手柄 - 仅非全屏时显示 -->
+        <n-tooltip v-if="!isFullscreen" trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <div class="panel-drag-handle" @mousedown="startPanelDrag">
+              <div class="drag-dots">
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+              </div>
+            </div>
+          </template>
+          {{ t('terminal.dragPanel') }}
+        </n-tooltip>
+        <!-- 退出全屏按钮 - 仅全屏时显示 -->
+        <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <n-button text size="small" @click="toggleFullscreen">
+              <template #icon>
+                <n-icon>
+                  <ContractOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ t('terminal.exitFullscreen') }}
+        </n-tooltip>
         <!-- 创建终端按钮 - 始终显示 -->
         <n-dropdown
           v-if="worktrees.length > 1"
@@ -188,34 +232,47 @@
           @select="handleCreateTerminalSelect"
           @clickoutside="handleCreateTerminalMenuClose"
         >
-          <n-button text size="small" @click="handleCreateTerminalButtonClick">
-            <template #icon>
-              <n-icon>
-                <Add />
-              </n-icon>
+          <n-tooltip trigger="hover" placement="bottom" :delay="100">
+            <template #trigger>
+              <n-button text size="small" @click="handleCreateTerminalButtonClick">
+                <template #icon>
+                  <n-icon>
+                    <Add />
+                  </n-icon>
+                </template>
+              </n-button>
             </template>
-          </n-button>
+            {{ t('terminal.createNewTerminal') }}
+          </n-tooltip>
         </n-dropdown>
-        <n-button v-else text size="small" @click="handleCreateTerminalClick">
-          <template #icon>
-            <n-icon>
-              <Add />
-            </n-icon>
+        <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <n-button text size="small" @click="handleCreateTerminalClick">
+              <template #icon>
+                <n-icon>
+                  <Add />
+                </n-icon>
+              </template>
+            </n-button>
           </template>
-        </n-button>
-        <n-button
-          v-if="projectIdRef"
-          text
-          size="small"
-          :title="t('terminal.viewAISessions')"
-          @click="showAISessionHistory = true"
-        >
-          <template #icon>
-            <n-icon>
-              <TimeOutline />
-            </n-icon>
+          {{ t('terminal.createNewTerminal') }}
+        </n-tooltip>
+        <n-tooltip v-if="projectIdRef" trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <n-button
+              text
+              size="small"
+              @click="showAISessionHistory = true"
+            >
+              <template #icon>
+                <n-icon>
+                  <TimeOutline />
+                </n-icon>
+              </template>
+            </n-button>
           </template>
-        </n-button>
+          {{ t('terminal.viewAISessions') }}
+        </n-tooltip>
         <n-dropdown
           trigger="click"
           placement="bottom-end"
@@ -224,13 +281,18 @@
           @select="handleSettingsMenuSelect"
           @clickoutside="showSettingsMenu = false"
         >
-          <n-button text size="small" @click="showSettingsMenu = !showSettingsMenu">
-            <template #icon>
-              <n-icon>
-                <SettingsOutline />
-              </n-icon>
+          <n-tooltip trigger="hover" placement="bottom" :delay="100">
+            <template #trigger>
+              <n-button text size="small" @click="showSettingsMenu = !showSettingsMenu">
+                <template #icon>
+                  <n-icon>
+                    <SettingsOutline />
+                  </n-icon>
+                </template>
+              </n-button>
             </template>
-          </n-button>
+            {{ t('nav.settings') }}
+          </n-tooltip>
         </n-dropdown>
         <n-tooltip
           trigger="hover"
@@ -471,6 +533,8 @@ import {
   FolderOpenOutline,
   TimeOutline,
   ChatbubblesOutline,
+  ContractOutline,
+  ExpandOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
@@ -517,6 +581,7 @@ const expanded = useStorage('terminal-panel-expanded', true);
 const panelHeight = useStorage('terminal-panel-height', 470);
 const panelLeft = useStorage('terminal-panel-left', 220);
 const panelRight = useStorage('terminal-panel-right', 170);
+const panelBottom = useStorage('terminal-panel-bottom', 12);
 const mobilePanelTop = useStorage('terminal-panel-mobile-top', 15); // 移动端顶部位置 (vh)
 const autoResize = useStorage('terminal-auto-resize', true);
 const sendResizeOnSwitch = useStorage('terminal-send-resize-on-switch', true);
@@ -722,6 +787,25 @@ const createTerminalMenuClosedAt = ref(0); // 记录菜单关闭时间
 
 // 设置菜单相关状态
 const showSettingsMenu = ref(false);
+
+// 拖动手柄菜单相关状态
+const showDragHandleMenu = ref(false);
+const dragHandleMenuX = ref(0);
+const dragHandleMenuY = ref(0);
+const isFullscreen = useStorage('terminal-panel-fullscreen', false);
+const savedPanelState = ref<{ left: number; right: number; bottom: number; height: number } | null>(null);
+
+const dragHandleMenuOptions = computed<DropdownOption[]>(() => [
+  {
+    label: isFullscreen.value ? t('terminal.exitFullscreen') : t('terminal.fullscreen'),
+    key: 'toggle-fullscreen',
+  },
+  {
+    label: t('terminal.resetPosition'),
+    key: 'reset-position',
+  },
+]);
+
 const settingsMenuOptions = computed<DropdownOption[]>(() => [
   {
     label: t('terminal.autoResize'),
@@ -918,7 +1002,7 @@ const createTerminalOptionsWithHeader = computed<DropdownOption[]>(() => {
   ];
 });
 
-const MIN_HEIGHT = 200;
+const MIN_HEIGHT = 40; // 只保留一条缝
 const MAX_HEIGHT = 800;
 const MIN_MARGIN = 12;
 const MAX_MARGIN_PERCENT = 0.4; // 最大边距占窗口宽度的40%
@@ -1286,6 +1370,7 @@ const panelStyle = computed(() => ({
   height: expanded.value ? `${panelHeight.value}px` : 'auto',
   left: `${panelLeft.value}px`,
   right: `${panelRight.value}px`,
+  bottom: `${panelBottom.value}px`,
   zIndex: terminalPanelZIndex.value,
 }));
 
@@ -1542,42 +1627,10 @@ onBeforeUnmount(() => {
   emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
 });
 
-// 处理窗口大小变化，当窗口缩小时自动调整边距以维持最小宽度
+// 处理窗口大小变化 - 不再自动调整边距，保持 padding 值不变
+// 窗口缩小时允许终端超出屏幕，而不是挤压终端
 function adjustPanelMarginsForMinWidth() {
-  if (typeof window === 'undefined' || !expanded.value) {
-    return;
-  }
-
-  const windowWidth = window.innerWidth;
-  const currentWidth = windowWidth - panelLeft.value - panelRight.value;
-
-  // 如果当前宽度小于最小宽度，需要调整边距
-  if (currentWidth < MIN_PANEL_WIDTH) {
-    const shortage = MIN_PANEL_WIDTH - currentWidth;
-
-    // 优先缩小左侧边距
-    const availableLeftReduction = panelLeft.value - MIN_MARGIN;
-    if (availableLeftReduction >= shortage) {
-      // 左侧空间足够
-      const newLeft = panelLeft.value - shortage;
-      if (newLeft !== panelLeft.value) {
-        panelLeft.value = newLeft;
-      }
-    } else {
-      // 左侧空间不够，需要同时调整右侧
-      const newLeft = MIN_MARGIN;
-      const remainingShortage = shortage - availableLeftReduction;
-      const newRight = Math.max(MIN_MARGIN, panelRight.value - remainingShortage);
-
-      // 只在值真的改变时才赋值，避免触发不必要的响应式更新
-      if (newLeft !== panelLeft.value) {
-        panelLeft.value = newLeft;
-      }
-      if (newRight !== panelRight.value) {
-        panelRight.value = newRight;
-      }
-    }
-  }
+  // 不做任何调整，保持 left、right、bottom 值不变
 }
 
 // 使用防抖函数包装，避免频繁调用（200ms防抖）
@@ -1861,12 +1914,15 @@ function startResize(event: MouseEvent) {
 
   const startY = event.clientY;
   const startHeight = panelHeight.value;
+  const windowHeight = window.innerHeight;
 
   const handleMouseMove = (e: MouseEvent) => {
     if (!isResizing.value) return;
 
     const deltaY = startY - e.clientY;
-    const newHeight = Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, startHeight + deltaY));
+    // 限制在边界内：高度不能小于0，顶部不能超出屏幕
+    const maxHeight = windowHeight - panelBottom.value;
+    const newHeight = Math.max(0, Math.min(maxHeight, startHeight + deltaY));
     panelHeight.value = newHeight;
 
     // 拖动时实时调整终端大小（使用节流函数）
@@ -1935,28 +1991,9 @@ function startResizeLeft(event: MouseEvent) {
     if (!isResizing.value) return;
 
     const deltaX = e.clientX - startX;
-    let newLeft = Math.max(MIN_MARGIN, Math.min(maxMargin, startLeft + deltaX));
-    let newRight = panelRight.value;
-
-    // 计算当前宽度
-    const currentWidth = windowWidth - newLeft - newRight;
-
-    // 如果宽度小于最小宽度，尝试缩小右侧边距
-    if (currentWidth < MIN_PANEL_WIDTH) {
-      const shortage = MIN_PANEL_WIDTH - currentWidth;
-      const minRight = Math.max(MIN_MARGIN, newRight - shortage);
-      const actualReduction = newRight - minRight;
-
-      // 调整右侧边距
-      newRight = minRight;
-
-      // 如果右侧无法完全补偿，则限制左侧的移动
-      if (actualReduction < shortage) {
-        newLeft = windowWidth - MIN_PANEL_WIDTH - newRight;
-      }
-
-      panelRight.value = newRight;
-    }
+    // 限制在边界内：不能小于0，也不能让面板宽度为负
+    const maxLeft = windowWidth - panelRight.value;
+    const newLeft = Math.max(0, Math.min(maxLeft, startLeft + deltaX));
 
     panelLeft.value = newLeft;
 
@@ -1996,28 +2033,9 @@ function startResizeRight(event: MouseEvent) {
     if (!isResizing.value) return;
 
     const deltaX = startX - e.clientX;
-    let newRight = Math.max(MIN_MARGIN, Math.min(maxMargin, startRight + deltaX));
-    let newLeft = panelLeft.value;
-
-    // 计算当前宽度
-    const currentWidth = windowWidth - newLeft - newRight;
-
-    // 如果宽度小于最小宽度，尝试缩小左侧边距
-    if (currentWidth < MIN_PANEL_WIDTH) {
-      const shortage = MIN_PANEL_WIDTH - currentWidth;
-      const minLeft = Math.max(MIN_MARGIN, newLeft - shortage);
-      const actualReduction = newLeft - minLeft;
-
-      // 调整左侧边距
-      newLeft = minLeft;
-
-      // 如果左侧无法完全补偿，则限制右侧的移动
-      if (actualReduction < shortage) {
-        newRight = windowWidth - MIN_PANEL_WIDTH - newLeft;
-      }
-
-      panelLeft.value = newLeft;
-    }
+    // 限制在边界内：不能小于0，也不能让面板宽度为负
+    const maxRight = windowWidth - panelLeft.value;
+    const newRight = Math.max(0, Math.min(maxRight, startRight + deltaX));
 
     panelRight.value = newRight;
 
@@ -2040,6 +2058,145 @@ function startResizeRight(event: MouseEvent) {
   document.addEventListener('mouseup', handleMouseUp);
   document.body.style.cursor = 'ew-resize';
   document.body.style.userSelect = 'none';
+}
+
+function startResizeBottom(event: MouseEvent) {
+  if (!expanded.value) return;
+
+  event.preventDefault();
+  isResizing.value = true;
+
+  const startY = event.clientY;
+  const startHeight = panelHeight.value;
+  const startBottom = panelBottom.value;
+  const windowHeight = window.innerHeight;
+
+  // 固定顶部位置（从屏幕底部算起）
+  const fixedTopPosition = startBottom + startHeight;
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (!isResizing.value) return;
+
+    // 向上拖动底部手柄 -> deltaY为负 -> bottom增加（底部向上移）
+    // 向下拖动底部手柄 -> deltaY为正 -> bottom减小（底部向下移）
+    const deltaY = e.clientY - startY;
+    // 限制在边界内：bottom不能小于0，也不能让高度为负
+    const maxBottom = fixedTopPosition;
+    let newBottom = Math.max(0, Math.min(maxBottom, startBottom - deltaY));
+
+    // 根据固定的顶部位置计算新高度
+    const newHeight = fixedTopPosition - newBottom;
+
+    panelBottom.value = newBottom;
+    panelHeight.value = newHeight;
+
+    // 拖动时实时调整终端大小（使用节流函数）
+    scheduleResizeAll();
+  };
+
+  const handleMouseUp = () => {
+    isResizing.value = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+
+    // 拖动结束后再调整一次，确保精确
+    scheduleResizeAll();
+  };
+
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
+  document.body.style.cursor = 'ns-resize';
+  document.body.style.userSelect = 'none';
+}
+
+const isDragging = ref(false);
+const DRAG_THRESHOLD = 5; // 鼠标移动超过这个距离才算拖动
+
+function startPanelDrag(event: MouseEvent) {
+  if (!expanded.value) return;
+
+  // 全屏模式下不允许拖动
+  if (isFullscreen.value) {
+    // 显示菜单
+    showDragHandleMenu.value = true;
+    dragHandleMenuX.value = event.clientX;
+    dragHandleMenuY.value = event.clientY;
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const startLeft = panelLeft.value;
+  const startRight = panelRight.value;
+  const startBottom = panelBottom.value;
+  const windowWidth = window.innerWidth;
+  const windowHeight = window.innerHeight;
+  const maxMargin = windowWidth * MAX_MARGIN_PERCENT;
+
+  let hasMoved = false;
+
+  const handleMouseMove = (e: MouseEvent) => {
+    const deltaX = e.clientX - startX;
+    const deltaY = e.clientY - startY;
+
+    // 检查是否超过拖动阈值
+    if (!hasMoved && (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD)) {
+      hasMoved = true;
+      isDragging.value = true;
+      document.body.style.cursor = 'move';
+      document.body.style.userSelect = 'none';
+    }
+
+    if (!isDragging.value) return;
+
+    const deltaYInverted = startY - e.clientY; // Y轴向上为正
+
+    // 计算新的位置 - 限制有效的deltaX，确保不超出边界
+    // 左边界限制：newLeft >= 0 => deltaX >= -startLeft
+    // 右边界限制：newRight >= 0 => deltaX <= startRight
+    const effectiveDeltaX = Math.max(-startLeft, Math.min(startRight, deltaX));
+
+    const newLeft = startLeft + effectiveDeltaX;
+    const newRight = startRight - effectiveDeltaX;
+
+    // 底部边界：不能小于0，顶部不能超出屏幕
+    const maxBottom = windowHeight - panelHeight.value;
+    const newBottom = Math.max(0, Math.min(maxBottom, startBottom + deltaYInverted));
+
+    panelLeft.value = newLeft;
+    panelRight.value = newRight;
+    panelBottom.value = newBottom;
+
+    // 拖动时实时调整终端大小（使用节流函数）
+    scheduleResizeAll();
+  };
+
+  const handleMouseUp = (e: MouseEvent) => {
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+
+    if (!hasMoved) {
+      // 没有移动，是点击 - 显示菜单
+      showDragHandleMenu.value = true;
+      dragHandleMenuX.value = e.clientX;
+      dragHandleMenuY.value = e.clientY;
+    } else {
+      // 拖动结束后再调整一次，确保精确
+      scheduleResizeAll();
+    }
+
+    isDragging.value = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  document.addEventListener('mousemove', handleMouseMove);
+  document.addEventListener('mouseup', handleMouseUp);
 }
 
 // 处理创建终端按钮点击 - 如果只有一个分支，直接创建
@@ -2188,7 +2345,7 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
   }
 }
 
-async function handleClose(sessionId: string) {
+function handleClose(sessionId: string): Promise<void> | void {
   // 处理空标签的关闭
   if (isEmptyTab(sessionId)) {
     closeEmptyTab(sessionId);
@@ -2197,20 +2354,33 @@ async function handleClose(sessionId: string) {
 
   // 如果开启了关闭确认，先弹出确认对话框
   if (confirmBeforeTerminalClose.value) {
-    const tab = tabs.value.find(t => t.id === sessionId);
-    const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
+    return new Promise((resolve, reject) => {
+      const tab = tabs.value.find(t => t.id === sessionId);
+      const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
 
-    dialog.warning({
-      title: t('terminal.confirmCloseTitle'),
-      content: t('terminal.confirmCloseContent', { title: tabTitle }),
-      positiveText: t('terminal.confirmCloseButton'),
-      negativeText: t('common.cancel'),
-      onPositiveClick: async () => {
-        await performClose(sessionId);
-      },
+      dialog.warning({
+        title: t('terminal.confirmCloseTitle'),
+        content: t('terminal.confirmCloseContent', { title: tabTitle }),
+        positiveText: t('terminal.confirmCloseButton'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          try {
+            await performClose(sessionId);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        },
+        onNegativeClick: () => {
+          reject();
+        },
+        onClose: () => {
+          reject();
+        },
+      });
     });
   } else {
-    await performClose(sessionId);
+    return performClose(sessionId);
   }
 }
 
@@ -2886,8 +3056,53 @@ function resetTerminalPosition() {
   panelHeight.value = 470;
   panelLeft.value = 220;
   panelRight.value = 170;
+  panelBottom.value = 12;
 
   // 重置后触发终端大小调整
+  nextTick(() => {
+    scheduleResizeAll();
+  });
+}
+
+// 处理拖动手柄菜单选择
+function handleDragHandleMenuSelect(key: string) {
+  showDragHandleMenu.value = false;
+  if (key === 'toggle-fullscreen') {
+    toggleFullscreen();
+  } else if (key === 'reset-position') {
+    resetTerminalPosition();
+  }
+}
+
+// 切换全屏模式
+function toggleFullscreen() {
+  if (isFullscreen.value) {
+    // 退出全屏 - 恢复之前的状态
+    if (savedPanelState.value) {
+      panelLeft.value = savedPanelState.value.left;
+      panelRight.value = savedPanelState.value.right;
+      panelBottom.value = savedPanelState.value.bottom;
+      panelHeight.value = savedPanelState.value.height;
+      savedPanelState.value = null;
+    }
+    isFullscreen.value = false;
+  } else {
+    // 进入全屏 - 保存当前状态
+    savedPanelState.value = {
+      left: panelLeft.value,
+      right: panelRight.value,
+      bottom: panelBottom.value,
+      height: panelHeight.value,
+    };
+    // 设置全屏参数
+    panelLeft.value = 0;
+    panelRight.value = 0;
+    panelBottom.value = 0;
+    panelHeight.value = window.innerHeight;
+    isFullscreen.value = true;
+  }
+
+  // 触发终端大小调整
   nextTick(() => {
     scheduleResizeAll();
   });
@@ -2914,7 +3129,6 @@ defineExpose({
 <style scoped>
 .terminal-panel {
   position: fixed;
-  bottom: 12px;
   min-width: 375px;
   display: flex;
   flex-direction: column;
@@ -2939,6 +3153,11 @@ defineExpose({
 
 .terminal-panel:not(.is-collapsed) {
   animation: expandPanel 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 拖动时禁用过渡动画，确保立即响应 */
+.terminal-panel.is-resizing {
+  transition: none !important;
 }
 
 .resize-handle {
@@ -2990,6 +3209,22 @@ defineExpose({
   background: var(--n-color-primary);
 }
 
+.resize-handle-bottom {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.resize-handle-bottom:hover .resize-indicator {
+  background-color: var(--n-color-primary);
+  opacity: 1;
+}
+
 .resize-indicator {
   width: 40px;
   height: 3px;
@@ -2997,6 +3232,35 @@ defineExpose({
   background-color: var(--n-border-color);
   opacity: 0.5;
   transition: all 0.2s ease;
+}
+
+.panel-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  cursor: move;
+  opacity: 0.4;
+  transition: opacity 0.2s;
+  user-select: none;
+}
+
+.panel-drag-handle:hover {
+  opacity: 1;
+}
+
+.drag-dots {
+  display: grid;
+  grid-template-columns: repeat(2, 4px);
+  grid-template-rows: repeat(3, 4px);
+  gap: 2px;
+}
+
+.drag-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background-color: currentColor;
 }
 
 .panel-header {
