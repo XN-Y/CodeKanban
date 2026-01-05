@@ -98,6 +98,29 @@ func registerAISessionRoutes(group *huma.Group) {
 		op.Tags = []string{aiSessionTag}
 	})
 
+	// Get a (possibly large) tool_result content on demand (by database ID).
+	huma.Get(group, "/ai-sessions/{id}/conversation/tool-results/{toolUseId}", func(ctx context.Context, input *struct {
+		ID        string `path:"id" doc:"会话ID（数据库ID）"`
+		ToolUseID string `path:"toolUseId" doc:"tool_use_id"`
+	}) (*h.ItemResponse[service.ToolResultResponse], error) {
+		result, err := svc.GetClaudeToolResult(ctx, input.ID, input.ToolUseID)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("tool result not found or failed to load")
+		}
+
+		resp := h.NewItemResponse(*result)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-get-tool-result"
+		op.Summary = "按需获取 Claude tool_result 内容"
+		op.Description = "默认对话返回 tool_result 的折叠预览，本接口用于展开时按需拉取原始内容"
+		op.Tags = []string{aiSessionTag}
+	})
+
 	// Get conversation for a session by session ID (UUID)
 	huma.Get(group, "/ai-sessions/by-session-id/{sessionId}/conversation", func(ctx context.Context, input *struct {
 		SessionID string `path:"sessionId" doc:"会话ID（AI助手生成的UUID）"`
@@ -117,6 +140,29 @@ func registerAISessionRoutes(group *huma.Group) {
 		op.OperationID = "ai-session-get-conversation-by-session-id"
 		op.Summary = "通过Session ID获取AI会话的对话内容"
 		op.Description = "返回指定会话的完整对话记录（用户消息和助手回复），使用AI助手生成的Session ID"
+		op.Tags = []string{aiSessionTag}
+	})
+
+	// Get a (possibly large) tool_result content on demand (by session ID).
+	huma.Get(group, "/ai-sessions/by-session-id/{sessionId}/conversation/tool-results/{toolUseId}", func(ctx context.Context, input *struct {
+		SessionID string `path:"sessionId" doc:"会话ID（AI助手生成的UUID）"`
+		ToolUseID string `path:"toolUseId" doc:"tool_use_id"`
+	}) (*h.ItemResponse[service.ToolResultResponse], error) {
+		result, err := svc.GetClaudeToolResultBySessionID(ctx, input.SessionID, input.ToolUseID)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("tool result not found or failed to load")
+		}
+
+		resp := h.NewItemResponse(*result)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-get-tool-result-by-session-id"
+		op.Summary = "按需获取 Claude tool_result 内容（SessionID）"
+		op.Description = "默认对话返回 tool_result 的折叠预览，本接口用于展开时按需拉取原始内容"
 		op.Tags = []string{aiSessionTag}
 	})
 

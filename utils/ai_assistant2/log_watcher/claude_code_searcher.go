@@ -123,6 +123,7 @@ func (s *ClaudeCodeFileSearcher) GetSessionDir() string {
 
 // EncodePathForClaude converts a path to Claude Code's folder naming convention.
 // Example: D:\codes\2025\aicode-kanban -> D--codes-2025-aicode-kanban
+// Example: D:\codes\2025\临时\box -> D--codes-2025----box (Chinese chars become dashes)
 func EncodePathForClaude(path string) string {
 	// Clean the path first (removes trailing slashes, normalizes separators)
 	path = filepath.Clean(path)
@@ -133,16 +134,22 @@ func EncodePathForClaude(path string) string {
 	// Remove any remaining trailing slashes (for safety)
 	path = strings.TrimRight(path, "/\\")
 
-	// Replace : with - (for drive letters like D: -> D-)
-	path = strings.ReplaceAll(path, ":", "-")
+	// Build result by processing each rune
+	var result strings.Builder
+	for _, r := range path {
+		switch {
+		case r == ':' || r == '/' || r == '_':
+			// Replace special characters with dash
+			result.WriteRune('-')
+		case r > 127:
+			// Replace non-ASCII characters (Chinese, etc.) with dash
+			result.WriteRune('-')
+		default:
+			result.WriteRune(r)
+		}
+	}
 
-	// Replace / with -
-	path = strings.ReplaceAll(path, "/", "-")
-
-	// Replace _ with - (Claude Code also replaces underscores)
-	path = strings.ReplaceAll(path, "_", "-")
-
-	return path
+	return result.String()
 }
 
 func encodePathForClaude(path string) string {
@@ -336,14 +343,20 @@ func ParseClaudeCodeLine(line string) (*UserMessage, string, error) {
 		return nil, "", err
 	}
 
-	// Only process user type entries
-	if entry.Type != "user" {
+	// Only extract user messages (assistant/tool messages are ignored here).
+	switch entry.Type {
+	case "user":
+		return parseClaudeCodeUserMessage(entry.Message, entry.Timestamp, entry.SessionID, entry.IsMeta)
+	default:
 		return nil, entry.SessionID, nil
 	}
+}
 
+// parseClaudeCodeUserMessage parses a user message from Claude Code log
+func parseClaudeCodeUserMessage(message json.RawMessage, timestamp, sessionID string, isMeta bool) (*UserMessage, string, error) {
 	// Skip meta messages (system-generated messages)
-	if entry.IsMeta {
-		return nil, entry.SessionID, nil
+	if isMeta {
+		return nil, sessionID, nil
 	}
 
 	// Parse message content
@@ -352,12 +365,12 @@ func ParseClaudeCodeLine(line string) (*UserMessage, string, error) {
 		Content interface{} `json:"content"`
 	}
 
-	if err := json.Unmarshal(entry.Message, &msgContent); err != nil {
-		return nil, entry.SessionID, err
+	if err := json.Unmarshal(message, &msgContent); err != nil {
+		return nil, sessionID, err
 	}
 
 	if msgContent.Role != "user" {
-		return nil, entry.SessionID, nil
+		return nil, sessionID, nil
 	}
 
 	// Extract text content
@@ -369,23 +382,23 @@ func ParseClaudeCodeLine(line string) (*UserMessage, string, error) {
 	case []interface{}:
 		// Handle array content (e.g., tool results)
 		// Skip these for now as they are typically tool responses
-		return nil, entry.SessionID, nil
+		return nil, sessionID, nil
 	}
 
 	if textContent == "" {
-		return nil, entry.SessionID, nil
+		return nil, sessionID, nil
 	}
 
 	// Skip system command messages (e.g., /model, /help, local commands)
 	if strings.HasPrefix(textContent, "<command-") || strings.HasPrefix(textContent, "<local-command") {
-		return nil, entry.SessionID, nil
+		return nil, sessionID, nil
 	}
 
-	ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
+	ts, _ := time.Parse(time.RFC3339, timestamp)
 	return &UserMessage{
 		Timestamp: ts,
 		Message:   textContent,
-	}, entry.SessionID, nil
+	}, sessionID, nil
 }
 
 // ClaudeCodeLogWatcher is a specialized LogWatcher for Claude Code

@@ -506,17 +506,36 @@ func (w *LogWatcher) parseCodexLine(line string) (*UserMessage, error) {
 			return nil, err
 		}
 
-		// Only capture user_message events
-		if payload.Type != "user_message" {
-			return nil, nil
+		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
+
+		switch payload.Type {
+		case "user_message":
+			return &UserMessage{
+				Timestamp: ts,
+				Message:   payload.Message,
+				Images:    payload.Images,
+			}, nil
+		case "agent_message":
+			// Agent final response message
+			if payload.Message != "" {
+				return &UserMessage{
+					Timestamp: ts,
+					Message:   payload.Message,
+				}, nil
+			}
+		case "agent_reasoning":
+			// Agent reasoning/thinking text
+			if payload.Text != "" {
+				return &UserMessage{
+					Timestamp: ts,
+					Message:   payload.Text,
+				}, nil
+			}
 		}
 
-		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
-		return &UserMessage{
-			Timestamp: ts,
-			Message:   payload.Message,
-			Images:    payload.Images,
-		}, nil
+		return nil, nil
+
+	// Skip response_item - it duplicates event_msg content
 
 	case "turn_context":
 		var payload TurnContextPayload

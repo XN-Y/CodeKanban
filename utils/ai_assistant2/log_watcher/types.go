@@ -91,6 +91,7 @@ type SessionMetaPayload struct {
 type EventMsgPayload struct {
 	Type    string   `json:"type"`
 	Message string   `json:"message,omitempty"`
+	Text    string   `json:"text,omitempty"` // For agent_reasoning
 	Images  []string `json:"images,omitempty"`
 	Reason  string   `json:"reason,omitempty"`
 }

@@ -83,6 +83,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerTaskRoutes(v1)
 	registerNotePadRoutes(v1)
 	registerAISessionRoutes(v1)
+	registerFSRoutes(v1)
 	registerSystemRoutes(v1, cfg, terminalManager)
 	registerUploadRoutes(v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)

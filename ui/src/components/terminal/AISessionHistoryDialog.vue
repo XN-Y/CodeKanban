@@ -9,20 +9,43 @@
     @close="handleClose"
   >
     <template #header-extra>
-      <n-button
-        quaternary
-        circle
-        size="small"
-        :loading="loading"
-        @click="loadSessions(false)"
-      >
-        <template #icon>
-          <n-icon><RefreshOutline /></n-icon>
-        </template>
-      </n-button>
+      <n-space :size="4" align="center">
+        <n-button
+          quaternary
+          circle
+          size="small"
+          :title="t('terminal.specifyDirectory')"
+          @click="showDirectoryPicker = true"
+        >
+          <template #icon>
+            <n-icon><FolderOpenOutline /></n-icon>
+          </template>
+        </n-button>
+        <n-button
+          quaternary
+          circle
+          size="small"
+          :loading="loading"
+          @click="loadSessions(false)"
+        >
+          <template #icon>
+            <n-icon><RefreshOutline /></n-icon>
+          </template>
+        </n-button>
+      </n-space>
     </template>
     <n-spin :show="loading">
       <div class="session-tabs">
+        <!-- Current directory indicator -->
+        <div v-if="currentViewPath" class="current-path-bar">
+          <n-icon :size="14"><FolderOutline /></n-icon>
+          <span class="current-path-text" :title="currentViewPath">{{ truncatePath(currentViewPath, 60) }}</span>
+          <n-button v-if="isCustomPath" quaternary size="tiny" @click="resetToProjectPath">
+            <template #icon>
+              <n-icon :size="12"><CloseOutline /></n-icon>
+            </template>
+          </n-button>
+        </div>
         <div class="search-bar">
           <n-input
             v-model:value="searchQuery"
@@ -204,18 +227,28 @@
       :messages="currentConversation?.messages ?? []"
       :loading="conversationLoading"
       :session-info="currentSessionInfo"
+      @load-tool-result="loadToolResult"
     />
   </n-modal>
+
+  <!-- Directory Picker Dialog -->
+  <DirectoryPickerDialog
+    v-model:show="showDirectoryPicker"
+    :initial-path="currentProjectPath"
+    @confirm="handleDirectorySelected"
+  />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { ChevronForwardOutline, ChatboxOutline, PlayOutline, CopyOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5';
+import { ChevronForwardOutline, ChatboxOutline, PlayOutline, CopyOutline, RefreshOutline, SearchOutline, FolderOpenOutline, FolderOutline, CloseOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { useTimeAgo } from '@vueuse/core';
 import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
+import DirectoryPickerDialog from '@/components/common/DirectoryPickerDialog.vue';
+import { useProjectStore } from '@/stores/project';
 
 type ScanPhase = 'recent' | 'extended' | 'complete';
 
@@ -257,6 +290,13 @@ const emit = defineEmits<{
 
 const { t } = useLocale();
 const message = useMessage();
+const projectStore = useProjectStore();
+
+// 通过 projectId 获取项目路径
+const currentProjectPath = computed(() => {
+  const project = projectStore.projects.find(p => p.id === props.projectId);
+  return project?.path || '';
+});
 
 const loading = ref(false);
 const activeType = ref<'claude_code' | 'codex'>('claude_code');
@@ -266,6 +306,10 @@ const codexSessions = ref<AISessionSummary[]>([]);
 const claudeScanPhase = ref<ScanPhase>('complete');
 const codexScanPhase = ref<ScanPhase>('complete');
 const searchQuery = ref('');
+const customPath = ref('');
+const showDirectoryPicker = ref(false);
+const currentViewPath = ref('');
+const isCustomPath = ref(false);
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Filtered sessions based on search query
@@ -296,12 +340,21 @@ interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  kind?: string;
+  toolUseId?: string;
+  hasMore?: boolean;
+  full?: string;
 }
 
 interface ConversationResponse {
   sessionId: string;
   title: string;
   messages: ConversationMessage[];
+}
+
+interface ToolResultResponse {
+  toolUseId: string;
+  content: string;
 }
 
 const showConversationModal = ref(false);
@@ -478,6 +531,72 @@ function handleClose() {
   showModal.value = false;
 }
 
+function handleDirectorySelected(path: string) {
+  customPath.value = path;
+  loadSessionsByPath(path);
+}
+
+async function loadSessionsByPath(path?: string) {
+  const targetPath = path || customPath.value.trim();
+  console.log('[AISessionHistoryDialog] loadSessionsByPath:', targetPath);
+  if (!targetPath) {
+    message.warning(t('terminal.pleaseEnterPath'));
+    return;
+  }
+
+  loading.value = true;
+  expandedSessionId.value = null;
+
+  try {
+    const response = await http
+      .Post<ItemResponse<ProjectAISessions>>('/ai-sessions/by-path', {
+        path: targetPath,
+      })
+      .send();
+
+    console.log('[AISessionHistoryDialog] response:', response);
+    const data = response?.item;
+    console.log('[AISessionHistoryDialog] data:', data);
+    console.log('[AISessionHistoryDialog] claudeSessions:', data?.claudeSessions);
+    console.log('[AISessionHistoryDialog] codexSessions:', data?.codexSessions);
+    if (data) {
+      claudeSessions.value = data.claudeSessions || [];
+      codexSessions.value = data.codexSessions || [];
+      claudeScanPhase.value = data.claudeScanPhase || 'complete';
+      codexScanPhase.value = data.codexScanPhase || 'complete';
+      currentViewPath.value = targetPath;
+      isCustomPath.value = true;
+
+      // Auto-select tab with sessions
+      if (data.hasCodex && !data.hasClaudeCode) {
+        activeType.value = 'codex';
+      } else {
+        activeType.value = 'claude_code';
+      }
+
+      // Schedule refresh if still scanning
+      if (showModal.value && (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')) {
+        if (refreshTimer) {
+          clearTimeout(refreshTimer);
+        }
+        refreshTimer = setTimeout(() => loadSessionsByPath(targetPath), 2000);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load AI sessions by path:', error);
+    message.error(t('common.loadFailed'));
+  } finally {
+    loading.value = false;
+  }
+}
+
+function resetToProjectPath() {
+  customPath.value = '';
+  isCustomPath.value = false;
+  currentViewPath.value = '';
+  loadSessions(false);
+}
+
 async function viewConversation(session: AISessionSummary) {
   currentSessionTitle.value = session.title || t('terminal.untitledSession');
   currentSession.value = session;
@@ -503,6 +622,31 @@ async function viewConversation(session: AISessionSummary) {
   }
 }
 
+async function loadToolResult(toolUseId: string) {
+  const session = currentSession.value;
+  if (!session || !toolUseId) return;
+
+  try {
+    const response = await http
+      .Get<{ item?: ToolResultResponse }>(
+        `/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`,
+        { cacheFor: 0 }
+      )
+      .send();
+
+    const content = response?.item?.content;
+    if (!content || !currentConversation.value) return;
+
+    const msg = currentConversation.value.messages.find((m) => m.toolUseId === toolUseId);
+    if (msg) {
+      msg.full = content;
+    }
+  } catch (error) {
+    console.error('Failed to load tool result:', error);
+    message.error(t('terminal.loadConversationFailed'));
+  }
+}
+
 function closeConversationModal() {
   showConversationModal.value = false;
   currentConversation.value = null;
@@ -517,6 +661,26 @@ function closeConversationModal() {
 
 .search-bar {
   margin-bottom: 12px;
+}
+
+.current-path-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  margin-bottom: 10px;
+  background: var(--n-color-embedded);
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--n-text-color-2);
+}
+
+.current-path-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
 }
 
 .session-list {

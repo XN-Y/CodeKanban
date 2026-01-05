@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -147,6 +148,9 @@ func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath
 	ctx = ensureContext(ctx)
 	logger := s.logger(ctx)
 
+	logger.Info("GetProjectAISessions called",
+		zap.String("projectPath", projectPath))
+
 	// Ensure background scanner is running
 	startBackgroundScanner()
 
@@ -159,15 +163,24 @@ func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath
 
 	// Normalize the project path
 	projectPath = filepath.Clean(projectPath)
+	logger.Debug("normalized project path",
+		zap.String("projectPath", projectPath))
 
 	// Get Claude Code sessions (phased)
 	claudeSessions, claudePhase, err := s.getClaudeCodeSessionsPhased(ctx, projectPath)
 	if err != nil {
 		logger.Warn("failed to get Claude Code sessions", zap.Error(err), zap.String("path", projectPath))
 	} else {
+		// Ensure we always have a non-nil slice (nil slices get omitted with omitempty)
+		if claudeSessions == nil {
+			claudeSessions = []*AISessionSummary{}
+		}
 		result.ClaudeSessions = claudeSessions
 		result.HasClaudeCode = len(claudeSessions) > 0
 		result.ClaudeScanPhase = claudePhase
+		logger.Debug("claude sessions found",
+			zap.Int("count", len(claudeSessions)),
+			zap.String("phase", claudePhase))
 	}
 
 	// Get Codex sessions (phased)
@@ -175,10 +188,23 @@ func (s *AISessionService) GetProjectAISessions(ctx context.Context, projectPath
 	if err != nil {
 		logger.Warn("failed to get Codex sessions", zap.Error(err), zap.String("path", projectPath))
 	} else {
+		// Ensure we always have a non-nil slice (nil slices get omitted with omitempty)
+		if codexSessions == nil {
+			codexSessions = []*AISessionSummary{}
+		}
 		result.CodexSessions = codexSessions
 		result.HasCodex = len(codexSessions) > 0
 		result.CodexScanPhase = codexPhase
+		logger.Debug("codex sessions found",
+			zap.Int("count", len(codexSessions)),
+			zap.String("phase", codexPhase))
 	}
+
+	logger.Info("GetProjectAISessions returning",
+		zap.Bool("hasClaudeCode", result.HasClaudeCode),
+		zap.Bool("hasCodex", result.HasCodex),
+		zap.Int("claudeCount", len(result.ClaudeSessions)),
+		zap.Int("codexCount", len(result.CodexSessions)))
 
 	return result, nil
 }
@@ -193,22 +219,68 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 	// Create searcher to find Claude Code session directory
 	searcher, err := log_watcher.NewClaudeCodeFileSearcher(projectPath)
 	if err != nil {
+		logger.Debug("failed to create claude searcher",
+			zap.String("projectPath", projectPath),
+			zap.Error(err))
 		return nil, ScanPhaseComplete, err
 	}
 
 	// Get the project-specific session directory
 	encodedPath := log_watcher.EncodePathForClaude(projectPath)
-	projectDir := filepath.Join(searcher.GetSessionDir(), encodedPath)
+	sessionBaseDir := searcher.GetSessionDir()
+	projectDir := filepath.Join(sessionBaseDir, encodedPath)
+
+	logger.Info("searching for claude sessions",
+		zap.String("projectPath", projectPath),
+		zap.String("encodedPath", encodedPath),
+		zap.String("projectDir", projectDir))
 
 	// Check if directory exists and get its mod time
 	dirInfo, err := os.Stat(projectDir)
 	if os.IsNotExist(err) {
+		// Try case-insensitive match as fallback (Windows paths are case-insensitive)
+		if entries, listErr := os.ReadDir(sessionBaseDir); listErr == nil {
+			var availableDirs []string
+			encodedPathLower := strings.ToLower(encodedPath)
+			for _, e := range entries {
+				if e.IsDir() {
+					dirName := e.Name()
+					availableDirs = append(availableDirs, dirName)
+					// Case-insensitive match
+					if strings.ToLower(dirName) == encodedPathLower {
+						logger.Debug("found case-insensitive match for session directory",
+							zap.String("expected", encodedPath),
+							zap.String("found", dirName))
+						projectDir = filepath.Join(sessionBaseDir, dirName)
+						dirInfo, err = os.Stat(projectDir)
+						if err == nil {
+							goto dirFound
+						}
+					}
+				}
+			}
+			logger.Info("claude session directory does not exist",
+				zap.String("projectDir", projectDir),
+				zap.String("expectedDirName", encodedPath),
+				zap.Strings("availableDirs", availableDirs))
+		} else {
+			logger.Debug("claude session directory does not exist",
+				zap.String("projectDir", projectDir))
+		}
 		return nil, ScanPhaseComplete, nil // No sessions for this project
 	}
+dirFound:
 	if err != nil {
+		logger.Debug("failed to stat claude session directory",
+			zap.String("projectDir", projectDir),
+			zap.Error(err))
 		return nil, ScanPhaseComplete, err
 	}
 	dirModTime := dirInfo.ModTime()
+
+	logger.Info("claude session directory found",
+		zap.String("projectDir", projectDir),
+		zap.Time("modTime", dirModTime))
 
 	// Check directory cache - fast path
 	dirCacheMu.RLock()
@@ -238,6 +310,10 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 		return nil, ScanPhaseComplete, err
 	}
 
+	logger.Debug("scanning claude directory",
+		zap.String("projectDir", projectDir),
+		zap.Int("totalEntries", len(entries)))
+
 	db := model.GetDB()
 	if db == nil {
 		return nil, ScanPhaseComplete, model.ErrDBNotInitialized
@@ -247,6 +323,7 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 	var sessions []*AISessionSummary
 	var extendedFiles []string // Files for background scan (1-15 days old)
 
+	var processedCount, skippedAgent, skippedOld int
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -255,6 +332,9 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 		name := entry.Name()
 		// Skip agent files and non-jsonl files
 		if strings.HasPrefix(name, "agent-") || !strings.HasSuffix(name, ".jsonl") {
+			if strings.HasPrefix(name, "agent-") {
+				skippedAgent++
+			}
 			continue
 		}
 
@@ -268,8 +348,14 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 
 		// Skip files older than 15 days
 		if fileAge > maxAgeThreshold {
+			skippedOld++
 			continue
 		}
+
+		processedCount++
+		logger.Debug("processing claude session file",
+			zap.String("name", name),
+			zap.Duration("age", fileAge))
 
 		// Extract session ID from filename (remove .jsonl extension)
 		sessionID := strings.TrimSuffix(name, ".jsonl")
@@ -306,16 +392,30 @@ func (s *AISessionService) getClaudeCodeSessionsPhased(ctx context.Context, proj
 		// Recent files (within 24 hours) - process immediately
 		session, err := s.getOrUpdateClaudeSession(ctx, db, sessionID, filePath, info, projectPath)
 		if err != nil {
-			logger.Debug("failed to process session file",
+			logger.Warn("failed to process session file",
 				zap.String("file", filePath),
+				zap.Int64("fileSize", info.Size()),
 				zap.Error(err))
 			continue
 		}
 
 		if session != nil {
 			sessions = append(sessions, session)
+			logger.Info("session added",
+				zap.String("sessionId", session.SessionID),
+				zap.String("title", session.Title))
+		} else {
+			logger.Warn("session is nil after processing",
+				zap.String("file", filePath))
 		}
 	}
+
+	logger.Info("claude scan summary",
+		zap.Int("processed", processedCount),
+		zap.Int("skippedAgent", skippedAgent),
+		zap.Int("skippedOld", skippedOld),
+		zap.Int("sessionsFound", len(sessions)),
+		zap.Int("extendedFiles", len(extendedFiles)))
 
 	// Sort by last message time (newest first)
 	sort.Slice(sessions, func(i, j int) bool {
@@ -717,7 +817,12 @@ type claudeSessionData struct {
 	AssistantMessageCount int
 }
 
+// maxLinesForListScan is the maximum number of lines to scan for list metadata.
+// We only need title, model, and start time - no need to scan entire file.
+const maxLinesForListScan = 100
+
 // parseClaudeCodeSessionFile parses a Claude Code session file to extract metadata.
+// Only scans the first 100 lines for efficiency - enough to get title, model, and start time.
 func (s *AISessionService) parseClaudeCodeSessionFile(filePath string) (*claudeSessionData, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -725,16 +830,24 @@ func (s *AISessionService) parseClaudeCodeSessionFile(filePath string) (*claudeS
 	}
 	defer file.Close()
 
+	fileInfo, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
 	data := &claudeSessionData{}
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 1024*1024)
 
+	lineCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
+
+		lineCount++
 
 		msg, sessionID, err := log_watcher.ParseClaudeCodeLine(line)
 		if err != nil {
@@ -785,13 +898,24 @@ func (s *AISessionService) parseClaudeCodeSessionFile(filePath string) (*claudeS
 				data.AssistantMessageCount++
 			}
 		}
+
+		// Stop after reading enough lines - we have what we need for the list
+		if lineCount >= maxLinesForListScan {
+			break
+		}
 	}
 
 	// If we couldn't determine start time, use file mod time
 	if data.StartedAt.IsZero() {
-		if info, err := os.Stat(filePath); err == nil {
-			data.StartedAt = info.ModTime()
-		}
+		data.StartedAt = fileInfo.ModTime()
+	}
+
+	// Estimate message count based on file size if we hit the limit
+	// (actual count will be updated when viewing conversation)
+	if lineCount >= maxLinesForListScan {
+		// Rough estimate: average ~2KB per message entry
+		data.MessageCount = int(fileInfo.Size() / 2000)
+		data.AssistantMessageCount = data.MessageCount / 2
 	}
 
 	return data, scanner.Err()
@@ -1443,6 +1567,10 @@ type ConversationMessage struct {
 	Role      string    `json:"role"`      // "user" or "assistant"
 	Content   string    `json:"content"`   // Message content
 	Timestamp time.Time `json:"timestamp"` // Message timestamp
+	Kind      string    `json:"kind,omitempty"`
+	ToolUseID string    `json:"toolUseId,omitempty"`
+	HasMore   bool      `json:"hasMore,omitempty"`
+	Full      string    `json:"full,omitempty"`
 }
 
 // ConversationResponse contains the full conversation for a session.
@@ -1478,6 +1606,17 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 	if err != nil {
 		logger.Debug("session not found", zap.String("query", query), zap.Error(err))
 		return nil, err
+	}
+
+	// Check file size - refuse to load files larger than 50MB
+	const maxConversationFileSize = 50 * 1024 * 1024 // 50MB
+	fileInfo, err := os.Stat(session.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.Size() > maxConversationFileSize {
+		return nil, fmt.Errorf("conversation file too large (%d MB), maximum is 50MB",
+			fileInfo.Size()/(1024*1024))
 	}
 
 	// Parse the session file based on type
@@ -1565,71 +1704,251 @@ func (s *AISessionService) parseClaudeCodeConversation(filePath string) ([]*Conv
 
 		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
 
-		// Handle user messages
-		if entry.Type == "user" && !entry.IsMeta {
-			var msgContent struct {
-				Role    string      `json:"role"`
-				Content interface{} `json:"content"`
-			}
-			if err := json.Unmarshal(entry.Message, &msgContent); err != nil {
-				continue
-			}
-
-			if msgContent.Role == "user" {
-				var textContent string
-				switch content := msgContent.Content.(type) {
-				case string:
-					textContent = content
-				}
-				if textContent != "" && !strings.HasPrefix(textContent, "<command-") && !strings.HasPrefix(textContent, "<local-command") {
-					messages = append(messages, &ConversationMessage{
-						Role:      "user",
-						Content:   textContent,
-						Timestamp: ts,
-					})
-				}
-			}
+		// Parse message payload
+		var msgContent struct {
+			Role    string      `json:"role"`
+			Content interface{} `json:"content"`
+		}
+		if err := json.Unmarshal(entry.Message, &msgContent); err != nil {
+			continue
 		}
 
-		// Handle assistant messages
-		if entry.Type == "assistant" {
-			var msgContent struct {
-				Role    string      `json:"role"`
-				Content interface{} `json:"content"`
-			}
-			if err := json.Unmarshal(entry.Message, &msgContent); err != nil {
+		switch entry.Type {
+		case "user":
+			if entry.IsMeta || msgContent.Role != "user" {
 				continue
 			}
 
-			if msgContent.Role == "assistant" {
-				var textContent string
-				switch content := msgContent.Content.(type) {
-				case string:
-					textContent = content
-				case []interface{}:
-					// Extract text from content blocks
-					for _, block := range content {
-						if blockMap, ok := block.(map[string]interface{}); ok {
-							if blockType, ok := blockMap["type"].(string); ok && blockType == "text" {
-								if text, ok := blockMap["text"].(string); ok {
-									textContent += text
-								}
-							}
-						}
-					}
+			// Normal user input is a string; tool results are typically array content.
+			switch content := msgContent.Content.(type) {
+			case string:
+				text := strings.TrimSpace(content)
+				if text == "" || strings.HasPrefix(text, "<command-") || strings.HasPrefix(text, "<local-command") {
+					continue
 				}
-				if textContent != "" {
-					messages = append(messages, &ConversationMessage{
-						Role:      "assistant",
-						Content:   textContent,
-						Timestamp: ts,
-					})
+				messages = append(messages, &ConversationMessage{
+					Role:      "user",
+					Content:   text,
+					Timestamp: ts,
+				})
+			case []interface{}:
+				// User messages with images can also be array blocks; tool results are usually tool_result blocks.
+				if hasClaudeToolResultBlock(content) {
+					appendClaudeToolResultMessages(&messages, content, ts)
+					continue
 				}
+
+				text := strings.TrimSpace(renderClaudeContentBlocks(content))
+				if text == "" || strings.HasPrefix(text, "<command-") || strings.HasPrefix(text, "<local-command") {
+					continue
+				}
+				messages = append(messages, &ConversationMessage{
+					Role:      "user",
+					Content:   text,
+					Timestamp: ts,
+				})
 			}
+		case "assistant":
+			if msgContent.Role != "assistant" {
+				continue
+			}
+			text := strings.TrimSpace(renderClaudeContentBlocks(msgContent.Content))
+			if text == "" {
+				continue
+			}
+			messages = append(messages, &ConversationMessage{
+				Role:      "assistant",
+				Content:   text,
+				Timestamp: ts,
+			})
 		}
 	}
 
 	return messages, scanner.Err()
+}
+
+func hasClaudeToolResultBlock(blocks []interface{}) bool {
+	for _, block := range blocks {
+		blockMap, ok := block.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if t, _ := blockMap["type"].(string); t == "tool_result" {
+			return true
+		}
+	}
+	return false
+}
+
+func appendClaudeToolResultMessages(dst *[]*ConversationMessage, blocks []interface{}, ts time.Time) {
+	for _, block := range blocks {
+		blockMap, ok := block.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if t, _ := blockMap["type"].(string); t != "tool_result" {
+			continue
+		}
+
+		preview, toolUseID, truncated := formatClaudeToolResult(blockMap, true)
+		preview = strings.TrimSpace(preview)
+		if preview == "" {
+			continue
+		}
+
+		*dst = append(*dst, &ConversationMessage{
+			Role:      "assistant",
+			Kind:      "tool_result",
+			ToolUseID: toolUseID,
+			HasMore:   truncated,
+			Content:   preview,
+			Timestamp: ts,
+		})
+	}
+}
+
+func renderClaudeContentBlocks(content interface{}) string {
+	switch v := content.(type) {
+	case string:
+		return v
+	case []interface{}:
+		parts := make([]string, 0, len(v))
+		for _, block := range v {
+			blockMap, ok := block.(map[string]interface{})
+			if !ok {
+				continue
+			}
+
+			blockType, _ := blockMap["type"].(string)
+			switch blockType {
+			case "text":
+				if text, ok := blockMap["text"].(string); ok && text != "" {
+					parts = append(parts, text)
+				}
+			case "tool_use":
+				if rendered := formatClaudeToolUseBlock(blockMap); rendered != "" {
+					parts = append(parts, rendered)
+				}
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]interface{}:
+		// Some tools embed both cleaned and raw content; prefer cleaned when present.
+		if cleaned, ok := v["cleanedText"].(string); ok && cleaned != "" {
+			return cleaned
+		}
+		if text, ok := v["text"].(string); ok && text != "" {
+			return text
+		}
+		if raw, ok := v["rawContent"].(string); ok && raw != "" {
+			return raw
+		}
+		if b, err := json.Marshal(v); err == nil {
+			return string(b)
+		}
+		return ""
+	default:
+		return ""
+	}
+}
+
+func formatClaudeToolUseBlock(block map[string]interface{}) string {
+	name, _ := block["name"].(string)
+	if name == "" {
+		return "[tool_use]"
+	}
+
+	inputMap, _ := block["input"].(map[string]interface{})
+	if inputMap == nil {
+		return "[" + name + "]"
+	}
+
+	switch name {
+	case "Edit", "Write", "Read":
+		if filePath, _ := inputMap["file_path"].(string); filePath != "" {
+			return "[" + name + ": " + filePath + "]"
+		}
+	case "Bash":
+		if cmd, _ := inputMap["command"].(string); cmd != "" {
+			// Keep it readable in the conversation view.
+			if len(cmd) > 200 {
+				cmd = cmd[:200] + "..."
+			}
+			return "[Bash: " + cmd + "]"
+		}
+	case "Grep", "Glob":
+		if pattern, _ := inputMap["pattern"].(string); pattern != "" {
+			return "[" + name + ": " + pattern + "]"
+		}
+	case "TodoWrite":
+		return "[TodoWrite]"
+	case "Task":
+		if desc, _ := inputMap["description"].(string); desc != "" {
+			return "[Task: " + desc + "]"
+		}
+	}
+
+	return "[" + name + "]"
+}
+
+func formatClaudeToolResult(block map[string]interface{}, preview bool) (string, string, bool) {
+	toolUseID, _ := block["tool_use_id"].(string)
+	isError, _ := block["is_error"].(bool)
+
+	header := "[Tool result]"
+	if toolUseID != "" {
+		header = "[Tool result: " + toolUseID + "]"
+	}
+	if isError {
+		header += " (error)"
+	}
+
+	content, ok := block["content"]
+	if !ok || content == nil {
+		return header, toolUseID, false
+	}
+
+	body := strings.TrimSpace(renderClaudeContentBlocks(content))
+	if body == "" {
+		return header, toolUseID, false
+	}
+
+	full := header + "\n" + body
+	if !preview {
+		return full, toolUseID, false
+	}
+
+	const (
+		maxPreviewChars = 1200
+		maxPreviewLines = 25
+	)
+	truncatedText, truncated := truncateText(full, maxPreviewChars, maxPreviewLines)
+	return truncatedText, toolUseID, truncated
+}
+
+func truncateText(s string, maxChars, maxLines int) (string, bool) {
+	if s == "" {
+		return "", false
+	}
+
+	lines := strings.Split(s, "\n")
+	truncated := false
+	if maxLines > 0 && len(lines) > maxLines {
+		lines = lines[:maxLines]
+		truncated = true
+	}
+
+	out := strings.Join(lines, "\n")
+	if maxChars > 0 && len(out) > maxChars {
+		out = out[:maxChars]
+		truncated = true
+	}
+
+	if truncated {
+		out = strings.TrimRight(out, "\n")
+		out += "\n\n…"
+	}
+	return out, truncated
 }
 
 // parseCodexConversation parses a Codex session file and extracts messages.
@@ -1689,4 +2008,132 @@ func (s *AISessionService) parseCodexConversation(filePath string) ([]*Conversat
 	}
 
 	return messages, scanner.Err()
+}
+
+type ToolResultResponse struct {
+	ToolUseID string `json:"toolUseId"`
+	Content   string `json:"content"`
+}
+
+func (s *AISessionService) GetClaudeToolResult(ctx context.Context, dbID, toolUseID string) (*ToolResultResponse, error) {
+	return s.getClaudeToolResultByQuery(ctx, "id = ?", []interface{}{dbID}, toolUseID)
+}
+
+func (s *AISessionService) GetClaudeToolResultBySessionID(ctx context.Context, sessionID, toolUseID string) (*ToolResultResponse, error) {
+	return s.getClaudeToolResultByQuery(ctx, "session_id = ?", []interface{}{sessionID}, toolUseID)
+}
+
+func (s *AISessionService) getClaudeToolResultByQuery(ctx context.Context, query string, args []interface{}, toolUseID string) (*ToolResultResponse, error) {
+	ctx = ensureContext(ctx)
+	logger := s.logger(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	var session tables.AISessionTable
+	if err := db.WithContext(ctx).Where(query, args...).First(&session).Error; err != nil {
+		return nil, err
+	}
+	if session.Type != tables.AISessionTypeClaudeCode {
+		return nil, errors.New("tool result only supported for Claude Code sessions")
+	}
+
+	// Guard against huge files.
+	const maxConversationFileSize = 50 * 1024 * 1024 // 50MB
+	fileInfo, err := os.Stat(session.FilePath)
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.Size() > maxConversationFileSize {
+		return nil, fmt.Errorf("conversation file too large (%d MB), maximum is 50MB",
+			fileInfo.Size()/(1024*1024))
+	}
+
+	content, err := findClaudeToolResultInFile(session.FilePath, toolUseID)
+	if err != nil {
+		logger.Debug("failed to find tool result",
+			zap.String("filePath", session.FilePath),
+			zap.String("toolUseId", toolUseID),
+			zap.Error(err))
+		return nil, err
+	}
+
+	return &ToolResultResponse{
+		ToolUseID: toolUseID,
+		Content:   content,
+	}, nil
+}
+
+func findClaudeToolResultInFile(filePath, toolUseID string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 2*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+
+		var entry struct {
+			Type    string          `json:"type"`
+			Message json.RawMessage `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Type != "user" {
+			continue
+		}
+
+		var msgContent struct {
+			Role    string      `json:"role"`
+			Content interface{} `json:"content"`
+		}
+		if err := json.Unmarshal(entry.Message, &msgContent); err != nil {
+			continue
+		}
+		if msgContent.Role != "user" {
+			continue
+		}
+
+		blocks, ok := msgContent.Content.([]interface{})
+		if !ok {
+			continue
+		}
+
+		for _, block := range blocks {
+			blockMap, ok := block.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if t, _ := blockMap["type"].(string); t != "tool_result" {
+				continue
+			}
+			id, _ := blockMap["tool_use_id"].(string)
+			if id != toolUseID {
+				continue
+			}
+
+			full, _, _ := formatClaudeToolResult(blockMap, false)
+			full = strings.TrimSpace(full)
+			if full == "" {
+				return "", errors.New("tool result content empty")
+			}
+			return full, nil
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return "", errors.New("tool result not found")
 }

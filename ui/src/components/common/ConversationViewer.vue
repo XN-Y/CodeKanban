@@ -14,7 +14,23 @@
               <span class="message-role">{{ msg.role === 'user' ? t('terminal.user') : t('terminal.assistant') }}</span>
               <span v-if="msg.timestamp" class="message-time">{{ formatTime(msg.timestamp) }}</span>
             </div>
-            <div class="message-content" v-html="renderMarkdown(msg.content)"></div>
+            <div
+              class="message-content"
+              v-html="renderMarkdown(isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full ? msg.full : msg.content)"
+            ></div>
+            <div
+              v-if="isToolResult(msg) && msg.toolUseId && (msg.hasMore || msg.full)"
+              class="tool-result-controls"
+            >
+              <n-button
+                size="tiny"
+                quaternary
+                :loading="!!toolResultLoading[msg.toolUseId]"
+                @click.stop="toggleToolResult(msg)"
+              >
+                {{ isExpanded(msg.toolUseId) ? t('terminal.collapseToolResult') : t('terminal.expandToolResult') }}
+              </n-button>
+            </div>
             <!-- 用户消息导航按钮 -->
             <div v-if="msg.role === 'user'" class="message-nav">
               <n-tooltip>
@@ -96,6 +112,10 @@ export interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp?: string;
+  kind?: string;
+  toolUseId?: string;
+  hasMore?: boolean;
+  full?: string;
 }
 
 export interface SessionInfo {
@@ -116,12 +136,18 @@ const props = withDefaults(defineProps<{
   useRelativeTime: true,
 });
 
+const emit = defineEmits<{
+  (e: 'load-tool-result', toolUseId: string): void;
+}>();
+
 const { t } = useLocale();
 const message = useMessage();
 
 const showUserOnly = ref(false);
 const containerRef = ref<HTMLElement | null>(null);
 const messageRefs = ref<Map<number, HTMLElement>>(new Map());
+const expandedToolResults = ref<Record<string, boolean>>({});
+const toolResultLoading = ref<Record<string, boolean>>({});
 
 // 设置消息元素的 ref
 function setMessageRef(el: unknown, index: number) {
@@ -231,6 +257,50 @@ function renderMarkdown(content: string): string {
   }
 }
 
+function isToolResult(msg: ConversationMessage) {
+  return msg.kind === 'tool_result' && !!msg.toolUseId;
+}
+
+function isExpanded(toolUseId: string) {
+  return !!expandedToolResults.value[toolUseId];
+}
+
+function toggleToolResult(msg: ConversationMessage) {
+  const toolUseId = msg.toolUseId;
+  if (!toolUseId) return;
+
+  const next = !isExpanded(toolUseId);
+  expandedToolResults.value = { ...expandedToolResults.value, [toolUseId]: next };
+  if (!next) return;
+
+  if (msg.full) return;
+  if (toolResultLoading.value[toolUseId]) return;
+
+  toolResultLoading.value = { ...toolResultLoading.value, [toolUseId]: true };
+  emit('load-tool-result', toolUseId);
+}
+
+function markToolResultLoaded(toolUseId: string) {
+  if (!toolUseId) return;
+  if (!toolResultLoading.value[toolUseId]) return;
+  const next = { ...toolResultLoading.value };
+  delete next[toolUseId];
+  toolResultLoading.value = next;
+}
+
+watch(
+  () => props.messages,
+  () => {
+    // Cleanup loading state when parent updates messages (e.g., full tool result arrives).
+    for (const msg of props.messages) {
+      if (isToolResult(msg) && msg.toolUseId && msg.full) {
+        markToolResultLoaded(msg.toolUseId);
+      }
+    }
+  },
+  { deep: true }
+);
+
 // 复制 Session ID
 async function copySessionId() {
   if (!props.sessionInfo?.sessionId) return;
@@ -255,6 +325,10 @@ async function copySessionId() {
   max-height: 60vh;
   overflow-y: auto;
   padding: 8px 0;
+}
+
+.tool-result-controls {
+  margin-top: 8px;
 }
 
 .message-item {

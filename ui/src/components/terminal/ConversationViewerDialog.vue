@@ -12,6 +12,7 @@
       :messages="conversation?.messages ?? []"
       :loading="loading"
       :session-info="sessionInfo"
+      @load-tool-result="loadToolResult"
     />
   </n-modal>
 </template>
@@ -27,12 +28,21 @@ interface ConversationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  kind?: string;
+  toolUseId?: string;
+  hasMore?: boolean;
+  full?: string;
 }
 
 interface ConversationResponse {
   sessionId: string;
   title: string;
   messages: ConversationMessage[];
+}
+
+interface ToolResultResponse {
+  toolUseId: string;
+  content: string;
 }
 
 const props = defineProps<{
@@ -90,6 +100,31 @@ async function loadConversation(sessionId: string) {
     message.error(t('terminal.loadConversationFailed'));
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadToolResult(toolUseId: string) {
+  const sessionId = props.sessionId;
+  if (!sessionId || !toolUseId) return;
+
+  try {
+    const response = await http
+      .Get<{ item?: ToolResultResponse }>(
+        `/ai-sessions/by-session-id/${sessionId}/conversation/tool-results/${encodeURIComponent(toolUseId)}`,
+        { cacheFor: 0 }
+      )
+      .send();
+
+    const content = response?.item?.content;
+    if (!content || !conversation.value) return;
+
+    const msg = conversation.value.messages.find((m) => m.toolUseId === toolUseId);
+    if (msg) {
+      msg.full = content;
+    }
+  } catch (error) {
+    console.error('Failed to load tool result:', error);
+    message.error(t('terminal.loadConversationFailed'));
   }
 }
 

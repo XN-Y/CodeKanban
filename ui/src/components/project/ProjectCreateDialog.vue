@@ -13,10 +13,17 @@
         <n-input v-model:value="formData.name" :placeholder="t('project.namePlaceholder')" />
       </n-form-item>
       <n-form-item :label="t('project.projectDirectory')" path="path">
-        <n-input
-          v-model:value="formData.path"
-          :placeholder="t('project.pathPlaceholder')"
-        />
+        <n-input-group>
+          <n-input
+            v-model:value="formData.path"
+            :placeholder="t('project.pathPlaceholder')"
+          />
+          <n-button @click="showDirectoryPicker = true">
+            <template #icon>
+              <n-icon><FolderOpenOutline /></n-icon>
+            </template>
+          </n-button>
+        </n-input-group>
         <template #feedback>
           <n-text depth="3">
             {{ t('project.pathHint') }}
@@ -39,14 +46,23 @@
       </n-form-item>
     </n-form>
   </n-modal>
+
+  <DirectoryPickerDialog
+    v-model:show="showDirectoryPicker"
+    :initial-path="pickerInitialPath"
+    @confirm="handleDirectorySelected"
+  />
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useMessage, type FormInst, type FormRules } from 'naive-ui';
+import { FolderOpenOutline } from '@vicons/ionicons5';
 import { useProjectStore } from '@/stores/project';
 import type { Project } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
+import { http } from '@/api/http';
+import DirectoryPickerDialog from '@/components/common/DirectoryPickerDialog.vue';
 
 const { t } = useLocale();
 
@@ -69,12 +85,35 @@ const visible = computed({
 
 const formRef = ref<FormInst | null>(null);
 const loading = ref(false);
+const showDirectoryPicker = ref(false);
+const homeDir = ref('');
 const formData = ref({
   name: '',
   path: '',
   description: '',
   hidePath: false,
 });
+
+// 目录选择器的初始路径：优先用已填写的路径，否则用 HOME 目录
+const pickerInitialPath = computed(() => formData.value.path || homeDir.value);
+
+function handleDirectorySelected(path: string) {
+  formData.value.path = path;
+}
+
+async function fetchHomeDir() {
+  try {
+    const res = await http.Get<{ item?: { path: string } }>('/fs/home').send();
+    if (res?.item?.path) {
+      homeDir.value = res.item.path;
+    }
+  } catch (e) {
+    console.error('Failed to get home directory:', e);
+  }
+}
+
+// 获取 HOME 目录
+fetchHomeDir();
 
 const rules: FormRules = {
   name: [{ required: true, message: t('validation.projectNameRequired'), trigger: ['blur', 'input'] }],
