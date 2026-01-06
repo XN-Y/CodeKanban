@@ -1450,7 +1450,8 @@ func (s *AISessionService) parseCodexSessionFile(filePath string) (*codexSession
 						data.Title = title
 					}
 				}
-			} else if msgType == "assistant_message" {
+			} else if msgType == "agent_message" || msgType == "agent_reasoning" {
+				// Codex uses "agent_message" for final responses and "agent_reasoning" for thinking
 				data.AssistantMessageCount++
 			}
 		}
@@ -1588,6 +1589,114 @@ func (s *AISessionService) GetSessionConversation(ctx context.Context, dbID stri
 // GetSessionConversationBySessionID retrieves the full conversation for a given session ID (UUID).
 func (s *AISessionService) GetSessionConversationBySessionID(ctx context.Context, sessionID string) (*ConversationResponse, error) {
 	return s.getConversationByQuery(ctx, "session_id = ?", sessionID)
+}
+
+// RefreshSessionAndGetConversation clears the cached session data in DB and re-parses the file.
+func (s *AISessionService) RefreshSessionAndGetConversation(ctx context.Context, dbID string) (*ConversationResponse, error) {
+	ctx = ensureContext(ctx)
+	logger := s.logger(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	// Find the session in database
+	var session tables.AISessionTable
+	err := db.WithContext(ctx).Where("id = ?", dbID).First(&session).Error
+	if err != nil {
+		logger.Debug("session not found", zap.String("dbID", dbID), zap.Error(err))
+		return nil, err
+	}
+
+	// Save file path and type before deleting
+	filePath := session.FilePath
+	sessionType := session.Type
+	sessionID := session.SessionID
+
+	// Delete the cached record to force re-parse
+	if err := db.WithContext(ctx).Delete(&session).Error; err != nil {
+		logger.Warn("failed to delete cached session", zap.String("dbID", dbID), zap.Error(err))
+		return nil, err
+	}
+
+	logger.Info("deleted cached session for refresh",
+		zap.String("dbID", dbID),
+		zap.String("sessionId", sessionID),
+		zap.String("type", string(sessionType)))
+
+	// Clear directory cache as well
+	dirCacheMu.Lock()
+	for key := range dirCache {
+		delete(dirCache, key)
+	}
+	dirCacheMu.Unlock()
+
+	// Clear scan states
+	scanStatesMu.Lock()
+	for key := range scanStates {
+		delete(scanStates, key)
+	}
+	scanStatesMu.Unlock()
+
+	// Check file size - refuse to load files larger than 50MB
+	const maxConversationFileSize = 50 * 1024 * 1024 // 50MB
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.Size() > maxConversationFileSize {
+		return nil, fmt.Errorf("conversation file too large (%d MB), maximum is 50MB",
+			fileInfo.Size()/(1024*1024))
+	}
+
+	// Parse the session file directly based on type
+	var messages []*ConversationMessage
+	var title string
+
+	switch sessionType {
+	case tables.AISessionTypeClaudeCode:
+		messages, err = s.parseClaudeCodeConversation(filePath)
+		if err == nil {
+			// Get title from first user message
+			for _, msg := range messages {
+				if msg.Role == "user" && msg.Content != "" {
+					title = msg.Content
+					if len(title) > 100 {
+						title = title[:100] + "..."
+					}
+					break
+				}
+			}
+		}
+	case tables.AISessionTypeCodex:
+		messages, err = s.parseCodexConversation(filePath)
+		if err == nil {
+			// Get title from first user message
+			for _, msg := range messages {
+				if msg.Role == "user" && msg.Content != "" {
+					title = msg.Content
+					if len(title) > 100 {
+						title = title[:100] + "..."
+					}
+					break
+				}
+			}
+		}
+	default:
+		return nil, errors.New("unknown session type")
+	}
+
+	if err != nil {
+		logger.Error("failed to parse conversation", zap.String("filePath", filePath), zap.Error(err))
+		return nil, err
+	}
+
+	return &ConversationResponse{
+		SessionID: sessionID,
+		Title:     title,
+		Messages:  messages,
+	}, nil
 }
 
 // getConversationByQuery retrieves conversation using a custom where clause.
@@ -1984,23 +2093,38 @@ func (s *AISessionService) parseCodexConversation(filePath string) ([]*Conversat
 			}
 
 			msgType, _ := payload["type"].(string)
-			msg, _ := payload["message"].(string)
-
-			if msg == "" {
-				continue
-			}
 
 			switch msgType {
 			case "user_message":
+				msg, _ := payload["message"].(string)
+				if msg == "" {
+					continue
+				}
 				messages = append(messages, &ConversationMessage{
 					Role:      "user",
 					Content:   msg,
 					Timestamp: ts,
 				})
-			case "assistant_message":
+			case "agent_message":
+				// Codex uses "agent_message" for final responses
+				msg, _ := payload["message"].(string)
+				if msg == "" {
+					continue
+				}
 				messages = append(messages, &ConversationMessage{
 					Role:      "assistant",
 					Content:   msg,
+					Timestamp: ts,
+				})
+			case "agent_reasoning":
+				// Codex uses "agent_reasoning" for thinking/reasoning text
+				text, _ := payload["text"].(string)
+				if text == "" {
+					continue
+				}
+				messages = append(messages, &ConversationMessage{
+					Role:      "assistant",
+					Content:   text,
 					Timestamp: ts,
 				})
 			}

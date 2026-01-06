@@ -91,7 +91,17 @@
           </template>
         </n-button>
       </div>
-      <div class="filter-controls">
+      <div class="toolbar-right">
+        <n-tooltip>
+          <template #trigger>
+            <n-button size="tiny" quaternary :loading="refreshing" @click="emit('refresh')">
+              <template #icon>
+                <n-icon size="14"><RefreshOutline /></n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ t('terminal.refreshConversation') }}
+        </n-tooltip>
         <n-checkbox v-model:checked="showUserOnly" size="small">
           {{ t('terminal.showUserMessagesOnly') }}
         </n-checkbox>
@@ -103,7 +113,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { CopyOutline, LogoGithub, ChevronUpOutline, ChevronDownOutline } from '@vicons/ionicons5';
+import { CopyOutline, LogoGithub, ChevronUpOutline, ChevronDownOutline, RefreshOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { useTimeAgo } from '@vueuse/core';
 import { marked } from 'marked';
@@ -126,11 +136,13 @@ export interface SessionInfo {
 const props = withDefaults(defineProps<{
   messages: ConversationMessage[];
   loading?: boolean;
+  refreshing?: boolean;
   sessionInfo?: SessionInfo | null;
   emptyText?: string;
   useRelativeTime?: boolean;
 }>(), {
   loading: false,
+  refreshing: false,
   sessionInfo: null,
   emptyText: '',
   useRelativeTime: true,
@@ -138,6 +150,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   (e: 'load-tool-result', toolUseId: string): void;
+  (e: 'refresh'): void;
 }>();
 
 const { t } = useLocale();
@@ -514,7 +527,7 @@ async function copySessionId() {
   user-select: all;
 }
 
-.filter-controls {
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: 8px;

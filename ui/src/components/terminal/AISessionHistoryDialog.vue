@@ -226,8 +226,10 @@
     <ConversationViewer
       :messages="currentConversation?.messages ?? []"
       :loading="conversationLoading"
+      :refreshing="conversationRefreshing"
       :session-info="currentSessionInfo"
       @load-tool-result="loadToolResult"
+      @refresh="refreshConversation"
     />
   </n-modal>
 
@@ -359,6 +361,7 @@ interface ToolResultResponse {
 
 const showConversationModal = ref(false);
 const conversationLoading = ref(false);
+const conversationRefreshing = ref(false);
 const currentConversation = ref<ConversationResponse | null>(null);
 const currentSessionTitle = ref('');
 const currentSession = ref<AISessionSummary | null>(null);
@@ -644,6 +647,30 @@ async function loadToolResult(toolUseId: string) {
   } catch (error) {
     console.error('Failed to load tool result:', error);
     message.error(t('terminal.loadConversationFailed'));
+  }
+}
+
+async function refreshConversation() {
+  const session = currentSession.value;
+  if (!session) return;
+
+  conversationRefreshing.value = true;
+
+  try {
+    // Call API to clear cache and reload
+    const response = await http
+      .Post<{ item?: ConversationResponse }>(`/ai-sessions/${session.id}/refresh`)
+      .send();
+
+    if (response?.item) {
+      currentConversation.value = response.item;
+      message.success(t('terminal.conversationRefreshed'));
+    }
+  } catch (error) {
+    console.error('Failed to refresh conversation:', error);
+    message.error(t('terminal.refreshConversationFailed'));
+  } finally {
+    conversationRefreshing.value = false;
   }
 }
 

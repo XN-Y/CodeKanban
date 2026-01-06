@@ -192,6 +192,28 @@ func registerAISessionRoutes(group *huma.Group) {
 		op.Tags = []string{aiSessionTag}
 	})
 
+	// Refresh session - clear cache and re-parse
+	huma.Post(group, "/ai-sessions/{id}/refresh", func(ctx context.Context, input *struct {
+		ID string `path:"id" doc:"会话ID（数据库ID）"`
+	}) (*h.ItemResponse[service.ConversationResponse], error) {
+		conversation, err := svc.RefreshSessionAndGetConversation(ctx, input.ID)
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			}
+			return nil, huma.Error404NotFound("session not found or failed to refresh")
+		}
+
+		resp := h.NewItemResponse(*conversation)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "ai-session-refresh"
+		op.Summary = "刷新AI会话缓存"
+		op.Description = "清除会话的数据库缓存，重新解析会话文件并返回对话内容"
+		op.Tags = []string{aiSessionTag}
+	})
+
 	// Task-AI Session linking routes
 	taskAISessionSvc := &model.TaskAISessionService{}
 
