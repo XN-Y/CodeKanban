@@ -75,6 +75,14 @@ func ResolveShellCommand(override string, cfg TerminalShellConfig) ([]string, er
 			continue
 		}
 		if err := ensureExecutable(parts[0]); err != nil {
+			// In embedded terminal contexts the process PATH may be incomplete; on Windows we can
+			// still locate common shells via registry/known locations.
+			if runtime.GOOS == "windows" {
+				if resolved := resolveWindowsShellBinary(parts[0]); resolved != "" {
+					parts[0] = resolved
+					return parts, nil
+				}
+			}
 			attempted = append(attempted, parts[0])
 			continue
 		}
@@ -96,6 +104,12 @@ func parsePreferredShell(raw string) ([]string, error) {
 		return nil, fmt.Errorf("invalid shell configuration: %q", raw)
 	}
 	if err := ensureExecutable(parts[0]); err != nil {
+		if runtime.GOOS == "windows" {
+			if resolved := resolveWindowsShellBinary(parts[0]); resolved != "" {
+				parts[0] = resolved
+				return parts, nil
+			}
+		}
 		return nil, fmt.Errorf("shell %q not found: %w", parts[0], err)
 	}
 	return parts, nil
@@ -143,12 +157,12 @@ func ensureExecutable(name string) error {
 
 // ShellOption represents an available shell option for the UI
 type ShellOption struct {
-	ID          string `json:"id"`                    // Unique identifier (e.g., "pwsh", "cmd", "bash")
-	Name        string `json:"name"`                  // Display name (e.g., "PowerShell 7", "CMD")
-	Command     string `json:"command"`               // Full command (e.g., "pwsh.exe -NoLogo")
-	Available   bool   `json:"available"`             // Whether the shell is available on this system
-	Description string `json:"description"`           // Brief description
-	Warning     string `json:"warning,omitempty"`     // Optional warning message (e.g., for limited features)
+	ID          string `json:"id"`                // Unique identifier (e.g., "pwsh", "cmd", "bash")
+	Name        string `json:"name"`              // Display name (e.g., "PowerShell 7", "CMD")
+	Command     string `json:"command"`           // Full command (e.g., "pwsh.exe -NoLogo")
+	Available   bool   `json:"available"`         // Whether the shell is available on this system
+	Description string `json:"description"`       // Brief description
+	Warning     string `json:"warning,omitempty"` // Optional warning message (e.g., for limited features)
 }
 
 // AvailableShellsResponse contains available shells and current settings

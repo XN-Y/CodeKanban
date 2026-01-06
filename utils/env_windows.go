@@ -6,8 +6,37 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 )
+
+func expandWindowsEnvironmentStrings(value string) (string, error) {
+	src, err := windows.UTF16PtrFromString(value)
+	if err != nil {
+		return "", err
+	}
+
+	// First call with size=0 to get required buffer length (in UTF-16 code units, including NUL).
+	n, err := windows.ExpandEnvironmentStrings(src, nil, 0)
+	if err != nil {
+		return "", err
+	}
+	if n == 0 {
+		return "", nil
+	}
+
+	buf := make([]uint16, n)
+	n2, err := windows.ExpandEnvironmentStrings(src, &buf[0], n)
+	if err != nil {
+		return "", err
+	}
+	if n2 == 0 {
+		return "", nil
+	}
+
+	// buf includes trailing NUL
+	return windows.UTF16ToString(buf), nil
+}
 
 // GetFreshEnviron returns the current environment variables with PATH refreshed from Windows registry.
 // This is useful for terminal managers that need to pick up newly installed tools.
@@ -123,8 +152,14 @@ func getRegistryPath(root registry.Key, keyPath, valueName string) string {
 		return ""
 	}
 
-	// Expand environment variables if it's a REG_EXPAND_SZ type
-	if valType == registry.EXPAND_SZ {
+	// Expand environment variables.
+	// Registry values commonly use Windows-style %VAR% expansions (e.g. %SystemRoot%).
+	// Some environments store PATH as REG_SZ even when it contains %VAR%, so expand regardless of type.
+	if expanded, err := expandWindowsEnvironmentStrings(value); err == nil && expanded != "" {
+		value = expanded
+	} else if valType == registry.EXPAND_SZ {
+		// Best-effort fallback when ExpandEnvironmentStrings fails for some reason.
+		// Note: os.ExpandEnv doesn't handle %VAR% on Windows; this is only useful for $VAR style.
 		value = os.ExpandEnv(value)
 	}
 

@@ -11,6 +11,25 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
+func resolveWindowsShellBinary(name string) string {
+	base := strings.ToLower(filepath.Base(name))
+	switch base {
+	case "pwsh.exe":
+		return getPowerShell7Path()
+	case "powershell.exe":
+		return getWindowsPowerShellPath()
+	case "cmd.exe":
+		return getCmdPath()
+	case "wsl.exe":
+		return getWSLPath()
+	case "bash.exe":
+		// Prefer Git Bash when users pick bash on Windows.
+		return getGitBashPath()
+	default:
+		return ""
+	}
+}
+
 // quotePathIfNeeded wraps a path in double quotes if it contains spaces
 func quotePathIfNeeded(path string) string {
 	if strings.Contains(path, " ") {
