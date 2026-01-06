@@ -78,15 +78,21 @@ const SNAPSHOT_SCROLLBACK = 1200;
  * 替换 True Color #000000 为可见颜色
  * xterm.js 的 extendedAnsi 只对 256 色索引模式生效，
  * 但很多程序使用 True Color (24-bit RGB) 直接输出颜色，绕过了映射表。
- * 这里对 True Color 前景色 RGB(0,0,0) 进行替换，避免在深色背景上不可见。
+ * 这里对 True Color 前景色和背景色 RGB(0,0,0) 进行替换，避免在深色背景上不可见。
+ * 这对 oh-my-zsh 主题（如 agnoster）尤为重要，因为它们大量使用背景色。
  *
  * True Color 前景色格式: \x1b[38;2;R;G;Bm 或 \x1b[38;2;R;G;B;...m
+ * True Color 背景色格式: \x1b[48;2;R;G;Bm 或 \x1b[48;2;R;G;B;...m
  */
-const TRUE_COLOR_BLACK_REGEX = /\x1b\[38;2;0;0;0([;m])/g;
-const TRUE_COLOR_BLACK_REPLACEMENT = '\x1b[38;2;74;74;74$1'; // #4a4a4a
+const TRUE_COLOR_FG_BLACK_REGEX = /\x1b\[38;2;0;0;0([;m])/g;
+const TRUE_COLOR_BG_BLACK_REGEX = /\x1b\[48;2;0;0;0([;m])/g;
+const TRUE_COLOR_FG_BLACK_REPLACEMENT = '\x1b[38;2;74;74;74$1'; // #4a4a4a
+const TRUE_COLOR_BG_BLACK_REPLACEMENT = '\x1b[48;2;40;40;40$1'; // #282828 - 背景用更深的灰
 
 function remapInvisibleColors(data: string): string {
-  return data.replace(TRUE_COLOR_BLACK_REGEX, TRUE_COLOR_BLACK_REPLACEMENT);
+  return data
+    .replace(TRUE_COLOR_FG_BLACK_REGEX, TRUE_COLOR_FG_BLACK_REPLACEMENT)
+    .replace(TRUE_COLOR_BG_BLACK_REGEX, TRUE_COLOR_BG_BLACK_REPLACEMENT);
 }
 
 // 内存中记录已经访问过的终端（刷新后清空）

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/signal"
 	"reflect"
+	"syscall"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v2"
@@ -90,6 +92,15 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerCaptureDebugRoute(app, terminalManager, theLogger)
 	mountStatic(app, cfg, assets, theLogger)
 	exposeOpenAPI(app, humaAPI, cfg, theLogger)
+
+	// 设置信号处理，使 Ctrl+C 可以优雅关闭服务器
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		theLogger.Info("Shutting down server...")
+		_ = app.Shutdown()
+	}()
 
 	return app.Listen(cfg.ServeAt)
 }
