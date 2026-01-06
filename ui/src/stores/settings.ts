@@ -129,6 +129,27 @@ export interface EditorSettings {
   customCommand: string;
 }
 
+export type TerminalQuickActionIcon =
+  | 'terminal'
+  | 'chat'
+  | 'code'
+  | 'rocket'
+  | 'play'
+  | 'claude'
+  | 'codex'
+  | 'qwen'
+  | 'gemini'
+  | 'cursor'
+  | 'copilot';
+
+export interface TerminalQuickAction {
+  id: string;
+  name: string;
+  command: string;
+  icon: TerminalQuickActionIcon;
+  enabled: boolean;
+}
+
 interface GeneralSettings {
   theme: ThemeSettings;
   currentPresetId: string;
@@ -137,6 +158,8 @@ interface GeneralSettings {
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
+  terminalQuickActions: TerminalQuickAction[];
+  terminalQuickActionsCollapsed: boolean;
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
   terminalThemeId: string;
@@ -170,6 +193,23 @@ const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   customCommand: '',
 };
 
+export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
+  {
+    id: 'claude',
+    name: 'Claude Code',
+    command: 'claude',
+    icon: 'claude',
+    enabled: true,
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    command: 'codex',
+    icon: 'codex',
+    enabled: true,
+  },
+];
+
 const defaultSettings: GeneralSettings = {
   theme: { ...defaultTheme },
   currentPresetId: DEFAULT_PRESET_ID,
@@ -178,6 +218,8 @@ const defaultSettings: GeneralSettings = {
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
+  terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
+  terminalQuickActionsCollapsed: true,
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
@@ -197,6 +239,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const panelShortcuts = computed(() => settings.value.panelShortcuts);
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
+  const terminalQuickActions = computed(() => settings.value.terminalQuickActions);
+  const terminalQuickActionsCollapsed = computed(() => settings.value.terminalQuickActionsCollapsed);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
@@ -310,6 +354,14 @@ export const useSettingsStore = defineStore('settings', () => {
     });
   }
 
+  function updateTerminalQuickActions(actions: TerminalQuickAction[]) {
+    settings.value.terminalQuickActions = sanitizeTerminalQuickActions(actions);
+  }
+
+  function updateTerminalQuickActionsCollapsed(value: boolean) {
+    settings.value.terminalQuickActionsCollapsed = Boolean(value);
+  }
+
   function updateConfirmBeforeTerminalClose(value: boolean) {
     settings.value.confirmBeforeTerminalClose = value;
   }
@@ -397,6 +449,8 @@ export const useSettingsStore = defineStore('settings', () => {
     panelShortcuts,
     terminalShortcut,
     notepadShortcut,
+    terminalQuickActions,
+    terminalQuickActionsCollapsed,
     editorSettings,
     confirmBeforeTerminalClose,
     terminalThemeId,
@@ -412,6 +466,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateNotepadShortcut,
     resetTerminalShortcut,
     resetNotepadShortcut,
+    updateTerminalQuickActions,
+    updateTerminalQuickActionsCollapsed,
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
     updateTerminalTheme,
@@ -456,6 +512,8 @@ function loadSettings(): GeneralSettings {
         recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
         maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
         panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
+        terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
+        terminalQuickActionsCollapsed: parsed.terminalQuickActionsCollapsed ?? defaultSettings.terminalQuickActionsCollapsed,
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
@@ -490,6 +548,8 @@ function cloneDefaultSettings(): GeneralSettings {
       terminal: { ...defaultSettings.panelShortcuts.terminal },
       notepad: { ...defaultSettings.panelShortcuts.notepad },
     },
+    terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
+    terminalQuickActionsCollapsed: defaultSettings.terminalQuickActionsCollapsed,
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     terminalFont: { ...defaultSettings.terminalFont },
@@ -581,6 +641,70 @@ function deriveDisplayFromCode(code?: string) {
     return code.replace('Numpad', 'Num ');
   }
   return code;
+}
+
+function sanitizeTerminalQuickActionIcon(value: unknown): TerminalQuickActionIcon {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  switch (normalized) {
+    case 'terminal':
+    case 'chat':
+    case 'code':
+    case 'rocket':
+    case 'play':
+    case 'claude':
+    case 'codex':
+    case 'qwen':
+    case 'gemini':
+    case 'cursor':
+    case 'copilot':
+      return normalized as TerminalQuickActionIcon;
+    default:
+      return 'terminal';
+  }
+}
+
+function sanitizeTerminalQuickActions(value?: unknown): TerminalQuickAction[] {
+  if (!Array.isArray(value)) {
+    return DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action }));
+  }
+
+  const sanitized: TerminalQuickAction[] = [];
+  const usedIds = new Set<string>();
+
+  for (let index = 0; index < value.length; index += 1) {
+    const raw = value[index] as Partial<TerminalQuickAction> | null | undefined;
+    if (!raw || typeof raw !== 'object') {
+      continue;
+    }
+
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    const command = typeof raw.command === 'string' ? raw.command : '';
+    const icon = sanitizeTerminalQuickActionIcon(raw.icon);
+    const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : true;
+
+    const baseId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `quick-${index + 1}`;
+    let id = baseId;
+    let suffix = 1;
+    while (usedIds.has(id)) {
+      suffix += 1;
+      id = `${baseId}-${suffix}`;
+    }
+    usedIds.add(id);
+
+    sanitized.push({
+      id,
+      name,
+      command,
+      icon,
+      enabled,
+    });
+  }
+
+  if (sanitized.length === 0) {
+    return DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action }));
+  }
+
+  return sanitized.slice(0, 12);
 }
 
 function sanitizeTerminalFont(value?: Partial<TerminalFontSettings>): TerminalFontSettings {

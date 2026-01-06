@@ -415,7 +415,10 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   }
 
-  async function createSession(projectId: string | undefined, options: TerminalCreateOptions) {
+  async function createSession(
+    projectId: string | undefined,
+    options: TerminalCreateOptions,
+  ): Promise<string> {
     const resolved = ensureProjectSelected(projectId);
 
     // 如果没有提供 worktreeId，自动选择
@@ -463,6 +466,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     // 更新终端计数缓存
     const currentCount = cachedCounts.get(resolved) ?? 0;
     cachedCounts.set(resolved, currentCount + 1);
+    return (response.item as unknown as TerminalSession).id;
   }
 
   async function renameSession(projectId: string | undefined, sessionId: string, title: string) {
@@ -536,11 +540,13 @@ export const useTerminalStore = defineStore('terminal', () => {
     return session;
   }
 
-  function send(sessionId: string, message: any) {
+  function send(sessionId: string, message: any): boolean {
     const socket = sockets.get(sessionId);
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify(message));
+      return true;
     }
+    return false;
   }
 
   function disconnectTab(sessionId: string, remove = true) {

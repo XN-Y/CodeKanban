@@ -162,6 +162,71 @@
         </n-form>
       </n-card>
 
+      <n-card :title="t('settings.terminalQuickActions')" size="huge">
+        <n-form label-placement="left" label-width="160">
+          <n-form-item :label="t('settings.terminalQuickActionsCollapsed')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="terminalQuickActionsCollapsedValue" />
+              <span class="form-tip">{{ t('settings.terminalQuickActionsCollapsedTip') }}</span>
+            </n-space>
+          </n-form-item>
+
+          <n-form-item :label="t('settings.terminalQuickActionsList')">
+            <n-space vertical size="small" style="width: 100%">
+              <n-dynamic-input v-model:value="terminalQuickActionsLocal" :on-create="createTerminalQuickAction">
+                <template #default="{ value }">
+                  <n-space align="center" :wrap="false" style="width: 100%">
+                    <div class="terminal-quick-action-item">
+                      <div class="terminal-quick-action-grid">
+                        <div class="terminal-quick-action-col-switch">
+                          <n-switch v-model:value="value.enabled" />
+                        </div>
+                        <div class="terminal-quick-action-col-name">
+                          <n-input
+                            v-model:value="value.name"
+                            :placeholder="t('settings.terminalQuickActionNamePlaceholder')"
+                          />
+                        </div>
+                        <div class="terminal-quick-action-col-command">
+                          <n-input
+                            v-model:value="value.command"
+                            :placeholder="t('settings.terminalQuickActionCommandPlaceholder')"
+                          />
+                        </div>
+                      </div>
+                      <div class="terminal-quick-action-grid terminal-quick-action-grid-secondary">
+                        <div class="terminal-quick-action-col-switch"></div>
+                        <div class="terminal-quick-action-col-icons">
+                          <n-radio-group v-model:value="value.icon" size="small">
+                            <n-radio-button
+                              v-for="option in terminalQuickActionIconButtons"
+                              :key="option.value"
+                              :value="option.value"
+                              :title="option.label"
+                            >
+                              <span v-if="'svg' in option && option.svg" class="terminal-quick-action-svg" v-html="option.svg"></span>
+                              <n-icon v-else :size="16">
+                                <component :is="option.icon" />
+                              </n-icon>
+                            </n-radio-button>
+                          </n-radio-group>
+                        </div>
+                      </div>
+                    </div>
+                  </n-space>
+                </template>
+              </n-dynamic-input>
+              <n-space>
+                <n-button size="small" @click="handleResetTerminalQuickActions">
+                  {{ t('settings.restoreDefault') }}
+                </n-button>
+              </n-space>
+              <span class="form-tip">{{ t('settings.terminalQuickActionsTip') }}</span>
+            </n-space>
+          </n-form-item>
+        </n-form>
+      </n-card>
+
       <n-card :title="t('settings.aiAssistantStatusTracking')" size="huge">
         <template #header-extra>
           <n-button
@@ -485,23 +550,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive } from 'vue';
+import { computed, ref, reactive, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useTitle, useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
 import { useMessage } from 'naive-ui';
-import { ColorPaletteOutline, SettingsOutline, RefreshOutline } from '@vicons/ionicons5';
+import {
+  ChatbubblesOutline,
+  CodeOutline,
+  ColorPaletteOutline,
+  LogoGithub,
+  LogoGoogle,
+  NavigateOutline,
+  RefreshOutline,
+  RocketOutline,
+  SettingsOutline,
+  SparklesOutline,
+  TerminalOutline,
+  PlayOutline,
+} from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import { useLocale } from '@/composables/useLocale';
+import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   useSettingsStore,
   DEFAULT_TERMINAL_SHORTCUT,
   DEFAULT_NOTEPAD_SHORTCUT,
+  DEFAULT_TERMINAL_QUICK_ACTIONS,
   TERMINAL_FONT_OPTIONS,
   FONT_WEIGHT_OPTIONS,
   type PanelShortcutSetting,
   type EditorPreference,
   type FontWeight,
+  type TerminalQuickAction,
+  type TerminalQuickActionIcon,
 } from '@/stores/settings';
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
@@ -537,6 +619,8 @@ const {
   maxTerminalsPerProject,
   terminalShortcut,
   notepadShortcut,
+  terminalQuickActions,
+  terminalQuickActionsCollapsed,
   editorSettings,
   confirmBeforeTerminalClose,
   terminalThemeId,
@@ -1012,6 +1096,84 @@ const confirmTerminalCloseValue = computed({
 // 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）
 const sendResizeOnSwitchValue = useStorage('terminal-send-resize-on-switch', true);
 
+const terminalQuickActionsCollapsedValue = computed({
+  get: () => terminalQuickActionsCollapsed.value,
+  set: value => settingsStore.updateTerminalQuickActionsCollapsed(value),
+});
+
+function normalizeSvgSize(svg: string, sizePx: number) {
+  const size = `${sizePx}px`;
+  return svg
+    .replace(/width:\s*12px;\s*height:\s*12px;/g, `width: ${size}; height: ${size};`)
+    .replace(/width="12px"/g, `width="${size}"`)
+    .replace(/height="12px"/g, `height="${size}"`);
+}
+
+const terminalQuickActionIconButtons = computed(() => {
+  const agentOptions: { label: string; value: TerminalQuickActionIcon; svg?: string; icon?: any }[] = [
+    { label: t('settings.terminalQuickActionIconClaude'), value: 'claude', svg: normalizeSvgSize(getAssistantIconByType('claude-code'), 16) },
+    { label: t('settings.terminalQuickActionIconCodex'), value: 'codex', svg: normalizeSvgSize(getAssistantIconByType('codex'), 16) },
+    { label: t('settings.terminalQuickActionIconQwen'), value: 'qwen', svg: normalizeSvgSize(getAssistantIconByType('qwen-code'), 16) },
+    { label: t('settings.terminalQuickActionIconGemini'), value: 'gemini', svg: normalizeSvgSize(getAssistantIconByType('gemini'), 16) },
+    { label: t('settings.terminalQuickActionIconCursor'), value: 'cursor', icon: NavigateOutline },
+    { label: t('settings.terminalQuickActionIconCopilot'), value: 'copilot', icon: LogoGithub },
+  ];
+
+  const genericOptions: { label: string; value: TerminalQuickActionIcon; icon: any }[] = [
+    { label: t('settings.terminalQuickActionIconTerminal'), value: 'terminal', icon: TerminalOutline },
+    { label: t('settings.terminalQuickActionIconChat'), value: 'chat', icon: ChatbubblesOutline },
+    { label: t('settings.terminalQuickActionIconCode'), value: 'code', icon: CodeOutline },
+    { label: t('settings.terminalQuickActionIconRocket'), value: 'rocket', icon: RocketOutline },
+    { label: t('settings.terminalQuickActionIconPlay'), value: 'play', icon: PlayOutline },
+  ];
+
+  const options = [...agentOptions, ...genericOptions];
+  return options;
+});
+
+const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(terminalQuickActions.value.map(item => ({ ...item })));
+let syncingTerminalQuickActions = false;
+const debouncedUpdateTerminalQuickActions = useDebounceFn((actions: TerminalQuickAction[]) => {
+  settingsStore.updateTerminalQuickActions(actions);
+}, 300);
+
+watch(
+  terminalQuickActions,
+  next => {
+    syncingTerminalQuickActions = true;
+    terminalQuickActionsLocal.value = next.map(item => ({ ...item }));
+    setTimeout(() => {
+      syncingTerminalQuickActions = false;
+    }, 0);
+  },
+  { deep: true },
+);
+
+watch(
+  terminalQuickActionsLocal,
+  next => {
+    if (syncingTerminalQuickActions) {
+      return;
+    }
+    debouncedUpdateTerminalQuickActions(next.map(item => ({ ...item })));
+  },
+  { deep: true },
+);
+
+function createTerminalQuickAction(): TerminalQuickAction {
+  return {
+    id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: '',
+    command: '',
+    icon: 'terminal',
+    enabled: true,
+  };
+}
+
+function handleResetTerminalQuickActions() {
+  settingsStore.updateTerminalQuickActions(DEFAULT_TERMINAL_QUICK_ACTIONS);
+}
+
 const terminalThemeValue = computed({
   get: () => terminalThemeId.value,
   set: (value: string) => settingsStore.updateTerminalTheme(value),
@@ -1245,6 +1407,65 @@ function formatShortcutLabel(event: KeyboardEvent) {
   margin-left: 4px;
 }
 
+.terminal-quick-action-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.terminal-quick-action-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 56px 140px minmax(220px, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 8px;
+}
+
+.terminal-quick-action-grid-secondary {
+  align-items: start;
+}
+
+.terminal-quick-action-col-icons {
+  grid-column: 2 / 4;
+}
+
+.terminal-quick-action-col-icons :deep(.n-radio-group) {
+  line-height: 1;
+}
+
+.terminal-quick-action-col-icons :deep(.n-radio-button__content) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.terminal-quick-action-col-icons :deep(.n-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+}
+
+.terminal-quick-action-svg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  line-height: 1;
+}
+
+.terminal-quick-action-svg :deep(svg) {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
 /* ========================================
    移动端响应式样式
    ======================================== */
@@ -1294,6 +1515,22 @@ function formatShortcutLabel(event: KeyboardEvent) {
   /* 表单项间距 */
   .general-settings-page :deep(.n-form-item) {
     margin-bottom: 16px;
+  }
+
+  .terminal-quick-action-grid {
+    grid-template-columns: 56px 1fr;
+  }
+
+  .terminal-quick-action-col-name {
+    grid-column: 2 / 3;
+  }
+
+  .terminal-quick-action-col-command {
+    grid-column: 2 / 3;
+  }
+
+  .terminal-quick-action-col-icons {
+    grid-column: 2 / 3;
   }
 }
 

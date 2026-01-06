@@ -194,35 +194,6 @@
         @clickoutside="showDragHandleMenu = false"
       />
       <div class="header-actions">
-        <!-- 拖动手柄 - 仅非全屏时显示 -->
-        <n-tooltip v-if="!isFullscreen" trigger="hover" placement="bottom" :delay="100">
-          <template #trigger>
-            <div class="panel-drag-handle" @mousedown="startPanelDrag">
-              <div class="drag-dots">
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-              </div>
-            </div>
-          </template>
-          {{ t('terminal.dragPanel') }}
-        </n-tooltip>
-        <!-- 退出全屏按钮 - 仅全屏时显示 -->
-        <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
-          <template #trigger>
-            <n-button text size="small" @click="toggleFullscreen">
-              <template #icon>
-                <n-icon>
-                  <ContractOutline />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          {{ t('terminal.exitFullscreen') }}
-        </n-tooltip>
         <!-- 创建终端按钮 - 始终显示 -->
         <n-dropdown
           v-if="worktrees.length > 1"
@@ -257,6 +228,58 @@
           </template>
           {{ t('terminal.createNewTerminal') }}
         </n-tooltip>
+        <template v-if="enabledQuickActions.length">
+          <n-dropdown
+            v-if="terminalQuickActionsCollapsed"
+            trigger="manual"
+            :show="showQuickActionsMenu"
+            :options="quickActionDropdownOptions"
+            @select="handleQuickActionSelect"
+            @clickoutside="showQuickActionsMenu = false"
+          >
+            <n-tooltip trigger="hover" placement="bottom" :delay="100">
+              <template #trigger>
+                <n-button
+                  text
+                  size="small"
+                  @click="showQuickActionsMenu = !showQuickActionsMenu"
+                >
+                  <template #icon>
+                    <n-icon>
+                      <PlayOutline />
+                    </n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ t('terminal.quickActions') }}
+            </n-tooltip>
+          </n-dropdown>
+          <template v-else>
+          <n-tooltip
+            v-for="action in enabledQuickActions"
+            :key="action.id"
+            trigger="hover"
+            placement="bottom"
+            :delay="100"
+          >
+            <template #trigger>
+              <n-button text size="small" @click="handleRunQuickAction(action)">
+                <template #icon>
+                  <span
+                    v-if="getQuickActionSvg(action.icon)"
+                    class="terminal-quick-action-button-svg"
+                    v-html="getQuickActionSvg(action.icon)"
+                  ></span>
+                  <n-icon v-else>
+                    <component :is="resolveQuickActionIcon(action.icon)" />
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            {{ formatQuickActionLabel(action) }}
+          </n-tooltip>
+          </template>
+        </template>
         <n-tooltip v-if="projectIdRef" trigger="hover" placement="bottom" :delay="100">
           <template #trigger>
             <n-button
@@ -272,6 +295,35 @@
             </n-button>
           </template>
           {{ t('terminal.viewAISessions') }}
+        </n-tooltip>
+        <!-- 拖动手柄 - 仅非全屏时显示 -->
+        <n-tooltip v-if="!isFullscreen" trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <div class="panel-drag-handle" @mousedown="startPanelDrag">
+              <div class="drag-dots">
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+                <div class="drag-dot"></div>
+              </div>
+            </div>
+          </template>
+          {{ t('terminal.dragPanel') }}
+        </n-tooltip>
+        <!-- 退出全屏按钮 - 仅全屏时显示 -->
+        <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <n-button text size="small" @click="toggleFullscreen">
+              <template #icon>
+                <n-icon>
+                  <ContractOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ t('terminal.exitFullscreen') }}
         </n-tooltip>
         <n-dropdown
           trigger="click"
@@ -512,6 +564,7 @@ import {
   watch,
 } from 'vue';
 import type { HTMLAttributes } from 'vue';
+import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
@@ -533,6 +586,13 @@ import {
   FolderOpenOutline,
   TimeOutline,
   ChatbubblesOutline,
+  PlayOutline,
+  CodeOutline,
+  RocketOutline,
+  LogoGoogle,
+  LogoGithub,
+  NavigateOutline,
+  SparklesOutline,
   ContractOutline,
   ExpandOutline,
 } from '@vicons/ionicons5';
@@ -550,12 +610,13 @@ import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
 import { getPresetById } from '@/constants/themes';
-import { getAssistantIconByType } from '@/utils/assistantIcon';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import type { DeveloperConfig } from '@/types/models';
+import type { TerminalQuickAction, TerminalQuickActionIcon } from '@/stores/settings';
+import { getAssistantIconByType } from '@/utils/assistantIcon';
 
 type ItemResponse<T> = {
   item?: T;
@@ -572,6 +633,7 @@ const isMobile = computed(() => props.isMobile);
 const hidden = computed(() => props.hidden);
 const message = useMessage();
 const dialog = useDialog();
+const router = useRouter();
 const { t } = useLocale();
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
@@ -1044,6 +1106,8 @@ const {
   confirmBeforeTerminalClose,
   activeTheme,
   currentPresetId,
+  terminalQuickActions,
+  terminalQuickActionsCollapsed,
 } = storeToRefs(settingsStore);
 
 // Tabs 主题覆盖 - 用于控制标签背景色
@@ -2252,6 +2316,173 @@ function handleCreateTerminalSelect(key: string) {
   openTerminal({ worktreeId: key });
 }
 
+const enabledQuickActions = computed(() =>
+  terminalQuickActions.value.filter(action => action.enabled && action.command.trim()),
+);
+
+const showQuickActionsMenu = ref(false);
+const QUICK_ACTION_SETTINGS_KEY = '__settings__';
+
+function formatQuickActionLabel(action: TerminalQuickAction) {
+  const name = (action.name || '').trim() || action.id;
+  return `${name}: ${t('terminal.quickActionStart')}`;
+}
+
+function resolveQuickActionIcon(icon: TerminalQuickActionIcon) {
+  switch (icon) {
+    case 'chat':
+      return ChatbubblesOutline;
+    case 'code':
+      return CodeOutline;
+    case 'rocket':
+      return RocketOutline;
+    case 'play':
+      return PlayOutline;
+    case 'claude':
+      return ChatbubblesOutline;
+    case 'codex':
+      return CodeOutline;
+    case 'qwen':
+      return SparklesOutline;
+    case 'gemini':
+      return LogoGoogle;
+    case 'cursor':
+      return NavigateOutline;
+    case 'copilot':
+      return LogoGithub;
+    default:
+      return TerminalOutline;
+  }
+}
+
+function normalizeSvgSize(svg: string, sizePx: number) {
+  const size = `${sizePx}px`;
+  return svg
+    .replace(/width:\s*12px;\s*height:\s*12px;/g, `width: ${size}; height: ${size};`)
+    .replace(/width="12px"/g, `width="${size}"`)
+    .replace(/height="12px"/g, `height="${size}"`);
+}
+
+function getQuickActionSvg(icon: TerminalQuickActionIcon): string {
+  switch (icon) {
+    case 'claude':
+      return normalizeSvgSize(getAssistantIconByType('claude-code'), 16);
+    case 'codex':
+      return normalizeSvgSize(getAssistantIconByType('codex'), 16);
+    case 'qwen':
+      return normalizeSvgSize(getAssistantIconByType('qwen-code'), 16);
+    case 'gemini':
+      return normalizeSvgSize(getAssistantIconByType('gemini'), 16);
+    default:
+      return '';
+  }
+}
+
+const quickActionDropdownOptions = computed<DropdownOption[]>(() =>
+  [
+    ...enabledQuickActions.value.map(action => ({
+      label: formatQuickActionLabel(action),
+      key: action.id,
+      icon: () => {
+        const svg = getQuickActionSvg(action.icon);
+        if (svg) {
+          return h('span', { class: 'terminal-quick-action-menu-svg', innerHTML: svg });
+        }
+        return h(NIcon, null, {
+          default: () => h(resolveQuickActionIcon(action.icon)),
+        });
+      },
+    })),
+    { key: '__divider__', type: 'divider' },
+    {
+      label: t('terminal.quickActionsManage'),
+      key: QUICK_ACTION_SETTINGS_KEY,
+      icon: () =>
+        h(NIcon, null, {
+          default: () => h(SettingsOutline),
+        }),
+    },
+  ],
+);
+
+function handleQuickActionSelect(key: string) {
+  showQuickActionsMenu.value = false;
+  if (key === QUICK_ACTION_SETTINGS_KEY) {
+    void router.push({ name: 'settings' });
+    return;
+  }
+  const action = enabledQuickActions.value.find(item => item.id === key);
+  if (!action) {
+    return;
+  }
+  void handleRunQuickAction(action);
+}
+
+function normalizeTerminalEnter(value: string) {
+  const trimmed = value.replace(/\s+$/, '');
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.endsWith('\n') || trimmed.endsWith('\r')) {
+    return trimmed;
+  }
+  return trimmed + '\r';
+}
+
+async function handleRunQuickAction(action: TerminalQuickAction) {
+  if (!props.projectId) {
+    message.warning(t('terminal.pleaseSelectProject'));
+    return;
+  }
+  if (!ensureTerminalCapacity()) {
+    return;
+  }
+
+  const input = normalizeTerminalEnter(action.command);
+  if (!input) {
+    message.warning(t('terminal.quickActionMissingCommand'));
+    return;
+  }
+
+  let worktreeId: string | undefined;
+  if (!isEmptyTab(activeId.value)) {
+    const activeTab = tabs.value.find(tab => tab.id === activeId.value);
+    worktreeId = activeTab?.worktreeId;
+  }
+  if (!worktreeId) {
+    worktreeId = worktrees.value.find(w => w.isMain)?.id ?? worktrees.value[0]?.id;
+  }
+  if (!worktreeId) {
+    message.warning(t('terminal.pleaseSelectProject'));
+    return;
+  }
+
+  shouldAutoFocusTerminal.value = true;
+  expanded.value = true;
+  localActiveEmptyTabId.value = '';
+
+  try {
+    const newSessionId = await createSession({ worktreeId });
+
+    const startAt = Date.now();
+    const timeoutMs = 8000;
+    const sendPayload = { type: 'input', data: input };
+
+    if (!send(newSessionId, sendPayload)) {
+      const timer = window.setInterval(() => {
+        if (send(newSessionId, sendPayload) || Date.now() - startAt > timeoutMs) {
+          window.clearInterval(timer);
+        }
+      }, 200);
+    }
+
+    scheduleResizeAll();
+    message.success(t('terminal.quickActionTriggered', { name: action.name }));
+  } catch (error: any) {
+    message.error(error?.message ?? t('terminal.quickActionFailed', { name: action.name }));
+  }
+}
+
 async function openTerminal(options: TerminalCreateOptions) {
   if (!props.projectId) {
     message.warning(t('terminal.pleaseSelectProject'));
@@ -2322,7 +2553,7 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
 
         // Send the resume command after a small delay to ensure terminal is fully ready
         setTimeout(() => {
-          send(newSessionId, { type: 'data', data: resumeCommand + '\r' });
+          send(newSessionId, { type: 'input', data: resumeCommand + '\r' });
         }, 100);
       }
     };
@@ -2332,10 +2563,10 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
 
     // Fallback: if ready event was already fired, try sending after delay
     setTimeout(() => {
-      emitter.off(newSessionId, handleReady);
+        emitter.off(newSessionId, handleReady);
       const tab = tabs.value.find(t => t.id === newSessionId);
       if (tab && tab.clientStatus === 'ready') {
-        send(newSessionId, { type: 'data', data: resumeCommand + '\r' });
+        send(newSessionId, { type: 'input', data: resumeCommand + '\r' });
       }
     }, 1500);
 
@@ -3407,6 +3638,19 @@ defineExpose({
   flex-shrink: 0;
   padding-right: 4px;
   margin-left: auto;
+}
+
+.terminal-quick-action-button-svg,
+.terminal-quick-action-menu-svg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.terminal-quick-action-button-svg :deep(svg),
+.terminal-quick-action-menu-svg :deep(svg) {
+  display: block;
 }
 
 .panel-body {

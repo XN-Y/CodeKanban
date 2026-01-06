@@ -16,11 +16,11 @@ func OpenTerminal(path string) error {
 		if _, err := exec.LookPath("wt.exe"); err == nil {
 			cmd = exec.Command("wt.exe", "-d", path)
 		} else {
-			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", "cd", "/d", path)
+			cmd = exec.Command("cmd", "/c", "start", "cmd", "/k", fmt.Sprintf("cd /d %s", quoteCmdPath(path)))
 		}
 	case "darwin":
 		script := fmt.Sprintf(`tell application "Terminal"
-	do script "cd %s"
+	do script "cd \"%s\""
 	activate
 end tell`, escapeAppleScript(path))
 		cmd = exec.Command("osascript", "-e", script)
@@ -61,4 +61,8 @@ func escapeAppleScript(path string) string {
 	escaped := strings.ReplaceAll(path, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
 	return escaped
+}
+
+func quoteCmdPath(path string) string {
+	return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
 }
