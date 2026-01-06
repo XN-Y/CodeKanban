@@ -72,10 +72,11 @@ export const FONT_WEIGHT_OPTIONS = [
 
 /**
  * 默认字体回退链（考虑中英文显示）
- * 顺序：流行英文等宽字体 -> Windows中文 -> macOS中文 -> Linux中文 -> 通用回退
+ * 顺序：macOS系统字体 -> Windows流行字体 -> 中文回退 -> 通用回退
+ * macOS会使用Menlo/Monaco，Windows上这两个字体不存在会跳过，继续用Cascadia Mono等
  */
 export const DEFAULT_TERMINAL_FONT_FAMILY =
-  'Cascadia Mono, JetBrains Mono, Consolas, Microsoft YaHei, PingFang SC, Noto Sans SC, monospace';
+  'Menlo, Monaco, Cascadia Mono, JetBrains Mono, Consolas, Microsoft YaHei, PingFang SC, Noto Sans SC, monospace';
 
 /**
  * 常用等宽字体列表
@@ -86,14 +87,16 @@ export const TERMINAL_FONT_OPTIONS = [
   { value: 'Cascadia Mono, Microsoft YaHei, PingFang SC, monospace', label: 'Cascadia Mono' },
   { value: 'JetBrains Mono, Microsoft YaHei, PingFang SC, monospace', label: 'JetBrains Mono' },
   { value: 'Consolas, Microsoft YaHei, PingFang SC, monospace', label: 'Consolas' },
+  // macOS 系统字体
+  { value: 'Menlo, Monaco, PingFang SC, monospace', label: 'Menlo (macOS)' },
+  { value: 'Monaco, Menlo, PingFang SC, monospace', label: 'Monaco (macOS)' },
+  { value: 'SF Mono, Menlo, Monaco, PingFang SC, monospace', label: 'SF Mono (macOS)' },
   // 专为中英文设计的等宽字体
   { value: 'Sarasa Mono SC, monospace', label: 'Sarasa Mono SC (更纱黑体)' },
   { value: 'Source Han Mono SC, monospace', label: 'Source Han Mono (思源等宽)' },
   // 其他流行的英文等宽字体
   { value: 'Cascadia Code, Microsoft YaHei, PingFang SC, monospace', label: 'Cascadia Code' },
   { value: 'Fira Code, Microsoft YaHei, PingFang SC, monospace', label: 'Fira Code' },
-  { value: 'Monaco, PingFang SC, monospace', label: 'Monaco (macOS)' },
-  { value: 'Menlo, PingFang SC, monospace', label: 'Menlo (macOS)' },
   { value: 'Source Code Pro, Microsoft YaHei, PingFang SC, monospace', label: 'Source Code Pro' },
   { value: 'Ubuntu Mono, Noto Sans SC, monospace', label: 'Ubuntu Mono' },
   { value: 'Roboto Mono, Noto Sans SC, monospace', label: 'Roboto Mono' },
