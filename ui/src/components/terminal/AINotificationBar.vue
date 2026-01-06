@@ -2004,7 +2004,7 @@ watch(
 /* 通知行容器（包含序号和卡片） */
 .notification-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 6px;
   pointer-events: auto;
   position: relative;
@@ -2029,7 +2029,6 @@ watch(
     transform 0.15s ease,
     box-shadow 0.15s ease,
     border-color 0.15s ease;
-  margin-top: 10px;
 }
 
 .project-index-badge:hover {
@@ -2048,7 +2047,6 @@ watch(
   width: 18px;
   height: 18px;
   font-size: 10px;
-  margin-top: 4px;
 }
 
 /* 单项目时序号不可见但占位 */
@@ -2062,6 +2060,7 @@ watch(
   position: absolute;
   left: 1px;
   top: 50%;
+  transform: translateY(-50%);
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -2075,11 +2074,6 @@ watch(
   z-index: 10;
 }
 
-/* 单项目时（无序号）普通模式调整 top */
-.notification-row:has(.project-index-badge.is-single-project) .current-session-indicator {
-  top: 15%;
-}
-
 .current-session-indicator svg {
   width: 10px;
   height: 10px;
@@ -2089,7 +2083,6 @@ watch(
   width: 18px;
   height: 18px;
   left: -23px;
-  margin-top: -13px;
 }
 
 /* 单项目时（无序号）紧凑模式调整 left */
