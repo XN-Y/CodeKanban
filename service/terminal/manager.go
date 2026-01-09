@@ -203,7 +203,12 @@ func (m *Manager) CloseSession(id string) error {
 	if err != nil {
 		return err
 	}
-	return session.Close()
+	if closeErr := session.Close(); closeErr != nil && m.logger != nil {
+		m.logger.Warn("terminal session closed with warning",
+			zap.String("sessionId", id),
+			zap.Error(closeErr))
+	}
+	return nil
 }
 
 // LinkTask associates a task with a terminal session.

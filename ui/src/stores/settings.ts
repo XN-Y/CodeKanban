@@ -56,6 +56,13 @@ export interface TerminalFontSettings {
  */
 export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
 
+/**
+ * 终端显示模式
+ * - floating: 浮动面板模式（默认）
+ * - docked: 固定在页面中央区域，与看板形成Tab切换
+ */
+export type TerminalDisplayMode = 'floating' | 'docked';
+
 export const FONT_WEIGHT_OPTIONS = [
   { value: 'normal', label: 'Normal (400)' },
   { value: '100', label: '100 - Thin' },
@@ -168,6 +175,7 @@ interface GeneralSettings {
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
+  terminalDisplayMode: TerminalDisplayMode;
 }
 
 const STORAGE_KEY = 'general_settings';
@@ -228,6 +236,7 @@ const defaultSettings: GeneralSettings = {
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
+  terminalDisplayMode: 'floating',
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -249,6 +258,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
+  const terminalDisplayMode = computed(() => settings.value.terminalDisplayMode);
 
   /**
    * 获取有效的终端主题 ID
@@ -384,6 +394,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalWebGLRenderer = mode;
   }
 
+  function updateTerminalDisplayMode(mode: TerminalDisplayMode) {
+    settings.value.terminalDisplayMode = mode;
+  }
+
   function resetTerminalFont() {
     settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
   }
@@ -459,6 +473,7 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalThemeId,
     terminalFont,
     terminalWebGLRenderer,
+    terminalDisplayMode,
     effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
@@ -476,6 +491,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
+    updateTerminalDisplayMode,
     resetTerminalFont,
     selectPreset,
     applySystemThemePreset,
@@ -522,6 +538,7 @@ function loadSettings(): GeneralSettings {
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
+        terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
       };
     }
   } catch (error) {
@@ -557,6 +574,7 @@ function cloneDefaultSettings(): GeneralSettings {
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
+    terminalDisplayMode: defaultSettings.terminalDisplayMode,
   };
 }
 
@@ -764,4 +782,13 @@ function sanitizeWebGLRenderer(value: string | undefined): 'auto' | 'force' | 'd
     return value as 'auto' | 'force' | 'disable';
   }
   return defaultSettings.terminalWebGLRenderer;
+}
+
+const VALID_DISPLAY_MODES: TerminalDisplayMode[] = ['floating', 'docked'];
+
+function sanitizeTerminalDisplayMode(value: string | undefined): TerminalDisplayMode {
+  if (value && VALID_DISPLAY_MODES.includes(value as TerminalDisplayMode)) {
+    return value as TerminalDisplayMode;
+  }
+  return defaultSettings.terminalDisplayMode;
 }

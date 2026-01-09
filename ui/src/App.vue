@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { RouterView } from 'vue-router';
+import { RouterView, useRoute } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { zhCN, dateZhCN, enUS, dateEnUS, darkTheme, type GlobalThemeOverrides } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
@@ -14,9 +14,22 @@ import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
 
 const settingsStore = useSettingsStore();
-const { activeTheme: theme, followSystemTheme, currentPresetId } = storeToRefs(settingsStore);
+const { activeTheme: theme, followSystemTheme, currentPresetId, terminalDisplayMode } =
+  storeToRefs(settingsStore);
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
+const route = useRoute();
+
+const shouldShowGlobalNotificationBar = computed(() => {
+  if (isMobile.value) {
+    return false;
+  }
+  // Dock 模式下，AI 通知嵌入到终端右侧，不再使用全局浮层。
+  if (terminalDisplayMode.value === 'docked' && route.name === 'project') {
+    return false;
+  }
+  return true;
+});
 
 // 获取预设主题中的终端标签颜色（用于 fallback）
 // 当 followSystemTheme 为 true 时，根据系统主题选择预设
@@ -201,7 +214,7 @@ onBeforeUnmount(() => {
               <AppInitializer />
               <RouterView />
               <NotePad />
-              <AINotificationBar v-if="!isMobile" />
+              <AINotificationBar v-if="shouldShowGlobalNotificationBar" />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>

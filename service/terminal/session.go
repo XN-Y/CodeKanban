@@ -762,15 +762,30 @@ func (s *Session) Close() error {
 		if s.cancel != nil {
 			s.cancel()
 		}
+		var (
+			pid int32
+			pty xpty.Pty
+		)
 		s.mu.Lock()
 		if s.cmd != nil && s.cmd.Process != nil {
-			_ = s.cmd.Process.Kill()
+			pid = int32(s.cmd.Process.Pid)
 		}
-		if s.pty != nil {
-			closeErr = s.pty.Close()
-			s.pty = nil
-		}
+		pty = s.pty
+		s.pty = nil
 		s.mu.Unlock()
+
+		if pid > 0 {
+			if err := process.KillProcessTree(pid); err != nil && s.logger != nil {
+				s.logger.Warn("failed to kill terminal process tree",
+					zap.Int32("pid", pid),
+					zap.String("sessionId", s.id),
+					zap.Error(err))
+			}
+		}
+
+		if pty != nil {
+			closeErr = pty.Close()
+		}
 		close(s.closed)
 		s.notifyExit(s.Err())
 	})

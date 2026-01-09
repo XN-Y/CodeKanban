@@ -96,7 +96,9 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 	}
 
 	recentInput := strings.Join(recentInputs, "")
+	// 移除输入提示符前缀: 旧版 ">" 或新版 "❯ "
 	recentInput, _ = strings.CutPrefix(recentInput, ">")
+	recentInput, _ = strings.CutPrefix(recentInput, "❯")
 	recentInput = strings.TrimSpace(recentInput)
 	// 只有当过滤后有实际内容时才更新 recentInput
 	if recentInput != "" && recentInput != d.recentInput {

@@ -14,13 +14,25 @@
 
         <n-layout has-sider>
           <!-- 右侧工作树侧边栏 -->
-          <n-layout-sider bordered :width="320" :collapsed-width="0" show-trigger="arrow-circle">
+          <n-layout-sider
+            v-model:collapsed="worktreeSiderCollapsed"
+            bordered
+            :width="320"
+            :collapsed-width="0"
+            show-trigger="arrow-circle"
+          >
             <WorktreeList @open-terminal="handleOpenTerminal" />
           </n-layout-sider>
 
-          <n-layout-content>
+          <n-layout-content content-style="height: 100vh;">
             <!-- 主内容区 -->
-            <div class="workspace-content">
+            <!-- Dock 模式：使用 Tab 视图切换看板和终端 -->
+            <WorkspaceTabView
+              v-if="isDockMode"
+              :project-id="currentProjectId"
+            />
+            <!-- 浮动模式：只显示看板 -->
+            <div v-else class="workspace-content">
               <KanbanBoard :project-id="currentProjectId" />
             </div>
           </n-layout-content>
@@ -106,8 +118,9 @@
       </div>
     </template>
 
-    <!-- 悬浮终端面板 -->
+    <!-- 悬浮终端面板：仅在浮动模式下显示 -->
     <TerminalPanel
+      v-if="!isDockMode"
       ref="terminalPanelRef"
       :project-id="currentProjectId"
       :is-mobile="isMobile"
@@ -125,13 +138,18 @@
 import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useTitle } from '@vueuse/core';
+import { storeToRefs } from 'pinia';
+import { useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
+import { useSettingsStore } from '@/stores/settings';
+import { useTerminalStore } from '@/stores/terminal';
 import { useResponsive } from '@/composables/useResponsive';
 import { useLocale } from '@/composables/useLocale';
 import WorktreeList from '@/components/worktree/WorktreeList.vue';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import RecentProjects from '@/components/project/RecentProjects.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
+import WorkspaceTabView from '@/components/workspace/WorkspaceTabView.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import type { Worktree } from '@/types/models';
@@ -139,11 +157,28 @@ import { APP_NAME } from '@/constants/app';
 
 const route = useRoute();
 const router = useRouter();
+const message = useMessage();
 const projectStore = useProjectStore();
+const settingsStore = useSettingsStore();
+const terminalStore = useTerminalStore();
+const { terminalDisplayMode } = storeToRefs(settingsStore);
 const { isMobile, isDesktop } = useResponsive();
 const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
+
+const WORKTREE_SIDER_COLLAPSED_KEY = 'worktree-sider-collapsed';
+const getInitialWorktreeSiderCollapsedState = (): boolean => {
+  const stored = localStorage.getItem(WORKTREE_SIDER_COLLAPSED_KEY);
+  return stored ? Boolean(JSON.parse(stored)) : false;
+};
+const worktreeSiderCollapsed = ref(getInitialWorktreeSiderCollapsedState());
+watch(worktreeSiderCollapsed, collapsed => {
+  localStorage.setItem(WORKTREE_SIDER_COLLAPSED_KEY, JSON.stringify(collapsed));
+});
+
+// Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
+const isDockMode = computed(() => isDesktop.value && terminalDisplayMode.value === 'docked');
 
 // 移动端视图切换
 type MobileView = 'kanban' | 'terminal' | 'projects' | 'notifications';
@@ -212,11 +247,30 @@ watch(
 );
 
 function handleOpenTerminal(worktree: Worktree) {
-  terminalPanelRef.value?.createTerminal({
-    worktreeId: worktree.id,
-    workingDir: worktree.path,
-    title: worktree.branchName,
-  });
+  // Floating mode: delegate to TerminalPanel for expand/focus behavior.
+  if (terminalPanelRef.value) {
+    terminalPanelRef.value.createTerminal({
+      worktreeId: worktree.id,
+      workingDir: worktree.path,
+      title: worktree.branchName,
+    });
+    return;
+  }
+
+  // Dock mode: TerminalPanel isn't mounted, so create the session via the store.
+  // WorkspaceTabView will auto-switch to the terminal tab when a new session appears.
+  if (!currentProjectId.value) {
+    return;
+  }
+  terminalStore
+    .createSession(currentProjectId.value, {
+      worktreeId: worktree.id,
+      workingDir: worktree.path,
+      title: worktree.branchName,
+    })
+    .catch((error: any) => {
+      message.error(error?.message ?? t('terminal.createFailed'));
+    });
 }
 
 function openProjectEditDialog() {

@@ -91,6 +91,12 @@ export const useProjectStore = defineStore('project', () => {
   async function fetchProject(id: string) {
     loading.value = true;
     try {
+      // Clear stale worktrees immediately when switching projects to avoid
+      // temporarily showing the previous project's worktrees (which can lead to
+      // actions using an outdated worktreeId).
+      if (currentProject.value?.id !== id) {
+        worktrees.value = [];
+      }
       currentProject.value = await projectApi.get(id);
       selectedWorktreeId.value = null;
       await fetchWorktrees(id);

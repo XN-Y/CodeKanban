@@ -1,8 +1,15 @@
 <template>
   <div
     class="terminal-panel"
-    :class="{ 'is-collapsed': !expanded && !isMobile, 'is-mobile': isMobile, 'is-hidden': hidden, 'is-resizing': isResizing || isDragging, 'is-fullscreen': isFullscreen }"
-    :style="isMobile ? undefined : panelStyle"
+    :class="{
+      'is-collapsed': !expanded && !isMobile && !isDocked,
+      'is-docked': isDocked,
+      'is-mobile': isMobile,
+      'is-hidden': hidden,
+      'is-resizing': isResizing || isDragging,
+      'is-fullscreen': isFullscreen,
+    }"
+    :style="isMobile || isDocked ? undefined : panelStyle"
     @pointerdown.capture="handlePanelPointerDown"
   >
     <div v-if="shouldShowBranchFilter" class="branch-filter-strip">
@@ -27,30 +34,41 @@
     </div>
 
     <!-- 拖动调整高度的手柄 -->
-    <div v-if="!isFullscreen" class="resize-handle resize-handle-top" @mousedown="startResize">
+    <div
+      v-if="!isFullscreen && !isDocked"
+      class="resize-handle resize-handle-top"
+      @mousedown="startResize"
+    >
       <div class="resize-indicator"></div>
     </div>
 
     <!-- 左侧拖动手柄 -->
-    <div v-if="!isFullscreen" class="resize-handle resize-handle-left" @mousedown="startResizeLeft"></div>
+    <div
+      v-if="!isFullscreen && !isDocked"
+      class="resize-handle resize-handle-left"
+      @mousedown="startResizeLeft"
+    ></div>
 
     <!-- 右侧拖动手柄 -->
-    <div v-if="!isFullscreen" class="resize-handle resize-handle-right" @mousedown="startResizeRight"></div>
+    <div
+      v-if="!isFullscreen && !isDocked"
+      class="resize-handle resize-handle-right"
+      @mousedown="startResizeRight"
+    ></div>
 
     <!-- 底部拖动手柄 -->
-    <div v-if="!isFullscreen" class="resize-handle resize-handle-bottom" @mousedown="startResizeBottom">
+    <div
+      v-if="!isFullscreen && !isDocked"
+      class="resize-handle resize-handle-bottom"
+      @mousedown="startResizeBottom"
+    >
       <div class="resize-indicator"></div>
     </div>
 
     <div class="panel-header">
       <!-- 移动端：下拉选择终端 + 上一个/下一个 -->
       <div v-if="isMobile && (tabs.length || emptyTabs.length)" class="mobile-tab-selector">
-        <button
-          type="button"
-          class="mobile-nav-btn"
-          :disabled="!hasPrevTab"
-          @click="goToPrevTab"
-        >
+        <button type="button" class="mobile-nav-btn" :disabled="!hasPrevTab" @click="goToPrevTab">
           <n-icon size="18">
             <ChevronBackOutline />
           </n-icon>
@@ -69,24 +87,27 @@
             @click="showMobileTabSelector = !showMobileTabSelector"
           >
             <span class="mobile-tab-title">{{ activeTabTitle }}</span>
-            <n-icon size="16" class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
+            <n-icon
+              size="16"
+              class="mobile-tab-arrow"
+              :class="{ 'is-open': showMobileTabSelector }"
+            >
               <ChevronDownOutline />
             </n-icon>
           </button>
         </n-dropdown>
-        <button
-          type="button"
-          class="mobile-nav-btn"
-          :disabled="!hasNextTab"
-          @click="goToNextTab"
-        >
+        <button type="button" class="mobile-nav-btn" :disabled="!hasNextTab" @click="goToNextTab">
           <n-icon size="18">
             <ChevronForwardOutline />
           </n-icon>
         </button>
       </div>
       <!-- 桌面端：标签页切换 -->
-      <div v-else-if="tabs.length || emptyTabs.length" ref="tabsContainerRef" class="tabs-container">
+      <div
+        v-else-if="tabs.length || emptyTabs.length"
+        ref="tabsContainerRef"
+        class="tabs-container"
+      >
         <n-tabs
           v-model:value="activeId"
           type="card"
@@ -110,13 +131,20 @@
               </span>
               <!-- 正常终端标签的完整显示 -->
               <span v-else class="tab-label" :title="getTabTooltip(tab)">
-                <span v-if="!hideStatusDots" class="status-dot" :class="(tab as TerminalTabState).clientStatus" />
+                <span
+                  v-if="!hideStatusDots"
+                  class="status-dot"
+                  :class="(tab as TerminalTabState).clientStatus"
+                />
                 <span class="tab-title" :style="tabTitleStyle">
                   {{ tab.title }}
                 </span>
                 <!-- 任务图标：独立显示，不依赖 AI 助手状态 -->
                 <span
-                  v-if="resolveTabTaskId(tab as TerminalTabState) && !showAssistantStatus(tab as TerminalTabState)"
+                  v-if="
+                    resolveTabTaskId(tab as TerminalTabState) &&
+                    !showAssistantStatus(tab as TerminalTabState)
+                  "
                   class="standalone-task-icon"
                   role="button"
                   tabindex="0"
@@ -132,7 +160,10 @@
                 <span
                   v-if="showAssistantStatus(tab as TerminalTabState)"
                   class="ai-status-pill"
-                  :class="[`state-${getAssistantStateClass(tab as TerminalTabState)}`, getAssistantPillSizeClass(tab as TerminalTabState)]"
+                  :class="[
+                    `state-${getAssistantStateClass(tab as TerminalTabState)}`,
+                    getAssistantPillSizeClass(tab as TerminalTabState),
+                  ]"
                   :title="getAssistantTooltip(tab as TerminalTabState)"
                 >
                   <span
@@ -151,16 +182,29 @@
                   </span>
                   <span
                     class="ai-status-clickable"
-                    :class="{ active: tab.id === activeTabId && (tab as TerminalTabState).aiSessionId }"
+                    :class="{
+                      active: tab.id === activeTabId && (tab as TerminalTabState).aiSessionId,
+                    }"
                     role="button"
                     :tabindex="(tab as TerminalTabState).aiSessionId ? 0 : -1"
-                    :title="(tab as TerminalTabState).aiSessionId ? t('terminal.viewConversation') : undefined"
+                    :title="
+                      (tab as TerminalTabState).aiSessionId
+                        ? t('terminal.viewConversation')
+                        : undefined
+                    "
                     @click.stop="handleStatusClick(tab as TerminalTabState)"
                     @keydown.enter.prevent.stop="handleStatusClick(tab as TerminalTabState)"
                   >
-                    <span class="ai-status-icon" v-html="getAssistantIcon(tab as TerminalTabState)"></span>
-                    <span class="ai-status-text">{{ getAssistantStatusLabel(tab as TerminalTabState) }}</span>
-                    <span class="ai-status-emoji">{{ getAssistantStatusEmoji(tab as TerminalTabState) }}</span>
+                    <span
+                      class="ai-status-icon"
+                      v-html="getAssistantIcon(tab as TerminalTabState)"
+                    ></span>
+                    <span class="ai-status-text">{{
+                      getAssistantStatusLabel(tab as TerminalTabState)
+                    }}</span>
+                    <span class="ai-status-emoji">{{
+                      getAssistantStatusEmoji(tab as TerminalTabState)
+                    }}</span>
                   </span>
                 </span>
               </span>
@@ -239,11 +283,7 @@
           >
             <n-tooltip trigger="hover" placement="bottom" :delay="100">
               <template #trigger>
-                <n-button
-                  text
-                  size="small"
-                  @click="showQuickActionsMenu = !showQuickActionsMenu"
-                >
+                <n-button text size="small" @click="showQuickActionsMenu = !showQuickActionsMenu">
                   <template #icon>
                     <n-icon>
                       <PlayOutline />
@@ -255,38 +295,34 @@
             </n-tooltip>
           </n-dropdown>
           <template v-else>
-          <n-tooltip
-            v-for="action in enabledQuickActions"
-            :key="action.id"
-            trigger="hover"
-            placement="bottom"
-            :delay="100"
-          >
-            <template #trigger>
-              <n-button text size="small" @click="handleRunQuickAction(action)">
-                <template #icon>
-                  <span
-                    v-if="getQuickActionSvg(action.icon)"
-                    class="terminal-quick-action-button-svg"
-                    v-html="getQuickActionSvg(action.icon)"
-                  ></span>
-                  <n-icon v-else>
-                    <component :is="resolveQuickActionIcon(action.icon)" />
-                  </n-icon>
-                </template>
-              </n-button>
-            </template>
-            {{ formatQuickActionLabel(action) }}
-          </n-tooltip>
+            <n-tooltip
+              v-for="action in enabledQuickActions"
+              :key="action.id"
+              trigger="hover"
+              placement="bottom"
+              :delay="100"
+            >
+              <template #trigger>
+                <n-button text size="small" @click="handleRunQuickAction(action)">
+                  <template #icon>
+                    <span
+                      v-if="getQuickActionSvg(action.icon)"
+                      class="terminal-quick-action-button-svg"
+                      v-html="getQuickActionSvg(action.icon)"
+                    ></span>
+                    <n-icon v-else>
+                      <component :is="resolveQuickActionIcon(action.icon)" />
+                    </n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ formatQuickActionLabel(action) }}
+            </n-tooltip>
           </template>
         </template>
         <n-tooltip v-if="projectIdRef" trigger="hover" placement="bottom" :delay="100">
           <template #trigger>
-            <n-button
-              text
-              size="small"
-              @click="showAISessionHistory = true"
-            >
+            <n-button text size="small" @click="showAISessionHistory = true">
               <template #icon>
                 <n-icon>
                   <TimeOutline />
@@ -297,7 +333,12 @@
           {{ t('terminal.viewAISessions') }}
         </n-tooltip>
         <!-- 拖动手柄 - 仅非全屏时显示 -->
-        <n-tooltip v-if="!isFullscreen" trigger="hover" placement="bottom" :delay="100">
+        <n-tooltip
+          v-if="!isDocked && !isFullscreen"
+          trigger="hover"
+          placement="bottom"
+          :delay="100"
+        >
           <template #trigger>
             <div class="panel-drag-handle" @mousedown="startPanelDrag">
               <div class="drag-dots">
@@ -313,7 +354,12 @@
           {{ t('terminal.dragPanel') }}
         </n-tooltip>
         <!-- 退出全屏按钮 - 仅全屏时显示 -->
-        <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+        <n-tooltip
+          v-else-if="!isDocked && isFullscreen"
+          trigger="hover"
+          placement="bottom"
+          :delay="100"
+        >
           <template #trigger>
             <n-button text size="small" @click="toggleFullscreen">
               <template #icon>
@@ -347,6 +393,7 @@
           </n-tooltip>
         </n-dropdown>
         <n-tooltip
+          v-if="!isDocked"
           trigger="hover"
           placement="bottom"
           :disabled="!expanded"
@@ -448,7 +495,7 @@
         v-for="tab in visibleTabs.filter(t => !isEmptyTabItem(t))"
         v-show="tab.id === activeId"
         :key="tab.id"
-        :tab="(tab as TerminalTabState)"
+        :tab="tab as TerminalTabState"
         :emitter="emitter"
         :send="send"
         :should-auto-focus="shouldAutoFocusTerminal"
@@ -490,7 +537,7 @@
           :key="task.id"
           :class="{
             'task-item-selected': selectedTaskId === task.id,
-            'task-item-disabled': isTaskLinkedToActiveSession(task.id)
+            'task-item-disabled': isTaskLinkedToActiveSession(task.id),
           }"
           @click="selectTask(task.id)"
         >
@@ -507,11 +554,7 @@
               >
                 {{ getPriorityLabel(task.priority) }}
               </n-tag>
-              <n-tag
-                v-if="isTaskLinkedToActiveSession(task.id)"
-                type="warning"
-                size="small"
-              >
+              <n-tag v-if="isTaskLinkedToActiveSession(task.id)" type="warning" size="small">
                 {{ t('terminal.taskAlreadyLinked') }}
               </n-tag>
             </div>
@@ -566,7 +609,21 @@ import {
 import type { HTMLAttributes } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { useDialog, useMessage, NIcon, NInput, NModal, NList, NListItem, NSpin, NEmpty, NTag, NButton, NSpace, NTooltip } from 'naive-ui';
+import {
+  useDialog,
+  useMessage,
+  NIcon,
+  NInput,
+  NModal,
+  NList,
+  NListItem,
+  NSpin,
+  NEmpty,
+  NTag,
+  NButton,
+  NSpace,
+  NTooltip,
+} from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
   ChevronBackOutline,
@@ -622,15 +679,22 @@ type ItemResponse<T> = {
   item?: T;
 };
 
-const props = defineProps<{
-  projectId: string;
-  isMobile?: boolean;
-  hidden?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    projectId: string;
+    isMobile?: boolean;
+    hidden?: boolean;
+    mode?: 'floating' | 'docked';
+  }>(),
+  {
+    mode: 'floating',
+  }
+);
 
 const projectIdRef = toRef(props, 'projectId');
 const isMobile = computed(() => props.isMobile);
 const hidden = computed(() => props.hidden);
+const isDocked = computed(() => props.mode === 'docked');
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
@@ -639,7 +703,15 @@ const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
 const taskStore = useTaskStore();
 const { tasksByStatus } = storeToRefs(taskStore);
-const expanded = useStorage('terminal-panel-expanded', true);
+const storedExpanded = useStorage('terminal-panel-expanded', true);
+const expanded = computed({
+  get: () => (isDocked.value ? true : storedExpanded.value),
+  set: value => {
+    if (!isDocked.value) {
+      storedExpanded.value = value;
+    }
+  },
+});
 const panelHeight = useStorage('terminal-panel-height', 470);
 const panelLeft = useStorage('terminal-panel-left', 220);
 const panelRight = useStorage('terminal-panel-right', 170);
@@ -855,7 +927,20 @@ const showDragHandleMenu = ref(false);
 const dragHandleMenuX = ref(0);
 const dragHandleMenuY = ref(0);
 const isFullscreen = useStorage('terminal-panel-fullscreen', false);
-const savedPanelState = ref<{ left: number; right: number; bottom: number; height: number } | null>(null);
+const savedPanelState = ref<{ left: number; right: number; bottom: number; height: number } | null>(
+  null
+);
+
+watch(
+  isDocked,
+  docked => {
+    if (docked && isFullscreen.value) {
+      isFullscreen.value = false;
+      savedPanelState.value = null;
+    }
+  },
+  { immediate: true }
+);
 
 const dragHandleMenuOptions = computed<DropdownOption[]>(() => [
   {
@@ -869,6 +954,13 @@ const dragHandleMenuOptions = computed<DropdownOption[]>(() => [
 ]);
 
 const settingsMenuOptions = computed<DropdownOption[]>(() => [
+  isDocked.value
+    ? { label: t('terminal.switchToFloating'), key: 'switch-to-floating' }
+    : { label: t('terminal.switchToDocked'), key: 'switch-to-docked' },
+  {
+    type: 'divider',
+    key: 'd1',
+  },
   {
     label: t('terminal.autoResize'),
     key: 'auto-resize',
@@ -1413,7 +1505,10 @@ const localActiveEmptyTabId = ref<string>('');
 const activeId = computed({
   get: () => {
     // 如果有本地激活的空终端，优先返回
-    if (localActiveEmptyTabId.value && emptyTabs.value.some(t => t.id === localActiveEmptyTabId.value)) {
+    if (
+      localActiveEmptyTabId.value &&
+      emptyTabs.value.some(t => t.id === localActiveEmptyTabId.value)
+    ) {
       return localActiveEmptyTabId.value;
     }
     return activeTabId.value;
@@ -1701,8 +1796,10 @@ function adjustPanelMarginsForMinWidth() {
 const debouncedAdjustMargins = useDebounceFn(adjustPanelMarginsForMinWidth, 200);
 
 if (typeof window !== 'undefined') {
-  useEventListener(window, 'keydown', handleTerminalToggleShortcut);
-  useEventListener(window, 'resize', debouncedAdjustMargins);
+  if (!isDocked.value) {
+    useEventListener(window, 'keydown', handleTerminalToggleShortcut);
+    useEventListener(window, 'resize', debouncedAdjustMargins);
+  }
 }
 
 function setupTabSorting() {
@@ -2317,7 +2414,7 @@ function handleCreateTerminalSelect(key: string) {
 }
 
 const enabledQuickActions = computed(() =>
-  terminalQuickActions.value.filter(action => action.enabled && action.command.trim()),
+  terminalQuickActions.value.filter(action => action.enabled && action.command.trim())
 );
 
 const showQuickActionsMenu = ref(false);
@@ -2378,32 +2475,30 @@ function getQuickActionSvg(icon: TerminalQuickActionIcon): string {
   }
 }
 
-const quickActionDropdownOptions = computed<DropdownOption[]>(() =>
-  [
-    ...enabledQuickActions.value.map(action => ({
-      label: formatQuickActionLabel(action),
-      key: action.id,
-      icon: () => {
-        const svg = getQuickActionSvg(action.icon);
-        if (svg) {
-          return h('span', { class: 'terminal-quick-action-menu-svg', innerHTML: svg });
-        }
-        return h(NIcon, null, {
-          default: () => h(resolveQuickActionIcon(action.icon)),
-        });
-      },
-    })),
-    { key: '__divider__', type: 'divider' },
-    {
-      label: t('terminal.quickActionsManage'),
-      key: QUICK_ACTION_SETTINGS_KEY,
-      icon: () =>
-        h(NIcon, null, {
-          default: () => h(SettingsOutline),
-        }),
+const quickActionDropdownOptions = computed<DropdownOption[]>(() => [
+  ...enabledQuickActions.value.map(action => ({
+    label: formatQuickActionLabel(action),
+    key: action.id,
+    icon: () => {
+      const svg = getQuickActionSvg(action.icon);
+      if (svg) {
+        return h('span', { class: 'terminal-quick-action-menu-svg', innerHTML: svg });
+      }
+      return h(NIcon, null, {
+        default: () => h(resolveQuickActionIcon(action.icon)),
+      });
     },
-  ],
-);
+  })),
+  { key: '__divider__', type: 'divider' },
+  {
+    label: t('terminal.quickActionsManage'),
+    key: QUICK_ACTION_SETTINGS_KEY,
+    icon: () =>
+      h(NIcon, null, {
+        default: () => h(SettingsOutline),
+      }),
+  },
+]);
 
 function handleQuickActionSelect(key: string) {
   showQuickActionsMenu.value = false;
@@ -2563,7 +2658,7 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
 
     // Fallback: if ready event was already fired, try sending after delay
     setTimeout(() => {
-        emitter.off(newSessionId, handleReady);
+      emitter.off(newSessionId, handleReady);
       const tab = tabs.value.find(t => t.id === newSessionId);
       if (tab && tab.clientStatus === 'ready') {
         send(newSessionId, { type: 'input', data: resumeCommand + '\r' });
@@ -2576,7 +2671,7 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
   }
 }
 
-function handleClose(sessionId: string): Promise<void> | void {
+function handleClose(sessionId: string) {
   // 处理空标签的关闭
   if (isEmptyTab(sessionId)) {
     closeEmptyTab(sessionId);
@@ -2585,34 +2680,20 @@ function handleClose(sessionId: string): Promise<void> | void {
 
   // 如果开启了关闭确认，先弹出确认对话框
   if (confirmBeforeTerminalClose.value) {
-    return new Promise((resolve, reject) => {
-      const tab = tabs.value.find(t => t.id === sessionId);
-      const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
+    const tab = tabs.value.find(t => t.id === sessionId);
+    const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
 
-      dialog.warning({
-        title: t('terminal.confirmCloseTitle'),
-        content: t('terminal.confirmCloseContent', { title: tabTitle }),
-        positiveText: t('terminal.confirmCloseButton'),
-        negativeText: t('common.cancel'),
-        onPositiveClick: async () => {
-          try {
-            await performClose(sessionId);
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
-        },
-        onNegativeClick: () => {
-          reject();
-        },
-        onClose: () => {
-          reject();
-        },
-      });
+    dialog.warning({
+      title: t('terminal.confirmCloseTitle'),
+      content: t('terminal.confirmCloseContent', { title: tabTitle }),
+      positiveText: t('terminal.confirmCloseButton'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => performClose(sessionId),
     });
-  } else {
-    return performClose(sessionId);
+    return;
   }
+
+  void performClose(sessionId);
 }
 
 async function performClose(sessionId: string) {
@@ -3260,7 +3341,11 @@ function buildDuplicateTitle(rawTitle: string) {
 
 function handleSettingsMenuSelect(key: string) {
   showSettingsMenu.value = false;
-  if (key === 'auto-resize') {
+  if (key === 'switch-to-docked') {
+    settingsStore.updateTerminalDisplayMode('docked');
+  } else if (key === 'switch-to-floating') {
+    settingsStore.updateTerminalDisplayMode('floating');
+  } else if (key === 'auto-resize') {
     autoResize.value = !autoResize.value;
   } else if (key === 'send-resize-on-switch') {
     sendResizeOnSwitch.value = !sendResizeOnSwitch.value;
@@ -3373,6 +3458,19 @@ defineExpose({
     height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     opacity 0.3s ease,
     transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.terminal-panel.is-docked {
+  position: relative;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .terminal-panel.is-collapsed {
@@ -4071,7 +4169,9 @@ defineExpose({
 .link-task-list :deep(.n-list-item) {
   cursor: pointer;
   border-radius: 6px;
-  transition: background-color 0.2s, border-color 0.2s;
+  transition:
+    background-color 0.2s,
+    border-color 0.2s;
   border: 2px solid transparent;
 }
 

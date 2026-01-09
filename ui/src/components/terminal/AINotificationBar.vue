@@ -2,26 +2,38 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
 import type { DropdownOption } from 'naive-ui';
+import { useDialog } from 'naive-ui';
 import Apis from '@/api';
 import { useAutoReq } from '@/api/composable';
-import { useTerminalStore } from '@/stores/terminal';
+import { useTerminalStore, type TerminalTabState } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
+import { useSettingsStore } from '@/stores/settings';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
 
 // Props
 const props = withDefaults(
   defineProps<{
     isMobile?: boolean;
+    layout?: 'overlay' | 'sidebar' | 'docked-sidebar';
+    compactMode?: 'auto' | 'force-compact' | 'force-comfortable';
   }>(),
   {
     isMobile: false,
+    layout: 'overlay',
+    compactMode: 'auto',
   }
 );
 
 const { t } = useI18n();
+const dialog = useDialog();
 const terminalStore = useTerminalStore();
 const projectStore = useProjectStore();
+const settingsStore = useSettingsStore();
+const { terminalDisplayMode, confirmBeforeTerminalClose } = storeToRefs(settingsStore);
+const isSidebar = computed(() => props.layout === 'sidebar' || props.layout === 'docked-sidebar');
+const isDockedSidebar = computed(() => props.layout === 'docked-sidebar');
 
 // 通知开关状态
 const NOTIFICATIONS_STORAGE_KEY = 'kanban-ai-notifications-enabled';
@@ -31,7 +43,25 @@ const DISPLAY_MODE_STORAGE_KEY = 'kanban-ai-notifications-mode';
 const CURRENT_PROJECT_ONLY_STORAGE_KEY = 'kanban-ai-notifications-current-project-only';
 const notificationsEnabled = ref(true);
 const clickedNotifications = ref<Set<string>>(new Set());
-const compactModeEnabled = ref(false);
+const compactModeEnabledStored = ref(true);
+const compactModeEnabled = computed({
+  get: () => {
+    if (props.compactMode === 'force-compact') {
+      return true;
+    }
+    if (props.compactMode === 'force-comfortable') {
+      return false;
+    }
+    return compactModeEnabledStored.value;
+  },
+  set: value => {
+    if (props.compactMode !== 'auto') {
+      return;
+    }
+    compactModeEnabledStored.value = value;
+  },
+});
+const canToggleCompactMode = computed(() => props.compactMode === 'auto');
 const currentProjectOnly = ref(false);
 
 // 项目序号过滤（不存储到 localStorage）
@@ -82,7 +112,7 @@ function loadCompactModeSetting() {
   try {
     const stored = localStorage.getItem(COMPACT_MODE_STORAGE_KEY);
     if (stored !== null) {
-      compactModeEnabled.value = stored === 'true';
+      compactModeEnabledStored.value = stored === 'true';
     }
   } catch (error) {
     console.warn('[AI Notification] Failed to load compact mode setting', error);
@@ -122,6 +152,9 @@ function saveClickedNotifications() {
 }
 
 function saveCompactModeSetting() {
+  if (!canToggleCompactMode.value) {
+    return;
+  }
   try {
     localStorage.setItem(COMPACT_MODE_STORAGE_KEY, String(compactModeEnabled.value));
   } catch (error) {
@@ -202,6 +235,9 @@ function toggleNotifications() {
 }
 
 function toggleCompactMode() {
+  if (!canToggleCompactMode.value) {
+    return;
+  }
   compactModeEnabled.value = !compactModeEnabled.value;
   saveCompactModeSetting();
 }
@@ -459,6 +495,72 @@ const currentProjectId = computed(() => {
   return typeof id === 'string' ? id : '';
 });
 
+type DockedSessionItem = {
+  sessionId: string;
+  projectId: string;
+  projectName?: string;
+  title: string;
+  branchName?: string;
+  assistantDisplayName?: string;
+  assistantType?: string;
+  assistantIcon?: string;
+  assistantColor?: string;
+  assistantState?: string;
+  interrupted?: boolean;
+  processStatus?: 'idle' | 'busy' | 'unknown';
+  activityTs: number;
+  isCurrentSession: boolean;
+  projectIndex?: { index: number; color: string };
+};
+
+function isAgentTerminalSession(session: TerminalTabState) {
+  return session.aiAssistant?.detected === true;
+}
+
+function parseTimestamp(value?: string) {
+  if (!value) {
+    return 0;
+  }
+  const ts = Date.parse(value);
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+const dockedProjectIdsToLoad = computed(() => {
+  if (!isDockedSidebar.value) {
+    return [];
+  }
+  const ids = new Set<string>();
+  if (currentProjectId.value) {
+    ids.add(currentProjectId.value);
+  }
+  projectStore.recentProjects.forEach(project => ids.add(project.id));
+  projectStore.projects.forEach(project => {
+    if (project.id) {
+      ids.add(project.id);
+    }
+  });
+  return Array.from(ids);
+});
+
+const loadedDockedProjectIds = ref<Set<string>>(new Set());
+
+watch(
+  dockedProjectIdsToLoad,
+  ids => {
+    if (!ids.length) {
+      return;
+    }
+    ids.forEach(id => {
+      if (loadedDockedProjectIds.value.has(id)) {
+        return;
+      }
+      loadedDockedProjectIds.value.add(id);
+      void terminalStore.loadSessions(id);
+    });
+  },
+  { immediate: true }
+);
+
 // 当前激活的终端 session ID
 const currentActiveSessionId = computed(() => {
   if (!currentProjectId.value) {
@@ -466,6 +568,109 @@ const currentActiveSessionId = computed(() => {
   }
   return terminalStore.getActiveTabId(currentProjectId.value) || '';
 });
+
+const dockedSessionItems = computed<DockedSessionItem[]>(() => {
+  if (!isDockedSidebar.value || !notificationsEnabled.value) {
+    return [];
+  }
+
+  const dockedCurrentProjectId = currentProjectId.value;
+  const dockedCurrentSessionId = dockedCurrentProjectId
+    ? terminalStore.getActiveTabId(dockedCurrentProjectId) || ''
+    : '';
+
+  const items: Omit<DockedSessionItem, 'projectIndex'>[] = [];
+  dockedProjectIdsToLoad.value.forEach(projectId => {
+    if (projectIndexFilter.value !== null && projectId !== projectIndexFilter.value) {
+      return;
+    }
+    const tabs = terminalStore.getTabs(projectId);
+    tabs.forEach(tab => {
+      if (!isAgentTerminalSession(tab)) {
+        return;
+      }
+      const worktreeId = tab.worktreeId;
+      const branchName = resolveBranchName(projectId, worktreeId);
+      const assistantType = tab.aiAssistant?.type;
+      const activityTs = parseTimestamp(tab.aiAssistant?.stateUpdatedAt) || parseTimestamp(tab.createdAt);
+      items.push({
+        sessionId: tab.id,
+        projectId,
+        projectName: getProjectNameById(projectId),
+        title: tab.title || 'Terminal',
+        branchName,
+        assistantDisplayName: tab.aiAssistant?.displayName || tab.aiAssistant?.name || '',
+        assistantType,
+        assistantIcon: getAssistantIconByType(assistantType),
+        assistantColor: getAssistantColorByType(assistantType),
+        assistantState: tab.aiAssistant?.state,
+        interrupted: tab.aiAssistant?.interrupted === true,
+        processStatus: tab.processStatus,
+        activityTs,
+        isCurrentSession: Boolean(
+          dockedCurrentProjectId &&
+            dockedCurrentSessionId &&
+            projectId === dockedCurrentProjectId &&
+            tab.id === dockedCurrentSessionId
+        ),
+      });
+    });
+  });
+
+  const sorted = [...items].sort((a, b) => b.activityTs - a.activityTs);
+
+  const presentProjectIds = new Set(sorted.map(item => item.projectId).filter(Boolean));
+  const projectIds: string[] = [];
+  projectStore.projects.forEach(project => {
+    if (project.id && presentProjectIds.has(project.id)) {
+      projectIds.push(project.id);
+    }
+  });
+  sorted.forEach(item => {
+    if (item.projectId && !projectIds.includes(item.projectId)) {
+      projectIds.push(item.projectId);
+    }
+  });
+
+  const projectIndex = new Map<string, { index: number; color: string }>();
+  projectIds.forEach((projectId, idx) => {
+    projectIndex.set(projectId, {
+      index: idx + 1,
+      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
+    });
+  });
+
+  return sorted.map(item => ({
+    ...item,
+    projectIndex: projectIndex.get(item.projectId),
+  }));
+});
+
+const isSingleDockedProject = computed(() => {
+  if (!isDockedSidebar.value) {
+    return false;
+  }
+  const ids = new Set<string>();
+  dockedProjectIdsToLoad.value.forEach(projectId => {
+    const tabs = terminalStore.getTabs(projectId);
+    if (tabs.some(tab => isAgentTerminalSession(tab))) {
+      ids.add(projectId);
+    }
+  });
+  return ids.size <= 1;
+});
+
+watch(
+  () => dockedSessionItems.value.length,
+  newLength => {
+    if (!isDockedSidebar.value) {
+      return;
+    }
+    if (newLength === 0 && projectIndexFilter.value !== null) {
+      projectIndexFilter.value = null;
+    }
+  }
+);
 
 const filteredNotifications = computed(() => {
   if (!notificationsEnabled.value) {
@@ -545,6 +750,70 @@ function isIdleNotification(notification: NotificationItem) {
   }
 
   return false;
+}
+
+function getDockedSessionSubtitle(item: DockedSessionItem) {
+  const parts: string[] = [];
+  if (item.branchName) {
+    parts.push(item.branchName);
+  }
+  const state = item.assistantState?.trim();
+  if (state) {
+    parts.push(state);
+  }
+  if (item.processStatus) {
+    parts.push(item.processStatus);
+  }
+  return parts.join(' · ');
+}
+
+async function handleDockedSessionClick(item: DockedSessionItem) {
+  if (!item.projectId) {
+    return;
+  }
+  const currentId = typeof currentRoute.params.id === 'string' ? currentRoute.params.id : '';
+  if (currentId !== item.projectId) {
+    try {
+      await router.push({ name: 'project', params: { id: item.projectId } });
+      await nextTick();
+    } catch (error) {
+      console.error('[AI Notification] Failed to switch project for docked session', error);
+    }
+  }
+
+  await terminalStore.loadSessions(item.projectId);
+  terminalStore.focusSession(item.projectId, item.sessionId);
+}
+
+async function closeDockedSession(item: DockedSessionItem) {
+  const projectId = item.projectId;
+  const sessionId = item.sessionId;
+  if (!projectId || !sessionId) {
+    return;
+  }
+
+  const tabTitle = item.title || t('terminal.defaultTerminalTitle');
+
+  const doClose = async () => {
+    try {
+      await terminalStore.closeSession(projectId, sessionId);
+    } catch (error) {
+      console.error('[Terminal] Failed to close terminal from docked notifications', error);
+    }
+  };
+
+  if (!confirmBeforeTerminalClose.value) {
+    await doClose();
+    return;
+  }
+
+  dialog.warning({
+    title: t('terminal.confirmCloseTitle'),
+    content: t('terminal.confirmCloseContent', { title: tabTitle }),
+    positiveText: t('terminal.confirmCloseButton'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => doClose(),
+  });
 }
 
 watch(
@@ -1367,10 +1636,15 @@ watch(
   <div
     v-else-if="!isOnProjectListPage"
     class="notification-bar-container"
-    :class="{ 'compact-mode': compactModeEnabled }"
+    :class="{
+      'compact-mode': compactModeEnabled,
+      'is-sidebar': isSidebar,
+      'is-docked-sidebar': isDockedSidebar,
+    }"
   >
     <div class="notification-toolbar">
       <button
+        v-if="canToggleCompactMode"
         type="button"
         class="notification-action-btn"
         :class="{ 'is-active': compactModeEnabled }"
@@ -1407,6 +1681,7 @@ watch(
       </button>
 
       <div
+        v-if="!isDockedSidebar"
         class="notification-mode-control notification-action-btn"
         :class="{ 'is-active': notificationDisplayMode !== 'standard' }"
       >
@@ -1454,51 +1729,132 @@ watch(
       </div>
 
       <!-- 通知开关按钮 -->
-      <button
-        class="notification-toggle-btn"
-        @click="toggleNotifications"
-        :title="
-          notificationsEnabled
-            ? t('terminal.disableNotifications')
-            : t('terminal.enableNotifications')
-        "
-      >
-        <svg
-          v-if="notificationsEnabled"
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-          <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-        </svg>
-        <svg
-          v-else
-          xmlns="http://www.w3.org/2000/svg"
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        >
-          <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
-          <path d="m21.7 18.7-1.6-1.6"></path>
-          <path d="M2 2l20 20"></path>
-          <path d="M8.7 3a6 6 0 0 1 10.3 5c0 1-.1 1.9-.4 2.7"></path>
-        </svg>
-      </button>
+      <n-tooltip placement="bottom" :delay="250">
+        <template #trigger>
+          <button class="notification-toggle-btn" @click="toggleNotifications">
+            <svg
+              v-if="notificationsEnabled"
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <svg
+              v-else
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
+              <path d="m21.7 18.7-1.6-1.6"></path>
+              <path d="M2 2l20 20"></path>
+              <path d="M8.7 3a6 6 0 0 1 10.3 5c0 1-.1 1.9-.4 2.7"></path>
+            </svg>
+          </button>
+        </template>
+        {{
+          notificationsEnabled ? t('terminal.disableNotifications') : t('terminal.enableNotifications')
+        }}
+      </n-tooltip>
+      <slot name="toolbar-extra" />
     </div>
 
     <transition-group
+      v-if="isDockedSidebar"
+      name="notification-slide"
+      tag="div"
+      class="notification-list docked-session-list"
+    >
+      <div
+        v-for="item in dockedSessionItems"
+        :key="`${item.projectId}:${item.sessionId}`"
+        class="notification-row docked-session-row"
+        :class="{ 'is-current-session': item.isCurrentSession }"
+        @click="handleDockedSessionClick(item)"
+      >
+        <div class="notification-item docked-session-item">
+          <div class="docked-session-main">
+            <div class="docked-session-title">
+              <span
+                class="notification-icon"
+                :style="{ color: item.assistantColor || defaultAssistantColor }"
+                v-html="item.assistantIcon || defaultAssistantIcon"
+              ></span>
+              <span class="docked-session-title-text">{{ item.title }}</span>
+              <span v-if="getDockedSessionSubtitle(item)" class="docked-session-state">
+                · {{ getDockedSessionSubtitle(item) }}
+              </span>
+            </div>
+          </div>
+
+          <div class="docked-session-actions">
+            <button
+              v-if="item.projectIndex"
+              class="project-index-badge docked-project-badge"
+              :class="{
+                'is-filtered': projectIndexFilter === item.projectId,
+                'is-single-project': isSingleDockedProject && projectIndexFilter === null
+              }"
+              :style="{ '--badge-color': item.projectIndex.color }"
+              @click="toggleProjectFilter(item.projectId, $event)"
+              :title="
+                projectIndexFilter === item.projectId
+                  ? t('terminal.clearProjectFilter')
+                  : t('terminal.filterByProject')
+              "
+            >
+              {{ item.projectIndex.index }}
+            </button>
+            <span
+              class="docked-current-indicator"
+              :class="{ 'is-hidden': !item.isCurrentSession }"
+              :title="t('terminal.currentActiveSession')"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </span>
+            <button
+              type="button"
+              class="notification-close docked-close-btn"
+              @click.stop="closeDockedSession(item)"
+              :title="t('common.close')"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      </div>
+    </transition-group>
+
+    <transition-group
+      v-else
       name="notification-slide"
       tag="div"
       class="notification-list"
@@ -1632,6 +1988,165 @@ watch(
   gap: 8px;
 }
 
+.notification-bar-container.is-sidebar {
+  position: relative;
+  top: auto;
+  right: auto;
+  z-index: auto;
+  height: 100%;
+  width: min(360px, 32vw);
+  max-width: 420px;
+  pointer-events: auto;
+  align-items: stretch;
+}
+
+.notification-bar-container.is-docked-sidebar {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  gap: 6px;
+}
+
+.notification-bar-container.is-docked-sidebar .notification-toolbar {
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.notification-bar-container.is-docked-sidebar .docked-session-list {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 6px;
+  box-sizing: border-box;
+}
+
+.notification-row.docked-session-row {
+  gap: 0;
+}
+
+.notification-item.docked-session-item {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  align-items: center;
+  gap: 10px;
+  border-left: none;
+  box-sizing: border-box;
+}
+
+.docked-session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.docked-session-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.docked-session-title .notification-icon {
+  flex-shrink: 0;
+}
+
+.docked-session-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.docked-session-state {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-color-secondary, #666666);
+}
+
+.docked-session-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: center;
+}
+
+.docked-session-actions > * {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.project-index-badge.docked-project-badge {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+  border-width: 1px;
+}
+
+.project-index-badge.docked-project-badge:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.notification-bar-container.is-docked-sidebar .docked-current-indicator {
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--n-primary-color, #3b82f6);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  box-shadow: none;
+  animation: none;
+}
+
+.notification-bar-container.is-docked-sidebar .docked-current-indicator.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.notification-bar-container.is-docked-sidebar .docked-current-indicator svg {
+  display: block;
+}
+
+.notification-close.docked-close-btn {
+  width: 22px;
+  height: 22px;
+  font-size: 18px;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.notification-close.docked-close-btn:hover {
+  opacity: 1;
+}
+
 .notification-toolbar {
   display: flex;
   gap: 8px;
@@ -1750,7 +2265,43 @@ watch(
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
+.notification-toggle-btn:active {
+  transform: scale(0.96);
+}
+
 .notification-toggle-btn svg {
+  display: block;
+}
+
+:slotted(.docked-reset-btn) {
+  width: 36px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--kanban-notification-button-border, rgba(0, 0, 0, 0.2));
+  background: var(--app-surface-color, var(--body-color, #ffffff));
+  box-shadow: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--kanban-notification-button-fg, var(--text-color, #000000));
+  transition: all 0.2s ease;
+  opacity: 0.85;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 0;
+}
+
+:slotted(.docked-reset-btn:hover) {
+  opacity: 1;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+:slotted(.docked-reset-btn:active) {
+  transform: scale(0.96);
+}
+
+:slotted(.docked-reset-btn svg) {
   display: block;
 }
 
@@ -1760,6 +2311,15 @@ watch(
   gap: 6px;
   width: min(345px, calc(100vw - 32px));
   max-width: 380px;
+  pointer-events: auto;
+}
+
+.notification-bar-container.is-sidebar .notification-list {
+  width: 100%;
+  max-width: none;
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 
 .notification-list.is-compact {
@@ -1794,9 +2354,29 @@ watch(
   align-items: center;
 }
 
+.notification-bar-container.is-sidebar .notification-item {
+  min-width: 0;
+}
+
+.notification-bar-container.is-docked-sidebar .notification-item {
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.notification-bar-container.is-docked-sidebar .notification-list.is-compact .notification-item {
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+
 .notification-item:hover {
   transform: translateX(-4px);
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.22);
+}
+
+.notification-bar-container.is-docked-sidebar .notification-item:hover {
+  transform: none;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.12);
 }
 
 .notification-completion {
@@ -1811,11 +2391,19 @@ watch(
   box-shadow: 0 12px 28px rgba(16, 185, 129, 0.15);
 }
 
+.notification-bar-container.is-docked-sidebar .notification-completion {
+  box-shadow: none;
+}
+
 /* 已点击过的完成通知样式 - 左侧提示条变黑灰色，背景变白色 */
 .notification-completion.notification-clicked {
   border-left-color: #9ca3af !important;
   background: #ffffff !important;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12) !important;
+}
+
+.notification-bar-container.is-docked-sidebar .notification-completion.notification-clicked {
+  box-shadow: none !important;
 }
 
 /* 空闲通知样式 - 灰色边框，白色背景 */
@@ -1826,6 +2414,10 @@ watch(
   border-color: rgba(156, 163, 175, 0.3);
   border-left-color: #9ca3af;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.12);
+}
+
+.notification-bar-container.is-docked-sidebar .notification-idle {
+  box-shadow: none;
 }
 
 .notification-idle .notification-icon {
@@ -1845,6 +2437,10 @@ watch(
   box-shadow: 0 12px 28px rgba(247, 144, 9, 0.15);
 }
 
+.notification-bar-container.is-docked-sidebar .notification-approval {
+  box-shadow: none;
+}
+
 .notification-working {
   --notification-working-fill: var(--kanban-terminal-tab-working-bg, rgba(237, 233, 254, 1));
   --notification-working-accent: var(--kanban-terminal-tab-working-border, rgba(139, 92, 246, 1));
@@ -1852,6 +2448,10 @@ watch(
   border-color: rgba(139, 92, 246, 0.3);
   border-left-color: var(--notification-working-accent);
   box-shadow: 0 12px 28px rgba(139, 92, 246, 0.15);
+}
+
+.notification-bar-container.is-docked-sidebar .notification-working {
+  box-shadow: none;
 }
 
 .notification-content {
@@ -2098,6 +2698,12 @@ watch(
 /* 当前激活 tab 行高亮效果 */
 .notification-row.is-current-session .notification-item {
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 12px 28px rgba(15, 23, 42, 0.18);
+}
+
+.notification-bar-container.is-docked-sidebar
+  .notification-row.docked-session-row.is-current-session
+  .notification-item.docked-session-item {
+  box-shadow: none;
 }
 
 @keyframes pulse-glow {
