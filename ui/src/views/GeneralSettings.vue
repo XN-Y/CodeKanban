@@ -164,56 +164,70 @@
 
       <n-card :title="t('settings.terminalQuickActions')" size="huge">
         <n-form label-placement="left" label-width="160">
-          <n-form-item :label="t('settings.terminalQuickActionsCollapsed')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="terminalQuickActionsCollapsedValue" />
-              <span class="form-tip">{{ t('settings.terminalQuickActionsCollapsedTip') }}</span>
-            </n-space>
-          </n-form-item>
-
           <n-form-item :label="t('settings.terminalQuickActionsList')">
             <n-space vertical size="small" style="width: 100%">
               <n-dynamic-input v-model:value="terminalQuickActionsLocal" :on-create="createTerminalQuickAction">
                 <template #default="{ value }">
-                  <n-space align="center" :wrap="false" style="width: 100%">
-                    <div class="terminal-quick-action-item">
-                      <div class="terminal-quick-action-grid">
-                        <div class="terminal-quick-action-col-switch">
-                          <n-switch v-model:value="value.enabled" />
-                        </div>
-                        <div class="terminal-quick-action-col-name">
-                          <n-input
-                            v-model:value="value.name"
-                            :placeholder="t('settings.terminalQuickActionNamePlaceholder')"
-                          />
-                        </div>
-                        <div class="terminal-quick-action-col-command">
-                          <n-input
-                            v-model:value="value.command"
-                            :placeholder="t('settings.terminalQuickActionCommandPlaceholder')"
-                          />
-                        </div>
-                      </div>
-                      <div class="terminal-quick-action-grid terminal-quick-action-grid-secondary">
-                        <div class="terminal-quick-action-col-switch"></div>
-                        <div class="terminal-quick-action-col-icons">
-                          <n-radio-group v-model:value="value.icon" size="small">
-                            <n-radio-button
-                              v-for="option in terminalQuickActionIconButtons"
-                              :key="option.value"
-                              :value="option.value"
-                              :title="option.label"
-                            >
-                              <span v-if="'svg' in option && option.svg" class="terminal-quick-action-svg" v-html="option.svg"></span>
-                              <n-icon v-else :size="16">
-                                <component :is="option.icon" />
-                              </n-icon>
-                            </n-radio-button>
-                          </n-radio-group>
-                        </div>
-                      </div>
+                  <div class="terminal-quick-action-item">
+                    <div class="terminal-quick-action-row terminal-quick-action-row-switches">
+                      <n-space align="center" size="small" wrap>
+                        <n-switch v-model:value="value.enabled" />
+                        <n-tooltip trigger="hover" placement="top" :delay="80">
+                          <template #trigger>
+                            <n-checkbox v-model:checked="value.stacked">
+                              {{ t('settings.terminalQuickActionStackLabel') }}
+                            </n-checkbox>
+                          </template>
+                          {{ t('settings.terminalQuickActionStackTip') }}
+                        </n-tooltip>
+                      </n-space>
                     </div>
-                  </n-space>
+                    <div class="terminal-quick-action-row terminal-quick-action-row-inputs">
+                      <n-input
+                        v-model:value="value.name"
+                        class="terminal-quick-action-input"
+                        :placeholder="t('settings.terminalQuickActionNamePlaceholder')"
+                      />
+                      <n-input
+                        v-model:value="value.command"
+                        class="terminal-quick-action-input"
+                        :placeholder="t('settings.terminalQuickActionCommandPlaceholder')"
+                      />
+                    </div>
+                    <div class="terminal-quick-action-row terminal-quick-action-row-icons">
+                      <n-radio-group v-model:value="value.icon" size="small">
+                        <n-radio-button
+                          v-for="option in terminalQuickActionIconButtons"
+                          :key="option.value"
+                          :value="option.value"
+                          :title="option.label"
+                        >
+                          <span v-if="'svg' in option && option.svg" class="terminal-quick-action-svg" v-html="option.svg"></span>
+                          <n-icon v-else :size="16">
+                            <component :is="option.icon" />
+                          </n-icon>
+                        </n-radio-button>
+                      </n-radio-group>
+                    </div>
+                  </div>
+                </template>
+                <template #action="{ index, remove, create }">
+                  <n-button-group size="small">
+                    <n-button quaternary circle @click="handleRemoveTerminalQuickAction(index, remove)">
+                      <template #icon>
+                        <n-icon>
+                          <Remove />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                    <n-button quaternary circle @click="create(index)">
+                      <template #icon>
+                        <n-icon>
+                          <Add />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                  </n-button-group>
                 </template>
               </n-dynamic-input>
               <n-space>
@@ -554,7 +568,7 @@ import { computed, ref, reactive, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useTitle, useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import {
   ChatbubblesOutline,
   CodeOutline,
@@ -568,6 +582,8 @@ import {
   SparklesOutline,
   TerminalOutline,
   PlayOutline,
+  Add,
+  Remove,
 } from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import { useLocale } from '@/composables/useLocale';
@@ -609,6 +625,7 @@ useTitle(`${t('settings.title')} - ${APP_NAME}`);
 
 const router = useRouter();
 const message = useMessage();
+const dialog = useDialog();
 const settingsStore = useSettingsStore();
 const {
   theme,
@@ -620,7 +637,6 @@ const {
   terminalShortcut,
   notepadShortcut,
   terminalQuickActions,
-  terminalQuickActionsCollapsed,
   editorSettings,
   confirmBeforeTerminalClose,
   terminalThemeId,
@@ -1096,11 +1112,6 @@ const confirmTerminalCloseValue = computed({
 // 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）
 const sendResizeOnSwitchValue = useStorage('terminal-send-resize-on-switch', true);
 
-const terminalQuickActionsCollapsedValue = computed({
-  get: () => terminalQuickActionsCollapsed.value,
-  set: value => settingsStore.updateTerminalQuickActionsCollapsed(value),
-});
-
 function normalizeSvgSize(svg: string, sizePx: number) {
   const size = `${sizePx}px`;
   return svg
@@ -1167,11 +1178,24 @@ function createTerminalQuickAction(): TerminalQuickAction {
     command: '',
     icon: 'terminal',
     enabled: true,
+    stacked: false,
   };
 }
 
 function handleResetTerminalQuickActions() {
   settingsStore.updateTerminalQuickActions(DEFAULT_TERMINAL_QUICK_ACTIONS);
+}
+
+function handleRemoveTerminalQuickAction(index: number, remove: (index: number) => void) {
+  dialog.warning({
+    title: t('common.confirm'),
+    content: t('settings.terminalQuickActionRemoveConfirm'),
+    positiveText: t('common.confirm'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      remove(index);
+    },
+  });
 }
 
 const terminalThemeValue = computed({
@@ -1414,35 +1438,39 @@ function formatShortcutLabel(event: KeyboardEvent) {
   gap: 8px;
 }
 
-.terminal-quick-action-grid {
+.terminal-quick-action-row {
   width: 100%;
-  display: grid;
-  grid-template-columns: 56px 140px minmax(220px, 1fr);
+  display: flex;
   align-items: center;
-  column-gap: 10px;
-  row-gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.terminal-quick-action-grid-secondary {
-  align-items: start;
+.terminal-quick-action-row-inputs {
+  gap: 12px;
 }
 
-.terminal-quick-action-col-icons {
-  grid-column: 2 / 4;
+.terminal-quick-action-row-icons {
+  flex-wrap: wrap;
 }
 
-.terminal-quick-action-col-icons :deep(.n-radio-group) {
+.terminal-quick-action-input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.terminal-quick-action-row-icons :deep(.n-radio-group) {
   line-height: 1;
 }
 
-.terminal-quick-action-col-icons :deep(.n-radio-button__content) {
+.terminal-quick-action-row-icons :deep(.n-radio-button__content) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
 }
 
-.terminal-quick-action-col-icons :deep(.n-icon) {
+.terminal-quick-action-row-icons :deep(.n-icon) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1517,20 +1545,9 @@ function formatShortcutLabel(event: KeyboardEvent) {
     margin-bottom: 16px;
   }
 
-  .terminal-quick-action-grid {
-    grid-template-columns: 56px 1fr;
-  }
-
-  .terminal-quick-action-col-name {
-    grid-column: 2 / 3;
-  }
-
-  .terminal-quick-action-col-command {
-    grid-column: 2 / 3;
-  }
-
-  .terminal-quick-action-col-icons {
-    grid-column: 2 / 3;
+  .terminal-quick-action-row-inputs,
+  .terminal-quick-action-row-icons {
+    flex-direction: column;
   }
 }
 

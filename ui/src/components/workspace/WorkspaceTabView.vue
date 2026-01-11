@@ -27,20 +27,6 @@
           <span v-if="terminalCount > 0" class="terminal-badge">{{ terminalCount }}</span>
         </button>
       </div>
-      <div class="tab-actions">
-        <n-tooltip>
-          <template #trigger>
-            <n-button text size="small" @click="switchToFloating">
-              <template #icon>
-                <n-icon size="18">
-                  <OpenOutline />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          {{ t('terminal.switchToFloating') }}
-        </n-tooltip>
-      </div>
     </div>
 
     <!-- Tab内容 -->
@@ -63,8 +49,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, watch } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
-import { NIcon, NButton, NTooltip } from 'naive-ui';
-import { GridOutline, TerminalOutline, OpenOutline } from '@vicons/ionicons5';
+import { NIcon } from 'naive-ui';
+import { GridOutline, TerminalOutline } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
 import { useLocale } from '@/composables/useLocale';
 import { useSettingsStore } from '@/stores/settings';
@@ -89,11 +75,6 @@ const activeTab = useStorage<'kanban' | 'terminal'>('workspace-active-tab', 'kan
 const terminalCount = computed(() => {
   return terminalStore.getTabs(props.projectId).length;
 });
-
-// 切换到浮动模式
-function switchToFloating() {
-  settingsStore.updateTerminalDisplayMode('floating');
-}
 
 // 监听终端事件，如果有新终端创建或需要关注的事件，自动切换到终端Tab
 watch(
@@ -183,8 +164,8 @@ if (typeof window !== 'undefined') {
   justify-content: space-between;
   padding: 0 12px;
   height: 40px;
-  border-bottom: 1px solid var(--n-border-color);
-  background-color: var(--n-card-color);
+  border-bottom: 1px solid var(--n-border-color, var(--app-input-border-color, rgba(0, 0, 0, 0.12)));
+  background-color: var(--app-surface-color, var(--n-card-color, #ffffff));
   flex-shrink: 0;
 }
 
@@ -234,12 +215,6 @@ if (typeof window !== 'undefined') {
   color: #fff;
   font-size: 11px;
   font-weight: 500;
-}
-
-.tab-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 .tab-content {

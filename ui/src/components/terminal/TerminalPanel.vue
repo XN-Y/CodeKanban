@@ -275,7 +275,7 @@
         </n-tooltip>
         <template v-if="enabledQuickActions.length">
           <n-dropdown
-            v-if="terminalQuickActionsCollapsed"
+            v-if="stackedQuickActions.length"
             trigger="manual"
             :show="showQuickActionsMenu"
             :options="quickActionDropdownOptions"
@@ -290,36 +290,34 @@
                       <PlayOutline />
                     </n-icon>
                   </template>
-                </n-button>
+              </n-button>
+            </template>
+            {{ t('terminal.quickActions') }}
+          </n-tooltip>
+        </n-dropdown>
+        <n-tooltip
+          v-for="action in standaloneQuickActions"
+          :key="action.id"
+          trigger="hover"
+          placement="bottom"
+          :delay="100"
+        >
+          <template #trigger>
+            <n-button text size="small" @click="handleRunQuickAction(action)">
+              <template #icon>
+                <span
+                  v-if="getQuickActionSvg(action.icon)"
+                  class="terminal-quick-action-button-svg"
+                  v-html="getQuickActionSvg(action.icon)"
+                ></span>
+                <n-icon v-else>
+                  <component :is="resolveQuickActionIcon(action.icon)" />
+                </n-icon>
               </template>
-              {{ t('terminal.quickActions') }}
-            </n-tooltip>
-          </n-dropdown>
-          <template v-else>
-            <n-tooltip
-              v-for="action in enabledQuickActions"
-              :key="action.id"
-              trigger="hover"
-              placement="bottom"
-              :delay="100"
-            >
-              <template #trigger>
-                <n-button text size="small" @click="handleRunQuickAction(action)">
-                  <template #icon>
-                    <span
-                      v-if="getQuickActionSvg(action.icon)"
-                      class="terminal-quick-action-button-svg"
-                      v-html="getQuickActionSvg(action.icon)"
-                    ></span>
-                    <n-icon v-else>
-                      <component :is="resolveQuickActionIcon(action.icon)" />
-                    </n-icon>
-                  </template>
-                </n-button>
-              </template>
-              {{ formatQuickActionLabel(action) }}
-            </n-tooltip>
+            </n-button>
           </template>
+          {{ formatQuickActionLabel(action) }}
+        </n-tooltip>
         </template>
         <n-tooltip v-if="projectIdRef" trigger="hover" placement="bottom" :delay="100">
           <template #trigger>
@@ -342,14 +340,9 @@
         >
           <template #trigger>
             <div class="panel-drag-handle" @mousedown="startPanelDrag">
-              <div class="drag-dots">
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-                <div class="drag-dot"></div>
-              </div>
+              <n-icon size="18">
+                <MoveOutline />
+              </n-icon>
             </div>
           </template>
           {{ t('terminal.dragPanel') }}
@@ -377,7 +370,7 @@
             <n-button text size="small" @click="toggleDockedMode">
               <template #icon>
                 <n-icon>
-                  <component :is="isDocked ? MoveOutline : PinOutline" />
+                  <component :is="isDocked ? OpenOutline : AlbumsOutline" />
                 </n-icon>
               </template>
             </n-button>
@@ -665,8 +658,9 @@ import {
   SparklesOutline,
   ContractOutline,
   ExpandOutline,
-  PinOutline,
   MoveOutline,
+  OpenOutline,
+  AlbumsOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
@@ -1216,7 +1210,6 @@ const {
   activeTheme,
   currentPresetId,
   terminalQuickActions,
-  terminalQuickActionsCollapsed,
 } = storeToRefs(settingsStore);
 
 // Tabs 主题覆盖 - 用于控制标签背景色
@@ -2450,8 +2443,22 @@ const enabledQuickActions = computed(() =>
   terminalQuickActions.value.filter(action => action.enabled && action.command.trim())
 );
 
+const stackedQuickActions = computed(() =>
+  enabledQuickActions.value.filter(action => action.stacked)
+);
+
+const standaloneQuickActions = computed(() =>
+  enabledQuickActions.value.filter(action => !action.stacked)
+);
+
 const showQuickActionsMenu = ref(false);
 const QUICK_ACTION_SETTINGS_KEY = '__settings__';
+
+watch(stackedQuickActions, actions => {
+  if (actions.length === 0) {
+    showQuickActionsMenu.value = false;
+  }
+});
 
 function formatQuickActionLabel(action: TerminalQuickAction) {
   const name = (action.name || '').trim() || action.id;
@@ -2509,7 +2516,7 @@ function getQuickActionSvg(icon: TerminalQuickActionIcon): string {
 }
 
 const quickActionDropdownOptions = computed<DropdownOption[]>(() => [
-  ...enabledQuickActions.value.map(action => ({
+  ...stackedQuickActions.value.map(action => ({
     label: formatQuickActionLabel(action),
     key: action.id,
     icon: () => {
@@ -2539,7 +2546,7 @@ function handleQuickActionSelect(key: string) {
     void router.push({ name: 'settings' });
     return;
   }
-  const action = enabledQuickActions.value.find(item => item.id === key);
+  const action = stackedQuickActions.value.find(item => item.id === key);
   if (!action) {
     return;
   }
@@ -3609,20 +3616,6 @@ defineExpose({
 
 .panel-drag-handle:hover {
   opacity: 1;
-}
-
-.drag-dots {
-  display: grid;
-  grid-template-columns: repeat(2, 4px);
-  grid-template-rows: repeat(3, 4px);
-  gap: 2px;
-}
-
-.drag-dot {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background-color: currentColor;
 }
 
 .panel-header {

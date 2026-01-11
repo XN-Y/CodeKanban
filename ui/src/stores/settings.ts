@@ -58,7 +58,7 @@ export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '50
 
 /**
  * 终端显示模式
- * - floating: 浮动面板模式（默认）
+ * - floating: 浮动面板模式
  * - docked: 固定在页面中央区域，与看板形成Tab切换
  */
 export type TerminalDisplayMode = 'floating' | 'docked';
@@ -158,6 +158,7 @@ export interface TerminalQuickAction {
   command: string;
   icon: TerminalQuickActionIcon;
   enabled: boolean;
+  stacked: boolean;
 }
 
 interface GeneralSettings {
@@ -169,7 +170,6 @@ interface GeneralSettings {
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
   terminalQuickActions: TerminalQuickAction[];
-  terminalQuickActionsCollapsed: boolean;
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
   terminalThemeId: string;
@@ -211,6 +211,7 @@ export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
     command: 'claude',
     icon: 'claude',
     enabled: true,
+    stacked: false,
   },
   {
     id: 'codex',
@@ -218,6 +219,7 @@ export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
     command: 'codex',
     icon: 'codex',
     enabled: true,
+    stacked: false,
   },
 ];
 
@@ -230,13 +232,12 @@ const defaultSettings: GeneralSettings = {
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
   terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
-  terminalQuickActionsCollapsed: true,
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
-  terminalDisplayMode: 'floating',
+  terminalDisplayMode: 'docked',
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -252,7 +253,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
   const terminalQuickActions = computed(() => settings.value.terminalQuickActions);
-  const terminalQuickActionsCollapsed = computed(() => settings.value.terminalQuickActionsCollapsed);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
@@ -371,10 +371,6 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalQuickActions = sanitizeTerminalQuickActions(actions);
   }
 
-  function updateTerminalQuickActionsCollapsed(value: boolean) {
-    settings.value.terminalQuickActionsCollapsed = Boolean(value);
-  }
-
   function updateConfirmBeforeTerminalClose(value: boolean) {
     settings.value.confirmBeforeTerminalClose = value;
   }
@@ -467,7 +463,6 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalShortcut,
     notepadShortcut,
     terminalQuickActions,
-    terminalQuickActionsCollapsed,
     editorSettings,
     confirmBeforeTerminalClose,
     terminalThemeId,
@@ -485,7 +480,6 @@ export const useSettingsStore = defineStore('settings', () => {
     resetTerminalShortcut,
     resetNotepadShortcut,
     updateTerminalQuickActions,
-    updateTerminalQuickActionsCollapsed,
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
     updateTerminalTheme,
@@ -532,7 +526,6 @@ function loadSettings(): GeneralSettings {
         maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
         panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
         terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
-        terminalQuickActionsCollapsed: parsed.terminalQuickActionsCollapsed ?? defaultSettings.terminalQuickActionsCollapsed,
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
@@ -569,7 +562,6 @@ function cloneDefaultSettings(): GeneralSettings {
       notepad: { ...defaultSettings.panelShortcuts.notepad },
     },
     terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
-    terminalQuickActionsCollapsed: defaultSettings.terminalQuickActionsCollapsed,
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     terminalFont: { ...defaultSettings.terminalFont },
@@ -702,6 +694,7 @@ function sanitizeTerminalQuickActions(value?: unknown): TerminalQuickAction[] {
     const command = typeof raw.command === 'string' ? raw.command : '';
     const icon = sanitizeTerminalQuickActionIcon(raw.icon);
     const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : true;
+    const stacked = typeof raw.stacked === 'boolean' ? raw.stacked : false;
 
     const baseId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `quick-${index + 1}`;
     let id = baseId;
@@ -718,6 +711,7 @@ function sanitizeTerminalQuickActions(value?: unknown): TerminalQuickAction[] {
       command,
       icon,
       enabled,
+      stacked,
     });
   }
 

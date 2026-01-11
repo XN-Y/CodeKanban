@@ -174,7 +174,7 @@ const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_
 const WORKTREE_SIDER_COLLAPSED_KEY = 'worktree-sider-collapsed';
 const getInitialWorktreeSiderCollapsedState = (): boolean => {
   const stored = localStorage.getItem(WORKTREE_SIDER_COLLAPSED_KEY);
-  return stored ? Boolean(JSON.parse(stored)) : false;
+  return stored ? Boolean(JSON.parse(stored)) : true;
 };
 const worktreeSiderCollapsed = ref(getInitialWorktreeSiderCollapsedState());
 watch(worktreeSiderCollapsed, collapsed => {
