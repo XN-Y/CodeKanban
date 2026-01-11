@@ -753,18 +753,35 @@ function isIdleNotification(notification: NotificationItem) {
 }
 
 function getDockedSessionSubtitle(item: DockedSessionItem) {
-  const parts: string[] = [];
-  if (item.branchName) {
-    parts.push(item.branchName);
+  return item.branchName?.trim() || '';
+}
+
+function getDockedSessionAccentColor(item: DockedSessionItem) {
+  const assistantState = item.assistantState?.trim();
+  switch (assistantState) {
+    case 'working':
+      return '#8b5cf6';
+    case 'waiting_approval':
+      return '#f79009';
+    case 'completed':
+      return '#10b981';
+    case 'idle':
+    case 'waiting_input':
+      return '#9ca3af';
+    default:
+      break;
   }
-  const state = item.assistantState?.trim();
-  if (state) {
-    parts.push(state);
+
+  switch (item.processStatus) {
+    case 'busy':
+      return '#8b5cf6';
+    case 'idle':
+      return '#9ca3af';
+    case 'unknown':
+      return '#94a3b8';
+    default:
+      return 'rgba(15, 23, 42, 0.08)';
   }
-  if (item.processStatus) {
-    parts.push(item.processStatus);
-  }
-  return parts.join(' · ');
 }
 
 async function handleDockedSessionClick(item: DockedSessionItem) {
@@ -1788,7 +1805,10 @@ watch(
         :class="{ 'is-current-session': item.isCurrentSession }"
         @click="handleDockedSessionClick(item)"
       >
-        <div class="notification-item docked-session-item">
+        <div
+          class="notification-item docked-session-item"
+          :style="{ '--docked-session-accent': getDockedSessionAccentColor(item) }"
+        >
           <div class="docked-session-main">
             <div class="docked-session-title">
               <span
@@ -2018,7 +2038,7 @@ watch(
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 6px;
+  padding: 10px 12px;
   box-sizing: border-box;
 }
 
@@ -2036,7 +2056,7 @@ watch(
   -webkit-backdrop-filter: none;
   align-items: center;
   gap: 10px;
-  border-left: none;
+  border-left-color: var(--docked-session-accent, rgba(15, 23, 42, 0.08));
   box-sizing: border-box;
 }
 

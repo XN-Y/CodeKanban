@@ -53,7 +53,8 @@ func (d *StatusDetector) containsTipLine(line string) bool {
 // isWorkingTaskLine checks if a line represents a working task
 func (d *StatusDetector) isWorkingTaskLine(line string) bool {
 	// Pattern: optional leading spaces + symbol + text + … + (esc to interrupt
-	pattern := regexp.MustCompile(`^\s*[✻✽✶∴·○◆▪▫□■☐☑☒★☆✓✔✗✘⚬⚫⚪⬤◯▸▹►▻◂◃◄◅✢*]\s+.+…\s*\(esc\s+to\s+interrupt`)
+	// 26/1/12 new version: ✻ Billowing… (ctrl+c to interrupt) false
+	pattern := regexp.MustCompile(`^\s*[✻✽✶∴·○◆▪▫□■☐☑☒★☆✓✔✗✘⚬⚫⚪⬤◯▸▹►▻◂◃◄◅✢*]\s+.+…\s*\((esc|ctrl\+c)\s+to\s+interrupt`)
 	return pattern.MatchString(line)
 }
 

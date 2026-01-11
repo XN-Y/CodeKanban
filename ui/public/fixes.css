@@ -1,31 +1,4 @@
-/* Hotfix overrides for UI layout quirks.
-   This file is served at `/fixes.css` (via Vite public dir). */
+/* Deprecated: hotfix styles moved to `ui/src/styles/fixes.css` and are bundled via `ui/src/main.ts`.
+   This file is kept only for backwards compatibility and can be deleted once no longer referenced. */
 
-/* AI Notification Bar: project badge + current-session indicator alignment */
-.notification-row {
-  align-items: center !important;
-}
-
-.project-index-badge {
-  margin-top: 0 !important;
-}
-
-.notification-list.is-compact .project-index-badge {
-  margin-top: 0 !important;
-}
-
-.current-session-indicator {
-  top: 50% !important;
-  transform: translateY(-50%) !important;
-  margin-top: 0 !important;
-}
-
-/* In case older bundled CSS applies a single-project override via :has() */
-.notification-row:has(.project-index-badge.is-single-project) .current-session-indicator {
-  top: 50% !important;
-}
-
-.notification-list.is-compact .current-session-indicator {
-  margin-top: 0 !important;
-}
-
+/* Intentionally left empty. */
