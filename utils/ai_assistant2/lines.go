@@ -50,10 +50,10 @@ func renderLinesFromTerminal(term vt10x.Terminal, raw [][]vt10x.Glyph, rows, col
 	}
 
 	lines := make([]string, 0, rows)
-	runes := make([]rune, 0, cols)
+	rowRunes := make([]rune, 0, cols)
 
 	for row := 0; row < rows; row++ {
-		runes = runes[:0]
+		rowRunes = rowRunes[:0]
 		var rowRaw []vt10x.Glyph
 		if raw != nil {
 			rowRaw = raw[row]
@@ -67,11 +67,19 @@ func renderLinesFromTerminal(term vt10x.Terminal, raw [][]vt10x.Glyph, rows, col
 			if cell.Mode&vt10x.AttrWideDummy != 0 {
 				continue
 			}
-			if cell.Char != 0 {
-				runes = append(runes, cell.Char)
+
+			ch := cell.Char
+			if ch == 0 {
+				ch = ' '
 			}
+			rowRunes = append(rowRunes, ch)
 		}
-		lines = append(lines, string(runes))
+
+		end := len(rowRunes)
+		for end > 0 && rowRunes[end-1] == ' ' {
+			end--
+		}
+		lines = append(lines, string(rowRunes[:end]))
 	}
 
 	return lines, raw
@@ -91,56 +99,6 @@ func RenderLinesFromBuffer(data []byte, rows, cols int) []string {
 	_, _ = term.Write(data)
 
 	lines, _ := renderLinesFromTerminal(term, nil, rows, cols)
-	return lines
-}
-
-// RenderGlyphGridFromBuffer feeds data into a pooled terminal and returns the raw glyph grid.
-func RenderGlyphGridFromBuffer(data []byte, rows, cols int) [][]vt10x.Glyph {
-	if len(data) == 0 || rows <= 0 || cols <= 0 {
-		return nil
-	}
-
-	term := captureTerminalPool.Get().(vt10x.Terminal)
-	defer captureTerminalPool.Put(term)
-
-	term.Resize(cols, rows)
-	_, _ = term.Write(captureClearSequence)
-	_, _ = term.Write(data)
-
-	return renderRawFromTerminal(term, rows, cols)
-}
-
-func renderRawFromTerminal(term vt10x.Terminal, rows, cols int) [][]vt10x.Glyph {
-	if term == nil || rows <= 0 || cols <= 0 {
-		return nil
-	}
-
-	termCols, termRows := term.Size()
-	if termCols <= 0 || termRows <= 0 {
-		return nil
-	}
-
-	if rows > termRows {
-		rows = termRows
-	}
-	if cols > termCols {
-		cols = termCols
-	}
-
-	lines := make([][]vt10x.Glyph, 0, rows)
-	runes := make([]vt10x.Glyph, 0, cols)
-
-	for row := 0; row < rows; row++ {
-		runes = runes[:0]
-		for col := 0; col < cols; col++ {
-			cell := term.Cell(col, row)
-			runes = append(runes, cell)
-		}
-		rowCopy := make([]vt10x.Glyph, len(runes))
-		copy(rowCopy, runes)
-		lines = append(lines, rowCopy)
-	}
-
 	return lines
 }
 

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -18,7 +19,6 @@ import (
 	"go.uber.org/zap"
 
 	"code-kanban/service/terminal"
-	"code-kanban/utils/ai_assistant2"
 )
 
 const (
@@ -29,6 +29,14 @@ const (
 	captureFallbackFG  = "#e8eaed"
 	captureFallbackBG  = "#1c1f24"
 )
+
+var captureDebugTerminalPool = sync.Pool{
+	New: func() any {
+		return vt10x.New()
+	},
+}
+
+var captureDebugClearSequence = []byte("\x1b[2J\x1b[H")
 
 var captureDebugTemplate = template.Must(template.New("capture-debug").Parse(captureDebugTemplateHTML))
 
@@ -230,29 +238,24 @@ func registerCaptureDebugRoute(app *fiber.App, manager *terminal.Manager, logger
 			return renderCaptureDebugPage(c, page)
 		}
 
-		grid := ai_assistant2.RenderGlyphGridFromBuffer(chunkBytes, page.Rows, page.Cols)
-		originalRows := len(grid)
-		if originalRows == 0 {
-			page.Message = "未能渲染任何网格（请检查行列参数）。"
-			return renderCaptureDebugPage(c, page)
-		}
-		originalCols := len(grid[0])
-		if originalCols == 0 {
-			page.Message = "网格列数无效。"
-			return renderCaptureDebugPage(c, page)
-		}
+		originalRows := page.Rows
+		originalCols := page.Cols
+		termEmulator := captureDebugTerminalPool.Get().(vt10x.Terminal)
+		defer captureDebugTerminalPool.Put(termEmulator)
+		termEmulator.Resize(originalCols, originalRows)
+		_, _ = termEmulator.Write(captureDebugClearSequence)
+		_, _ = termEmulator.Write(chunkBytes)
 
 		effectiveRows := originalRows
 		effectiveCols := originalCols
 		if trimView {
-			if trimmed, rowsUsed, colsUsed := shrinkGlyphGrid(grid); rowsUsed > 0 && colsUsed > 0 && (rowsUsed < effectiveRows || colsUsed < effectiveCols) {
-				grid = trimmed
-				effectiveRows = rowsUsed
-				effectiveCols = colsUsed
+			if maxRow, maxCol := findLastOccupiedCell(termEmulator, originalRows, originalCols); maxRow >= 0 && maxCol >= 0 {
+				effectiveRows = maxRow + 1
+				effectiveCols = maxCol + 1
 			}
 		}
 
-		page.Grid = convertGlyphGrid(grid)
+		page.Grid = convertTerminalGrid(termEmulator, effectiveRows, effectiveCols)
 		page.HasGrid = true
 		page.Source = chunkSource
 		page.Rows = effectiveRows
@@ -307,14 +310,16 @@ func parseCaptureTimeout(raw string) time.Duration {
 	return time.Duration(value) * time.Second
 }
 
-func convertGlyphGrid(grid [][]vt10x.Glyph) [][]captureDebugCell {
-	rows := len(grid)
+func convertTerminalGrid(term vt10x.Terminal, rows, cols int) [][]captureDebugCell {
+	if term == nil || rows <= 0 || cols <= 0 {
+		return nil
+	}
+
 	result := make([][]captureDebugCell, rows)
 	for r := 0; r < rows; r++ {
-		row := grid[r]
-		cells := make([]captureDebugCell, len(row))
-		for c := 0; c < len(row); c++ {
-			glyph := row[c]
+		cells := make([]captureDebugCell, cols)
+		for c := 0; c < cols; c++ {
+			glyph := term.Cell(c, r)
 			display := glyphToDisplay(glyph.Char)
 			char, label := glyphCharValues(glyph.Char)
 			cells[c] = captureDebugCell{
@@ -443,11 +448,16 @@ func colorRawLabel(color vt10x.Color) string {
 	return fmt.Sprintf("%d (%s)", value, hex)
 }
 
-func shrinkGlyphGrid(grid [][]vt10x.Glyph) ([][]vt10x.Glyph, int, int) {
+func findLastOccupiedCell(term vt10x.Terminal, rows, cols int) (int, int) {
+	if term == nil || rows <= 0 || cols <= 0 {
+		return -1, -1
+	}
+
 	maxRow := -1
 	maxCol := -1
-	for r, row := range grid {
-		for c, glyph := range row {
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			glyph := term.Cell(c, r)
 			if glyphOccupied(glyph) {
 				if r > maxRow {
 					maxRow = r
@@ -458,23 +468,7 @@ func shrinkGlyphGrid(grid [][]vt10x.Glyph) ([][]vt10x.Glyph, int, int) {
 			}
 		}
 	}
-	if maxRow < 0 || maxCol < 0 {
-		return nil, 0, 0
-	}
-	trimmed := make([][]vt10x.Glyph, maxRow+1)
-	for r := 0; r <= maxRow; r++ {
-		row := grid[r]
-		if len(row) == 0 {
-			continue
-		}
-		limit := maxCol + 1
-		if limit > len(row) {
-			limit = len(row)
-		}
-		trimmed[r] = make([]vt10x.Glyph, limit)
-		copy(trimmed[r], row[:limit])
-	}
-	return trimmed, maxRow + 1, maxCol + 1
+	return maxRow, maxCol
 }
 
 func glyphOccupied(glyph vt10x.Glyph) bool {

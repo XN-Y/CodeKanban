@@ -371,6 +371,18 @@
           </template>
           {{ t('terminal.exitFullscreen') }}
         </n-tooltip>
+        <n-tooltip trigger="hover" placement="bottom" :delay="100">
+          <template #trigger>
+            <n-button text size="small" @click="toggleDockedMode">
+              <template #icon>
+                <n-icon>
+                  <component :is="isDocked ? MoveOutline : PinOutline" />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ isDocked ? t('terminal.switchToFloating') : t('terminal.switchToDocked') }}
+        </n-tooltip>
         <n-dropdown
           trigger="click"
           placement="bottom-end"
@@ -505,7 +517,7 @@
   </div>
 
   <button
-    v-if="!expanded"
+    v-if="!expanded && !isMobile"
     type="button"
     class="terminal-floating-button"
     :class="{ 'has-notifications': totalUnviewedCount > 0 }"
@@ -652,6 +664,8 @@ import {
   SparklesOutline,
   ContractOutline,
   ExpandOutline,
+  PinOutline,
+  MoveOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
 import AISessionHistoryDialog from './AISessionHistoryDialog.vue';
@@ -692,8 +706,8 @@ const props = withDefaults(
 );
 
 const projectIdRef = toRef(props, 'projectId');
-const isMobile = computed(() => props.isMobile);
-const hidden = computed(() => props.hidden);
+const isMobile = computed(() => Boolean(props.isMobile));
+const hidden = computed(() => Boolean(props.hidden));
 const isDocked = computed(() => props.mode === 'docked');
 const message = useMessage();
 const dialog = useDialog();
@@ -705,9 +719,9 @@ const taskStore = useTaskStore();
 const { tasksByStatus } = storeToRefs(taskStore);
 const storedExpanded = useStorage('terminal-panel-expanded', true);
 const expanded = computed({
-  get: () => (isDocked.value ? true : storedExpanded.value),
+  get: () => (isDocked.value || isMobile.value ? true : storedExpanded.value),
   set: value => {
-    if (!isDocked.value) {
+    if (!isDocked.value && !isMobile.value) {
       storedExpanded.value = value;
     }
   },
@@ -954,13 +968,6 @@ const dragHandleMenuOptions = computed<DropdownOption[]>(() => [
 ]);
 
 const settingsMenuOptions = computed<DropdownOption[]>(() => [
-  isDocked.value
-    ? { label: t('terminal.switchToFloating'), key: 'switch-to-floating' }
-    : { label: t('terminal.switchToDocked'), key: 'switch-to-docked' },
-  {
-    type: 'divider',
-    key: 'd1',
-  },
   {
     label: t('terminal.autoResize'),
     key: 'auto-resize',
@@ -1016,6 +1023,10 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
     key: 'reset-position',
   },
 ]);
+
+function toggleDockedMode() {
+  settingsStore.updateTerminalDisplayMode(isDocked.value ? 'floating' : 'docked');
+}
 
 async function ensureDeveloperConfigLoaded() {
   if (developerConfigLoaded.value) {
@@ -4331,8 +4342,8 @@ defineExpose({
   transform: rotate(180deg);
 }
 
-/* 移动端隐藏浮动按钮 */
-@media (max-width: 767px) {
+/* 移动端布局隐藏浮动按钮 */
+@media (max-width: 900px) {
   .terminal-floating-button {
     display: none !important;
   }

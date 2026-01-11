@@ -19,7 +19,7 @@ const (
 )
 
 const (
-	codexInputPrompt  = "› "
+	codexInputPrompt  = "›"
 	codexIndentPrefix = "  "
 )
 
@@ -42,10 +42,11 @@ func NewStatusDetector() *StatusDetector {
 	return &StatusDetector{
 		// Match: symbol (◦ or •) + text + (time • esc to interrupt)
 		// (10h 19m 44s • esc to interrupt) codex#6729
-		workingPattern: regexp.MustCompile(`^[◦•] .+\((\d+h )?(\d+m )?\d+s • esc to interrupt\)`),
+		// 注: 26/1/11 更新，点后面的空格不一定存在，esc to interrup左括号不一定存在，不知道是什么vtx规范
+		workingPattern: regexp.MustCompile(`^[•◦]\s*.+\(?(\d+h\s+)?(\d+m\s+)?\d+s\s*•\s*esc to interrup(t)?\)?$`),
 
-		// Selection arrow: › followed by digit and dot
-		selectionPattern: regexp.MustCompile(`^› \d+\. `),
+		// Selection arrow: "›" or "❯" followed by digit and dot.
+		selectionPattern: regexp.MustCompile(`^[›❯]\s*\d+\.\s+`),
 	}
 }
 
@@ -127,8 +128,8 @@ func (d *StatusDetector) isWorkingLine(line string) bool {
 		return false
 	}
 
-	// Fast path: check for "esc to interrupt)" substring first
-	if !strings.Contains(line, "esc to interrupt)") {
+	// Fast path: check for "esc to interrup" substring first (t and ')' can be truncated)
+	if !strings.Contains(line, "esc to interrup") {
 		return false
 	}
 
@@ -176,6 +177,10 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 	currentLine := startIdx - 1
 	for ; currentLine >= 0; currentLine-- {
 		line := lines[currentLine]
+		if strings.HasPrefix(line, "■ Conversation interrupted") {
+			return types.StateWaitingInput
+		}
+
 		if d.isWorkingLine(line) {
 			return types.StateWorking
 		}
@@ -210,7 +215,7 @@ func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isE
 	}
 	end--
 
-	for start = end - 1; start >= 0; start-- {
+	for start = end; start >= 0; start-- {
 		line := lines[start]
 		switch {
 		case strings.HasPrefix(line, codexInputPrompt):

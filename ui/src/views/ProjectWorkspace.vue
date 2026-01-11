@@ -1,7 +1,7 @@
 <template>
-  <div class="project-workspace" :class="{ 'is-mobile': isMobile }">
+  <div class="project-workspace" :class="{ 'is-mobile': isMobileLayout }">
     <!-- 桌面端布局 -->
-    <template v-if="isDesktop">
+    <template v-if="!isMobileLayout">
       <n-layout has-sider>
         <!-- 左侧最近项目侧边栏 -->
         <n-layout-sider bordered :width="240" :min-width="200" :max-width="400" resizable>
@@ -123,8 +123,8 @@
       v-if="!isDockMode"
       ref="terminalPanelRef"
       :project-id="currentProjectId"
-      :is-mobile="isMobile"
-      :hidden="isMobile && mobileActiveView !== 'terminal'"
+      :is-mobile="isMobileLayout"
+      :hidden="isMobileLayout && mobileActiveView !== 'terminal'"
     />
     <ProjectEditDialog
       v-model:show="showEditDialog"
@@ -155,6 +155,8 @@ import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import type { Worktree } from '@/types/models';
 import { APP_NAME } from '@/constants/app';
 
+const WORKSPACE_MOBILE_MAX_WIDTH = 900;
+
 const route = useRoute();
 const router = useRouter();
 const message = useMessage();
@@ -162,10 +164,12 @@ const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const { terminalDisplayMode } = storeToRefs(settingsStore);
-const { isMobile, isDesktop } = useResponsive();
+const { isDesktop, windowWidth } = useResponsive();
 const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
+
+const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
 const WORKTREE_SIDER_COLLAPSED_KEY = 'worktree-sider-collapsed';
 const getInitialWorktreeSiderCollapsedState = (): boolean => {
