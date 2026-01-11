@@ -17,6 +17,8 @@ type CompletionRecord struct {
 	Title       string                         `json:"title"`
 	Assistant   *ai_assistant2.AIAssistantInfo `json:"assistant"`
 	CompletedAt time.Time                      `json:"completedAt"`
+	// ReadAt 标记此通知是否已被用户查看（已读）
+	ReadAt *time.Time `json:"readAt,omitempty"`
 	// State 表示当前卡片状态，working 时仍保留卡片
 	State string `json:"state,omitempty"`
 	// LastUserInput 存储用户上次输入的信息
@@ -57,6 +59,8 @@ func (rm *RecordManager) AddCompletion(record *CompletionRecord) {
 	if record.State == "" {
 		record.State = "completed"
 	}
+	// 新通知默认未读
+	record.ReadAt = nil
 	rm.completions.Store(record.SessionID, record)
 }
 
@@ -111,6 +115,21 @@ func (rm *RecordManager) DismissCompletion(recordID string) bool {
 	return found
 }
 
+// MarkCompletionRead 将完成通知标记为已读（不会关闭通知）
+func (rm *RecordManager) MarkCompletionRead(recordID string) bool {
+	found := false
+	rm.completions.Range(func(_, value any) bool {
+		if record, ok := value.(*CompletionRecord); ok && record.ID == recordID && !record.Dismissed {
+			now := time.Now()
+			record.ReadAt = &now
+			found = true
+			return false // 停止遍历
+		}
+		return true
+	})
+	return found
+}
+
 // DismissApproval 关闭一个审批记录
 func (rm *RecordManager) DismissApproval(recordID string) bool {
 	found := false
@@ -147,6 +166,9 @@ func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state 
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
 			record.State = state
+			if state == "working" {
+				record.ReadAt = nil
+			}
 			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
 			return true
 		}
@@ -161,6 +183,9 @@ func (rm *RecordManager) UpdateCompletionBySession(sessionID string, state strin
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
 			record.State = state
+			if state == "working" {
+				record.ReadAt = nil
+			}
 			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
 			if userInput != "" {
 				record.LastUserInput = userInput

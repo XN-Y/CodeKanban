@@ -367,6 +367,24 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 		op.Tags = []string{terminalTag}
 	})
 
+	huma.Post(group, "/terminals/completion-records/{recordId}/read", func(
+		ctx context.Context,
+		input *struct {
+			RecordID string `path:"recordId"`
+		},
+	) (*h.MessageResponse, error) {
+		if !c.manager.GetRecordManager().MarkCompletionRead(input.RecordID) {
+			return nil, huma.Error404NotFound("record not found")
+		}
+		resp := h.NewMessageResponse("record read")
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-completion-record-read"
+		op.Summary = "标记完成记录为已读"
+		op.Tags = []string{terminalTag}
+	})
+
 	huma.Post(group, "/terminals/approval-records/{recordId}/dismiss", func(
 		ctx context.Context,
 		input *struct {

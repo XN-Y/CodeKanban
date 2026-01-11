@@ -69,6 +69,10 @@ export default {
     'POST',
     '/api/v1/terminals/completion-records/{recordId}/dismiss'
   ],
+  'terminalSession.terminalCompletionRecordRead': [
+    'POST',
+    '/api/v1/terminals/completion-records/{recordId}/read'
+  ],
   'terminalSession.terminalCounts': ['GET', '/api/v1/terminals/counts'],
   'terminalSession.captureChunk': ['GET', '/api/v1/terminals/{sessionId}/capture'],
   'terminalSession.debug': ['GET', '/api/v1/terminals/{sessionId}/debug'],

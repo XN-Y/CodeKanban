@@ -172,6 +172,56 @@ func TestRecordManager_DismissCompletion(t *testing.T) {
 	}
 }
 
+func TestRecordManager_MarkCompletionRead(t *testing.T) {
+	rm := NewRecordManager()
+
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec1",
+		SessionID:   "sess1",
+		ProjectID:   "proj1",
+		Title:       "Test Session",
+		State:       "completed",
+		CompletedAt: time.Now(),
+	})
+
+	if ok := rm.MarkCompletionRead("rec1"); !ok {
+		t.Fatal("expected MarkCompletionRead to return true")
+	}
+
+	completions := rm.GetCompletions()
+	if len(completions) != 1 {
+		t.Fatalf("expected 1 completion, got %d", len(completions))
+	}
+	if completions[0].ReadAt == nil {
+		t.Fatal("expected ReadAt to be set")
+	}
+}
+
+func TestRecordManager_UpdateCompletionBySession_ClearsReadAtWhenWorking(t *testing.T) {
+	rm := NewRecordManager()
+
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec1",
+		SessionID:   "sess1",
+		ProjectID:   "proj1",
+		Title:       "Test Session",
+		State:       "completed",
+		CompletedAt: time.Now(),
+	})
+
+	rm.MarkCompletionRead("rec1")
+	completions := rm.GetCompletions()
+	if completions[0].ReadAt == nil {
+		t.Fatal("expected ReadAt to be set before update")
+	}
+
+	rm.UpdateCompletionBySession("sess1", "working", "")
+	completions = rm.GetCompletions()
+	if completions[0].ReadAt != nil {
+		t.Fatal("expected ReadAt to be cleared when state becomes working")
+	}
+}
+
 func TestRecordManager_ClearSessionRecords(t *testing.T) {
 	rm := NewRecordManager()
 

@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="panelRef"
     class="terminal-panel"
     :class="{
       'is-collapsed': !expanded && !isMobile && !isDocked,
@@ -713,6 +714,7 @@ const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
 const { t } = useLocale();
+const panelRef = ref<HTMLElement | null>(null);
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
 const taskStore = useTaskStore();
@@ -734,6 +736,10 @@ const mobilePanelTop = useStorage('terminal-panel-mobile-top', 15); // 移动端
 const autoResize = useStorage('terminal-auto-resize', true);
 const sendResizeOnSwitch = useStorage('terminal-send-resize-on-switch', true);
 const showBranchFilter = useStorage('terminal-show-branch-filter', true);
+const panelSize = reactive({
+  width: 0,
+  height: 0,
+});
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
 const developerConfigState = reactive<DeveloperConfig>({
@@ -1889,6 +1895,22 @@ const scheduleActiveTabResize = useDebounceFn((tabId: string) => {
     emitter.emit(`terminal-resize-${tabId}`);
   }
 }, 150);
+
+useResizeObserver(panelRef, entries => {
+  const entry = entries[0];
+  if (!entry) {
+    return;
+  }
+  const { width, height } = entry.contentRect;
+  const roundedWidth = Math.round(width);
+  const roundedHeight = Math.round(height);
+  if (roundedWidth === panelSize.width && roundedHeight === panelSize.height) {
+    return;
+  }
+  panelSize.width = roundedWidth;
+  panelSize.height = roundedHeight;
+  scheduleResizeAll();
+});
 
 // 切换标签时强制发送 resize，不受 autoResize 设置影响
 const forceResizeTab = (tabId: string) => {

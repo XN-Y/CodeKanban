@@ -190,27 +190,60 @@ function saveCurrentProjectOnlySetting() {
 }
 
 function markNotificationsAsRead(notificationIds: string[]) {
+  const next = new Set(clickedNotifications.value);
   let changed = false;
   notificationIds.forEach(id => {
-    if (id && !clickedNotifications.value.has(id)) {
-      clickedNotifications.value.add(id);
+    if (id && !next.has(id)) {
+      next.add(id);
       changed = true;
     }
   });
-  if (changed) {
-    saveClickedNotifications();
+  if (!changed) {
+    return;
   }
+  clickedNotifications.value = next;
+  saveClickedNotifications();
 }
 
 function clearReadStateForNotifications(notificationIds: string[]) {
+  const next = new Set(clickedNotifications.value);
   let changed = false;
   notificationIds.forEach(id => {
-    if (id && clickedNotifications.value.delete(id)) {
+    if (id && next.delete(id)) {
       changed = true;
     }
   });
-  if (changed) {
-    saveClickedNotifications();
+  if (!changed) {
+    return;
+  }
+  clickedNotifications.value = next;
+  saveClickedNotifications();
+}
+
+const completionReadInFlight = new Set<string>();
+
+async function submitCompletionRecordsRead(recordIds: string[]) {
+  const uniqueIds = Array.from(new Set(recordIds.filter(Boolean)));
+  const tasks = uniqueIds
+    .filter(recordId => !completionReadInFlight.has(recordId))
+    .map(async recordId => {
+      completionReadInFlight.add(recordId);
+      try {
+        await Apis.terminalSession
+          .terminalCompletionRecordRead({
+            pathParams: { recordId },
+            cacheFor: 0,
+          })
+          .send();
+      } catch (error) {
+        console.error('[AI Notification] Failed to mark completion record read', recordId, error);
+      } finally {
+        completionReadInFlight.delete(recordId);
+      }
+    });
+
+  if (tasks.length) {
+    await Promise.all(tasks);
   }
 }
 
@@ -218,13 +251,22 @@ function markSessionCompletionNotificationsAsRead(sessionId: string) {
   if (!sessionId) {
     return;
   }
-  const ids = notifications.value
-    .filter(
-      notification => notification.type === 'completion' && notification.sessionId === sessionId
-    )
-    .map(notification => notification.id);
+  const completionItems = notifications.value.filter(
+    notification =>
+      notification.type === 'completion' &&
+      notification.sessionId === sessionId &&
+      notification.state !== 'working'
+  );
+  const ids = completionItems.map(notification => notification.id);
   if (ids.length) {
     markNotificationsAsRead(ids);
+  }
+
+  const recordIdsToRead = completionItems
+    .filter(item => !item.readAt)
+    .map(item => item.recordId);
+  if (recordIdsToRead.length) {
+    void submitCompletionRecordsRead(recordIdsToRead);
   }
 }
 
@@ -289,12 +331,32 @@ interface NotificationItem {
   assistantIcon?: string;
   assistantColor?: string;
   timestamp: Date;
+  readAt?: Date;
   state?: 'completed' | 'working';
   lastAgentCommand?: string;
   lastUserInput?: string;
   assistantState?: string;
   processStatus?: 'idle' | 'busy' | 'unknown';
   interrupted?: boolean;
+}
+
+function isNotificationRead(notification: NotificationItem): boolean {
+  if (isNotificationClicked(notification.id)) {
+    return true;
+  }
+  return notification.type === 'completion' && Boolean(notification.readAt);
+}
+
+function isActiveCompletionNotification(notification: NotificationItem): boolean {
+  return (
+    notification.type === 'completion' &&
+    notification.state === 'completed' &&
+    notification.sessionId === currentActiveSessionId.value
+  );
+}
+
+function isNotificationVisuallyRead(notification: NotificationItem): boolean {
+  return isNotificationRead(notification) || isActiveCompletionNotification(notification);
 }
 
 type NotificationType = 'completion' | 'approval' | 'idle';
@@ -313,6 +375,7 @@ interface CompletionRecordResponse {
   title: string;
   assistant?: AssistantInfo;
   completedAt?: string;
+  readAt?: string;
   dismissed?: boolean;
   state?: 'completed' | 'working';
   lastUserInput?: string;
@@ -335,6 +398,20 @@ const worktreeBranchCache = new Map<string, { branchName: string; projectId?: st
 const router = useRouter();
 const currentRoute = useRoute();
 const notifications = ref<NotificationItem[]>([]);
+const pendingCompletionSessions = computed(() => {
+  const sessionIds = new Set<string>();
+  notifications.value.forEach(notification => {
+    if (
+      notification.type === 'completion' &&
+      notification.sessionId &&
+      notification.state !== 'working' &&
+      !isNotificationRead(notification)
+    ) {
+      sessionIds.add(notification.sessionId);
+    }
+  });
+  return sessionIds;
+});
 
 // 使用 useAutoReq 实现自动请求：页面激活时刷新、聚焦刷新、网络重连刷新、30秒轮询
 const completionsReq = useAutoReq(
@@ -569,6 +646,53 @@ const currentActiveSessionId = computed(() => {
   return terminalStore.getActiveTabId(currentProjectId.value) || '';
 });
 
+const activeCompletionAutoReadKey = computed(() => {
+  const sessionId = currentActiveSessionId.value;
+  if (!sessionId) {
+    return '';
+  }
+  return notifications.value
+    .filter(
+      notification =>
+        notification.type === 'completion' &&
+        notification.sessionId === sessionId &&
+        notification.state === 'completed'
+    )
+    .map(notification => `${notification.recordId}:${notification.readAt ? 1 : 0}:${isNotificationClicked(notification.id) ? 1 : 0}`)
+    .join(',');
+});
+
+function autoReadCurrentActiveCompletionNotifications() {
+  const sessionId = currentActiveSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+
+  const items = notifications.value.filter(
+    notification =>
+      notification.type === 'completion' &&
+      notification.sessionId === sessionId &&
+      notification.state === 'completed'
+  );
+  if (!items.length) {
+    return;
+  }
+
+  markNotificationsAsRead(items.map(item => item.id));
+  const recordIdsToRead = items.filter(item => !item.readAt).map(item => item.recordId);
+  if (recordIdsToRead.length) {
+    void submitCompletionRecordsRead(recordIdsToRead);
+  }
+}
+
+watch(
+  activeCompletionAutoReadKey,
+  () => {
+    autoReadCurrentActiveCompletionNotifications();
+  },
+  { immediate: true }
+);
+
 const dockedSessionItems = computed<DockedSessionItem[]>(() => {
   if (!isDockedSidebar.value || !notificationsEnabled.value) {
     return [];
@@ -784,9 +908,42 @@ function getDockedSessionAccentColor(item: DockedSessionItem) {
   }
 }
 
+function getDockedSessionClasses(item: DockedSessionItem): string[] {
+  const shouldTreatCompletionAsRead = item.isCurrentSession;
+  if (item.sessionId && pendingCompletionSessions.value.has(item.sessionId)) {
+    return shouldTreatCompletionAsRead ? ['notification-idle'] : ['notification-completion'];
+  }
+  const assistantState = item.assistantState?.trim();
+  switch (assistantState) {
+    case 'working':
+      return ['notification-working'];
+    case 'waiting_approval':
+      return ['notification-approval'];
+    case 'waiting_input':
+    case 'idle':
+      return ['notification-idle'];
+    case 'completed':
+      return shouldTreatCompletionAsRead ? ['notification-idle'] : ['notification-completion'];
+    default:
+      break;
+  }
+
+  switch (item.processStatus) {
+    case 'busy':
+      return ['notification-working'];
+    case 'idle':
+      return ['notification-idle'];
+    default:
+      return [];
+  }
+}
+
 async function handleDockedSessionClick(item: DockedSessionItem) {
   if (!item.projectId) {
     return;
+  }
+  if (item.sessionId) {
+    markSessionCompletionNotificationsAsRead(item.sessionId);
   }
   const currentId = typeof currentRoute.params.id === 'string' ? currentRoute.params.id : '';
   if (currentId !== item.projectId) {
@@ -893,7 +1050,7 @@ function getCompletionHeader(notification: NotificationItem) {
   let titleKey: string;
   if (notification.state === 'working') {
     titleKey = 'terminal.aiWorking';
-  } else if (notification.interrupted || isNotificationClicked(notification.id)) {
+  } else if (notification.interrupted || isNotificationVisuallyRead(notification)) {
     // 被中断或用户已看过的完成通知显示"空闲"
     titleKey = 'terminal.aiIdle';
   } else {
@@ -1035,6 +1192,7 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
+    readAt: record.readAt ? new Date(record.readAt) : undefined,
     state: record.state === 'working' ? 'working' : 'completed',
     assistantState,
     processStatus,
@@ -1318,6 +1476,13 @@ function handleAIDetected(event: AIDetectedEvent) {
 async function handleNotificationClick(notification: NotificationItem) {
   // 记录该通知已被点击
   markNotificationsAsRead([notification.id]);
+  if (
+    notification.type === 'completion' &&
+    notification.state === 'completed' &&
+    !notification.readAt
+  ) {
+    void submitCompletionRecordsRead([notification.recordId]);
+  }
 
   const targetProjectId = notification.projectId;
   if (!targetProjectId) {
@@ -1614,7 +1779,11 @@ watch(
           {{ getProjectIndex(notification)?.index }}
         </button>
         <div
-          :class="['mobile-notification-item', getNotificationClass(notification), { 'notification-clicked': isNotificationClicked(notification.id) }]"
+          :class="[
+            'mobile-notification-item',
+            getNotificationClass(notification),
+            { 'notification-clicked': isNotificationVisuallyRead(notification) },
+          ]"
           @click="handleNotificationClick(notification)"
         >
           <div class="mobile-notification-content">
@@ -1806,7 +1975,7 @@ watch(
         @click="handleDockedSessionClick(item)"
       >
         <div
-          class="notification-item docked-session-item"
+          :class="['notification-item', 'docked-session-item', ...getDockedSessionClasses(item)]"
           :style="{ '--docked-session-accent': getDockedSessionAccentColor(item) }"
         >
           <div class="docked-session-main">
@@ -1921,7 +2090,7 @@ watch(
           :class="[
             'notification-item',
             getNotificationClass(notification),
-            { 'notification-clicked': isNotificationClicked(notification.id) },
+            { 'notification-clicked': isNotificationVisuallyRead(notification) },
           ]"
           @click="handleNotificationClick(notification)"
         >
@@ -2038,7 +2207,7 @@ watch(
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 10px 12px;
+  padding: 0;
   box-sizing: border-box;
 }
 
