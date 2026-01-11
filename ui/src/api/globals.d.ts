@@ -3837,6 +3837,43 @@ declare global {
       /**
        * ---
        *
+       * [POST] 标记完成记录为已读
+       *
+       * **path:** /api/v1/terminals/completion-records/{recordId}/read
+       *
+       * ---
+       *
+       * **Path Parameters**
+       * ```ts
+       * type PathParameters = {
+       *   recordId: string
+       * }
+       * ```
+       *
+       * ---
+       *
+       * **Response**
+       * ```ts
+       * type Response = {
+       *   // A URL to the JSON Schema for this object.
+       *   $schema?: string
+       *   // 提示信息
+       *   message: string
+       * }
+       * ```
+       */
+      terminalCompletionRecordRead<
+        Config extends Alova2MethodConfig<MessageResponseBody> & {
+          pathParams: {
+            recordId: string;
+          };
+        }
+      >(
+        config: Config
+      ): Alova2Method<MessageResponseBody, 'terminalSession.terminalCompletionRecordRead', Config>;
+      /**
+       * ---
+       *
        * [GET] 获取所有项目的终端数量统计
        *
        * **path:** /api/v1/terminals/counts
