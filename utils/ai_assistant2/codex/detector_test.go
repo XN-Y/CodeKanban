@@ -2,6 +2,9 @@ package codex
 
 import (
 	"testing"
+	"time"
+
+	"code-kanban/utils/ai_assistant2/types"
 )
 
 func TestWorkingLineDetection_WithCursorMovedSpaces(t *testing.T) {
@@ -12,6 +15,10 @@ func TestWorkingLineDetection_WithCursorMovedSpaces(t *testing.T) {
 		line string
 		yes  bool
 	}{
+		{"mcpStartNoiseProgress", "\u2022 Starting MCP servers (3/4): foo (65s \u2022 esc to interrupt)", false},
+		{"compactWorking", "◦ Working", true},
+		{"compactWorkingWithSeconds", "◦ Working  1", true},
+		{"compactWorkingNotStatus", "• Working on it", false},
 		{"normal", "• Working (65s • esc to interrupt)", true},
 		{"noLeadingSpace", "•Working (65s • esc to interrupt)", true},
 		{"missingClosingParen", "• Working (65s • esc to interrupt", true},
@@ -27,5 +34,23 @@ func TestWorkingLineDetection_WithCursorMovedSpaces(t *testing.T) {
 				t.Fatalf("isWorkingLine(%q)=%v want %v", tc.line, got, tc.yes)
 			}
 		})
+	}
+}
+
+func TestDetectStateFromLines_WaitingApproval(t *testing.T) {
+	d := NewStatusDetector()
+
+	lines := []string{
+		"\u276F 1. Approve",
+		"\u203A 2. Cancel",
+		"  Press enter to confirm or esc to cancel",
+	}
+
+	state, ok := d.DetectStateFromLines(lines, nil, 80, time.Now(), types.StateWaitingInput, time.Time{}, 0, 0)
+	if !ok {
+		t.Fatalf("DetectStateFromLines() ok=false want true")
+	}
+	if state != types.StateWaitingApproval {
+		t.Fatalf("DetectStateFromLines()=%s want %s", state, types.StateWaitingApproval)
 	}
 }

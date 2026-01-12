@@ -118,9 +118,8 @@ type sessionSubscriber struct {
 }
 
 const (
-	subscriberBufferSize     = 128
-	assistantOutputBufferLen = 32
-	maxSessionTitleLength    = 64
+	subscriberBufferSize  = 128
+	maxSessionTitleLength = 64
 
 	// Metadata polling interval levels
 	MetadataIntervalShort  = 2 * time.Second  // Active usage
@@ -159,9 +158,12 @@ type Session struct {
 	encoding encoding.Encoding
 	encName  string
 
-	assistantTracker  *ai_assistant2.StatusTracker
-	getAIConfig       func() *utils.AIAssistantStatusConfig
-	assistantOutputCh chan []byte
+	assistantTracker        *ai_assistant2.StatusTracker
+	getAIConfig             func() *utils.AIAssistantStatusConfig
+	assistantOutputNotifyCh chan struct{}
+	assistantOutputMu       sync.Mutex
+	assistantOutputQueue    [][]byte
+	assistantOutputQueueMax int
 
 	associatedTaskID          string
 	lockedTitle               string
@@ -284,6 +286,7 @@ func NewSession(params SessionParams) (*Session, error) {
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
 	session.assistantTracker.SetStateChangeCallback(session.handleStateChangeFromTracker)
+	session.assistantTracker.SetTerminalSize(session.rows, session.cols)
 
 	if session.title == "" {
 		session.title = session.id
@@ -347,7 +350,10 @@ func (s *Session) Start(ctx context.Context) error {
 
 	s.setStatus(SessionStatusRunning)
 
-	s.assistantOutputCh = make(chan []byte, assistantOutputBufferLen)
+	s.assistantOutputNotifyCh = make(chan struct{}, 1)
+	if s.assistantTracker != nil {
+		s.assistantTracker.SetTerminalSize(rows, cols)
+	}
 
 	go s.wait(sessionCtx)
 	go s.consumePTY(sessionCtx)
@@ -485,22 +491,28 @@ func (s *Session) enqueueAssistantOutput(chunk []byte) {
 		return
 	}
 
-	ch := s.assistantOutputCh
-	if ch == nil {
+	notifyCh := s.assistantOutputNotifyCh
+	if notifyCh == nil {
 		s.handleAssistantOutput(chunk)
 		return
 	}
 
+	s.assistantOutputMu.Lock()
+	s.assistantOutputQueue = append(s.assistantOutputQueue, chunk)
+	if len(s.assistantOutputQueue) > s.assistantOutputQueueMax {
+		s.assistantOutputQueueMax = len(s.assistantOutputQueue)
+	}
+	s.assistantOutputMu.Unlock()
+
 	select {
-	case ch <- chunk:
+	case notifyCh <- struct{}{}:
 	default:
-		// Drop if processor is backed up to avoid blocking PTY reader
 	}
 }
 
 func (s *Session) processAssistantOutput(ctx context.Context) {
-	ch := s.assistantOutputCh
-	if ch == nil {
+	notifyCh := s.assistantOutputNotifyCh
+	if notifyCh == nil {
 		return
 	}
 
@@ -508,10 +520,35 @@ func (s *Session) processAssistantOutput(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case chunk := <-ch:
-			s.handleAssistantOutput(chunk)
+		case <-notifyCh:
+			for {
+				chunk := s.dequeueAssistantOutput()
+				if len(chunk) == 0 {
+					break
+				}
+				s.handleAssistantOutput(chunk)
+			}
 		}
 	}
+}
+
+func (s *Session) dequeueAssistantOutput() []byte {
+	s.assistantOutputMu.Lock()
+	defer s.assistantOutputMu.Unlock()
+
+	if len(s.assistantOutputQueue) == 0 {
+		return nil
+	}
+
+	chunk := s.assistantOutputQueue[0]
+	s.assistantOutputQueue[0] = nil
+	s.assistantOutputQueue = s.assistantOutputQueue[1:]
+
+	if len(s.assistantOutputQueue) == 0 {
+		s.assistantOutputQueue = nil
+	}
+
+	return chunk
 }
 
 func (s *Session) checkAndBroadcastMetadata() {
@@ -682,9 +719,8 @@ func (s *Session) Resize(cols, rows int) error {
 	s.mu.Unlock()
 
 	// Also resize terminal emulator
-	// Resize emulator in tracker if active
 	if s.assistantTracker != nil {
-		s.assistantTracker.Activate(s.assistantTracker.AssistantType(), rows, cols)
+		s.assistantTracker.SetTerminalSize(rows, cols)
 	}
 
 	s.Touch()
@@ -1527,6 +1563,9 @@ type DebugInfo struct {
 	ScrollbackLimit           int                            `json:"scrollbackLimit"`
 	AIAssistant               *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 	AIChunkCount              int64                          `json:"aiChunkCount,omitempty"`
+	AssistantOutputQueueLen   int                            `json:"assistantOutputQueueLen,omitempty"`
+	AssistantOutputQueueCap   int                            `json:"assistantOutputQueueCap,omitempty"`
+	AssistantOutputQueueMax   int                            `json:"assistantOutputQueueMax,omitempty"`
 }
 
 // GetDebugInfo returns comprehensive debugging information about the session.
@@ -1545,6 +1584,12 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 		Cols:            cols,
 		ScrollbackLimit: s.scrollbackLimit,
 	}
+
+	s.assistantOutputMu.Lock()
+	info.AssistantOutputQueueLen = len(s.assistantOutputQueue)
+	info.AssistantOutputQueueCap = cap(s.assistantOutputQueue)
+	info.AssistantOutputQueueMax = s.assistantOutputQueueMax
+	s.assistantOutputMu.Unlock()
 
 	// Get scrollback chunks and timestamps
 	scrollback := s.Scrollback()

@@ -1,6 +1,7 @@
 package ai_assistant2
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -22,6 +23,16 @@ const (
 	// NOTE: TrackingModeCapture 失败了，往往连续1s从系统终端中拿到的行都不变，无法应对codex这种不总是显示工作状态的cli
 	TrackingModeCapture         TrackingMode = "capture"
 	TrackingModeVirtualTerminal TrackingMode = "virtual-terminal"
+)
+
+var (
+	syncOutputSeqH = []byte("\x1b[?2026h")
+	syncOutputSeqL = []byte("\x1b[?2026l")
+)
+
+const (
+	syncOutputMaxBufferedBytes    = 4 * 1024 * 1024
+	syncOutputMaxBufferedDuration = 5 * time.Second
 )
 
 // ParseTrackingMode normalizes incoming config to a supported mode.
@@ -66,6 +77,15 @@ type StatusTracker struct {
 	captureFunc  CaptureLinesFunc
 	captureBusy  bool
 	totalChunks  int64
+
+	// Synchronized output support (CSI ?2026 h/l). Some CLIs (Codex/Claude Code)
+	// enable it to ensure screen updates are applied atomically. vt10x ignores
+	// this mode, so we implement buffering here to avoid exposing intermediate
+	// frames to the detector.
+	syncOutputDepth     int
+	syncOutputStartedAt time.Time
+	syncOutputPending   []byte
+	syncOutputBuffer    []byte
 
 	// Status detector for the current assistant
 	detector types.StatusDetector
@@ -129,6 +149,26 @@ func (t *StatusTracker) SetStateChangeCallback(callback StateChangeCallback) {
 	t.callback = callback
 }
 
+// SetTerminalSize updates the terminal size used by the emulator. This is safe to call
+// even when the tracker is not active so the emulator can keep an accurate baseline
+// of the terminal display before activation.
+func (t *StatusTracker) SetTerminalSize(rows, cols int) {
+	if rows <= 0 || cols <= 0 {
+		return
+	}
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.rows == rows && t.cols == cols {
+		return
+	}
+
+	t.rows = rows
+	t.cols = cols
+	t.ensureEmulatorSizeLocked(cols, rows)
+}
+
 // Activate enables tracking for a specific AI assistant
 func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols int) {
 	t.mu.Lock()
@@ -139,32 +179,22 @@ func (t *StatusTracker) Activate(assistantType types.AssistantType, rows, cols i
 		return
 	}
 
-	// If already active with same type, just update size if changed
-	if t.active && t.assistantType == assistantType {
-		if t.rows != rows || t.cols != cols {
-			t.rows = rows
-			t.cols = cols
-			t.ensureEmulatorSizeLocked(cols, rows)
-		}
+	// Update size first so the emulator keeps a correct baseline even if Codex
+	// redraws using diff rendering and doesn't emit a full frame on activation.
+	if rows > 0 && cols > 0 {
+		t.rows = rows
+		t.cols = cols
+	}
+	t.ensureEmulatorSizeLocked(t.cols, t.rows)
+
+	// If already active with same type, only update detector/periodic checks.
+	if t.active && t.assistantType == assistantType && t.detector != nil {
 		return
 	}
 
-	// Create new emulator and detector for this assistant
+	// (Re)activate detector for this assistant without resetting the emulator.
 	t.assistantType = assistantType
 	t.active = true
-	t.rows = rows
-	t.cols = cols
-	if t.trackingMode == TrackingModeVirtualTerminal {
-		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
-		t.raw = ensureGlyphGrid(t.raw, rows, cols)
-		t.rawCols = cols
-		t.rawRows = rows
-	} else {
-		t.emulator = nil
-		t.raw = nil
-		t.rawCols = 0
-		t.rawRows = 0
-	}
 	t.detector = createDetector(assistantType)
 
 	// Initialize state and timestamps
@@ -222,23 +252,27 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	}
 
 	now := time.Now()
-	t.totalChunks++
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.active || t.detector == nil {
-		return types.StateUnknown, time.Time{}, false
-	}
 
-	// Virtual terminal mode processes chunks sequentially while holding the lock.
+	t.totalChunks++
+
+	// Always keep the emulator in sync with the real terminal output. Codex uses
+	// diff-based rendering, so state detection must start from an accurate
+	// baseline rather than assuming a full redraw on activation.
 	t.ensureEmulatorSizeLocked(t.cols, t.rows)
 	if t.emulator == nil {
 		return types.StateUnknown, time.Time{}, false
 	}
-	t.emulator.Write(chunk)
+	forceDetect := t.applyChunkLocked(chunk, now)
+
+	if !t.active || t.detector == nil {
+		return types.StateUnknown, time.Time{}, false
+	}
 
 	// 节流，但必须确保写入chunk
-	if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+	if !forceDetect && !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
 		return types.StateUnknown, time.Time{}, false
 	}
 
@@ -260,6 +294,142 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 		})
 	}
 	return state, ts, changed
+}
+
+func (t *StatusTracker) applyChunkLocked(chunk []byte, now time.Time) (forceDetect bool) {
+	if len(chunk) == 0 || t.emulator == nil {
+		return false
+	}
+
+	// Fast path: if we are not currently buffering and the chunk can't possibly
+	// contain ?2026 toggles (including split prefixes at the end), avoid scanning.
+	if t.syncOutputDepth == 0 && len(t.syncOutputPending) == 0 &&
+		bytes.Index(chunk, syncOutputSeqH) == -1 &&
+		bytes.Index(chunk, syncOutputSeqL) == -1 &&
+		syncOutputPendingLen(chunk) == 0 {
+		_, _ = t.emulator.Write(chunk)
+		return false
+	}
+
+	// Merge with any previously buffered prefix (escape sequences can be split across chunks).
+	data := chunk
+	if len(t.syncOutputPending) > 0 {
+		merged := make([]byte, 0, len(t.syncOutputPending)+len(chunk))
+		merged = append(merged, t.syncOutputPending...)
+		merged = append(merged, chunk...)
+		data = merged
+		t.syncOutputPending = nil
+	}
+
+	// Hold back a potential prefix of the sync output sequences at the end of the chunk.
+	pendingLen := syncOutputPendingLen(data)
+	processable := data
+	if pendingLen > 0 {
+		processable = data[:len(data)-pendingLen]
+		pending := make([]byte, pendingLen)
+		copy(pending, data[len(data)-pendingLen:])
+		t.syncOutputPending = pending
+	}
+
+	// Another fast path after pending trimming.
+	if t.syncOutputDepth == 0 &&
+		bytes.Index(processable, syncOutputSeqH) == -1 &&
+		bytes.Index(processable, syncOutputSeqL) == -1 {
+		t.writeOrBufferLocked(processable)
+		return false
+	}
+
+	segmentStart := 0
+	for i := 0; i < len(processable); {
+		// Match "\x1b[?2026h" / "\x1b[?2026l".
+		if processable[i] == 0x1b && i+len(syncOutputSeqH) <= len(processable) &&
+			processable[i+1] == '[' && processable[i+2] == '?' &&
+			processable[i+3] == '2' && processable[i+4] == '0' && processable[i+5] == '2' && processable[i+6] == '6' {
+			switch processable[i+7] {
+			case 'l':
+				t.writeOrBufferLocked(processable[segmentStart:i])
+				t.syncOutputDepth++
+				if t.syncOutputDepth == 1 {
+					t.syncOutputStartedAt = now
+				}
+				i += len(syncOutputSeqL)
+				segmentStart = i
+				continue
+			case 'h':
+				t.writeOrBufferLocked(processable[segmentStart:i])
+				if t.syncOutputDepth > 0 {
+					t.syncOutputDepth--
+				}
+				if t.syncOutputDepth == 0 {
+					if len(t.syncOutputBuffer) > 0 {
+						_, _ = t.emulator.Write(t.syncOutputBuffer)
+						t.syncOutputBuffer = t.syncOutputBuffer[:0]
+						forceDetect = true
+					}
+					t.syncOutputStartedAt = time.Time{}
+				}
+				i += len(syncOutputSeqH)
+				segmentStart = i
+				continue
+			}
+		}
+		i++
+	}
+	t.writeOrBufferLocked(processable[segmentStart:])
+
+	// Fail-safe: if the end marker never arrives, avoid buffering forever.
+	if t.syncOutputDepth > 0 {
+		tooLarge := len(t.syncOutputBuffer) > syncOutputMaxBufferedBytes
+		tooLong := !t.syncOutputStartedAt.IsZero() && now.Sub(t.syncOutputStartedAt) > syncOutputMaxBufferedDuration
+		if tooLarge || tooLong {
+			if len(t.syncOutputBuffer) > 0 {
+				_, _ = t.emulator.Write(t.syncOutputBuffer)
+				t.syncOutputBuffer = t.syncOutputBuffer[:0]
+				forceDetect = true
+			}
+			t.syncOutputDepth = 0
+			t.syncOutputStartedAt = time.Time{}
+		}
+	}
+
+	return forceDetect
+}
+
+func (t *StatusTracker) writeOrBufferLocked(data []byte) {
+	if len(data) == 0 || t.emulator == nil {
+		return
+	}
+
+	if t.syncOutputDepth > 0 {
+		t.syncOutputBuffer = append(t.syncOutputBuffer, data...)
+		return
+	}
+
+	_, _ = t.emulator.Write(data)
+}
+
+// syncOutputPendingLen returns the longest suffix of data that is a prefix of a sync output toggle.
+func syncOutputPendingLen(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+
+	maxCheck := len(syncOutputSeqH) - 1
+	if maxCheck <= 0 {
+		return 0
+	}
+	if len(data) < maxCheck {
+		maxCheck = len(data)
+	}
+
+	for n := maxCheck; n > 0; n-- {
+		suffix := data[len(data)-n:]
+		if bytes.HasPrefix(syncOutputSeqH, suffix) || bytes.HasPrefix(syncOutputSeqL, suffix) {
+			return n
+		}
+	}
+
+	return 0
 }
 
 func (t *StatusTracker) detectStateFromLinesLocked(lines []string, raw [][]vt10x.Glyph, now time.Time, cursor vt10x.Cursor) (types.State, time.Time, bool) {
@@ -424,15 +594,8 @@ func (t *StatusTracker) resetLocked() {
 	t.lastChangedAt = time.Time{}
 	t.recentUpdatedAt = time.Time{}
 	t.lastProcessTime = time.Time{}
-	t.emulator = nil
 	t.detector = nil
-	t.rows = 0
-	t.cols = 0
 	t.captureBusy = false
-	t.totalChunks = 0
-	t.raw = nil
-	t.rawCols = 0
-	t.rawRows = 0
 }
 
 func (t *StatusTracker) emitStateChangeLocked(event StateChangeEvent) {

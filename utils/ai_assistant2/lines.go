@@ -12,7 +12,10 @@ var captureTerminalPool = sync.Pool{
 	},
 }
 
-var captureClearSequence = []byte("\x1b[2J\x1b[H")
+// Reset the emulator state between pooled uses:
+// - RIS (\x1bc) resets modes/attrs/cursor
+// - Clear screen + home ensures a clean viewport
+var captureResetSequence = []byte("\x1bc\x1b[2J\x1b[H")
 
 // getVisibleLinesLocked extracts visible lines from the emulator (must be called with lock held)
 func getVisibleLinesLocked(t *StatusTracker) ([]string, [][]vt10x.Glyph) {
@@ -30,6 +33,12 @@ func renderLinesFromTerminal(term vt10x.Terminal, raw [][]vt10x.Glyph, rows, col
 	if term == nil || rows <= 0 || cols <= 0 {
 		return nil, raw
 	}
+
+	// vt10x state is internally mutex-protected during writes. Lock here to ensure
+	// Size/Cell reads observe a consistent snapshot even if the caller ever
+	// introduces concurrent writes.
+	term.Lock()
+	defer term.Unlock()
 
 	termCols, termRows := term.Size()
 	if termCols <= 0 || termRows <= 0 {
@@ -95,7 +104,7 @@ func RenderLinesFromBuffer(data []byte, rows, cols int) []string {
 	defer captureTerminalPool.Put(term)
 
 	term.Resize(cols, rows)
-	_, _ = term.Write(captureClearSequence)
+	_, _ = term.Write(captureResetSequence)
 	_, _ = term.Write(data)
 
 	lines, _ := renderLinesFromTerminal(term, nil, rows, cols)

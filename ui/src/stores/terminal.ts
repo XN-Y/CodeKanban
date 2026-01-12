@@ -859,21 +859,22 @@ export const useTerminalStore = defineStore('terminal', () => {
 
           // 🎯 Detect AI assistant completion
           // Only trigger notification when transitioning from working state to waiting_input
-          const currentState = payload.metadata.aiAssistant?.state;
+          const assistant = payload.metadata.aiAssistant;
+          const currentState = assistant?.state;
           const previousState = aiPreviousStates.get(tab.id);
 
           // 🔍 Detect AI assistant detection/closure
-          const isAgentDetected = payload.metadata.aiAssistant?.detected;
+          const isAgentDetected = assistant?.detected === true;
 
           // Detect AI agent first appearance - emit ai:detected only once per session
-          if (isAgentDetected === true && !aiDetectedSessions.has(tab.id)) {
+          if (isAgentDetected && !aiDetectedSessions.has(tab.id)) {
             aiDetectedSessions.add(tab.id);
             console.log(
-              `[Terminal] AI Agent Detected: ${payload.metadata.aiAssistant?.displayName || 'AI'} detected in session ${tab.id}`,
+              `[Terminal] AI Agent Detected: ${assistant?.displayName || 'AI'} detected in session ${tab.id}`,
               {
                 sessionId: tab.id,
                 sessionTitle: tab.title,
-                assistant: payload.metadata.aiAssistant,
+                assistant,
               }
             );
             emitter.emit('ai:detected', {
@@ -883,113 +884,118 @@ export const useTerminalStore = defineStore('terminal', () => {
               projectName: getProjectName(tab.projectId),
               worktreeId: tab.worktreeId,
               detectedAt: new Date(),
-              assistantName: payload.metadata.aiAssistant?.displayName || payload.metadata.aiAssistant?.name,
-              assistantType: payload.metadata.aiAssistant?.type,
+              assistantName: assistant?.displayName || assistant?.name,
+              assistantType: assistant?.type,
             });
           }
 
           // When agent is closed, clear any existing notifications
-          if (isAgentDetected === false) {
-            aiDetectedSessions.delete(tab.id);
-            console.log(
-              `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
-              {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                assistant: payload.metadata.aiAssistant,
-              }
-            );
-            emitter.emit('ai:closed', {
-              sessionId: tab.id,
-            });
-          }
-
-          // Detect approval requests
-          if (currentState === 'waiting_approval') {
-            console.log(
-              `[Terminal] AI Approval Needed: ${payload.metadata.aiAssistant?.displayName || 'AI'} is waiting for approval`,
-              {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                previousState,
-                currentState,
-                assistant: payload.metadata.aiAssistant,
-              }
-            );
-            emitter.emit('ai:approval-needed', {
-              sessionId: tab.id,
-              sessionTitle: tab.title,
-              projectId: tab.projectId,
-              projectName: getProjectName(tab.projectId),
-              assistant: payload.metadata.aiAssistant,
-            });
-          }
-
-          // Detect AI starting to work again (after being idle/completed)
-          if (currentState === 'working' && previousState && previousState !== 'working') {
-            console.log(
-              `[Terminal] AI Started Working: ${payload.metadata.aiAssistant?.displayName || 'AI'} resumed work`,
-              {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                previousState,
-                currentState,
-                assistant: payload.metadata.aiAssistant,
-              }
-            );
-            emitter.emit('ai:working', {
-              sessionId: tab.id,
-              sessionTitle: tab.title,
-              projectId: tab.projectId,
-              projectName: getProjectName(tab.projectId),
-              assistant: payload.metadata.aiAssistant,
-              latestCommand: trimmedAssistantInput,
-            });
-          }
-
-          if (currentState === 'waiting_input' && previousState) {
-            // Check if transitioning from working state
-            const isFromWorkingState = previousState === 'working';
-            const wasInterrupted = payload.metadata.aiAssistant?.interrupted === true;
-
-            if (isFromWorkingState && !wasInterrupted) {
-              // Valid completion: working state → waiting input (NOT interrupted)
+          if (!isAgentDetected) {
+            // If assistant info is missing or marked as not detected, treat it as closed/detached.
+            // This prevents stale state from triggering false completion notifications when the agent restarts.
+            if (aiDetectedSessions.has(tab.id)) {
+              aiDetectedSessions.delete(tab.id);
               console.log(
-                `[Terminal] AI Completion Detected: ${payload.metadata.aiAssistant?.displayName || 'AI'} completed execution`,
+                `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
+                {
+                  sessionId: tab.id,
+                  sessionTitle: tab.title,
+                  assistant,
+                }
+              );
+              emitter.emit('ai:closed', {
+                sessionId: tab.id,
+              });
+            }
+            aiPreviousStates.delete(tab.id);
+          } else {
+            // Detect approval requests
+            if (currentState === 'waiting_approval') {
+              console.log(
+                `[Terminal] AI Approval Needed: ${assistant?.displayName || 'AI'} is waiting for approval`,
                 {
                   sessionId: tab.id,
                   sessionTitle: tab.title,
                   previousState,
                   currentState,
-                  assistant: payload.metadata.aiAssistant,
+                  assistant,
                 }
               );
-              emitter.emit('ai:completed', {
+              emitter.emit('ai:approval-needed', {
                 sessionId: tab.id,
                 sessionTitle: tab.title,
                 projectId: tab.projectId,
                 projectName: getProjectName(tab.projectId),
-                assistant: payload.metadata.aiAssistant,
+                assistant,
               });
-            } else if (isFromWorkingState && wasInterrupted) {
-              // User interrupted the execution
+            }
+
+            // Detect AI starting to work again (after being idle/completed)
+            if (currentState === 'working' && previousState && previousState !== 'working') {
               console.log(
-                `[Terminal] AI Interrupted: ${payload.metadata.aiAssistant?.displayName || 'AI'} was interrupted by user`,
+                `[Terminal] AI Started Working: ${assistant?.displayName || 'AI'} resumed work`,
                 {
                   sessionId: tab.id,
                   sessionTitle: tab.title,
                   previousState,
                   currentState,
-                  assistant: payload.metadata.aiAssistant,
+                  assistant,
                 }
               );
-              // Don't emit ai:completed for interrupted executions
+              emitter.emit('ai:working', {
+                sessionId: tab.id,
+                sessionTitle: tab.title,
+                projectId: tab.projectId,
+                projectName: getProjectName(tab.projectId),
+                assistant,
+                latestCommand: trimmedAssistantInput,
+              });
             }
-          }
 
-          // Update previous state for next comparison
-          if (currentState) {
-            aiPreviousStates.set(tab.id, currentState);
+            if (currentState === 'waiting_input' && previousState) {
+              // Check if transitioning from working state
+              const isFromWorkingState = previousState === 'working';
+              const wasInterrupted = assistant?.interrupted === true;
+
+              if (isFromWorkingState && !wasInterrupted) {
+                // Valid completion: working state → waiting input (NOT interrupted)
+                console.log(
+                  `[Terminal] AI Completion Detected: ${assistant?.displayName || 'AI'} completed execution`,
+                  {
+                    sessionId: tab.id,
+                    sessionTitle: tab.title,
+                    previousState,
+                    currentState,
+                    assistant,
+                  }
+                );
+                emitter.emit('ai:completed', {
+                  sessionId: tab.id,
+                  sessionTitle: tab.title,
+                  projectId: tab.projectId,
+                  projectName: getProjectName(tab.projectId),
+                  assistant,
+                });
+              } else if (isFromWorkingState && wasInterrupted) {
+                // User interrupted the execution
+                console.log(
+                  `[Terminal] AI Interrupted: ${assistant?.displayName || 'AI'} was interrupted by user`,
+                  {
+                    sessionId: tab.id,
+                    sessionTitle: tab.title,
+                    previousState,
+                    currentState,
+                    assistant,
+                  }
+                );
+                // Don't emit ai:completed for interrupted executions
+              }
+            }
+
+            // Update previous state for next comparison
+            if (currentState) {
+              aiPreviousStates.set(tab.id, currentState);
+            }
           }
         }
         // Check if there are any listeners for this session

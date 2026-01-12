@@ -36,7 +36,7 @@ var captureDebugTerminalPool = sync.Pool{
 	},
 }
 
-var captureDebugClearSequence = []byte("\x1b[2J\x1b[H")
+var captureDebugClearSequence = []byte("\x1bc\x1b[2J\x1b[H")
 
 var captureDebugTemplate = template.Must(template.New("capture-debug").Parse(captureDebugTemplateHTML))
 

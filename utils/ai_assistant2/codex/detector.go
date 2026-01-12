@@ -128,21 +128,19 @@ func (d *StatusDetector) isWorkingLine(line string) bool {
 		return false
 	}
 
-	// Fast path: check for "esc to interrup" substring first (t and ')' can be truncated)
-	if !strings.Contains(line, "esc to interrup") {
+	// Codex startup MCP messages can include the same suffix, but are not "working".
+	if strings.Contains(line, "Starting MCP servers") {
 		return false
 	}
 
-	ret := d.workingPattern.MatchString(line)
-
-	if ret {
-		// 启动时的mcp加载
-		if strings.Contains(line, "Starting MCP servers") {
-			return false
-		}
+	// Full status line: "... (65s • esc to interrupt)" (t and ')' can be truncated).
+	if strings.Contains(line, "esc to interrup") {
+		return d.workingPattern.MatchString(line)
 	}
 
-	return ret
+	// Compact status line: Codex sometimes renders only the left-side label and updates
+	// the timer elsewhere (e.g. "◦ Working" / "◦ Working  1").
+	return isCompactWorkingLine(line)
 }
 
 // Default detector instance
@@ -186,7 +184,36 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 		}
 	}
 
-	return types.StateWaitingInput
+	// Let the caller fall back to other heuristics (e.g. approval prompts).
+	return types.StateUnknown
+}
+
+func isCompactWorkingLine(line string) bool {
+	if line == "" {
+		return false
+	}
+
+	if !(strings.HasPrefix(line, "•") || strings.HasPrefix(line, "◦")) {
+		return false
+	}
+
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "•"), "◦"))
+	if !strings.HasPrefix(rest, "Working") {
+		return false
+	}
+
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "Working"))
+	if rest == "" {
+		return true
+	}
+
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 func detectInputWindow(lines []string, raw [][]vt10x.Glyph) (start, end int, isEmpty bool) {
