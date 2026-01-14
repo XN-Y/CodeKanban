@@ -1,7 +1,6 @@
 package ai_assistant2
 
 import (
-	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -78,6 +77,7 @@ type StatusTracker struct {
 	captureBusy  bool
 	totalChunks  int64
 
+	detectChunks int64
 	// Synchronized output support (CSI ?2026 h/l). Some CLIs (Codex/Claude Code)
 	// enable it to ensure screen updates are applied atomically. vt10x ignores
 	// this mode, so we implement buffering here to avoid exposing intermediate
@@ -265,14 +265,35 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	if t.emulator == nil {
 		return types.StateUnknown, time.Time{}, false
 	}
-	forceDetect := t.applyChunkLocked(chunk, now)
+
+	_, _ = t.emulator.Write(chunk)
+
+	// 50 次检测以前的 lines 全部打印
+	// 抓帧测试用
+	// if t.totalChunks < 2000 {
+	// 	fmt.Println(t.totalChunks, "@@@@@", strconv.Quote(string(chunk)))
+	// 	lines, _ := getVisibleLinesLocked(t)
+
+	// 	f, err := os.Create("./temp/" + fmt.Sprintf("%d-%d", t.totalChunks, t.detectChunks) + ".json")
+	// 	if err != nil {
+	// 		fmt.Println("Error opening file:", err)
+	// 	}
+
+	// 	f.WriteString(fmt.Sprintln("==================================", t.totalChunks, t.detectChunks))
+	// 	f.WriteString(fmt.Sprintln("@@@@@", strconv.Quote(string(chunk))))
+	// 	for _, line := range lines {
+	// 		f.WriteString(fmt.Sprintln(line))
+	// 	}
+	// 	f.WriteString(fmt.Sprintln("=================================="))
+	// 	f.Close()
+	// }
 
 	if !t.active || t.detector == nil {
 		return types.StateUnknown, time.Time{}, false
 	}
 
 	// 节流，但必须确保写入chunk
-	if !forceDetect && !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+	if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
 		return types.StateUnknown, time.Time{}, false
 	}
 
@@ -284,6 +305,8 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	}
 
 	prevState := t.lastState
+
+	t.detectChunks++
 	state, ts, changed := t.detectStateFromLinesLocked(lines, raw, now, t.emulator.Cursor())
 	if changed {
 		t.emitStateChangeLocked(StateChangeEvent{
@@ -294,142 +317,6 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 		})
 	}
 	return state, ts, changed
-}
-
-func (t *StatusTracker) applyChunkLocked(chunk []byte, now time.Time) (forceDetect bool) {
-	if len(chunk) == 0 || t.emulator == nil {
-		return false
-	}
-
-	// Fast path: if we are not currently buffering and the chunk can't possibly
-	// contain ?2026 toggles (including split prefixes at the end), avoid scanning.
-	if t.syncOutputDepth == 0 && len(t.syncOutputPending) == 0 &&
-		bytes.Index(chunk, syncOutputSeqH) == -1 &&
-		bytes.Index(chunk, syncOutputSeqL) == -1 &&
-		syncOutputPendingLen(chunk) == 0 {
-		_, _ = t.emulator.Write(chunk)
-		return false
-	}
-
-	// Merge with any previously buffered prefix (escape sequences can be split across chunks).
-	data := chunk
-	if len(t.syncOutputPending) > 0 {
-		merged := make([]byte, 0, len(t.syncOutputPending)+len(chunk))
-		merged = append(merged, t.syncOutputPending...)
-		merged = append(merged, chunk...)
-		data = merged
-		t.syncOutputPending = nil
-	}
-
-	// Hold back a potential prefix of the sync output sequences at the end of the chunk.
-	pendingLen := syncOutputPendingLen(data)
-	processable := data
-	if pendingLen > 0 {
-		processable = data[:len(data)-pendingLen]
-		pending := make([]byte, pendingLen)
-		copy(pending, data[len(data)-pendingLen:])
-		t.syncOutputPending = pending
-	}
-
-	// Another fast path after pending trimming.
-	if t.syncOutputDepth == 0 &&
-		bytes.Index(processable, syncOutputSeqH) == -1 &&
-		bytes.Index(processable, syncOutputSeqL) == -1 {
-		t.writeOrBufferLocked(processable)
-		return false
-	}
-
-	segmentStart := 0
-	for i := 0; i < len(processable); {
-		// Match "\x1b[?2026h" / "\x1b[?2026l".
-		if processable[i] == 0x1b && i+len(syncOutputSeqH) <= len(processable) &&
-			processable[i+1] == '[' && processable[i+2] == '?' &&
-			processable[i+3] == '2' && processable[i+4] == '0' && processable[i+5] == '2' && processable[i+6] == '6' {
-			switch processable[i+7] {
-			case 'l':
-				t.writeOrBufferLocked(processable[segmentStart:i])
-				t.syncOutputDepth++
-				if t.syncOutputDepth == 1 {
-					t.syncOutputStartedAt = now
-				}
-				i += len(syncOutputSeqL)
-				segmentStart = i
-				continue
-			case 'h':
-				t.writeOrBufferLocked(processable[segmentStart:i])
-				if t.syncOutputDepth > 0 {
-					t.syncOutputDepth--
-				}
-				if t.syncOutputDepth == 0 {
-					if len(t.syncOutputBuffer) > 0 {
-						_, _ = t.emulator.Write(t.syncOutputBuffer)
-						t.syncOutputBuffer = t.syncOutputBuffer[:0]
-						forceDetect = true
-					}
-					t.syncOutputStartedAt = time.Time{}
-				}
-				i += len(syncOutputSeqH)
-				segmentStart = i
-				continue
-			}
-		}
-		i++
-	}
-	t.writeOrBufferLocked(processable[segmentStart:])
-
-	// Fail-safe: if the end marker never arrives, avoid buffering forever.
-	if t.syncOutputDepth > 0 {
-		tooLarge := len(t.syncOutputBuffer) > syncOutputMaxBufferedBytes
-		tooLong := !t.syncOutputStartedAt.IsZero() && now.Sub(t.syncOutputStartedAt) > syncOutputMaxBufferedDuration
-		if tooLarge || tooLong {
-			if len(t.syncOutputBuffer) > 0 {
-				_, _ = t.emulator.Write(t.syncOutputBuffer)
-				t.syncOutputBuffer = t.syncOutputBuffer[:0]
-				forceDetect = true
-			}
-			t.syncOutputDepth = 0
-			t.syncOutputStartedAt = time.Time{}
-		}
-	}
-
-	return forceDetect
-}
-
-func (t *StatusTracker) writeOrBufferLocked(data []byte) {
-	if len(data) == 0 || t.emulator == nil {
-		return
-	}
-
-	if t.syncOutputDepth > 0 {
-		t.syncOutputBuffer = append(t.syncOutputBuffer, data...)
-		return
-	}
-
-	_, _ = t.emulator.Write(data)
-}
-
-// syncOutputPendingLen returns the longest suffix of data that is a prefix of a sync output toggle.
-func syncOutputPendingLen(data []byte) int {
-	if len(data) == 0 {
-		return 0
-	}
-
-	maxCheck := len(syncOutputSeqH) - 1
-	if maxCheck <= 0 {
-		return 0
-	}
-	if len(data) < maxCheck {
-		maxCheck = len(data)
-	}
-
-	for n := maxCheck; n > 0; n-- {
-		suffix := data[len(data)-n:]
-		if bytes.HasPrefix(syncOutputSeqH, suffix) || bytes.HasPrefix(syncOutputSeqL, suffix) {
-			return n
-		}
-	}
-
-	return 0
 }
 
 func (t *StatusTracker) detectStateFromLinesLocked(lines []string, raw [][]vt10x.Glyph, now time.Time, cursor vt10x.Cursor) (types.State, time.Time, bool) {

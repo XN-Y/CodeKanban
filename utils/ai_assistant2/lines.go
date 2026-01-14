@@ -37,8 +37,8 @@ func renderLinesFromTerminal(term vt10x.Terminal, raw [][]vt10x.Glyph, rows, col
 	// vt10x state is internally mutex-protected during writes. Lock here to ensure
 	// Size/Cell reads observe a consistent snapshot even if the caller ever
 	// introduces concurrent writes.
-	term.Lock()
-	defer term.Unlock()
+	// term.Lock()
+	// defer term.Unlock()
 
 	termCols, termRows := term.Size()
 	if termCols <= 0 || termRows <= 0 {

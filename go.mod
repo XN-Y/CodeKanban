@@ -73,6 +73,7 @@ require (
 	github.com/pjbgf/sha1cd v0.3.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/sergi/go-diff v1.3.2-0.20230802210424-5b0b94c5c0d3 // indirect
 	github.com/skeema/knownhosts v1.3.0 // indirect
@@ -97,4 +98,4 @@ require (
 
 replace github.com/danielgtaylor/huma/v2 => github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c
 
-replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20251224191154-4bc538e9f6c2
+replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34

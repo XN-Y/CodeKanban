@@ -47,6 +47,13 @@ func (d *StatusDetector) detectStateWorkingAndWaiting(lines []string, raw [][]vt
 	}
 
 	if firstSepIdx == -1 || secondSepIdx == -1 {
+		// Fallback: early startup frames (or truncated viewports) might not include the input box
+		// separators yet, but can still show a working status line.
+		for i := len(lines) - 1; i >= 0; i-- {
+			if d.isWorkingTaskLine(lines[i]) {
+				return types.StateWorking
+			}
+		}
 		return types.StateUnknown
 	}
 
