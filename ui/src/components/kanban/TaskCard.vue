@@ -12,11 +12,13 @@
       <div class="task-card__actions">
         <n-tooltip trigger="hover" placement="bottom">
           <template #trigger>
-            <n-button quaternary circle size="tiny" type="primary" @click.stop="handleStartWork">
-              <n-icon size="14">
-                <PlayCircleOutline />
-              </n-icon>
-            </n-button>
+            <n-dropdown trigger="click" :options="startWorkOptions" @select="handleStartWorkSelect">
+              <n-button quaternary circle size="tiny" type="primary" @click.stop>
+                <n-icon size="14">
+                  <PlayCircleOutline />
+                </n-icon>
+              </n-button>
+            </n-dropdown>
           </template>
           {{ t('task.startWorkTooltip') }}
         </n-tooltip>
@@ -87,8 +89,10 @@
 import { computed } from 'vue';
 import dayjs from 'dayjs';
 import { CopyOutline, CreateOutline, TrashOutline, PlayCircleOutline } from '@vicons/ionicons5';
+import type { DropdownOption } from 'naive-ui';
 import type { Task } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
+import type { StartWorkAction } from '@/types/startWork';
 
 const { t } = useLocale();
 
@@ -108,7 +112,7 @@ const emit = defineEmits<{
   edit: [];
   delete: [];
   copy: [];
-  'start-work': [];
+  'start-work': [StartWorkAction];
   'view-terminal': [];
 }>();
 
@@ -152,10 +156,20 @@ const linkedTerminalLabel = computed(() => {
 const linkedTerminalStateClass = computed(() => `status-${linkedTerminalStatus.value}`);
 const linkedTerminalTitle = computed(() => props.linkedTerminal?.sessionTitle ?? '');
 
+const startWorkOptions = computed<DropdownOption[]>(() => [
+  { label: t('task.startWorkMenuTerminal'), key: 'terminal' },
+  { label: t('task.startWorkMenuClaude'), key: 'claude' },
+  { label: t('task.startWorkMenuCodex'), key: 'codex' },
+]);
+
 const handleEdit = () => emit('edit');
 const handleDelete = () => emit('delete');
 const handleCopy = () => emit('copy');
-const handleStartWork = () => emit('start-work');
+const handleStartWorkSelect = (key: string | number) => {
+  if (key === 'terminal' || key === 'claude' || key === 'codex') {
+    emit('start-work', key);
+  }
+};
 </script>
 
 <style scoped>

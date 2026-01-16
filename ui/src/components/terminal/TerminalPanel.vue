@@ -273,6 +273,38 @@
           </template>
           {{ t('terminal.createNewTerminal') }}
         </n-tooltip>
+        <n-button-group size="small" class="terminal-editor-actions">
+          <n-tooltip trigger="hover" placement="bottom" :delay="100">
+            <template #trigger>
+              <n-button
+                text
+                size="small"
+                :disabled="!canOpenEditor"
+                @click="handleEditorButtonClick"
+              >
+                <template #icon>
+                  <n-icon>
+                    <CodeSlashOutline />
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            {{ t('worktree.openWith', { editor: defaultEditorLabel }) }}
+          </n-tooltip>
+          <n-dropdown
+            :options="editorDropdownOptions"
+            :disabled="!canOpenEditor"
+            @select="handleEditorSelect"
+          >
+            <n-button text size="small" :disabled="!canOpenEditor">
+              <template #icon>
+                <n-icon>
+                  <ChevronDownOutline />
+                </n-icon>
+              </template>
+            </n-button>
+          </n-dropdown>
+        </n-button-group>
         <template v-if="enabledQuickActions.length">
           <n-dropdown
             v-if="stackedQuickActions.length"
@@ -650,6 +682,7 @@ import {
   TimeOutline,
   ChatbubblesOutline,
   PlayOutline,
+  CodeSlashOutline,
   CodeOutline,
   RocketOutline,
   LogoGoogle,
@@ -676,12 +709,13 @@ import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
 import { getPresetById } from '@/constants/themes';
+import { DEFAULT_EDITOR, EDITOR_LABEL_MAP, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import type { DeveloperConfig } from '@/types/models';
-import type { TerminalQuickAction, TerminalQuickActionIcon } from '@/stores/settings';
+import type { EditorPreference, TerminalQuickAction, TerminalQuickActionIcon } from '@/stores/settings';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 
 type ItemResponse<T> = {
@@ -848,6 +882,12 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
   const hasProcessInfo = tab?.processPid != null;
   const linkedTaskId = resolveTabTaskId(tab);
   const hasLinkedTask = Boolean(linkedTaskId);
+  const canOpenEditorForTab = Boolean(resolveEditorPath(tab));
+  const editorMenuOptions = editorOptions.value.map(option => ({
+    label: option.label,
+    key: `open-editor:${option.value}`,
+    disabled: !canOpenEditorForTab || option.disabled,
+  }));
 
   const options: DropdownOption[] = [
     {
@@ -875,6 +915,13 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       label: t('terminal.browseDirectory'),
       key: 'browse-directory',
       icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
+    },
+    {
+      label: t('worktree.openInEditor'),
+      key: 'open-editor',
+      icon: () => h(NIcon, null, { default: () => h(CodeSlashOutline) }),
+      disabled: !canOpenEditorForTab,
+      children: editorMenuOptions,
     },
     {
       type: 'divider',
@@ -1210,7 +1257,31 @@ const {
   activeTheme,
   currentPresetId,
   terminalQuickActions,
+  editorSettings,
 } = storeToRefs(settingsStore);
+
+const defaultEditorPreference = computed<EditorPreference>(() =>
+  editorSettings.value?.defaultEditor && isEditorPreference(editorSettings.value.defaultEditor)
+    ? editorSettings.value.defaultEditor
+    : DEFAULT_EDITOR
+);
+const customEditorCommand = computed(() => editorSettings.value?.customCommand?.trim() ?? '');
+const editorOptions = computed(() =>
+  EDITOR_OPTIONS.map(option => ({
+    ...option,
+    disabled: option.value === 'custom' && !customEditorCommand.value,
+  }))
+);
+const editorDropdownOptions = computed<DropdownOption[]>(() =>
+  editorOptions.value.map(option => ({
+    label: option.label,
+    key: option.value,
+    disabled: option.disabled,
+  }))
+);
+const defaultEditorLabel = computed(
+  () => EDITOR_LABEL_MAP[defaultEditorPreference.value] ?? t('worktree.editor')
+);
 
 // Tabs 主题覆盖 - 用于控制标签背景色
 const tabsThemeOverrides = computed(() => {
@@ -1534,6 +1605,21 @@ const activeId = computed({
     }
   },
 });
+
+function resolveEditorPath(tab: TerminalTabState | null | undefined): string {
+  if (!tab) {
+    return '';
+  }
+  const worktreePath = worktrees.value.find(worktree => worktree.id === tab.worktreeId)?.path;
+  if (worktreePath && worktreePath.trim()) {
+    return worktreePath.trim();
+  }
+  return tab.workingDir?.trim() ?? '';
+}
+
+const activeTerminalTab = computed(() => tabs.value.find(tab => tab.id === activeId.value) ?? null);
+const activeEditorPath = computed(() => resolveEditorPath(activeTerminalTab.value));
+const canOpenEditor = computed(() => Boolean(activeEditorPath.value));
 
 const panelStyle = computed(() => ({
   height: expanded.value ? `${panelHeight.value}px` : 'auto',
@@ -2439,6 +2525,45 @@ function handleCreateTerminalSelect(key: string) {
   openTerminal({ worktreeId: key });
 }
 
+async function openEditorForTab(tab: TerminalTabState | null, editor: EditorPreference) {
+  const path = resolveEditorPath(tab);
+  if (!path) {
+    return;
+  }
+  if (editor === 'custom' && !customEditorCommand.value) {
+    message.warning(t('worktree.configureCustomCommandFirst'));
+    return;
+  }
+  try {
+    await projectStore.openInEditor(
+      path,
+      editor,
+      editor === 'custom' ? customEditorCommand.value : undefined,
+    );
+    const label = EDITOR_LABEL_MAP[editor] ?? t('worktree.editor');
+    message.success(t('worktree.openedInEditor', { editor: label }));
+  } catch (error: any) {
+    message.error(error?.message ?? t('worktree.openEditorFailed'));
+  }
+}
+
+function handleEditorButtonClick() {
+  if (!canOpenEditor.value) {
+    return;
+  }
+  void openEditorForTab(activeTerminalTab.value, defaultEditorPreference.value);
+}
+
+function handleEditorSelect(key: string | number) {
+  if (!canOpenEditor.value) {
+    return;
+  }
+  if (typeof key !== 'string' || !isEditorPreference(key)) {
+    return;
+  }
+  void openEditorForTab(activeTerminalTab.value, key);
+}
+
 const enabledQuickActions = computed(() =>
   terminalQuickActions.value.filter(action => action.enabled && action.command.trim())
 );
@@ -2618,7 +2743,7 @@ async function handleRunQuickAction(action: TerminalQuickAction) {
   }
 }
 
-async function openTerminal(options: TerminalCreateOptions) {
+async function openTerminal(options: TerminalCreateOptions): Promise<string | undefined> {
   if (!props.projectId) {
     message.warning(t('terminal.pleaseSelectProject'));
     return;
@@ -2636,12 +2761,13 @@ async function openTerminal(options: TerminalCreateOptions) {
     if (!finalOptions.insertAfterSessionId && activeTabId.value) {
       finalOptions.insertAfterSessionId = activeTabId.value;
     }
-    await createSession(finalOptions);
+    const sessionId = await createSession(finalOptions);
     // 创建成功后，等待面板展开动画完成（200ms）+ 缓冲时间，再触发 resize
     // 确保终端尺寸计算时容器已经是最终尺寸
     setTimeout(() => {
       scheduleResizeAll();
     }, 400);
+    return sessionId;
   } catch (error: any) {
     message.error(error?.message ?? t('terminal.createFailed'));
   }
@@ -3164,6 +3290,17 @@ async function handleContextMenuSelect(key: string) {
   }
   if (key === 'browse-directory') {
     browseDirectory(tab);
+    return;
+  }
+  if (key === 'open-editor') {
+    await openEditorForTab(tab, defaultEditorPreference.value);
+    return;
+  }
+  if (key.startsWith('open-editor:')) {
+    const editorKey = key.replace('open-editor:', '');
+    if (isEditorPreference(editorKey)) {
+      await openEditorForTab(tab, editorKey);
+    }
     return;
   }
   if (key === 'copy-ai-session-id') {

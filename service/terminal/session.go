@@ -1202,6 +1202,7 @@ func (s *Session) handleStateChangeFromTracker(event ai_assistant2.StateChangeEv
 	}
 
 	s.applyAssistantState(event)
+	s.updateTaskStatusFromAssistantEvent(event)
 	if event.RecentInput != "" {
 		go s.handleRecentInput(event)
 	}
@@ -1244,6 +1245,49 @@ func (s *Session) applyAssistantState(event ai_assistant2.StateChangeEvent) {
 	s.metaMu.Unlock()
 
 	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
+}
+
+func (s *Session) updateTaskStatusFromAssistantEvent(event ai_assistant2.StateChangeEvent) {
+	taskID := s.TaskID()
+	if taskID == "" {
+		return
+	}
+
+	targetStatus := ""
+	if event.State == types.StateWaitingInput && event.PreviousState == types.StateWorking {
+		targetStatus = "done"
+	} else if event.State == types.StateWorking {
+		targetStatus = "in_progress"
+	}
+
+	if targetStatus == "" {
+		return
+	}
+
+	taskSvc := &model.TaskService{}
+	ctx := context.Background()
+	task, err := taskSvc.GetTask(ctx, taskID)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to fetch task for assistant state update",
+				zap.String("taskId", taskID),
+				zap.Error(err))
+		}
+		return
+	}
+
+	if task.Status == "archived" || task.Status == targetStatus {
+		return
+	}
+
+	if _, err := taskSvc.UpdateTask(ctx, taskID, map[string]any{"status": targetStatus}); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("failed to update task status from assistant state",
+				zap.String("taskId", taskID),
+				zap.String("status", targetStatus),
+				zap.Error(err))
+		}
+	}
 }
 
 func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
@@ -1910,6 +1954,7 @@ func (s *Session) handleLogWatcherMessage(msg *log_watcher.UserMessage) {
 		RecentInput:   msg.Message,
 	}
 
+	s.updateTaskStatusFromAssistantEvent(event)
 	// Handle the recent input (this will update task description, title, etc.)
 	go s.handleRecentInput(event)
 

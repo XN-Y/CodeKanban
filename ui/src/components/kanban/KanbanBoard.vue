@@ -111,15 +111,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
+import { computed, h, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
-import { useDialog, useMessage } from 'naive-ui';
+import { NInput, useDialog, useMessage } from 'naive-ui';
 import { AddOutline, RefreshOutline } from '@vicons/ionicons5';
+import { storeToRefs } from 'pinia';
 import { useResponsive } from '@/composables/useResponsive';
 import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
 import TaskDetailDrawer from './TaskDetailDrawer.vue';
+import { useSettingsStore } from '@/stores/settings';
 import { useTaskStore } from '@/stores/task';
 import { useTerminalStore } from '@/stores/terminal';
 import { taskActions } from '@/composables/useTaskActions';
@@ -128,6 +130,7 @@ import { useLocale } from '@/composables/useLocale';
 import { extractItems, extractItem } from '@/api/response';
 import type { Task } from '@/types/models';
 import type TerminalPanel from '@/components/terminal/TerminalPanel.vue';
+import type { StartWorkAction } from '@/types/startWork';
 
 const { t } = useLocale();
 const { isMobile, isDesktop } = useResponsive();
@@ -148,6 +151,8 @@ type LinkedTerminalSummary = {
 const taskStore = useTaskStore();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
+const settingsStore = useSettingsStore();
+const { terminalQuickActions } = storeToRefs(settingsStore);
 const message = useMessage();
 const dialog = useDialog();
 const { copy: copyTaskTitle, isSupported: clipboardSupported } = useClipboard();
@@ -378,17 +383,162 @@ function handleTaskViewTerminal(task: Task) {
   }
 }
 
-async function handleTaskStartWork(task: Task) {
-  try {
-    if (focusLinkedTerminal(task)) {
-      message.success(t('task.jumpToLinkedTerminal'));
+function normalizeTerminalEnter(value: string) {
+  const trimmed = value.replace(/\s+$/, '');
+  if (!trimmed) {
+    return '';
+  }
+  if (trimmed.endsWith('\n') || trimmed.endsWith('\r')) {
+    return trimmed;
+  }
+  return trimmed + '\r';
+}
+
+function resolveAgentCommand(agent: Exclude<StartWorkAction, 'terminal'>): string {
+  const configured = terminalQuickActions.value.find(action => action.id === agent)?.command?.trim();
+  if (configured) {
+    return configured;
+  }
+  return agent === 'claude' ? 'claude' : 'codex';
+}
+
+function sendWithRetry(sessionId: string, input: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const payload = { type: 'input', data: input };
+    const startAt = Date.now();
+    const timeoutMs = 8000;
+    if (terminalStore.send(sessionId, payload)) {
+      resolve(true);
       return;
     }
+    const timer = window.setInterval(() => {
+      if (terminalStore.send(sessionId, payload)) {
+        window.clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startAt > timeoutMs) {
+        window.clearInterval(timer);
+        resolve(false);
+      }
+    }, 200);
+  });
+}
+
+function waitForTerminalReady(sessionId: string): Promise<void> {
+  return new Promise(resolve => {
+    const isReady = () => {
+      const tab = terminalStore.getTabs(currentProjectId.value).find(t => t.id === sessionId);
+      return tab?.clientStatus === 'ready';
+    };
+
+    if (isReady()) {
+      resolve();
+      return;
+    }
+
+    let timer = 0;
+
+    const handleReady = (payload: any) => {
+      if (payload?.type === 'ready') {
+        cleanup();
+        resolve();
+      }
+    };
+
+    const cleanup = () => {
+      terminalStore.emitter.off(sessionId, handleReady);
+      if (timer) {
+        window.clearTimeout(timer);
+      }
+    };
+
+    terminalStore.emitter.on(sessionId, handleReady);
+
+    timer = window.setTimeout(() => {
+      cleanup();
+      resolve();
+    }, 8000);
+  });
+}
+
+async function sendAgentCommandAndPrompt(
+  sessionId: string,
+  agent: Exclude<StartWorkAction, 'terminal'>,
+  prompt: string,
+): Promise<boolean> {
+  const command = resolveAgentCommand(agent);
+  const commandInput = normalizeTerminalEnter(command);
+  const promptInput = normalizeTerminalEnter(prompt);
+
+  if (!commandInput || !promptInput) {
+    return false;
+  }
+
+  await waitForTerminalReady(sessionId);
+  const sentCommand = await sendWithRetry(sessionId, commandInput);
+  if (!sentCommand) {
+    return false;
+  }
+  await new Promise<void>(resolve => {
+    window.setTimeout(() => resolve(), 500);
+  });
+  return await sendWithRetry(sessionId, promptInput);
+}
+
+function promptAgentPrompt(task: Task, agent: Exclude<StartWorkAction, 'terminal'>): Promise<string | null> {
+  return new Promise(resolve => {
+    let settled = false;
+    const resolveOnce = (value: string | null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(value);
+    };
+
+    const valueRef = ref(task.title);
+    const agentLabel = agent === 'claude' ? t('task.startWorkMenuClaude') : t('task.startWorkMenuCodex');
+
+    dialog.create({
+      title: t('task.startWorkPromptTitle', { agent: agentLabel }),
+      content: () =>
+        h(NInput, {
+          value: valueRef.value,
+          'onUpdate:value': (val: string) => (valueRef.value = val),
+          type: 'textarea',
+          placeholder: t('task.startWorkPromptPlaceholder'),
+          autosize: { minRows: 4, maxRows: 12 },
+        }),
+      positiveText: t('task.startWorkPromptRun'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: () => {
+        const prompt = valueRef.value.trim();
+        if (!prompt) {
+          message.warning(t('task.startWorkPromptRequired'));
+          return false;
+        }
+        resolveOnce(prompt);
+        return true;
+      },
+      onNegativeClick: () => resolveOnce(null),
+      onClose: () => resolveOnce(null),
+    });
+  });
+}
+
+async function handleTaskStartWork(task: Task, action: StartWorkAction = 'terminal') {
+  try {
+    if (action === 'terminal') {
+      if (focusLinkedTerminal(task)) {
+        message.success(t('task.jumpToLinkedTerminal'));
+        return;
+      }
+    }
+
     // 确定要使用的worktree
     let targetWorktreeId = task.worktreeId;
-    let targetWorktree = targetWorktreeId
-      ? projectStore.worktrees.find(w => w.id === targetWorktreeId)
-      : null;
+    let targetWorktree = targetWorktreeId ? projectStore.worktrees.find(w => w.id === targetWorktreeId) : null;
 
     // 如果任务没有关联分支，或者关联的分支不存在，使用主分支
     if (!targetWorktree) {
@@ -400,8 +550,33 @@ async function handleTaskStartWork(task: Task) {
       targetWorktreeId = targetWorktree.id;
     }
 
-    // 使用终端面板创建终端会话（会自动展开终端面板）
-    if (terminalPanelRef?.value) {
+    if (action !== 'terminal') {
+      const prompt = await promptAgentPrompt(task, action);
+      if (!prompt) {
+        return;
+      }
+
+      const sessionId = await terminalPanelRef?.value?.createTerminal({
+        worktreeId: targetWorktreeId!,
+        title: task.title,
+        workingDir: targetWorktree.path,
+        taskId: task.id,
+      });
+      if (!sessionId) {
+        return;
+      }
+
+      const sent = await sendAgentCommandAndPrompt(sessionId, action, prompt);
+      if (!sent) {
+        message.error(t('task.startWorkFailed'));
+        return;
+      }
+      message.success(
+        t('task.agentStarted', {
+          agent: action === 'claude' ? t('task.startWorkMenuClaude') : t('task.startWorkMenuCodex'),
+        }),
+      );
+    } else if (terminalPanelRef?.value) {
       await terminalPanelRef.value.createTerminal({
         worktreeId: targetWorktreeId!,
         title: task.title,
@@ -419,7 +594,9 @@ async function handleTaskStartWork(task: Task) {
       }
     }
 
-    message.success(t('task.terminalCreatedAndTaskUpdated'));
+    if (action === 'terminal') {
+      message.success(t('task.terminalCreatedAndTaskUpdated'));
+    }
   } catch (error: any) {
     message.error(error?.message ?? t('task.startWorkFailed'));
   }

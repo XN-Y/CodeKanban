@@ -39,7 +39,7 @@
             @edit="emit('task-edit', element)"
             @delete="emit('task-delete', element)"
             @copy="emit('task-copy', element)"
-            @start-work="emit('task-start-work', element)"
+            @start-work="action => emit('task-start-work', element, action)"
             @view-terminal="emit('view-terminal', element)"
           />
         </template>
@@ -54,6 +54,7 @@ import { AddOutline } from '@vicons/ionicons5';
 import draggable from 'vuedraggable';
 import TaskCard from './TaskCard.vue';
 import type { Task } from '@/types/models';
+import type { StartWorkAction } from '@/types/startWork';
 
 type LinkedTerminalSummary = {
   sessionId: string;
@@ -77,7 +78,7 @@ const emit = defineEmits<{
   'task-edit': [Task];
   'task-delete': [Task];
   'task-copy': [Task];
-  'task-start-work': [Task];
+  'task-start-work': [Task, StartWorkAction];
   'view-terminal': [Task];
   'add-click': [];
 }>();

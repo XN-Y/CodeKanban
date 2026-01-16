@@ -2305,10 +2305,10 @@ watch(
   justify-content: center;
   line-height: 0;
   border-radius: 50%;
-  background: transparent;
-  color: var(--n-primary-color, #3b82f6);
-  border: 1px solid rgba(59, 130, 246, 0.35);
-  box-shadow: none;
+  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  color: #ffffff;
+  border: 1px solid rgba(59, 130, 246, 0.9);
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
   animation: none;
 }
 
