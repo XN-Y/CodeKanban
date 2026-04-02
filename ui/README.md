@@ -26,6 +26,10 @@ pnpm install
 pnpm dev
 ```
 
+Development requests to `/api` are proxied by reading the backend address from `../config.yaml` first,
+then `../data/config.yaml`, preferring `domain` and falling back to `serveAt`.
+If neither file provides an address, the proxy falls back to `http://127.0.0.1:3007`.
+
 ### Type-Check, Compile and Minify for Production
 
 ```sh
