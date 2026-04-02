@@ -401,6 +401,8 @@ export default {
     autoCreateTaskOnStartWork: '开始工作时自动创建任务',
     resetPosition: '重置终端位置',
     resetNotificationWidth: '重置通知栏宽度',
+    showNotificationSidebar: '显示右侧栏',
+    hideNotificationSidebar: '隐藏右侧栏',
     switchToDocked: '固定到页面',
     switchToFloating: '切换为浮动窗口',
     duplicateSuffix: ' 副本',

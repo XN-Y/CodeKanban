@@ -27,6 +27,83 @@
           <span v-if="terminalCount > 0" class="terminal-badge">{{ terminalCount }}</span>
         </button>
       </div>
+      <div v-if="activeTab === 'terminal'" class="tab-actions">
+        <n-tooltip placement="bottom" :delay="250">
+          <template #trigger>
+            <button
+              type="button"
+              class="header-action-btn"
+              :aria-label="notificationSidebarToggleLabel"
+              :aria-pressed="isNotificationSidebarVisible"
+              @click="toggleNotificationSidebar"
+            >
+              <svg
+                v-if="isNotificationSidebarVisible"
+                class="sidebar-toggle-icon"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect
+                  x="2.75"
+                  y="3.25"
+                  width="14.5"
+                  height="13.5"
+                  rx="2.25"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+                <path
+                  d="M12.25 4v12"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+                <path
+                  d="M14 8.25L15.75 10L14 11.75"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <svg
+                v-else
+                class="sidebar-toggle-icon"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <rect
+                  x="2.75"
+                  y="3.25"
+                  width="14.5"
+                  height="13.5"
+                  rx="2.25"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                />
+                <path
+                  d="M12.25 4v12"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-dasharray="1.5 2"
+                  opacity="0.5"
+                />
+                <path
+                  d="M15.75 8.25L14 10L15.75 11.75"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+          </template>
+          {{ notificationSidebarToggleLabel }}
+        </n-tooltip>
+      </div>
     </div>
 
     <!-- Tab内容 -->
@@ -39,7 +116,7 @@
           <div class="terminal-main">
             <TerminalPanel :project-id="projectId" mode="docked" />
           </div>
-          <DockedNotificationSidebar />
+          <DockedNotificationSidebar v-if="isNotificationSidebarVisible" />
         </div>
       </div>
     </div>
@@ -70,11 +147,20 @@ const { terminalShortcut } = storeToRefs(settingsStore);
 
 // 当前活跃的Tab，持久化存储
 const activeTab = useStorage<'kanban' | 'terminal'>('workspace-active-tab', 'kanban');
+const isNotificationSidebarVisible = useStorage('workspace-notification-sidebar-visible', true);
 
 // 终端数量
 const terminalCount = computed(() => {
   return terminalStore.getTabs(props.projectId).length;
 });
+
+const notificationSidebarToggleLabel = computed(() =>
+  t(
+    isNotificationSidebarVisible.value
+      ? 'terminal.hideNotificationSidebar'
+      : 'terminal.showNotificationSidebar'
+  )
+);
 
 // 监听终端事件，如果有新终端创建或需要关注的事件，自动切换到终端Tab
 watch(
@@ -133,6 +219,10 @@ function handleDockedTerminalToggleShortcut(event: KeyboardEvent) {
   activeTab.value = activeTab.value === 'terminal' ? 'kanban' : 'terminal';
 }
 
+function toggleNotificationSidebar() {
+  isNotificationSidebarVisible.value = !isNotificationSidebarVisible.value;
+}
+
 const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {
   if (payload?.projectId && payload.projectId !== props.projectId) {
     return;
@@ -172,6 +262,11 @@ if (typeof window !== 'undefined') {
 .tab-list {
   display: flex;
   gap: 4px;
+}
+
+.tab-actions {
+  display: flex;
+  align-items: center;
 }
 
 .tab-item {
@@ -215,6 +310,53 @@ if (typeof window !== 'undefined') {
   color: #fff;
   font-size: 11px;
   font-weight: 500;
+}
+
+.header-action-btn {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background-color: transparent;
+  color: var(--n-text-color-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.82;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    opacity 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.header-action-btn:hover {
+  color: var(--n-text-color);
+  background-color: var(--n-color-hover);
+  opacity: 1;
+}
+
+.header-action-btn[aria-pressed='true'] {
+  color: var(--n-text-color);
+  background-color: transparent;
+  opacity: 0.94;
+}
+
+.header-action-btn[aria-pressed='true']:hover {
+  color: var(--n-primary-color);
+}
+
+.sidebar-toggle-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.header-action-btn:focus-visible {
+  outline: 2px solid var(--n-primary-color);
+  outline-offset: 2px;
 }
 
 .tab-content {

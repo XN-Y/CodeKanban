@@ -413,6 +413,8 @@ export default {
     autoCreateTaskOnStartWork: 'Auto-create task when work starts',
     resetPosition: 'Reset Terminal Position',
     resetNotificationWidth: 'Reset Notification Width',
+    showNotificationSidebar: 'Show Right Sidebar',
+    hideNotificationSidebar: 'Hide Right Sidebar',
     switchToDocked: 'Dock to Page',
     switchToFloating: 'Switch to Floating',
     duplicateSuffix: ' Copy',
