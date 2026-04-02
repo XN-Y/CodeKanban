@@ -4,8 +4,8 @@
     <n-card title="欢迎使用 Code Kanban">
       <n-space vertical size="large">
         <n-text>
-          Code Kanban 是一个面向 <n-text strong>AI 编程时代</n-text>的效率工具，
-          专为解决CLI AI 编程工具的多项目、多终端管理痛点而设计。
+          Code Kanban 是一个面向 <n-text strong>AI 编程时代</n-text>的效率工具， 专为解决CLI AI
+          编程工具的多项目、多终端管理痛点而设计。
         </n-text>
 
         <n-text>
@@ -13,9 +13,10 @@
         </n-text>
 
         <n-alert type="warning" title="AI 编程时代的挑战">
-          使用 Claude Code、Codex、Qwen Code 等 CLI AI 编程工具时，经常需要在多个项目、多个分支间频繁切换。
-          传统的终端窗口杂乱无章，进行的任务难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。
-          Code Kanban 让你在一个界面中掌控一切！
+          使用 Claude Code、Codex、Qwen Code 等 CLI AI
+          编程工具时，经常需要在多个项目、多个分支间频繁切换。
+          传统的终端窗口杂乱无章，进行的任务难以追踪，多个 AI CLI 工具同时运行更是混乱不堪。 Code
+          Kanban 让你在一个界面中掌控一切！
         </n-alert>
 
         <n-alert type="success" title="核心优势">
@@ -39,8 +40,8 @@
         </n-alert>
 
         <n-alert type="info" title="Git Worktree 技术加持">
-          通过 Git Worktree 技术，让你在同一个项目的不同分支间无缝切换，
-          无需频繁 checkout 和 stash，每个工作区独立维护自己的文件状态。
+          通过 Git Worktree 技术，让你在同一个项目的不同分支间无缝切换， 无需频繁 checkout 和
+          stash，每个工作区独立维护自己的文件状态。
         </n-alert>
       </n-space>
     </n-card>
@@ -71,7 +72,8 @@
                   现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
                 </n-text>
                 <n-text depth="3">
-                  终端窗口的快捷键是 ` (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
+                  终端窗口的快捷键是 `
+                  (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
                 </n-text>
                 <n-text depth="3" type="success">
                   <n-icon size="16"><AlertCircleOutline /></n-icon>
@@ -83,9 +85,7 @@
 
             <n-step title="完成任务">
               <n-space vertical>
-                <n-text depth="3">
-                  在你感觉合适的时候进行代码提交。
-                </n-text>
+                <n-text depth="3"> 在你感觉合适的时候进行代码提交。 </n-text>
                 <n-text depth="3">
                   此外，还提供了简易任务板用于目标管理，笔记本用于随手注记（屏幕右侧，快捷键1）。对了，终端可以在任务板中启动，终端标题会直接使用对应任务的标题。
                 </n-text>
@@ -114,10 +114,12 @@
             <n-step title="创建工作区">
               <n-space vertical>
                 <n-text depth="3">
-                  如果项目是 Git 仓库，可以点击「Worktrees」标签页，然后点击「新建」按钮，选择基础分支创建工作区。
+                  如果项目是 Git
+                  仓库，可以点击「Worktrees」标签页，然后点击「新建」按钮，选择基础分支创建工作区。
                 </n-text>
                 <n-text depth="3">
-                  系统会自动在项目目录下创建独立的工作区文件夹（使用 git worktree，位置是「.worktrees/分支名」）。
+                  系统会自动在项目目录下创建独立的工作区文件夹（使用 git
+                  worktree，位置是「.worktrees/分支名」）。
                 </n-text>
                 <n-text depth="3">
                   有一些项目的工作流程要求为每一个PR开一个分支，你可以使用这个功能，也可以在终端里直接切换分支然后刷新页面，都没关系。
@@ -130,12 +132,8 @@
                 <n-text depth="3">
                   在看板中创建任务，拖拽任务卡片可调整其状态（待办 → 进行中 → 已完成）。
                 </n-text>
-                <n-text depth="3">
-                  任务可以关联到特定的工作区和分支。
-                </n-text>
-                <n-text depth="3">
-                  把你要做的事情一一列上去。
-                </n-text>
+                <n-text depth="3"> 任务可以关联到特定的工作区和分支。 </n-text>
+                <n-text depth="3"> 把你要做的事情一一列上去。 </n-text>
               </n-space>
             </n-step>
 
@@ -148,7 +146,8 @@
                   现在你可以根据你要完成的任务开一堆终端了，然后在里面分别运行几个AI编程工具，最好把终端标题改成正在进行的任务名字，以免忘记。
                 </n-text>
                 <n-text depth="3">
-                  终端窗口的快捷键是 ` (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
+                  终端窗口的快捷键是 `
+                  (键盘上数字1左边的那个键)，焦点不在终端上的时候可以用来开关终端。
                 </n-text>
                 <n-text depth="3" type="success">
                   <n-icon size="16"><AlertCircleOutline /></n-icon>
@@ -160,23 +159,18 @@
 
             <n-step title="提交代码">
               <n-space vertical>
+                <n-text depth="3"> 在你感觉合适的时候进行代码提交。 </n-text>
                 <n-text depth="3">
-                  在你感觉合适的时候进行代码提交。
-                </n-text>
-                <n-text depth="3">
-                  如果你是从分支进行提交，那我建议最好在提交前进行一下rebase，Code Kanban提供了这个功能，然后以squash或者merge的方式并入主分支，又或者去发起一个PR，根据当前项目的要求而定。
+                  如果你是从分支进行提交，那我建议最好在提交前进行一下rebase，Code
+                  Kanban提供了这个功能，然后以squash或者merge的方式并入主分支，又或者去发起一个PR，根据当前项目的要求而定。
                 </n-text>
               </n-space>
             </n-step>
 
             <n-step title="完成任务">
               <n-space vertical>
-                <n-text depth="3">
-                  当你确定已经搞好的时候，在任务板上，将任务拖到已完成。
-                </n-text>
-                <n-text depth="3">
-                  最后将临时的工作分支删掉，结束！
-                </n-text>
+                <n-text depth="3"> 当你确定已经搞好的时候，在任务板上，将任务拖到已完成。 </n-text>
+                <n-text depth="3"> 最后将临时的工作分支删掉，结束！ </n-text>
               </n-space>
             </n-step>
           </n-steps>
@@ -194,11 +188,14 @@
             <n-ul>
               <n-li><strong>项目名称：</strong>便于识别的显示名称</n-li>
               <n-li><strong>项目路径：</strong>项目目录的绝对路径（建议使用 Git 仓库根目录）</n-li>
-              <n-li><strong>默认分支：</strong>通常是 main 或 master（仅当项目是 Git 仓库时需要）</n-li>
+              <n-li
+                ><strong>默认分支：</strong>通常是 main 或 master（仅当项目是 Git 仓库时需要）</n-li
+              >
               <n-li><strong>描述：</strong>可选的项目说明</n-li>
             </n-ul>
             <n-alert type="info" title="关于项目路径">
-              项目路径不强制要求是 Git 仓库，但如果不是 Git 仓库，将无法使用工作区（Worktree）管理、分支管理等 Git 相关功能。
+              项目路径不强制要求是 Git 仓库，但如果不是 Git
+              仓库，将无法使用工作区（Worktree）管理、分支管理等 Git 相关功能。
             </n-alert>
 
             <n-h3>编辑项目</n-h3>
@@ -215,7 +212,8 @@
         <n-collapse-item title="工作区（Worktree）管理" name="worktrees">
           <n-space vertical>
             <n-alert type="warning" title="前置要求">
-              工作区（Worktree）功能需要项目是一个有效的 Git 仓库。如果项目路径不是 Git 仓库，该功能将不可用。
+              工作区（Worktree）功能需要项目是一个有效的 Git 仓库。如果项目路径不是 Git
+              仓库，该功能将不可用。
             </n-alert>
 
             <n-h3>什么是 Worktree？</n-h3>
@@ -233,8 +231,13 @@
 
             <n-h3>工作区操作</n-h3>
             <n-ul>
-              <n-li><strong>在编辑器中打开：</strong>使用配置的编辑器（VS Code、Cursor 等）打开工作区目录</n-li>
-              <n-li><strong>在终端打开：</strong>打开新的终端标签页，工作目录自动切换到该工作区</n-li>
+              <n-li
+                ><strong>在编辑器中打开：</strong>使用配置的编辑器（VS Code、Cursor
+                等）打开工作区目录</n-li
+              >
+              <n-li
+                ><strong>在终端打开：</strong>打开新的终端标签页，工作目录自动切换到该工作区</n-li
+              >
               <n-li><strong>删除工作区：</strong>会同时删除工作区目录和 Git worktree 记录</n-li>
             </n-ul>
 
@@ -285,10 +288,16 @@
         <n-collapse-item title="集成终端" name="terminal">
           <n-space vertical>
             <n-h3>打开终端</n-h3>
-            <n-text>在工作区卡片中点击「打开终端」按钮，会自动打开终端面板并切换到该工作区的目录。</n-text>
+            <n-text
+              >在工作区卡片中点击「打开终端」按钮，会自动打开终端面板并切换到该工作区的目录。</n-text
+            >
 
             <n-h3>折叠/展开终端</n-h3>
-            <n-text>按 <n-text code>`</n-text> 键（反引号）可以快速切换终端面板的展开/折叠状态，方便查看代码或执行命令。</n-text>
+            <n-text
+              >按
+              <n-text code>`</n-text>
+              键（反引号）可以快速切换终端面板的展开/折叠状态，方便查看代码或执行命令。</n-text
+            >
 
             <n-h3>多标签管理</n-h3>
             <n-ul>
@@ -365,14 +374,13 @@
             <n-li>
               <strong>主开发分支：</strong>为主要开发分支（如 develop）创建一个常驻工作区
             </n-li>
-            <n-li>
-              <strong>功能分支：</strong>每个新功能创建独立的分支和工作区
-            </n-li>
+            <n-li> <strong>功能分支：</strong>每个新功能创建独立的分支和工作区 </n-li>
             <n-li>
               <strong>快速切换：</strong>需要在不同功能间切换时，直接在编辑器中打开对应工作区即可
             </n-li>
             <n-li>
-              <strong>紧急修复：</strong>遇到紧急 bug，可以立即为 hotfix 分支创建工作区，无需中断当前工作
+              <strong>紧急修复：</strong>遇到紧急 bug，可以立即为 hotfix
+              分支创建工作区，无需中断当前工作
             </n-li>
           </n-ol>
         </div>
@@ -388,8 +396,8 @@
             <div>
               <n-text strong>1. 使用快捷键提升效率</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
-                按 <n-text code>`</n-text> 键（反引号）快速展开/折叠终端面板，
-                按 <n-text code>1</n-text> 键快速打开/关闭笔记本面板。
+                按 <n-text code>`</n-text> 键（反引号）快速展开/折叠终端面板， 按
+                <n-text code>1</n-text> 键快速打开/关闭笔记本面板。
                 这样可以在不离开键盘的情况下快速切换工作区域。
               </n-text>
             </div>
@@ -405,8 +413,8 @@
             <div>
               <n-text strong>3. 任务与分支关联</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
-                创建任务时关联对应的分支，方便追踪每个分支的开发进度。
-                可以在任务描述中添加相关的 commit hash 或 PR 链接。
+                创建任务时关联对应的分支，方便追踪每个分支的开发进度。 可以在任务描述中添加相关的
+                commit hash 或 PR 链接。
               </n-text>
             </div>
 
@@ -437,8 +445,7 @@
             <div>
               <n-text strong>7. 个性化主题</n-text>
               <n-text depth="3" style="display: block; margin-top: 8px">
-                在设置中调整主题颜色，打造符合个人审美的界面。
-                可以设置暗色主题保护视力。
+                在设置中调整主题颜色，打造符合个人审美的界面。 可以设置暗色主题保护视力。
               </n-text>
             </div>
           </n-space>
@@ -453,23 +460,22 @@
           </n-h3>
           <n-space vertical>
             <n-alert type="warning" title="工作区路径问题">
-              工作区创建在项目根目录下的 <n-text code>.worktrees/</n-text> 目录中。
-              建议在 .gitignore 中添加此目录，避免提交到仓库。
+              工作区创建在项目根目录下的 <n-text code>.worktrees/</n-text> 目录中。 建议在
+              .gitignore 中添加此目录，避免提交到仓库。
             </n-alert>
 
             <n-alert type="info" title="终端编码问题">
-              Windows 系统默认使用 GBK 编码，可能导致中文乱码。
-              升级到 PowerShell 7 可以部分解决这个问题。
+              Windows 系统默认使用 GBK 编码，可能导致中文乱码。 升级到 PowerShell 7
+              可以部分解决这个问题。
             </n-alert>
 
             <n-alert type="warning" title="磁盘空间">
-              每个工作区都会占用磁盘空间（包含完整的项目文件）。
-              定期清理不再使用的工作区释放空间。
+              每个工作区都会占用磁盘空间（包含完整的项目文件）。 定期清理不再使用的工作区释放空间。
             </n-alert>
 
             <n-alert type="info" title="数据存储">
-              任务、工作区信息等数据存储在应用数据库中。
-              删除项目只会移除记录，不会影响 Git 仓库本身。
+              任务、工作区信息等数据存储在应用数据库中。 删除项目只会移除记录，不会影响 Git
+              仓库本身。
             </n-alert>
           </n-space>
         </div>
@@ -498,9 +504,7 @@
 
               <n-step title="编码实现">
                 <n-space vertical size="small">
-                  <n-text depth="3">
-                    点击工作区的「在编辑器中打开」，开始编写代码。
-                  </n-text>
+                  <n-text depth="3"> 点击工作区的「在编辑器中打开」，开始编写代码。 </n-text>
                   <n-text depth="3">
                     在终端中运行 CLI AI 编程工具（如 claude code），或运行测试、启动开发服务器等。
                   </n-text>
@@ -509,25 +513,24 @@
 
               <n-step title="提交代码">
                 <n-space vertical size="small">
-                  <n-text depth="3">
-                    在终端中执行 git add、git commit、git push 等命令。
-                  </n-text>
-                  <n-text depth="3">
-                    可以在任务描述中记录关键的 commit hash。
-                  </n-text>
+                  <n-text depth="3"> 在终端中执行 git add、git commit、git push 等命令。 </n-text>
+                  <n-text depth="3"> 可以在任务描述中记录关键的 commit hash。 </n-text>
                 </n-space>
               </n-step>
 
               <n-step title="从主分支 Rebase">
                 <n-space vertical size="small">
                   <n-text depth="3">
-                    开发过程中，在工作区的分支卡片上点击「Rebase」快捷按钮，选择要 rebase 的目标分支（通常是 develop 或 main）。
+                    开发过程中，在工作区的分支卡片上点击「Rebase」快捷按钮，选择要 rebase
+                    的目标分支（通常是 develop 或 main）。
                   </n-text>
                   <n-text depth="3">
                     系统会自动执行 rebase 操作，如有冲突需要在终端中手动解决。
                   </n-text>
                   <n-text depth="3" type="info">
-                    💡 也可以在终端手动执行：<n-text code>git fetch origin && git rebase origin/main</n-text>
+                    💡 也可以在终端手动执行：<n-text code
+                      >git fetch origin && git rebase origin/main</n-text
+                    >
                   </n-text>
                 </n-space>
               </n-step>
@@ -537,9 +540,7 @@
                   <n-text depth="3">
                     如果团队使用 Pull Request 流程，提交 PR 后，在笔记本中记录 PR 链接。
                   </n-text>
-                  <n-text depth="3">
-                    如需修改，继续在该工作区中开发。
-                  </n-text>
+                  <n-text depth="3"> 如需修改，继续在该工作区中开发。 </n-text>
                 </n-space>
               </n-step>
 
@@ -552,22 +553,20 @@
                     系统会自动将当前分支的代码合并到目标分支，并推送到远程仓库。
                   </n-text>
                   <n-text depth="3" type="info">
-                    💡 也可以切换到主分支工作区，在终端手动执行：<n-text code>git merge 功能分支名 && git push</n-text>
+                    💡 也可以切换到主分支工作区，在终端手动执行：<n-text code
+                      >git merge 功能分支名 && git push</n-text
+                    >
                   </n-text>
                 </n-space>
               </n-step>
 
               <n-step title="删除临时分支和工作区">
                 <n-space vertical size="small">
-                  <n-text depth="3">
-                    合并完成后，将任务卡片拖到「已完成」列。
-                  </n-text>
+                  <n-text depth="3"> 合并完成后，将任务卡片拖到「已完成」列。 </n-text>
                   <n-text depth="3">
                     在功能分支的工作区卡片菜单（点击卡片右上角的「···」）中选择「删除」，清理工作区目录。
                   </n-text>
-                  <n-text depth="3">
-                    系统会自动清理工作区目录和 Git worktree 记录。
-                  </n-text>
+                  <n-text depth="3"> 系统会自动清理工作区目录和 Git worktree 记录。 </n-text>
                 </n-space>
               </n-step>
             </n-steps>
@@ -582,8 +581,12 @@
         <div>
           <n-text>一点说明</n-text>
           <n-ul>
-            <n-li>此项目算是一个AI开发的练手项目，AI代码含量较高，只在选型阶段和后端的部分疑难问题上进行了人工干预。</n-li>
-            <n-li>AI进化的速度超过了人们的想象，确实很厉害，顿时感觉自己处于一个夕阳行业中了。</n-li>
+            <n-li
+              >此项目算是一个AI开发的练手项目，AI代码含量较高，只在选型阶段和后端的部分疑难问题上进行了人工干预。</n-li
+            >
+            <n-li
+              >AI进化的速度超过了人们的想象，确实很厉害，顿时感觉自己处于一个夕阳行业中了。</n-li
+            >
             <n-li>项目名字是临时乱起的，也许后面会有个正式点的名字和版本号。</n-li>
             <n-li>希望大家用来提高效率改善生活，不要用来内卷，搞窝里斗。</n-li>
             <n-li>如果感觉好用，也可以赞助一点。</n-li>
@@ -591,9 +594,7 @@
         </div>
 
         <div>
-          <n-text>
-            如果你在使用过程中遇到问题，或有功能建议，欢迎通过以下方式反馈：
-          </n-text>
+          <n-text> 如果你在使用过程中遇到问题，或有功能建议，欢迎通过以下方式反馈： </n-text>
           <n-ul>
             <n-li>
               <n-text>GitHub Issues：</n-text>
@@ -613,7 +614,9 @@
         <n-divider />
 
         <div>
-          <n-text strong style="font-size: 16px; display: block; margin-bottom: 16px">开发者</n-text>
+          <n-text strong style="font-size: 16px; display: block; margin-bottom: 16px"
+            >开发者</n-text
+          >
           <n-space align="center">
             <n-avatar
               round

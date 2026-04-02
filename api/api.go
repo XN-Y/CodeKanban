@@ -158,7 +158,20 @@ func exposeOpenAPI(app *fiber.App, api huma.API, cfg *utils.AppConfig, logger *z
 
 	app.Get("/openapi.json", func(c *fiber.Ctx) error {
 		spec := api.OpenAPI()
-		body, err := json.MarshalIndent(spec, "", "  ")
+		// Huma's OpenAPI output uses JSON Schema. We add a `visible` hint to each
+		// schema property so template/form generators can distinguish between:
+		// - required: object-level `required` array
+		// - readOnly: property-level `readOnly`
+		// - visible: property-level `visible` (custom hint, defaults to true)
+		//
+		// `$schema` is a JSON Schema meta field and should not be shown in UIs.
+		augmented, err := addSchemaVisibilityToOpenAPI(spec)
+		if err != nil {
+			logger.Warn("增强 OpenAPI 文档失败，回退原始输出", zap.Error(err))
+			augmented = spec
+		}
+
+		body, err := json.MarshalIndent(augmented, "", "  ")
 		if err != nil {
 			logger.Warn("生成 OpenAPI 文档失败", zap.Error(err))
 			return fiber.NewError(http.StatusInternalServerError, "OpenAPI 文档生成失败")
@@ -188,4 +201,71 @@ func humaTypesRegister() {
 			},
 		}
 	})
+}
+
+func addSchemaVisibilityToOpenAPI(spec any) (any, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+
+	components, ok := doc["components"].(map[string]any)
+	if !ok {
+		return doc, nil
+	}
+	schemas, ok := components["schemas"].(map[string]any)
+	if !ok {
+		return doc, nil
+	}
+
+	for _, schema := range schemas {
+		addSchemaVisibilityHint(schema)
+	}
+
+	return doc, nil
+}
+
+func addSchemaVisibilityHint(schema any) {
+	obj, ok := schema.(map[string]any)
+	if !ok {
+		return
+	}
+
+	if properties, ok := obj["properties"].(map[string]any); ok {
+		for name, propSchema := range properties {
+			if propObj, ok := propSchema.(map[string]any); ok {
+				if _, exists := propObj["visible"]; !exists {
+					propObj["visible"] = name != "$schema"
+				}
+			}
+			addSchemaVisibilityHint(propSchema)
+		}
+	}
+
+	if items, ok := obj["items"]; ok {
+		addSchemaVisibilityHint(items)
+	}
+
+	for _, key := range []string{"oneOf", "anyOf", "allOf"} {
+		if variants, ok := obj[key].([]any); ok {
+			for _, variant := range variants {
+				addSchemaVisibilityHint(variant)
+			}
+		}
+	}
+
+	if additional, ok := obj["additionalProperties"]; ok {
+		addSchemaVisibilityHint(additional)
+	}
+
+	for _, key := range []string{"not", "if", "then", "else", "contains", "propertyNames"} {
+		if nested, ok := obj[key]; ok {
+			addSchemaVisibilityHint(nested)
+		}
+	}
 }

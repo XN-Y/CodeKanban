@@ -3,14 +3,17 @@ import { http } from './http';
 
 export const branchApi = {
   async list(projectId: string): Promise<BranchListResult> {
-    const body = (await http.Get<{ body?: { item?: BranchListResult } }>(`/projects/${projectId}/branches`).send()) ?? {};
+    const body =
+      (await http
+        .Get<{ body?: { item?: BranchListResult } }>(`/projects/${projectId}/branches`)
+        .send()) ?? {};
     const item = body.body?.item;
     return item ?? { local: [], remote: [] };
   },
 
   async create(
     projectId: string,
-    payload: { name: string; base?: string; createWorktree?: boolean },
+    payload: { name: string; base?: string; createWorktree?: boolean }
   ): Promise<void> {
     await http
       .Post(`/projects/${projectId}/branches/create`, {
@@ -23,10 +26,7 @@ export const branchApi = {
 
   async delete(projectId: string, branchName: string, force = false): Promise<void> {
     await http
-      .Post(
-        `/projects/${projectId}/branches/${encodeURIComponent(branchName)}?force=${force}`,
-        {},
-      )
+      .Post(`/projects/${projectId}/branches/${encodeURIComponent(branchName)}?force=${force}`, {})
       .send();
   },
 
@@ -38,7 +38,7 @@ export const branchApi = {
       strategy?: 'merge' | 'rebase' | 'squash';
       commit?: boolean;
       commitMessage?: string;
-    },
+    }
   ): Promise<MergeResult> {
     const body =
       (await http

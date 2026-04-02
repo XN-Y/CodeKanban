@@ -19,7 +19,11 @@ import { Method } from 'alova';
 import apiDefinitions from './apiDefinitions';
 
 const cache = Object.create(null);
-const createFunctionalProxy = (array: (string | symbol)[], alovaInstance: Alova<AlovaGenerics>, configMap: any) => {
+const createFunctionalProxy = (
+  array: (string | symbol)[],
+  alovaInstance: Alova<AlovaGenerics>,
+  configMap: any
+) => {
   const apiPathKey = array.join('.') as keyof typeof apiDefinitions;
   if (cache[apiPathKey]) {
     return cache[apiPathKey];
@@ -39,7 +43,7 @@ const createFunctionalProxy = (array: (string | symbol)[], alovaInstance: Alova<
       }
       const mergedConfig = {
         ...configMap[apiPathKey],
-        ...config
+        ...config,
       };
       const [method, url] = apiItem;
       const pathParams = mergedConfig.pathParams;
@@ -49,7 +53,10 @@ const createFunctionalProxy = (array: (string | symbol)[], alovaInstance: Alova<
       });
       delete mergedConfig.pathParams;
       let data = mergedConfig.data;
-      if (Object.prototype.toString.call(data) === '[object Object]' && typeof FormData !== 'undefined') {
+      if (
+        Object.prototype.toString.call(data) === '[object Object]' &&
+        typeof FormData !== 'undefined'
+      ) {
         let hasBlobData = false;
         const formData = new FormData();
         for (const key in data) {
@@ -69,8 +76,14 @@ const createFunctionalProxy = (array: (string | symbol)[], alovaInstance: Alova<
         }
         data = hasBlobData ? formData : data;
       }
-      return new Method(method!.toUpperCase() as MethodType, alovaInstance, urlReplaced, mergedConfig, data);
-    }
+      return new Method(
+        method!.toUpperCase() as MethodType,
+        alovaInstance,
+        urlReplaced,
+        mergedConfig,
+        data
+      );
+    },
   });
   cache[apiPathKey] = proxy;
   return proxy;
@@ -80,7 +93,7 @@ export const createApis = (alovaInstance: Alova<AlovaGenerics>, configMap: any) 
   const Apis = new Proxy({} as Apis, {
     get(_, property) {
       return createFunctionalProxy([property], alovaInstance, configMap);
-    }
+    },
   });
   return Apis;
 };
@@ -104,7 +117,9 @@ type APISofParameters<Tag extends string, Url extends string> = Tag extends keyo
   : any;
 type MethodsConfigMap = {
   [P in keyof typeof import('./apiDefinitions').default]?: MethodConfig<
-    P extends `${infer Tag}.${infer Url}` ? Parameters<NonNullable<APISofParameters<Tag, Url>[0]>['transform']>[0] : any
+    P extends `${infer Tag}.${infer Url}`
+      ? Parameters<NonNullable<APISofParameters<Tag, Url>[0]>['transform']>[0]
+      : any
   >;
 };
 export const withConfigType = <Config extends MethodsConfigMap>(config: Config) => config;

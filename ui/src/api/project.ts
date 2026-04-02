@@ -27,9 +27,12 @@ export const projectApi = {
     return body.item;
   },
 
-  async create(
-    data: { name: string; path: string; description?: string; hidePath: boolean },
-  ): Promise<Project> {
+  async create(data: {
+    name: string;
+    path: string;
+    description?: string;
+    hidePath: boolean;
+  }): Promise<Project> {
     const body = (await http.Post<ItemResponse<Project>>('/projects/create', data).send()) ?? {};
     if (!body.item) {
       throw new Error('failed to create project');
@@ -39,7 +42,7 @@ export const projectApi = {
 
   async update(
     id: string,
-    data: { name: string; description?: string; hidePath: boolean },
+    data: { name: string; description?: string; hidePath: boolean }
   ): Promise<Project> {
     const body =
       (await http.Post<ItemResponse<Project>>(`/projects/${id}/update`, data).send()) ?? {};
@@ -55,7 +58,8 @@ export const projectApi = {
 
   async updatePriority(id: string, priority: number | null): Promise<Project> {
     const body =
-      (await http.Post<ItemResponse<Project>>(`/projects/${id}/priority`, { priority }).send()) ?? {};
+      (await http.Post<ItemResponse<Project>>(`/projects/${id}/priority`, { priority }).send()) ??
+      {};
     if (!body.item) {
       throw new Error('failed to update project priority');
     }
@@ -96,10 +100,9 @@ export const worktreeApi = {
       globalBaseDirOverride: data.globalBaseDirOverride,
     };
     const body =
-      (await http.Post<ItemResponse<Worktree>>(
-        `/projects/${projectId}/worktrees/create`,
-        payload,
-      ).send()) ?? {};
+      (await http
+        .Post<ItemResponse<Worktree>>(`/projects/${projectId}/worktrees/create`, payload)
+        .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to create worktree');
     }
@@ -122,7 +125,11 @@ export const systemApi = {
   async openTerminal(path: string): Promise<void> {
     await http.Post('/system/open-terminal', { path }).send();
   },
-  async openEditor(options: { path: string; editor: string; customCommand?: string }): Promise<void> {
+  async openEditor(options: {
+    path: string;
+    editor: string;
+    customCommand?: string;
+  }): Promise<void> {
     await http.Post('/system/open-editor', options).send();
   },
 };

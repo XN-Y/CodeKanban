@@ -87,9 +87,12 @@ async function loadConversation(sessionId: string) {
 
   try {
     const response = await http
-      .Get<{ item?: ConversationResponse }>(`/ai-sessions/by-session-id/${sessionId}/conversation`, {
-        cacheFor: 0,
-      })
+      .Get<{ item?: ConversationResponse }>(
+        `/ai-sessions/by-session-id/${sessionId}/conversation`,
+        {
+          cacheFor: 0,
+        }
+      )
       .send();
 
     if (response?.item) {
@@ -109,16 +112,15 @@ async function loadToolResult(toolUseId: string) {
 
   try {
     const response = await http
-      .Get<{ item?: ToolResultResponse }>(
-        `/ai-sessions/by-session-id/${sessionId}/conversation/tool-results/${encodeURIComponent(toolUseId)}`,
-        { cacheFor: 0 }
-      )
+      .Get<{
+        item?: ToolResultResponse;
+      }>(`/ai-sessions/by-session-id/${sessionId}/conversation/tool-results/${encodeURIComponent(toolUseId)}`, { cacheFor: 0 })
       .send();
 
     const content = response?.item?.content;
     if (!content || !conversation.value) return;
 
-    const msg = conversation.value.messages.find((m) => m.toolUseId === toolUseId);
+    const msg = conversation.value.messages.find(m => m.toolUseId === toolUseId);
     if (msg) {
       msg.full = content;
     }

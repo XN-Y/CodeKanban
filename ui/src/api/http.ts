@@ -22,27 +22,27 @@ type HttpConfig<Responded, Transformed> = AlovaMethodCreateConfig<
 interface HttpClient {
   Get<Responded = unknown, Transformed = Responded>(
     path: string,
-    config?: HttpConfig<Responded, Transformed>,
+    config?: HttpConfig<Responded, Transformed>
   ): HttpMethod<Responded, Transformed>;
   Post<Responded = unknown, Transformed = Responded>(
     path: string,
     data?: RequestBody,
-    config?: HttpConfig<Responded, Transformed>,
+    config?: HttpConfig<Responded, Transformed>
   ): HttpMethod<Responded, Transformed>;
   Put<Responded = unknown, Transformed = Responded>(
     path: string,
     data?: RequestBody,
-    config?: HttpConfig<Responded, Transformed>,
+    config?: HttpConfig<Responded, Transformed>
   ): HttpMethod<Responded, Transformed>;
   Patch<Responded = unknown, Transformed = Responded>(
     path: string,
     data?: RequestBody,
-    config?: HttpConfig<Responded, Transformed>,
+    config?: HttpConfig<Responded, Transformed>
   ): HttpMethod<Responded, Transformed>;
   Delete<Responded = unknown, Transformed = Responded>(
     path: string,
     data?: RequestBody,
-    config?: HttpConfig<Responded, Transformed>,
+    config?: HttpConfig<Responded, Transformed>
   ): HttpMethod<Responded, Transformed>;
 }
 
@@ -65,9 +65,7 @@ const normalizePath = (path: string) => {
   return `${API_PREFIX}${ensured}`;
 };
 
-const enhanceConfig = <Responded, Transformed>(
-  config?: HttpConfig<Responded, Transformed>,
-) => {
+const enhanceConfig = <Responded, Transformed>(config?: HttpConfig<Responded, Transformed>) => {
   const nextConfig: HttpConfig<Responded, Transformed> = { ...config };
   const originalTransform = nextConfig.transform;
 

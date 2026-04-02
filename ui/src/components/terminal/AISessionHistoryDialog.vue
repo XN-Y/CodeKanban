@@ -21,13 +21,7 @@
             <n-icon><FolderOpenOutline /></n-icon>
           </template>
         </n-button>
-        <n-button
-          quaternary
-          circle
-          size="small"
-          :loading="loading"
-          @click="loadSessions(false)"
-        >
+        <n-button quaternary circle size="small" :loading="loading" @click="loadSessions(false)">
           <template #icon>
             <n-icon><RefreshOutline /></n-icon>
           </template>
@@ -39,7 +33,9 @@
         <!-- Current directory indicator -->
         <div v-if="currentViewPath" class="current-path-bar">
           <n-icon :size="14"><FolderOutline /></n-icon>
-          <span class="current-path-text" :title="currentViewPath">{{ truncatePath(currentViewPath, 60) }}</span>
+          <span class="current-path-text" :title="currentViewPath">{{
+            truncatePath(currentViewPath, 60)
+          }}</span>
           <n-button v-if="isCustomPath" quaternary size="tiny" @click="resetToProjectPath">
             <template #icon>
               <n-icon :size="12"><CloseOutline /></n-icon>
@@ -88,7 +84,12 @@
                         class="message-count-tag"
                         @click.stop="viewConversation(session)"
                       >
-                        {{ t('terminal.messageCount', { count: session.messageCount, replyCount: session.assistantMessageCount }) }}
+                        {{
+                          t('terminal.messageCount', {
+                            count: session.messageCount,
+                            replyCount: session.assistantMessageCount,
+                          })
+                        }}
                       </n-tag>
                       <n-icon
                         :size="16"
@@ -173,7 +174,12 @@
                         class="message-count-tag"
                         @click.stop="viewConversation(session)"
                       >
-                        {{ t('terminal.messageCount', { count: session.messageCount, replyCount: session.assistantMessageCount }) }}
+                        {{
+                          t('terminal.messageCount', {
+                            count: session.messageCount,
+                            replyCount: session.assistantMessageCount,
+                          })
+                        }}
                       </n-tag>
                       <n-icon
                         :size="16"
@@ -244,7 +250,17 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { ChevronForwardOutline, ChatboxOutline, PlayOutline, CopyOutline, RefreshOutline, SearchOutline, FolderOpenOutline, FolderOutline, CloseOutline } from '@vicons/ionicons5';
+import {
+  ChevronForwardOutline,
+  ChatboxOutline,
+  PlayOutline,
+  CopyOutline,
+  RefreshOutline,
+  SearchOutline,
+  FolderOpenOutline,
+  FolderOutline,
+  CloseOutline,
+} from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { useTimeAgo } from '@vueuse/core';
@@ -319,7 +335,7 @@ const filteredClaudeSessions = computed(() => {
   if (!searchQuery.value.trim()) return claudeSessions.value;
   const query = searchQuery.value.toLowerCase();
   return claudeSessions.value.filter(
-    (s) =>
+    s =>
       (s.title && s.title.toLowerCase().includes(query)) ||
       s.sessionId.toLowerCase().includes(query) ||
       s.model?.toLowerCase().includes(query)
@@ -330,7 +346,7 @@ const filteredCodexSessions = computed(() => {
   if (!searchQuery.value.trim()) return codexSessions.value;
   const query = searchQuery.value.toLowerCase();
   return codexSessions.value.filter(
-    (s) =>
+    s =>
       (s.title && s.title.toLowerCase().includes(query)) ||
       s.sessionId.toLowerCase().includes(query) ||
       s.model?.toLowerCase().includes(query)
@@ -374,8 +390,8 @@ const currentSessionInfo = computed<SessionInfo | null>(() => {
   };
 });
 
-const isScanning = computed(() =>
-  claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete'
+const isScanning = computed(
+  () => claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete'
 );
 
 const claudeCodeTabLabel = computed(() => {
@@ -390,7 +406,7 @@ const codexTabLabel = computed(() => {
   return `Codex${count > 0 ? ` (${count}${scanIndicator})` : scanIndicator}`;
 });
 
-watch(showModal, async (show) => {
+watch(showModal, async show => {
   if (show && props.projectId) {
     await loadSessions();
   } else {
@@ -435,7 +451,10 @@ async function loadSessions(isRefresh = false) {
       }
 
       // Schedule refresh if still scanning
-      if (showModal.value && (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')) {
+      if (
+        showModal.value &&
+        (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')
+      ) {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
@@ -578,7 +597,10 @@ async function loadSessionsByPath(path?: string) {
       }
 
       // Schedule refresh if still scanning
-      if (showModal.value && (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')) {
+      if (
+        showModal.value &&
+        (claudeScanPhase.value !== 'complete' || codexScanPhase.value !== 'complete')
+      ) {
         if (refreshTimer) {
           clearTimeout(refreshTimer);
         }
@@ -631,16 +653,15 @@ async function loadToolResult(toolUseId: string) {
 
   try {
     const response = await http
-      .Get<{ item?: ToolResultResponse }>(
-        `/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`,
-        { cacheFor: 0 }
-      )
+      .Get<{
+        item?: ToolResultResponse;
+      }>(`/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`, { cacheFor: 0 })
       .send();
 
     const content = response?.item?.content;
     if (!content || !currentConversation.value) return;
 
-    const msg = currentConversation.value.messages.find((m) => m.toolUseId === toolUseId);
+    const msg = currentConversation.value.messages.find(m => m.toolUseId === toolUseId);
     if (msg) {
       msg.full = content;
     }
@@ -865,5 +886,4 @@ function closeConversationModal() {
 .message-count-tag:hover {
   opacity: 0.8;
 }
-
 </style>

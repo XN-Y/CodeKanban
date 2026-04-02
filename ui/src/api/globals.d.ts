@@ -36,7 +36,16 @@ type Alova2MethodConfig<Responded> =
   >
     ? Omit<
         AlovaMethodCreateConfig<
-          AlovaGenerics<Responded, any, RequestConfig, Response, ResponseHeader, L1Cache, L2Cache, SE>,
+          AlovaGenerics<
+            Responded,
+            any,
+            RequestConfig,
+            Response,
+            ResponseHeader,
+            L1Cache,
+            L2Cache,
+            SE
+          >,
           any,
           Responded
         >,
@@ -47,7 +56,7 @@ type Alova2MethodConfig<Responded> =
 // Extract the return type of transform function that define in $$userConfigMap, if it not exists, use the default type.
 type ExtractUserDefinedTransformed<
   DefinitionKey extends keyof typeof apiDefinitions,
-  Default
+  Default,
 > = DefinitionKey extends keyof UserMethodConfigMap
   ? UserMethodConfigMap[DefinitionKey]['transform'] extends (...args: any[]) => any
     ? Awaited<ReturnType<UserMethodConfigMap[DefinitionKey]['transform']>>
@@ -56,7 +65,7 @@ type ExtractUserDefinedTransformed<
 type Alova2Method<
   Responded,
   DefinitionKey extends keyof typeof apiDefinitions,
-  CurrentConfig extends Alova2MethodConfig<any>
+  CurrentConfig extends Alova2MethodConfig<any>,
 > =
   CollapsedAlova extends Alova<
     AlovaGenerics<
@@ -1070,7 +1079,7 @@ declare global {
              */
             projectId?: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemsResponseNotePadTableBody, 'notepad.list', Config>;
@@ -1124,7 +1133,7 @@ declare global {
       create<
         Config extends Alova2MethodConfig<ItemResponseNotePadTableBody> & {
           data: CreateNotePadBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.create', Config>;
@@ -1173,7 +1182,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.get', Config>;
@@ -1210,7 +1219,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'notepad.delete', Config>;
@@ -1272,7 +1281,7 @@ declare global {
             id: string;
           };
           data: MoveNotePadBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.move', Config>;
@@ -1336,7 +1345,7 @@ declare global {
             id: string;
           };
           data: UpdateNotePadBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseNotePadTableBody, 'notepad.update', Config>;
@@ -1438,7 +1447,7 @@ declare global {
       create<
         Config extends Alova2MethodConfig<ItemResponseProjectBody> & {
           data: CreateProjectInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.create', Config>;
@@ -1489,7 +1498,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.getById', Config>;
@@ -1526,7 +1535,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'project.delete', Config>;
@@ -1590,7 +1599,7 @@ declare global {
             id: string;
           };
           data: UpdateProjectPriorityInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.updatePriority', Config>;
@@ -1658,7 +1667,7 @@ declare global {
             id: string;
           };
           data: UpdateProjectInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseProjectBody, 'project.update', Config>;
@@ -1738,7 +1747,7 @@ declare global {
              */
             force?: boolean;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseBranchListResultBody, 'branch.list', Config>;
@@ -1792,7 +1801,7 @@ declare global {
             projectId: string;
           };
           data: CreateBranchBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'branch.create', Config>;
@@ -1847,7 +1856,7 @@ declare global {
              */
             force?: boolean;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'branch.delete', Config>;
@@ -1913,7 +1922,7 @@ declare global {
             id: string;
           };
           data: MergeBranchBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseMergeResultBody, 'branch.merge', Config>;
@@ -1957,7 +1966,7 @@ declare global {
           pathParams: {
             projectId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseRefreshAllResultBody, 'worktree.refreshAllByProject', Config>;
@@ -1994,7 +2003,7 @@ declare global {
           pathParams: {
             projectId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'worktree.syncByProject', Config>;
@@ -2055,7 +2064,7 @@ declare global {
           pathParams: {
             projectId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemsResponseWorktreeBody, 'worktree.listByProject', Config>;
@@ -2129,7 +2138,7 @@ declare global {
             projectId: string;
           };
           data: Worktree_create_request;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseWorktreeBody, 'worktree.create', Config>;
@@ -2190,7 +2199,7 @@ declare global {
           pathParams: {
             projectId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemsResponseWorktreeBody, 'worktree.refreshCommitInfo', Config>;
@@ -2241,7 +2250,7 @@ declare global {
             force?: boolean;
             deleteBranch?: boolean;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'worktree.delete', Config>;
@@ -2311,7 +2320,7 @@ declare global {
             id: string;
           };
           data: Worktree_commit_request;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseWorktreeBody, 'worktree.commit', Config>;
@@ -2368,7 +2377,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseWorktreeBody, 'worktree.refreshStatus', Config>;
@@ -2524,7 +2533,7 @@ declare global {
             page?: number;
             pageSize?: number;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<PaginatedResponseTaskTableBody, 'task.list', Config>;
@@ -2673,7 +2682,7 @@ declare global {
             projectId: string;
           };
           data: CreateTaskBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.create', Config>;
@@ -2793,7 +2802,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.getById', Config>;
@@ -2926,7 +2935,7 @@ declare global {
             id: string;
           };
           data: BindWorktreeBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.bindWorktree', Config>;
@@ -2963,7 +2972,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'task.delete', Config>;
@@ -3100,7 +3109,7 @@ declare global {
             id: string;
           };
           data: MoveTaskBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.move', Config>;
@@ -3243,7 +3252,7 @@ declare global {
             id: string;
           };
           data: UpdateTaskBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskTableBody, 'task.update', Config>;
@@ -3314,7 +3323,7 @@ declare global {
           pathParams: {
             projectId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemsResponseTerminalSessionViewBody, 'terminalSession.list', Config>;
@@ -3353,7 +3362,7 @@ declare global {
             projectId: string;
             sessionId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'terminalSession.close', Config>;
@@ -3433,7 +3442,7 @@ declare global {
             sessionId: string;
           };
           data: TerminalRenameInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.rename', Config>;
@@ -3513,7 +3522,7 @@ declare global {
             sessionId: string;
           };
           data: TerminalTaskLinkInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.linkTask', Config>;
@@ -3580,7 +3589,7 @@ declare global {
             projectId: string;
             sessionId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.unlinkTask', Config>;
@@ -3668,7 +3677,7 @@ declare global {
             worktreeId: string;
           };
           data: TerminalCreateInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTerminalSessionViewBody, 'terminalSession.create', Config>;
@@ -3712,9 +3721,15 @@ declare global {
        * }
        * ```
        */
-      terminalApprovalRecordsList<Config extends Alova2MethodConfig<ItemsResponseApprovalRecordBody>>(
+      terminalApprovalRecordsList<
+        Config extends Alova2MethodConfig<ItemsResponseApprovalRecordBody>,
+      >(
         config?: Config
-      ): Alova2Method<ItemsResponseApprovalRecordBody, 'terminalSession.terminalApprovalRecordsList', Config>;
+      ): Alova2Method<
+        ItemsResponseApprovalRecordBody,
+        'terminalSession.terminalApprovalRecordsList',
+        Config
+      >;
       /**
        * ---
        *
@@ -3748,7 +3763,7 @@ declare global {
           pathParams: {
             recordId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'terminalSession.terminalApprovalRecordDismiss', Config>;
@@ -3794,9 +3809,15 @@ declare global {
        * }
        * ```
        */
-      terminalCompletionRecordsList<Config extends Alova2MethodConfig<ItemsResponseCompletionRecordBody>>(
+      terminalCompletionRecordsList<
+        Config extends Alova2MethodConfig<ItemsResponseCompletionRecordBody>,
+      >(
         config?: Config
-      ): Alova2Method<ItemsResponseCompletionRecordBody, 'terminalSession.terminalCompletionRecordsList', Config>;
+      ): Alova2Method<
+        ItemsResponseCompletionRecordBody,
+        'terminalSession.terminalCompletionRecordsList',
+        Config
+      >;
       /**
        * ---
        *
@@ -3830,10 +3851,14 @@ declare global {
           pathParams: {
             recordId: string;
           };
-        }
+        },
       >(
         config: Config
-      ): Alova2Method<MessageResponseBody, 'terminalSession.terminalCompletionRecordDismiss', Config>;
+      ): Alova2Method<
+        MessageResponseBody,
+        'terminalSession.terminalCompletionRecordDismiss',
+        Config
+      >;
       /**
        * ---
        *
@@ -3867,7 +3892,7 @@ declare global {
           pathParams: {
             recordId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'terminalSession.terminalCompletionRecordRead', Config>;
@@ -3946,7 +3971,7 @@ declare global {
              */
             timeout?: number;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseCapturedChunkBody, 'terminalSession.captureChunk', Config>;
@@ -4012,7 +4037,7 @@ declare global {
           pathParams: {
             sessionId: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseDebugInfoBody, 'terminalSession.debug', Config>;
@@ -4046,9 +4071,15 @@ declare global {
        * }
        * ```
        */
-      aiAssistantStatusGet<Config extends Alova2MethodConfig<ItemResponseAIAssistantStatusConfigBody>>(
+      aiAssistantStatusGet<
+        Config extends Alova2MethodConfig<ItemResponseAIAssistantStatusConfigBody>,
+      >(
         config?: Config
-      ): Alova2Method<ItemResponseAIAssistantStatusConfigBody, 'system.aiAssistantStatusGet', Config>;
+      ): Alova2Method<
+        ItemResponseAIAssistantStatusConfigBody,
+        'system.aiAssistantStatusGet',
+        Config
+      >;
       /**
        * ---
        *
@@ -4087,7 +4118,7 @@ declare global {
       aiAssistantStatusUpdate<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           data: AIAssistantStatusConfig;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.aiAssistantStatusUpdate', Config>;
@@ -4184,7 +4215,7 @@ declare global {
       developerConfigUpdate<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           data: DeveloperConfig;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.developerConfigUpdate', Config>;
@@ -4226,7 +4257,7 @@ declare global {
       openEditor<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           data: OpenEditorInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.openEditor', Config>;
@@ -4264,7 +4295,7 @@ declare global {
       openExplorer<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           data: OpenPathInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.openExplorer', Config>;
@@ -4302,7 +4333,7 @@ declare global {
       openTerminal<
         Config extends Alova2MethodConfig<MessageResponseBody> & {
           data: OpenPathInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'system.openTerminal', Config>;
@@ -4367,7 +4398,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<MessageResponseBody, 'taskComment.delete', Config>;
@@ -4502,7 +4533,7 @@ declare global {
           pathParams: {
             id: string;
           };
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemsResponseTaskCommentTableBody, 'taskComment.list', Config>;
@@ -4646,7 +4677,7 @@ declare global {
             id: string;
           };
           data: CreateCommentBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseTaskCommentTableBody, 'taskComment.create', Config>;
@@ -4695,7 +4726,7 @@ declare global {
       clipboardImage<
         Config extends Alova2MethodConfig<ItemResponseUploadImageResponseBody> & {
           data: UploadClipboardImageInputBody;
-        }
+        },
       >(
         config: Config
       ): Alova2Method<ItemResponseUploadImageResponseBody, 'upload.clipboardImage', Config>;

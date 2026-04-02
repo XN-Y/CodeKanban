@@ -11,12 +11,20 @@
             :class="msg.role"
           >
             <div class="message-header">
-              <span class="message-role">{{ msg.role === 'user' ? t('terminal.user') : t('terminal.assistant') }}</span>
+              <span class="message-role">{{
+                msg.role === 'user' ? t('terminal.user') : t('terminal.assistant')
+              }}</span>
               <span v-if="msg.timestamp" class="message-time">{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div
               class="message-content"
-              v-html="renderMarkdown(isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full ? msg.full : msg.content)"
+              v-html="
+                renderMarkdown(
+                  isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full
+                    ? msg.full
+                    : msg.content
+                )
+              "
             ></div>
             <div
               v-if="isToolResult(msg) && msg.toolUseId && (msg.hasMore || msg.full)"
@@ -28,7 +36,11 @@
                 :loading="!!toolResultLoading[msg.toolUseId]"
                 @click.stop="toggleToolResult(msg)"
               >
-                {{ isExpanded(msg.toolUseId) ? t('terminal.collapseToolResult') : t('terminal.expandToolResult') }}
+                {{
+                  isExpanded(msg.toolUseId)
+                    ? t('terminal.collapseToolResult')
+                    : t('terminal.expandToolResult')
+                }}
               </n-button>
             </div>
             <!-- 用户消息导航按钮 -->
@@ -73,11 +85,21 @@
     <!-- 底部工具栏 -->
     <div class="conversation-toolbar">
       <div v-if="sessionInfo" class="session-info">
-        <n-tag v-if="sessionInfo.type" size="small" :type="sessionInfo.type === 'claude_code' ? 'info' : 'success'">
+        <n-tag
+          v-if="sessionInfo.type"
+          size="small"
+          :type="sessionInfo.type === 'claude_code' ? 'info' : 'success'"
+        >
           <template #icon>
             <n-icon size="12">
-              <svg v-if="sessionInfo.type === 'claude_code'" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+              <svg
+                v-if="sessionInfo.type === 'claude_code'"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+              >
+                <path
+                  d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
+                />
               </svg>
               <LogoGithub v-else />
             </n-icon>
@@ -113,7 +135,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { CopyOutline, LogoGithub, ChevronUpOutline, ChevronDownOutline, RefreshOutline } from '@vicons/ionicons5';
+import {
+  CopyOutline,
+  LogoGithub,
+  ChevronUpOutline,
+  ChevronDownOutline,
+  RefreshOutline,
+} from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { useTimeAgo } from '@vueuse/core';
 import { marked } from 'marked';
@@ -133,20 +161,23 @@ export interface SessionInfo {
   type?: 'claude_code' | 'codex' | string;
 }
 
-const props = withDefaults(defineProps<{
-  messages: ConversationMessage[];
-  loading?: boolean;
-  refreshing?: boolean;
-  sessionInfo?: SessionInfo | null;
-  emptyText?: string;
-  useRelativeTime?: boolean;
-}>(), {
-  loading: false,
-  refreshing: false,
-  sessionInfo: null,
-  emptyText: '',
-  useRelativeTime: true,
-});
+const props = withDefaults(
+  defineProps<{
+    messages: ConversationMessage[];
+    loading?: boolean;
+    refreshing?: boolean;
+    sessionInfo?: SessionInfo | null;
+    emptyText?: string;
+    useRelativeTime?: boolean;
+  }>(),
+  {
+    loading: false,
+    refreshing: false,
+    sessionInfo: null,
+    emptyText: '',
+    useRelativeTime: true,
+  }
+);
 
 const emit = defineEmits<{
   (e: 'load-tool-result', toolUseId: string): void;
@@ -172,9 +203,12 @@ function setMessageRef(el: unknown, index: number) {
 }
 
 // 清理 refs 当消息列表变化时
-watch(() => props.messages, () => {
-  messageRefs.value.clear();
-});
+watch(
+  () => props.messages,
+  () => {
+    messageRefs.value.clear();
+  }
+);
 
 // 过滤消息
 const filteredMessages = computed(() => {
@@ -464,9 +498,15 @@ async function copySessionId() {
   font-weight: 600;
 }
 
-.message-content :deep(h1) { font-size: 1.5em; }
-.message-content :deep(h2) { font-size: 1.3em; }
-.message-content :deep(h3) { font-size: 1.1em; }
+.message-content :deep(h1) {
+  font-size: 1.5em;
+}
+.message-content :deep(h2) {
+  font-size: 1.3em;
+}
+.message-content :deep(h3) {
+  font-size: 1.1em;
+}
 
 .message-content :deep(a) {
   color: var(--n-primary-color);

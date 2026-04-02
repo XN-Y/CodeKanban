@@ -921,6 +921,86 @@ func (s *AISessionService) parseClaudeCodeSessionFile(filePath string) (*claudeS
 	return data, scanner.Err()
 }
 
+func dedupeAISessionSummariesBySessionID(sessions []*AISessionSummary) []*AISessionSummary {
+	if len(sessions) <= 1 {
+		return sessions
+	}
+
+	bySessionID := make(map[string]*AISessionSummary, len(sessions))
+	order := make([]string, 0, len(sessions))
+
+	for _, session := range sessions {
+		if session == nil {
+			continue
+		}
+
+		key := session.SessionID
+		if key == "" {
+			key = session.ID
+		}
+		if key == "" {
+			continue
+		}
+
+		if existing, ok := bySessionID[key]; ok {
+			if isNewerAISessionSummary(existing, session) {
+				bySessionID[key] = session
+			}
+			continue
+		}
+
+		bySessionID[key] = session
+		order = append(order, key)
+	}
+
+	out := make([]*AISessionSummary, 0, len(bySessionID))
+	for _, key := range order {
+		if session, ok := bySessionID[key]; ok {
+			out = append(out, session)
+		}
+	}
+	return out
+}
+
+func isNewerAISessionSummary(existing, candidate *AISessionSummary) bool {
+	if existing == nil {
+		return true
+	}
+	if candidate == nil {
+		return false
+	}
+
+	switch {
+	case existing.LastMessageAt == nil && candidate.LastMessageAt != nil:
+		return true
+	case existing.LastMessageAt != nil && candidate.LastMessageAt == nil:
+		return false
+	case existing.LastMessageAt != nil && candidate.LastMessageAt != nil:
+		if candidate.LastMessageAt.After(*existing.LastMessageAt) {
+			return true
+		}
+		if existing.LastMessageAt.After(*candidate.LastMessageAt) {
+			return false
+		}
+	}
+
+	if candidate.SessionStartedAt.After(existing.SessionStartedAt) {
+		return true
+	}
+	if existing.SessionStartedAt.After(candidate.SessionStartedAt) {
+		return false
+	}
+
+	if candidate.MessageCount > existing.MessageCount {
+		return true
+	}
+	if candidate.AssistantMessageCount > existing.AssistantMessageCount {
+		return true
+	}
+
+	return false
+}
+
 // getCodexSessionsPhased returns Codex sessions using phased scanning.
 // Phase 1: Quickly return sessions from last 24 hours (day 0)
 // Phase 2: Background scan for 1-15 days old sessions
@@ -957,7 +1037,7 @@ func (s *AISessionService) getCodexSessionsPhased(ctx context.Context, projectPa
 		// If within TTL, return cached without checking mod time
 		if time.Since(cached.cachedAt) < dirCacheTTL {
 			phase := s.getCodexScanPhase(projectPath)
-			return cached.sessions, phase, nil
+			return dedupeAISessionSummariesBySessionID(cached.sessions), phase, nil
 		}
 		// For codex, we also check today's date directory for new sessions
 		todayDir := filepath.Join(sessionDir, time.Now().Format("2006"), time.Now().Format("01"), time.Now().Format("02"))
@@ -970,7 +1050,7 @@ func (s *AISessionService) getCodexSessionsPhased(ctx context.Context, projectPa
 			cached.cachedAt = time.Now()
 			dirCacheMu.Unlock()
 			phase := s.getCodexScanPhase(projectPath)
-			return cached.sessions, phase, nil
+			return dedupeAISessionSummariesBySessionID(cached.sessions), phase, nil
 		}
 	}
 
@@ -1128,6 +1208,8 @@ func (s *AISessionService) getCodexSessionsPhased(ctx context.Context, projectPa
 			extendedDays = append(extendedDays, daysAgo)
 		}
 	}
+
+	sessions = dedupeAISessionSummariesBySessionID(sessions)
 
 	// Sort by last message time (newest first)
 	sort.Slice(sessions, func(i, j int) bool {
@@ -1325,7 +1407,7 @@ func (s *AISessionService) scanCodexExtendedPhase(ctx context.Context, projectPa
 
 	// Update scan state
 	state.mu.Lock()
-	state.sessions = append(state.sessions, newSessions...)
+	state.sessions = dedupeAISessionSummariesBySessionID(append(state.sessions, newSessions...))
 	state.pendingDirs = nil
 	state.phase = ScanPhaseComplete
 

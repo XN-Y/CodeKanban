@@ -39,12 +39,21 @@ export default {
   'terminalSession.list': ['GET', '/api/v1/projects/{projectId}/terminals'],
   'terminalSession.close': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/close'],
   'terminalSession.rename': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/rename'],
-  'terminalSession.linkTask': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/link'],
-  'terminalSession.unlinkTask': ['POST', '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/unlink'],
+  'terminalSession.linkTask': [
+    'POST',
+    '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/link',
+  ],
+  'terminalSession.unlinkTask': [
+    'POST',
+    '/api/v1/projects/{projectId}/terminals/{sessionId}/tasks/unlink',
+  ],
   'worktree.listByProject': ['GET', '/api/v1/projects/{projectId}/worktrees'],
   'worktree.create': ['POST', '/api/v1/projects/{projectId}/worktrees/create'],
   'worktree.refreshCommitInfo': ['POST', '/api/v1/projects/{projectId}/worktrees/refresh-commits'],
-  'terminalSession.create': ['POST', '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals'],
+  'terminalSession.create': [
+    'POST',
+    '/api/v1/projects/{projectId}/worktrees/{worktreeId}/terminals',
+  ],
   'system.aiAssistantStatusGet': ['GET', '/api/v1/system/ai-assistant-status'],
   'system.aiAssistantStatusUpdate': ['POST', '/api/v1/system/ai-assistant-status/update'],
   'system.checkUpdate': ['GET', '/api/v1/system/check-update'],
@@ -63,15 +72,18 @@ export default {
   'task.move': ['POST', '/api/v1/tasks/{id}/move'],
   'task.update': ['POST', '/api/v1/tasks/{id}/update'],
   'terminalSession.terminalApprovalRecordsList': ['GET', '/api/v1/terminals/approval-records'],
-  'terminalSession.terminalApprovalRecordDismiss': ['POST', '/api/v1/terminals/approval-records/{recordId}/dismiss'],
+  'terminalSession.terminalApprovalRecordDismiss': [
+    'POST',
+    '/api/v1/terminals/approval-records/{recordId}/dismiss',
+  ],
   'terminalSession.terminalCompletionRecordsList': ['GET', '/api/v1/terminals/completion-records'],
   'terminalSession.terminalCompletionRecordDismiss': [
     'POST',
-    '/api/v1/terminals/completion-records/{recordId}/dismiss'
+    '/api/v1/terminals/completion-records/{recordId}/dismiss',
   ],
   'terminalSession.terminalCompletionRecordRead': [
     'POST',
-    '/api/v1/terminals/completion-records/{recordId}/read'
+    '/api/v1/terminals/completion-records/{recordId}/read',
   ],
   'terminalSession.terminalCounts': ['GET', '/api/v1/terminals/counts'],
   'terminalSession.captureChunk': ['GET', '/api/v1/terminals/{sessionId}/capture'],
@@ -86,5 +98,5 @@ export default {
   'aiSession.getConversation': ['GET', '/api/v1/ai-sessions/{id}/conversation'],
   'taskAiSession.list': ['GET', '/api/v1/tasks/{taskId}/ai-sessions'],
   'taskAiSession.link': ['POST', '/api/v1/tasks/{taskId}/ai-sessions/link'],
-  'taskAiSession.unlink': ['POST', '/api/v1/tasks/{taskId}/ai-sessions/unlink']
+  'taskAiSession.unlink': ['POST', '/api/v1/tasks/{taskId}/ai-sessions/unlink'],
 };
