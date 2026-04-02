@@ -14,8 +14,12 @@
       </n-form-item>
       <n-form-item :label="t('project.projectDirectory')" path="path">
         <n-input-group>
-          <n-input v-model:value="formData.path" :placeholder="t('project.pathPlaceholder')" />
-          <n-button @click="showDirectoryPicker = true">
+          <n-input
+            v-model:value="formData.path"
+            :placeholder="t('project.pathPlaceholder')"
+            @blur="handlePathBlur"
+          />
+          <n-button @click="handleOpenDirectoryPicker">
             <template #icon>
               <n-icon><FolderOpenOutline /></n-icon>
             </template>
@@ -84,6 +88,7 @@ const formRef = ref<FormInst | null>(null);
 const loading = ref(false);
 const showDirectoryPicker = ref(false);
 const homeDir = ref('');
+const lastAutoFilledName = ref('');
 const formData = ref({
   name: '',
   path: '',
@@ -94,23 +99,77 @@ const formData = ref({
 // 目录选择器的初始路径：优先用已填写的路径，否则用 HOME 目录
 const pickerInitialPath = computed(() => formData.value.path || homeDir.value);
 
+function fillPathWithHomeIfEmpty() {
+  if (!formData.value.path.trim() && homeDir.value) {
+    formData.value.path = homeDir.value;
+  }
+}
+
 function handleDirectorySelected(path: string) {
   formData.value.path = path;
+  syncProjectNameFromPath(path);
+}
+
+function handlePathBlur() {
+  formData.value.path = formData.value.path.trim();
+  syncProjectNameFromPath(formData.value.path);
+}
+
+function extractDirectoryName(path: string) {
+  const trimmedPath = path.trim();
+  if (!trimmedPath) {
+    return '';
+  }
+
+  const normalizedPath = trimmedPath.replace(/[\\/]+$/, '');
+  if (!normalizedPath || /^[A-Za-z]:$/.test(normalizedPath)) {
+    return '';
+  }
+
+  const segments = normalizedPath.split(/[\\/]/).filter(Boolean);
+  return segments[segments.length - 1] ?? '';
+}
+
+function syncProjectNameFromPath(path: string) {
+  const directoryName = extractDirectoryName(path);
+  if (!directoryName) {
+    return;
+  }
+
+  const currentName = formData.value.name.trim();
+  if (!currentName || currentName === lastAutoFilledName.value) {
+    formData.value.name = directoryName;
+    lastAutoFilledName.value = directoryName;
+  }
 }
 
 async function fetchHomeDir() {
+  if (homeDir.value) {
+    fillPathWithHomeIfEmpty();
+    return homeDir.value;
+  }
+
   try {
     const res = await http.Get<{ item?: { path: string } }>('/fs/home').send();
     if (res?.item?.path) {
       homeDir.value = res.item.path;
+      fillPathWithHomeIfEmpty();
     }
   } catch (e) {
     console.error('Failed to get home directory:', e);
   }
+
+  return homeDir.value;
+}
+
+async function handleOpenDirectoryPicker() {
+  await fetchHomeDir();
+  fillPathWithHomeIfEmpty();
+  showDirectoryPicker.value = true;
 }
 
 // 获取 HOME 目录
-fetchHomeDir();
+void fetchHomeDir();
 
 const rules: FormRules = {
   name: [
@@ -122,7 +181,11 @@ const rules: FormRules = {
 };
 
 watch(visible, newVal => {
-  if (!newVal) {
+  if (newVal) {
+    fillPathWithHomeIfEmpty();
+    void fetchHomeDir();
+  } else {
+    lastAutoFilledName.value = '';
     formData.value = { name: '', path: '', description: '', hidePath: false };
   }
 });
