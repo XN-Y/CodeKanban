@@ -1903,10 +1903,38 @@ function adjustPanelMarginsForMinWidth() {
 // 使用防抖函数包装，避免频繁调用（200ms防抖）
 const debouncedAdjustMargins = useDebounceFn(adjustPanelMarginsForMinWidth, 200);
 
+function triggerGlobalTerminalRefresh() {
+  if (!expanded.value && !isDocked.value && !isMobile.value) {
+    return;
+  }
+  window.setTimeout(() => {
+    emitter.emit('terminal-resize-all');
+  }, 60);
+}
+
+function handleWindowFocusRefresh() {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    return;
+  }
+  triggerGlobalTerminalRefresh();
+}
+
+function handleDocumentVisibilityRefresh() {
+  if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+    return;
+  }
+  triggerGlobalTerminalRefresh();
+}
+
 if (typeof window !== 'undefined') {
   if (!isDocked.value) {
     useEventListener(window, 'keydown', handleTerminalToggleShortcut);
     useEventListener(window, 'resize', debouncedAdjustMargins);
+  }
+  useEventListener(window, 'focus', handleWindowFocusRefresh);
+  useEventListener(window, 'pageshow', handleWindowFocusRefresh);
+  if (typeof document !== 'undefined') {
+    useEventListener(document, 'visibilitychange', handleDocumentVisibilityRefresh);
   }
 }
 

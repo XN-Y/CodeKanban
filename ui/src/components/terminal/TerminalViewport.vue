@@ -69,6 +69,7 @@ const terminalOverlayStyle = computed(() => {
 const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
+let webglAddon: WebglAddon | null = null;
 let serializeAddon: SerializeAddon | null = null;
 let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
@@ -262,6 +263,69 @@ function persistSnapshot() {
   }
 }
 
+function isContainerVisible() {
+  return Boolean(
+    containerRef.value &&
+      containerRef.value.offsetWidth > 0 &&
+      containerRef.value.offsetHeight > 0
+  );
+}
+
+function refreshTerminalViewport(
+  reason: string,
+  options: {
+    clearTextureAtlas?: boolean;
+    retry?: boolean;
+  } = {}
+) {
+  if (!terminal) {
+    return;
+  }
+
+  const runRefresh = () => {
+    if (!terminal || !isContainerVisible()) {
+      return;
+    }
+
+    handleResize();
+
+    if (options.clearTextureAtlas !== false) {
+      try {
+        terminal.clearTextureAtlas();
+      } catch (error) {
+        console.warn('[Terminal Refresh] Failed to clear texture atlas', {
+          sessionId: props.tab.id,
+          reason,
+          error,
+        });
+      }
+    }
+
+    try {
+      terminal.refresh(0, Math.max(terminal.rows - 1, 0));
+      console.log('[Terminal Refresh]', {
+        sessionId: props.tab.id,
+        title: props.tab.title,
+        reason,
+        cols: terminal.cols,
+        rows: terminal.rows,
+      });
+    } catch (error) {
+      console.warn('[Terminal Refresh] Failed to refresh terminal viewport', {
+        sessionId: props.tab.id,
+        reason,
+        error,
+      });
+    }
+  };
+
+  runRefresh();
+
+  if (options.retry !== false) {
+    window.setTimeout(runRefresh, 160);
+  }
+}
+
 function handleResize() {
   if (!terminal || !fitAddon) {
     console.log('[Terminal Resize] Skipped: terminal or fitAddon not ready');
@@ -325,7 +389,7 @@ function handleTerminalResizeAll() {
   });
   // 延迟一下确保 DOM 更新完成，使用防抖版本避免阻塞输入
   setTimeout(() => {
-    debouncedResize();
+    refreshTerminalViewport('terminal-resize-event');
   }, 10);
 }
 
@@ -382,7 +446,20 @@ onMounted(() => {
 
   if (shouldUseWebGL) {
     try {
-      const webglAddon = new WebglAddon();
+      webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        console.warn('[Terminal] WebGL context lost, falling back to canvas renderer', {
+          sessionId: props.tab.id,
+          title: props.tab.title,
+        });
+        webglAddon?.dispose();
+        webglAddon = null;
+        window.setTimeout(() => {
+          refreshTerminalViewport('webgl-context-loss', {
+            clearTextureAtlas: false,
+          });
+        }, 0);
+      });
       terminal.loadAddon(webglAddon);
       console.log('[Terminal] WebGL renderer loaded successfully', {
         webglMode,
@@ -642,6 +719,8 @@ function handleTerminalBlurEvent() {
 function handleTerminalActivated() {
   if (!terminal || !fitAddon) return;
 
+  refreshTerminalViewport('terminal-activated');
+
   const isFirstVisit = !visitedTerminals.has(props.tab.id);
   if (isFirstVisit) {
     visitedTerminals.add(props.tab.id);
@@ -680,6 +759,8 @@ onBeforeUnmount(() => {
       containerRef.value.removeEventListener('drop', dropHandler);
     }
   }
+  webglAddon?.dispose();
+  webglAddon = null;
   terminal?.dispose();
   terminal = null;
   fitAddon?.dispose();
