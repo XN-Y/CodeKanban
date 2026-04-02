@@ -6,17 +6,6 @@
         <button
           type="button"
           class="tab-item"
-          :class="{ active: activeTab === 'kanban' }"
-          @click="activeTab = 'kanban'"
-        >
-          <n-icon size="16">
-            <GridOutline />
-          </n-icon>
-          <span class="tab-label">{{ t('nav.kanban') }}</span>
-        </button>
-        <button
-          type="button"
-          class="tab-item"
           :class="{ active: activeTab === 'terminal' }"
           @click="activeTab = 'terminal'"
         >
@@ -25,6 +14,17 @@
           </n-icon>
           <span class="tab-label">{{ t('nav.terminal') }}</span>
           <span v-if="terminalCount > 0" class="terminal-badge">{{ terminalCount }}</span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
+          :class="{ active: activeTab === 'kanban' }"
+          @click="activeTab = 'kanban'"
+        >
+          <n-icon size="16">
+            <GridOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.kanban') }}</span>
         </button>
       </div>
       <div v-if="activeTab === 'terminal'" class="tab-actions">
@@ -146,7 +146,7 @@ const terminalStore = useTerminalStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
 
 // 当前活跃的Tab，持久化存储
-const activeTab = useStorage<'kanban' | 'terminal'>('workspace-active-tab', 'kanban');
+const activeTab = useStorage<'kanban' | 'terminal'>('workspace-active-tab', 'terminal');
 const isNotificationSidebarVisible = useStorage('workspace-notification-sidebar-visible', true);
 
 // 终端数量
