@@ -7,6 +7,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -326,6 +327,7 @@ func (s *Session) Start(ctx context.Context) error {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(sessionCtx, s.command[0], s.command[1:]...)
 	cmd.Dir = s.workingDir
+	configurePTYCommand(cmd)
 
 	env := append([]string{}, s.env...)
 	env = append(env, "TERM=xterm-256color")
@@ -699,6 +701,8 @@ func (s *Session) Write(p []byte) (int, error) {
 func (s *Session) Resize(cols, rows int) error {
 	s.mu.RLock()
 	pty := s.pty
+	currentCols := s.cols
+	currentRows := s.rows
 	s.mu.RUnlock()
 
 	if pty == nil {
@@ -709,7 +713,7 @@ func (s *Session) Resize(cols, rows int) error {
 		return nil
 	}
 
-	if err := pty.Resize(cols, rows); err != nil {
+	if err := resizePTYForTarget(pty, runtime.GOOS, currentCols, currentRows, cols, rows); err != nil {
 		return err
 	}
 
@@ -1581,7 +1585,7 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 		pty := s.pty
 		s.mu.RUnlock()
 		if pty != nil {
-			_ = pty.Resize(cols, rows)
+			_ = resizePTYForTarget(pty, runtime.GOOS, cols, rows, cols, rows)
 		}
 
 		// Get current state
