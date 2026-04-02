@@ -23,35 +23,65 @@ main {
 
 /* 显示/隐藏工具类 - 移动端 */
 @media (max-width: 767px) {
-  .hide-mobile { display: none !important; }
-  .show-mobile-only { display: block !important; }
-  .show-mobile-flex { display: flex !important; }
+  .hide-mobile {
+    display: none !important;
+  }
+  .show-mobile-only {
+    display: block !important;
+  }
+  .show-mobile-flex {
+    display: flex !important;
+  }
 }
 @media (min-width: 768px) {
-  .show-mobile-only { display: none !important; }
-  .show-mobile-flex { display: none !important; }
+  .show-mobile-only {
+    display: none !important;
+  }
+  .show-mobile-flex {
+    display: none !important;
+  }
 }
 
 /* 显示/隐藏工具类 - 平板端 */
 @media (min-width: 768px) and (max-width: 1023px) {
-  .hide-tablet { display: none !important; }
-  .show-tablet-only { display: block !important; }
-  .show-tablet-flex { display: flex !important; }
+  .hide-tablet {
+    display: none !important;
+  }
+  .show-tablet-only {
+    display: block !important;
+  }
+  .show-tablet-flex {
+    display: flex !important;
+  }
 }
 @media (max-width: 767px), (min-width: 1024px) {
-  .show-tablet-only { display: none !important; }
-  .show-tablet-flex { display: none !important; }
+  .show-tablet-only {
+    display: none !important;
+  }
+  .show-tablet-flex {
+    display: none !important;
+  }
 }
 
 /* 显示/隐藏工具类 - 桌面端 */
 @media (min-width: 1024px) {
-  .hide-desktop { display: none !important; }
-  .show-desktop-only { display: block !important; }
-  .show-desktop-flex { display: flex !important; }
+  .hide-desktop {
+    display: none !important;
+  }
+  .show-desktop-only {
+    display: block !important;
+  }
+  .show-desktop-flex {
+    display: flex !important;
+  }
 }
 @media (max-width: 1023px) {
-  .show-desktop-only { display: none !important; }
-  .show-desktop-flex { display: none !important; }
+  .show-desktop-only {
+    display: none !important;
+  }
+  .show-desktop-flex {
+    display: none !important;
+  }
 }
 
 /* 触摸设备优化 */

@@ -3,7 +3,12 @@
     <n-page-header>
       <template #title>
         <n-space align="center" size="small">
-          <n-button quaternary size="small" @click="goBackToWorkspace" :disabled="!currentProjectId">
+          <n-button
+            quaternary
+            size="small"
+            @click="goBackToWorkspace"
+            :disabled="!currentProjectId"
+          >
             <template #icon>
               <n-icon><ChevronBackOutline /></n-icon>
             </template>
@@ -15,7 +20,12 @@
       <template #extra>
         <n-space align="center">
           <LanguageSwitcher />
-          <n-button quaternary :disabled="!currentProjectId" :loading="projectStore.loading" @click="reloadBranches(true)">
+          <n-button
+            quaternary
+            :disabled="!currentProjectId"
+            :loading="projectStore.loading"
+            @click="reloadBranches(true)"
+          >
             <template #icon>
               <n-icon><RefreshOutline /></n-icon>
             </template>
@@ -49,7 +59,13 @@
       <n-statistic :label="t('branch.worktreeBound')">{{ worktreeBoundCount }}</n-statistic>
     </n-space>
 
-    <n-alert v-if="branchError" type="error" class="branch-alert" closable @close="branchError = null">
+    <n-alert
+      v-if="branchError"
+      type="error"
+      class="branch-alert"
+      closable
+      @close="branchError = null"
+    >
       {{ branchError }}
     </n-alert>
 
@@ -58,7 +74,9 @@
         <n-gi :span="24" :lg="12">
           <n-card :title="t('branch.localBranches')">
             <template #header-extra>
-              <n-text depth="3">{{ t('branch.totalCount', { count: filteredLocalBranches.length }) }}</n-text>
+              <n-text depth="3">{{
+                t('branch.totalCount', { count: filteredLocalBranches.length })
+              }}</n-text>
             </template>
             <template v-if="filteredLocalBranches.length === 0">
               <n-empty :description="t('branch.noLocalBranches')" />
@@ -100,7 +118,9 @@
         <n-gi :span="24" :lg="12">
           <n-card :title="t('branch.remoteBranches')">
             <template #header-extra>
-              <n-text depth="3">{{ t('branch.totalCount', { count: filteredRemoteBranches.length }) }}</n-text>
+              <n-text depth="3">{{
+                t('branch.totalCount', { count: filteredRemoteBranches.length })
+              }}</n-text>
             </template>
             <template v-if="filteredRemoteBranches.length === 0">
               <n-empty :description="t('branch.noRemoteBranches')" />
@@ -113,11 +133,7 @@
                 :item-size="86"
               >
                 <template #default="{ item }">
-                  <BranchListItem
-                    :branch="item"
-                    mode="remote"
-                    @checkout="handleCheckoutRemote"
-                  />
+                  <BranchListItem :branch="item" mode="remote" @checkout="handleCheckoutRemote" />
                 </template>
               </n-virtual-list>
               <div v-else class="branch-list">
@@ -136,7 +152,12 @@
         <n-gi :span="24">
           <div>
             <n-card :title="t('branch.mergeAndConflict')">
-              <n-form ref="mergeFormRef" :model="mergeForm" :rules="mergeFormRules" label-placement="left">
+              <n-form
+                ref="mergeFormRef"
+                :model="mergeForm"
+                :rules="mergeFormRules"
+                label-placement="left"
+              >
                 <n-grid cols="1 640:2" x-gap="16">
                   <n-gi>
                     <n-form-item :label="t('branch.targetWorktree')" path="worktreeId">
@@ -180,11 +201,17 @@
                 <template v-if="showSquashCommitOptions">
                   <n-form-item :label="t('branch.commitControl')">
                     <n-space align="center">
-                      <n-checkbox v-model:checked="mergeForm.commitImmediately">{{ t('branch.commitImmediately') }}</n-checkbox>
+                      <n-checkbox v-model:checked="mergeForm.commitImmediately">{{
+                        t('branch.commitImmediately')
+                      }}</n-checkbox>
                       <n-text depth="3">{{ t('branch.commitImmediatelyHint') }}</n-text>
                     </n-space>
                   </n-form-item>
-                  <n-form-item v-if="shouldCommitAfterSquash" :label="t('branch.commitMessage')" path="commitMessage">
+                  <n-form-item
+                    v-if="shouldCommitAfterSquash"
+                    :label="t('branch.commitMessage')"
+                    path="commitMessage"
+                  >
                     <n-input
                       v-model:value="mergeForm.commitMessage"
                       type="textarea"
@@ -228,10 +255,23 @@
       </n-grid>
     </n-spin>
 
-    <n-modal v-model:show="showCreateModal" preset="dialog" :title="t('branch.createBranchDialog')" :mask-closable="false">
-      <n-form ref="createFormRef" :model="createForm" :rules="createFormRules" label-placement="top">
+    <n-modal
+      v-model:show="showCreateModal"
+      preset="dialog"
+      :title="t('branch.createBranchDialog')"
+      :mask-closable="false"
+    >
+      <n-form
+        ref="createFormRef"
+        :model="createForm"
+        :rules="createFormRules"
+        label-placement="top"
+      >
         <n-form-item :label="t('branch.branchNameField')" path="name">
-          <n-input v-model:value="createForm.name" :placeholder="t('branch.branchNameFieldPlaceholder')" />
+          <n-input
+            v-model:value="createForm.name"
+            :placeholder="t('branch.branchNameFieldPlaceholder')"
+          />
         </n-form-item>
         <n-form-item :label="t('branch.baseBranchField')" path="base">
           <n-select
@@ -242,13 +282,19 @@
           />
         </n-form-item>
         <n-form-item>
-          <n-checkbox v-model:checked="createForm.createWorktree">{{ t('branch.createWorktreeWithBranch') }}</n-checkbox>
+          <n-checkbox v-model:checked="createForm.createWorktree">{{
+            t('branch.createWorktreeWithBranch')
+          }}</n-checkbox>
         </n-form-item>
       </n-form>
       <template #action>
         <n-space justify="end">
           <n-button @click="closeCreateModal">{{ t('common.cancel') }}</n-button>
-          <n-button type="primary" :loading="createBranchReq.loading.value" @click="submitCreateBranch">
+          <n-button
+            type="primary"
+            :loading="createBranchReq.loading.value"
+            @click="submitCreateBranch"
+          >
             {{ t('common.create') }}
           </n-button>
         </n-space>
@@ -281,14 +327,20 @@ const dialog = useDialog();
 const message = useMessage();
 const { t } = useLocale();
 
-const currentProjectId = computed(() => (typeof route.params.id === 'string' ? route.params.id : ''));
+const currentProjectId = computed(() =>
+  typeof route.params.id === 'string' ? route.params.id : ''
+);
 const pageHeading = computed(() =>
-  projectStore.currentProject ? `${projectStore.currentProject.name} · ${t('branch.title')}` : t('branch.title'),
+  projectStore.currentProject
+    ? `${projectStore.currentProject.name} · ${t('branch.title')}`
+    : t('branch.title')
 );
 useTitle(
   computed(() =>
-    projectStore.currentProject ? `${projectStore.currentProject.name} - ${t('branch.title')}` : t('branch.title'),
-  ),
+    projectStore.currentProject
+      ? `${projectStore.currentProject.name} - ${t('branch.title')}`
+      : t('branch.title')
+  )
 );
 
 const branchListReq = useReq(
@@ -297,7 +349,7 @@ const branchListReq = useReq(
       pathParams: { projectId },
       ...(force ? { params: { force: true } } : {}),
     } as any),
-  { cacheFor: 60000 },
+  { cacheFor: 60000 }
 );
 
 const createBranchReq = useReq(
@@ -309,15 +361,14 @@ const createBranchReq = useReq(
         base: payload.base ?? '',
         createWorktree: payload.createWorktree ?? false,
       },
-    }),
+    })
 );
 
-const deleteBranchReq = useReq(
-  (projectId: string, branchName: string, force: boolean) =>
-    Apis.branch.delete({
-      pathParams: { projectId, branchName },
-      params: { force },
-    }),
+const deleteBranchReq = useReq((projectId: string, branchName: string, force: boolean) =>
+  Apis.branch.delete({
+    pathParams: { projectId, branchName },
+    params: { force },
+  })
 );
 
 const mergeBranchReq = useReq(
@@ -329,17 +380,17 @@ const mergeBranchReq = useReq(
       strategy: 'merge' | 'rebase' | 'squash';
       commit: boolean;
       commitMessage: string;
-    },
+    }
   ) =>
     Apis.branch.merge({
       pathParams: { id: worktreeId },
       data: payload,
-    }),
+    })
 );
 
-const refreshWorktreeStatusReq = useReq(
-  (worktreeId: string) => Apis.worktree.refreshStatus({
-    pathParams: { id: worktreeId }
+const refreshWorktreeStatusReq = useReq((worktreeId: string) =>
+  Apis.worktree.refreshStatus({
+    pathParams: { id: worktreeId },
   })
 );
 
@@ -369,7 +420,9 @@ const mergeForm = reactive({
   commitMessage: '',
 });
 const showSquashCommitOptions = computed(() => mergeForm.strategy === 'squash');
-const shouldCommitAfterSquash = computed(() => showSquashCommitOptions.value && mergeForm.commitImmediately);
+const shouldCommitAfterSquash = computed(
+  () => showSquashCommitOptions.value && mergeForm.commitImmediately
+);
 const mergeFormRules: FormRules = {
   worktreeId: [{ required: true, message: t('branch.selectWorktree') }],
   targetBranch: [{ required: true, message: t('branch.selectTargetBranch') }],
@@ -394,12 +447,12 @@ watch(
       initializeProject(id);
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 watch(
   () => mergeForm.worktreeId,
-  worktreeId => syncTargetBranchFromSelection(worktreeId, true),
+  worktreeId => syncTargetBranchFromSelection(worktreeId, true)
 );
 
 watch(
@@ -408,7 +461,7 @@ watch(
     if (mergeForm.worktreeId) {
       syncTargetBranchFromSelection(mergeForm.worktreeId, false);
     }
-  },
+  }
 );
 
 watch(
@@ -418,7 +471,7 @@ watch(
       mergeForm.commitMessage = '';
       mergeForm.commitImmediately = true;
     }
-  },
+  }
 );
 
 async function initializeProject(id: string) {
@@ -456,7 +509,7 @@ const branchLoading = computed(() => branchListReq.loading.value || projectStore
 
 const defaultBranch = computed(() => projectStore.currentProject?.defaultBranch ?? '');
 const worktreeBoundCount = computed(
-  () => branchList.value.local.filter(branch => branch.hasWorktree).length,
+  () => branchList.value.local.filter(branch => branch.hasWorktree).length
 );
 
 const searchApply = debounce((value: string) => {
@@ -475,19 +528,24 @@ const worktreeOptions = computed(() =>
   projectStore.worktrees.map(worktree => ({
     label: `${worktree.branchName} · ${worktree.path}`,
     value: worktree.id,
-  })),
+  }))
 );
 
 const localBranchOptions = computed(() =>
   branchList.value.local.map(branch => ({
     label: branch.name,
     value: branch.name,
-  })),
+  }))
 );
 
 const baseBranchOptions = computed(() => [
   ...(defaultBranch.value
-    ? [{ label: t('branch.defaultBranchLabel', { branch: defaultBranch.value }), value: defaultBranch.value }]
+    ? [
+        {
+          label: t('branch.defaultBranchLabel', { branch: defaultBranch.value }),
+          value: defaultBranch.value,
+        },
+      ]
     : []),
   ...branchList.value.local
     .filter(branch => branch.name !== defaultBranch.value)
@@ -532,7 +590,9 @@ async function submitCreateBranch() {
 }
 
 function handleCheckoutRemote(branch: BranchInfo) {
-  const simplified = branch.name.includes('/') ? branch.name.split('/').slice(1).join('/') : branch.name;
+  const simplified = branch.name.includes('/')
+    ? branch.name.split('/').slice(1).join('/')
+    : branch.name;
   openCreateModal(simplified, branch.name);
 }
 
@@ -636,13 +696,15 @@ async function submitMerge() {
           refreshIds.add(worktreeId);
         }
         if (refreshIds.size > 0) {
-          await Promise.all(Array.from(refreshIds).map(async (id) => {
-            const result = await refreshWorktreeStatusReq.send(id);
-            const updated = extractItem(result);
-            if (updated) {
-              projectStore.updateWorktreeInList(id, updated);
-            }
-          }));
+          await Promise.all(
+            Array.from(refreshIds).map(async id => {
+              const result = await refreshWorktreeStatusReq.send(id);
+              const updated = extractItem(result);
+              if (updated) {
+                projectStore.updateWorktreeInList(id, updated);
+              }
+            })
+          );
         }
       } else {
         message.warning(payload.message || t('branch.hasConflicts'));
@@ -669,7 +731,9 @@ async function refreshMergeStatus() {
   }
 }
 
-const canMerge = computed(() => projectStore.worktrees.length > 0 && branchList.value.local.length > 1);
+const canMerge = computed(
+  () => projectStore.worktrees.length > 0 && branchList.value.local.length > 1
+);
 
 const canExecuteMerge = computed(() => {
   // 必须选择了worktree、目标分支和源分支

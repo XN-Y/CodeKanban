@@ -69,7 +69,9 @@ const formData = ref({
 });
 
 const rules: FormRules = {
-  name: [{ required: true, message: t('validation.projectNameRequired'), trigger: ['blur', 'input'] }],
+  name: [
+    { required: true, message: t('validation.projectNameRequired'), trigger: ['blur', 'input'] },
+  ],
 };
 
 function syncFormWithProject(project: Project | null) {

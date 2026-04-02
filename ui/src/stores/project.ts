@@ -23,14 +23,16 @@ export const useProjectStore = defineStore('project', () => {
 
   const settingsStore = useSettingsStore();
   const { recentProjectsLimit } = storeToRefs(settingsStore);
-  const resolvedRecentLimit = computed(() => Math.max(recentProjectsLimit.value || DEFAULT_MAX_RECENT_PROJECTS, 1));
+  const resolvedRecentLimit = computed(() =>
+    Math.max(recentProjectsLimit.value || DEFAULT_MAX_RECENT_PROJECTS, 1)
+  );
 
   watch(
     resolvedRecentLimit,
     limit => {
       enforceRecentLimit(limit);
     },
-    { immediate: true },
+    { immediate: true }
   );
 
   const selectedWorktree = computed(() => {
@@ -73,7 +75,10 @@ export const useProjectStore = defineStore('project', () => {
   });
 
   watch(worktrees, list => {
-    if (selectedWorktreeId.value && !list.some(worktree => worktree.id === selectedWorktreeId.value)) {
+    if (
+      selectedWorktreeId.value &&
+      !list.some(worktree => worktree.id === selectedWorktreeId.value)
+    ) {
       selectedWorktreeId.value = null;
     }
   });
@@ -105,9 +110,12 @@ export const useProjectStore = defineStore('project', () => {
     }
   }
 
-  async function createProject(
-    payload: { name: string; path: string; description?: string; hidePath: boolean },
-  ) {
+  async function createProject(payload: {
+    name: string;
+    path: string;
+    description?: string;
+    hidePath: boolean;
+  }) {
     const project = await projectApi.create(payload);
     projects.value.push(project);
     return project;
@@ -115,7 +123,7 @@ export const useProjectStore = defineStore('project', () => {
 
   async function updateProject(
     id: string,
-    payload: { name: string; description?: string; hidePath: boolean },
+    payload: { name: string; description?: string; hidePath: boolean }
   ) {
     const project = await projectApi.update(id, payload);
     const index = projects.value.findIndex(item => item.id === id);

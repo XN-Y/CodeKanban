@@ -322,34 +322,34 @@
                       <PlayOutline />
                     </n-icon>
                   </template>
+                </n-button>
+              </template>
+              {{ t('terminal.quickActions') }}
+            </n-tooltip>
+          </n-dropdown>
+          <n-tooltip
+            v-for="action in standaloneQuickActions"
+            :key="action.id"
+            trigger="hover"
+            placement="bottom"
+            :delay="100"
+          >
+            <template #trigger>
+              <n-button text size="small" @click="handleRunQuickAction(action)">
+                <template #icon>
+                  <span
+                    v-if="getQuickActionSvg(action.icon)"
+                    class="terminal-quick-action-button-svg"
+                    v-html="getQuickActionSvg(action.icon)"
+                  ></span>
+                  <n-icon v-else>
+                    <component :is="resolveQuickActionIcon(action.icon)" />
+                  </n-icon>
+                </template>
               </n-button>
             </template>
-            {{ t('terminal.quickActions') }}
+            {{ formatQuickActionLabel(action) }}
           </n-tooltip>
-        </n-dropdown>
-        <n-tooltip
-          v-for="action in standaloneQuickActions"
-          :key="action.id"
-          trigger="hover"
-          placement="bottom"
-          :delay="100"
-        >
-          <template #trigger>
-            <n-button text size="small" @click="handleRunQuickAction(action)">
-              <template #icon>
-                <span
-                  v-if="getQuickActionSvg(action.icon)"
-                  class="terminal-quick-action-button-svg"
-                  v-html="getQuickActionSvg(action.icon)"
-                ></span>
-                <n-icon v-else>
-                  <component :is="resolveQuickActionIcon(action.icon)" />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          {{ formatQuickActionLabel(action) }}
-        </n-tooltip>
         </template>
         <n-tooltip v-if="projectIdRef" trigger="hover" placement="bottom" :delay="100">
           <template #trigger>
@@ -658,6 +658,7 @@ import {
   NSpin,
   NEmpty,
   NTag,
+  NCheckbox,
   NButton,
   NSpace,
   NTooltip,
@@ -708,14 +709,25 @@ import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
+import { taskActions } from '@/composables/useTaskActions';
 import { getPresetById } from '@/constants/themes';
-import { DEFAULT_EDITOR, EDITOR_LABEL_MAP, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
+import {
+  DEFAULT_EDITOR,
+  EDITOR_LABEL_MAP,
+  EDITOR_OPTIONS,
+  isEditorPreference,
+} from '@/constants/editor';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
-import type { DeveloperConfig } from '@/types/models';
-import type { EditorPreference, TerminalQuickAction, TerminalQuickActionIcon } from '@/stores/settings';
+import { extractItem } from '@/api/response';
+import type { DeveloperConfig, Task } from '@/types/models';
+import type {
+  EditorPreference,
+  TerminalQuickAction,
+  TerminalQuickActionIcon,
+} from '@/stores/settings';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 
 type ItemResponse<T> = {
@@ -917,7 +929,7 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       icon: () => h(NIcon, null, { default: () => h(FolderOpenOutline) }),
     },
     {
-      label: t('worktree.openInEditor'),
+      label: t('worktree.openWith', { editor: defaultEditorLabel.value }),
       key: 'open-editor',
       icon: () => h(NIcon, null, { default: () => h(CodeSlashOutline) }),
       disabled: !canOpenEditorForTab,
@@ -2538,7 +2550,7 @@ async function openEditorForTab(tab: TerminalTabState | null, editor: EditorPref
     await projectStore.openInEditor(
       path,
       editor,
-      editor === 'custom' ? customEditorCommand.value : undefined,
+      editor === 'custom' ? customEditorCommand.value : undefined
     );
     const label = EDITOR_LABEL_MAP[editor] ?? t('worktree.editor');
     message.success(t('worktree.openedInEditor', { editor: label }));
@@ -2844,17 +2856,52 @@ function handleClose(sessionId: string) {
     return;
   }
 
+  const tab = tabs.value.find(t => t.id === sessionId);
+  const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
+  const linkedTaskId = resolveTabTaskId(tab);
+
   // 如果开启了关闭确认，先弹出确认对话框
   if (confirmBeforeTerminalClose.value) {
-    const tab = tabs.value.find(t => t.id === sessionId);
-    const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
+    const shouldCompleteTask = ref(Boolean(linkedTaskId));
 
     dialog.warning({
       title: t('terminal.confirmCloseTitle'),
-      content: t('terminal.confirmCloseContent', { title: tabTitle }),
+      content: () => {
+        const children = [
+          h('div', { class: 'terminal-close-confirm__message' }, [
+            t('terminal.confirmCloseContent', { title: tabTitle }),
+          ]),
+        ];
+
+        if (linkedTaskId) {
+          children.push(
+            h(
+              'div',
+              { class: 'terminal-close-confirm__checkbox' },
+              h(
+                NCheckbox,
+                {
+                  checked: shouldCompleteTask.value,
+                  'onUpdate:checked': (value: boolean) => {
+                    shouldCompleteTask.value = value;
+                  },
+                },
+                { default: () => t('terminal.confirmCloseCompleteTask') }
+              )
+            )
+          );
+        }
+
+        return h('div', { class: 'terminal-close-confirm' }, children);
+      },
       positiveText: t('terminal.confirmCloseButton'),
       negativeText: t('common.cancel'),
-      onPositiveClick: () => performClose(sessionId),
+      onPositiveClick: async () => {
+        const closed = await performClose(sessionId);
+        if (closed && linkedTaskId && shouldCompleteTask.value) {
+          await completeLinkedTask(linkedTaskId);
+        }
+      },
     });
     return;
   }
@@ -2862,13 +2909,33 @@ function handleClose(sessionId: string) {
   void performClose(sessionId);
 }
 
-async function performClose(sessionId: string) {
+async function performClose(sessionId: string): Promise<boolean> {
   try {
     await closeSession(sessionId);
     message.success(t('terminal.terminalClosed'));
+    return true;
   } catch (error: any) {
     message.error(error?.message ?? t('terminal.closeFailed'));
     disconnectTab(sessionId);
+    return false;
+  }
+}
+
+async function completeLinkedTask(taskId: string) {
+  const task = taskStore.tasks.find(item => item.id === taskId);
+  if (task && (task.status === 'done' || task.status === 'archived')) {
+    return;
+  }
+  try {
+    const response = await taskActions.moveTask.send(taskId, { status: 'done' });
+    const updated = extractItem(response) as unknown as Task | undefined;
+    if (updated) {
+      taskStore.upsertTask(updated);
+    } else {
+      taskActions.invalidateTaskCache();
+    }
+  } catch (error: any) {
+    message.error(error?.message ?? t('terminal.completeLinkedTaskFailed'));
   }
 }
 
@@ -4492,6 +4559,10 @@ defineExpose({
 
 .mobile-tab-arrow.is-open {
   transform: rotate(180deg);
+}
+
+.terminal-close-confirm__checkbox {
+  margin-top: 8px;
 }
 
 /* 移动端布局隐藏浮动按钮 */

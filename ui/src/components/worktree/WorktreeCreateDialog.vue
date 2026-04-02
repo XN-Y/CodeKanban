@@ -29,11 +29,17 @@
         />
       </n-form-item>
       <n-form-item :label="t('branch.branchName')" path="branchName">
-        <n-input v-model:value="formData.branchName" :placeholder="t('branch.branchNamePlaceholder')" />
+        <n-input
+          v-model:value="formData.branchName"
+          :placeholder="t('branch.branchNamePlaceholder')"
+        />
       </n-form-item>
 
       <n-form-item :label="t('branch.baseBranch')" path="baseBranch">
-        <n-input v-model:value="formData.baseBranch" :placeholder="t('branch.baseBranchPlaceholder')" />
+        <n-input
+          v-model:value="formData.baseBranch"
+          :placeholder="t('branch.baseBranchPlaceholder')"
+        />
       </n-form-item>
     </n-form>
   </n-modal>
@@ -76,7 +82,9 @@ const formData = ref({
 });
 
 const rules: FormRules = {
-  branchName: [{ required: true, message: t('validation.branchNameRequired'), trigger: ['blur', 'input'] }],
+  branchName: [
+    { required: true, message: t('validation.branchNameRequired'), trigger: ['blur', 'input'] },
+  ],
 };
 
 /**
@@ -147,7 +155,10 @@ async function handleCreate() {
   try {
     await formRef.value?.validate();
     loading.value = true;
-    const worktree = await projectStore.createWorktree(projectStore.currentProject.id, formData.value);
+    const worktree = await projectStore.createWorktree(
+      projectStore.currentProject.id,
+      formData.value
+    );
     // 先 emit success 事件，确保父组件能接收到
     emit('success', worktree);
     // 返回 true 让 Naive UI 自动关闭对话框

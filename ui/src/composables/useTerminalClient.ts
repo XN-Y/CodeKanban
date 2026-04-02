@@ -25,7 +25,7 @@ export function useTerminalClient(projectIdRef: Ref<string>) {
       store.prepareProject(id);
       void store.loadSessions(id);
     },
-    { immediate: true },
+    { immediate: true }
   );
 
   function reloadSessions() {

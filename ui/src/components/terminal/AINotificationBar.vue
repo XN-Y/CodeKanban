@@ -1,16 +1,20 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import type { DropdownOption } from 'naive-ui';
-import { useDialog } from 'naive-ui';
+import { useDialog, useMessage, NCheckbox } from 'naive-ui';
 import Apis from '@/api';
 import { useAutoReq } from '@/api/composable';
+import { extractItem } from '@/api/response';
+import { taskActions } from '@/composables/useTaskActions';
 import { useTerminalStore, type TerminalTabState } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
+import { useTaskStore } from '@/stores/task';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
+import type { Task } from '@/types/models';
 
 // Props
 const props = withDefaults(
@@ -28,9 +32,11 @@ const props = withDefaults(
 
 const { t } = useI18n();
 const dialog = useDialog();
+const message = useMessage();
 const terminalStore = useTerminalStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
+const taskStore = useTaskStore();
 const { terminalDisplayMode, confirmBeforeTerminalClose } = storeToRefs(settingsStore);
 const isSidebar = computed(() => props.layout === 'sidebar' || props.layout === 'docked-sidebar');
 const isDockedSidebar = computed(() => props.layout === 'docked-sidebar');
@@ -262,9 +268,7 @@ function markSessionCompletionNotificationsAsRead(sessionId: string) {
     markNotificationsAsRead(ids);
   }
 
-  const recordIdsToRead = completionItems
-    .filter(item => !item.readAt)
-    .map(item => item.recordId);
+  const recordIdsToRead = completionItems.filter(item => !item.readAt).map(item => item.recordId);
   if (recordIdsToRead.length) {
     void submitCompletionRecordsRead(recordIdsToRead);
   }
@@ -658,7 +662,10 @@ const activeCompletionAutoReadKey = computed(() => {
         notification.sessionId === sessionId &&
         notification.state === 'completed'
     )
-    .map(notification => `${notification.recordId}:${notification.readAt ? 1 : 0}:${isNotificationClicked(notification.id) ? 1 : 0}`)
+    .map(
+      notification =>
+        `${notification.recordId}:${notification.readAt ? 1 : 0}:${isNotificationClicked(notification.id) ? 1 : 0}`
+    )
     .join(',');
 });
 
@@ -716,7 +723,8 @@ const dockedSessionItems = computed<DockedSessionItem[]>(() => {
       const worktreeId = tab.worktreeId;
       const branchName = resolveBranchName(projectId, worktreeId);
       const assistantType = tab.aiAssistant?.type;
-      const activityTs = parseTimestamp(tab.aiAssistant?.stateUpdatedAt) || parseTimestamp(tab.createdAt);
+      const activityTs =
+        parseTimestamp(tab.aiAssistant?.stateUpdatedAt) || parseTimestamp(tab.createdAt);
       items.push({
         sessionId: tab.id,
         projectId,
@@ -824,7 +832,7 @@ const filteredNotifications = computed(() => {
 // 监听过滤后的通知数量，如果为0则自动取消项目序号过滤
 watch(
   () => filteredNotifications.value.length,
-  (newLength) => {
+  newLength => {
     if (newLength === 0 && projectIndexFilter.value !== null) {
       projectIndexFilter.value = null;
     }
@@ -967,12 +975,17 @@ async function closeDockedSession(item: DockedSessionItem) {
   }
 
   const tabTitle = item.title || t('terminal.defaultTerminalTitle');
+  const session = terminalStore.getSessionById(sessionId);
+  const linkedTaskId = session?.taskId || terminalStore.getLinkedTaskId(sessionId);
 
-  const doClose = async () => {
+  const doClose = async (): Promise<boolean> => {
     try {
       await terminalStore.closeSession(projectId, sessionId);
+      return true;
     } catch (error) {
       console.error('[Terminal] Failed to close terminal from docked notifications', error);
+      message.error(t('terminal.closeFailed'));
+      return false;
     }
   };
 
@@ -981,13 +994,63 @@ async function closeDockedSession(item: DockedSessionItem) {
     return;
   }
 
+  const shouldCompleteTask = ref(Boolean(linkedTaskId));
+
   dialog.warning({
     title: t('terminal.confirmCloseTitle'),
-    content: t('terminal.confirmCloseContent', { title: tabTitle }),
+    content: () => {
+      const children = [
+        h('div', { class: 'terminal-close-confirm__message' }, [
+          t('terminal.confirmCloseContent', { title: tabTitle }),
+        ]),
+      ];
+      if (linkedTaskId) {
+        children.push(
+          h(
+            'div',
+            { class: 'terminal-close-confirm__checkbox' },
+            h(
+              NCheckbox,
+              {
+                checked: shouldCompleteTask.value,
+                'onUpdate:checked': (value: boolean) => {
+                  shouldCompleteTask.value = value;
+                },
+              },
+              { default: () => t('terminal.confirmCloseCompleteTask') }
+            )
+          )
+        );
+      }
+      return h('div', { class: 'terminal-close-confirm' }, children);
+    },
     positiveText: t('terminal.confirmCloseButton'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => doClose(),
+    onPositiveClick: async () => {
+      const closed = await doClose();
+      if (closed && linkedTaskId && shouldCompleteTask.value) {
+        await completeLinkedTask(linkedTaskId);
+      }
+    },
   });
+}
+
+async function completeLinkedTask(taskId: string) {
+  const task = taskStore.tasks.find(item => item.id === taskId);
+  if (task && (task.status === 'done' || task.status === 'archived')) {
+    return;
+  }
+  try {
+    const response = await taskActions.moveTask.send(taskId, { status: 'done' });
+    const updated = extractItem(response) as unknown as Task | undefined;
+    if (updated) {
+      taskStore.upsertTask(updated);
+    } else {
+      taskActions.invalidateTaskCache();
+    }
+  } catch (error: any) {
+    message.error(error?.message ?? t('terminal.completeLinkedTaskFailed'));
+  }
 }
 
 watch(
@@ -1436,7 +1499,16 @@ interface AIDetectedEvent {
 }
 
 function handleAIDetected(event: AIDetectedEvent) {
-  const { sessionId, sessionTitle, projectId, projectName, worktreeId, detectedAt, assistantName, assistantType } = event;
+  const {
+    sessionId,
+    sessionTitle,
+    projectId,
+    projectName,
+    worktreeId,
+    detectedAt,
+    assistantName,
+    assistantType,
+  } = event;
 
   // 检查是否已存在该 session 的通知
   const existingNotification = notifications.value.find(
@@ -1469,7 +1541,11 @@ function handleAIDetected(event: AIDetectedEvent) {
   };
 
   notifications.value = sortNotifications([...notifications.value, idleNotification]);
-  console.log('[AI Notification] AI Agent detected, adding idle notification', { sessionId, projectId, assistantName });
+  console.log('[AI Notification] AI Agent detected, adding idle notification', {
+    sessionId,
+    projectId,
+    assistantName,
+  });
 }
 
 // 点击通知，切换到对应的终端
@@ -1694,10 +1770,7 @@ watch(
 
 <template>
   <!-- 移动端：全屏列表布局 -->
-  <div
-    v-if="props.isMobile"
-    class="mobile-notification-container"
-  >
+  <div v-if="props.isMobile" class="mobile-notification-container">
     <div class="mobile-notification-header">
       <h3 class="mobile-notification-title">{{ t('terminal.notifications') }}</h3>
       <div class="mobile-notification-actions">
@@ -1706,13 +1779,25 @@ watch(
           class="mobile-action-btn"
           :class="{ 'is-active': compactModeEnabled }"
           @click="toggleCompactMode"
-          :title="compactModeEnabled ? t('terminal.disableCompactMode') : t('terminal.enableCompactMode')"
+          :title="
+            compactModeEnabled ? t('terminal.disableCompactMode') : t('terminal.enableCompactMode')
+          "
         >
           <svg v-if="!compactModeEnabled" width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path
+              d="M4 7h16M4 12h16M4 17h16"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
           <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none">
-            <path d="M4 8h16M7 12h10M9 16h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path
+              d="M4 8h16M7 12h10M9 16h6"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
         <n-dropdown
@@ -1727,7 +1812,13 @@ watch(
             :class="{ 'is-active': notificationDisplayMode !== 'standard' }"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M4 7h16M4 12h10M4 17h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path
+                d="M4 7h16M4 12h10M4 17h8"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
             </svg>
           </button>
         </n-dropdown>
@@ -1735,13 +1826,37 @@ watch(
           type="button"
           class="mobile-action-btn"
           @click="toggleNotifications"
-          :title="notificationsEnabled ? t('terminal.disableNotifications') : t('terminal.enableNotifications')"
+          :title="
+            notificationsEnabled
+              ? t('terminal.disableNotifications')
+              : t('terminal.enableNotifications')
+          "
         >
-          <svg v-if="notificationsEnabled" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            v-if="notificationsEnabled"
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
             <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
           </svg>
-          <svg v-else width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            v-else
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M6.3 5.3a1 1 0 0 0-1.4 1.4l1.5 1.5A6 6 0 0 0 6 10c0 7-3 9-3 9h14"></path>
             <path d="m21.7 18.7-1.6-1.6"></path>
             <path d="M2 2l20 20"></path>
@@ -1752,7 +1867,16 @@ watch(
     </div>
 
     <div v-if="filteredNotifications.length === 0" class="mobile-empty-state">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <svg
+        width="48"
+        height="48"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
         <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
         <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
       </svg>
@@ -1771,7 +1895,7 @@ watch(
           class="mobile-project-badge"
           :class="{
             'is-filtered': projectIndexFilter === notification.projectId,
-            'is-single-project': projectIndexMap.size <= 1
+            'is-single-project': projectIndexMap.size <= 1,
           }"
           :style="{ '--badge-color': getProjectIndex(notification)?.color }"
           @click="toggleProjectFilter(notification.projectId, $event)"
@@ -1788,31 +1912,51 @@ watch(
         >
           <div class="mobile-notification-content">
             <div v-if="!compactModeEnabled" class="mobile-notification-header-row">
-              <span class="notification-icon" :style="{ color: notification.assistantColor || defaultAssistantColor }" v-html="notification.assistantIcon || defaultAssistantIcon"></span>
-              <span class="mobile-notification-header-title">{{ getNotificationHeader(notification) }}</span>
+              <span
+                class="notification-icon"
+                :style="{ color: notification.assistantColor || defaultAssistantColor }"
+                v-html="notification.assistantIcon || defaultAssistantIcon"
+              ></span>
+              <span class="mobile-notification-header-title">{{
+                getNotificationHeader(notification)
+              }}</span>
             </div>
             <div class="mobile-notification-body" :class="{ 'compact-body': compactModeEnabled }">
               <div class="mobile-notification-description" :class="{ compact: compactModeEnabled }">
                 <template v-if="compactModeEnabled">
-                  <span class="notification-text compact-text">{{ getCompactDisplayText(notification) }}</span>
+                  <span class="notification-text compact-text">{{
+                    getCompactDisplayText(notification)
+                  }}</span>
                 </template>
                 <template v-else>
                   <span class="notification-text">
                     <span class="notification-tab-label">{{ getTabLabel(notification) }}</span>
                     <template v-if="getLatestAgentCommand(notification)">
                       <span class="notification-text-separator">·</span>
-                      <span class="notification-command-text">{{ getLatestAgentCommand(notification) }}</span>
+                      <span class="notification-command-text">{{
+                        getLatestAgentCommand(notification)
+                      }}</span>
                     </template>
                   </span>
                 </template>
               </div>
               <div v-if="!compactModeEnabled" class="mobile-notification-footer">
-                <span class="notification-action-hint">{{ t('terminal.clickToJumpTerminal') }}</span>
-                <span class="notification-time" :title="notification.timestamp.toLocaleString()">{{ formatNotificationTime(notification.timestamp) }}</span>
+                <span class="notification-action-hint">{{
+                  t('terminal.clickToJumpTerminal')
+                }}</span>
+                <span class="notification-time" :title="notification.timestamp.toLocaleString()">{{
+                  formatNotificationTime(notification.timestamp)
+                }}</span>
               </div>
             </div>
           </div>
-          <button class="mobile-notification-close" @click.stop="dismissNotification(notification)" :title="t('common.close')">×</button>
+          <button
+            class="mobile-notification-close"
+            @click.stop="dismissNotification(notification)"
+            :title="t('common.close')"
+          >
+            ×
+          </button>
         </div>
       </div>
     </div>
@@ -1955,7 +2099,9 @@ watch(
           </button>
         </template>
         {{
-          notificationsEnabled ? t('terminal.disableNotifications') : t('terminal.enableNotifications')
+          notificationsEnabled
+            ? t('terminal.disableNotifications')
+            : t('terminal.enableNotifications')
         }}
       </n-tooltip>
       <slot name="toolbar-extra" />
@@ -1998,7 +2144,7 @@ watch(
               class="project-index-badge docked-project-badge"
               :class="{
                 'is-filtered': projectIndexFilter === item.projectId,
-                'is-single-project': isSingleDockedProject && projectIndexFilter === null
+                'is-single-project': isSingleDockedProject && projectIndexFilter === null,
               }"
               :style="{ '--badge-color': item.projectIndex.color }"
               @click="toggleProjectFilter(item.projectId, $event)"
@@ -2061,7 +2207,16 @@ watch(
           class="current-session-indicator"
           :title="t('terminal.currentActiveSession')"
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
@@ -2072,7 +2227,7 @@ watch(
           class="project-index-badge"
           :class="{
             'is-filtered': projectIndexFilter === notification.projectId,
-            'is-single-project': projectIndexMap.size <= 1
+            'is-single-project': projectIndexMap.size <= 1,
           }"
           :style="{
             '--badge-color': getProjectIndex(notification)?.color,
@@ -2094,70 +2249,70 @@ watch(
           ]"
           @click="handleNotificationClick(notification)"
         >
-        <div class="notification-content">
-          <div v-if="!compactModeEnabled" class="notification-header">
-            <span
-              class="notification-icon"
-              :style="{ color: notification.assistantColor || defaultAssistantColor }"
-              v-html="notification.assistantIcon || defaultAssistantIcon"
-            ></span>
-            <span class="notification-title">
-              {{ getNotificationHeader(notification) }}
-            </span>
-          </div>
-          <div class="notification-body" :class="{ 'compact-body': compactModeEnabled }">
-            <n-popover
-              trigger="hover"
-              :delay="1500"
-              placement="bottom-end"
-              :show-arrow="false"
-              class="notification-popover"
-            >
-              <template #trigger>
-                <div class="notification-description" :class="{ compact: compactModeEnabled }">
-                  <!-- 紧凑模式：显示 {项目名}[{终端标题}] {用户上次输入的信息} -->
-                  <template v-if="compactModeEnabled">
-                    <span class="notification-text compact-text">
-                      {{ getCompactDisplayText(notification) }}
-                    </span>
-                  </template>
-                  <!-- 普通模式：保持原有显示逻辑 -->
-                  <template v-else>
-                    <span class="notification-text">
-                      <span class="notification-tab-label">
-                        {{ getTabLabel(notification) }}
-                      </span>
-                      <template v-if="getLatestAgentCommand(notification)">
-                        <span class="notification-text-separator">·</span>
-                        <span class="notification-command-text">
-                          {{ getLatestAgentCommand(notification) }}
-                        </span>
-                      </template>
-                    </span>
-                  </template>
-                </div>
-              </template>
-              <div class="notification-detail-text">
-                {{ getNotificationDescription(notification) }}
-              </div>
-            </n-popover>
-            <div class="notification-footer">
-              <span class="notification-action-hint">
-                {{ t('terminal.clickToJumpTerminal') }}
-              </span>
-              <span class="notification-time" :title="notification.timestamp.toLocaleString()">
-                {{ formatNotificationTime(notification.timestamp) }}
+          <div class="notification-content">
+            <div v-if="!compactModeEnabled" class="notification-header">
+              <span
+                class="notification-icon"
+                :style="{ color: notification.assistantColor || defaultAssistantColor }"
+                v-html="notification.assistantIcon || defaultAssistantIcon"
+              ></span>
+              <span class="notification-title">
+                {{ getNotificationHeader(notification) }}
               </span>
             </div>
+            <div class="notification-body" :class="{ 'compact-body': compactModeEnabled }">
+              <n-popover
+                trigger="hover"
+                :delay="1500"
+                placement="bottom-end"
+                :show-arrow="false"
+                class="notification-popover"
+              >
+                <template #trigger>
+                  <div class="notification-description" :class="{ compact: compactModeEnabled }">
+                    <!-- 紧凑模式：显示 {项目名}[{终端标题}] {用户上次输入的信息} -->
+                    <template v-if="compactModeEnabled">
+                      <span class="notification-text compact-text">
+                        {{ getCompactDisplayText(notification) }}
+                      </span>
+                    </template>
+                    <!-- 普通模式：保持原有显示逻辑 -->
+                    <template v-else>
+                      <span class="notification-text">
+                        <span class="notification-tab-label">
+                          {{ getTabLabel(notification) }}
+                        </span>
+                        <template v-if="getLatestAgentCommand(notification)">
+                          <span class="notification-text-separator">·</span>
+                          <span class="notification-command-text">
+                            {{ getLatestAgentCommand(notification) }}
+                          </span>
+                        </template>
+                      </span>
+                    </template>
+                  </div>
+                </template>
+                <div class="notification-detail-text">
+                  {{ getNotificationDescription(notification) }}
+                </div>
+              </n-popover>
+              <div class="notification-footer">
+                <span class="notification-action-hint">
+                  {{ t('terminal.clickToJumpTerminal') }}
+                </span>
+                <span class="notification-time" :title="notification.timestamp.toLocaleString()">
+                  {{ formatNotificationTime(notification.timestamp) }}
+                </span>
+              </div>
+            </div>
           </div>
-        </div>
-        <button
-          class="notification-close"
-          @click.stop="dismissNotification(notification)"
-          :title="t('common.close')"
-        >
-          ×
-        </button>
+          <button
+            class="notification-close"
+            @click.stop="dismissNotification(notification)"
+            :title="t('common.close')"
+          >
+            ×
+          </button>
         </div>
       </div>
     </transition-group>
@@ -2875,7 +3030,9 @@ watch(
 }
 
 /* 单项目时（无序号）紧凑模式调整 left */
-.notification-list.is-compact .notification-row:has(.project-index-badge.is-single-project) .current-session-indicator {
+.notification-list.is-compact
+  .notification-row:has(.project-index-badge.is-single-project)
+  .current-session-indicator {
   left: 0;
 }
 
@@ -2886,7 +3043,9 @@ watch(
 
 /* 当前激活 tab 行高亮效果 */
 .notification-row.is-current-session .notification-item {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 12px 28px rgba(15, 23, 42, 0.18);
+  box-shadow:
+    0 0 0 2px rgba(59, 130, 246, 0.35),
+    0 12px 28px rgba(15, 23, 42, 0.18);
 }
 
 .notification-bar-container.is-docked-sidebar
@@ -2896,7 +3055,8 @@ watch(
 }
 
 @keyframes pulse-glow {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
   }
   50% {
@@ -3083,7 +3243,9 @@ watch(
 
 .mobile-project-badge.is-filtered {
   border-color: #fff;
-  box-shadow: 0 0 0 2px var(--badge-color, #3b82f6), 0 2px 8px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    0 0 0 2px var(--badge-color, #3b82f6),
+    0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .mobile-project-badge.is-single-project {
@@ -3229,6 +3391,8 @@ watch(
 
 /* 移动端当前激活行高亮 */
 .mobile-notification-row.is-current-session .mobile-notification-item {
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35), 0 2px 8px rgba(15, 23, 42, 0.08);
+  box-shadow:
+    0 0 0 2px rgba(59, 130, 246, 0.35),
+    0 2px 8px rgba(15, 23, 42, 0.08);
 }
 </style>

@@ -16,9 +16,7 @@ export function resolveWsUrl(pathOrUrl: string, base?: string) {
     return base;
   })();
 
-  const httpBase = normalizedBase.startsWith('http')
-    ? normalizedBase
-    : `http:${normalizedBase}`;
+  const httpBase = normalizedBase.startsWith('http') ? normalizedBase : `http:${normalizedBase}`;
   const resolved = new URL(pathOrUrl, httpBase);
   resolved.protocol = resolved.protocol === 'https:' ? 'wss:' : 'ws:';
   return resolved.toString();

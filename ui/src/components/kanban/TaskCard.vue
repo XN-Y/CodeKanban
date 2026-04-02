@@ -60,7 +60,12 @@
         <n-tag v-if="displayBranchName" size="tiny" :bordered="false">
           {{ displayBranchName }}
         </n-tag>
-        <n-tag v-if="task.dueDate" size="tiny" :type="isOverdue ? 'error' : 'default'" :bordered="false">
+        <n-tag
+          v-if="task.dueDate"
+          size="tiny"
+          :type="isOverdue ? 'error' : 'default'"
+          :bordered="false"
+        >
           {{ t('task.duePrefix') }} {{ formatDate(task.dueDate) }}
         </n-tag>
       </n-space>
@@ -116,12 +121,14 @@ const emit = defineEmits<{
   'view-terminal': [];
 }>();
 
-const priorityMap = computed((): Record<number, { label: string; type: 'default' | 'info' | 'warning' | 'error' }> => ({
-  0: { label: '', type: 'default' as const },
-  1: { label: t('task.priority.low'), type: 'info' as const },
-  2: { label: t('task.priority.medium'), type: 'warning' as const },
-  3: { label: t('task.priority.high'), type: 'error' as const },
-}));
+const priorityMap = computed(
+  (): Record<number, { label: string; type: 'default' | 'info' | 'warning' | 'error' }> => ({
+    0: { label: '', type: 'default' as const },
+    1: { label: t('task.priority.low'), type: 'info' as const },
+    2: { label: t('task.priority.medium'), type: 'warning' as const },
+    3: { label: t('task.priority.high'), type: 'error' as const },
+  })
+);
 
 const priorityType = computed(() => priorityMap.value[props.task.priority]?.type ?? 'default');
 const priorityLabel = computed(() => priorityMap.value[props.task.priority]?.label ?? '');

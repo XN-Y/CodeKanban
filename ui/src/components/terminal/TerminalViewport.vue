@@ -51,7 +51,8 @@ function getTerminalFontSize(baseFontSize: number): number {
 
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
-const { effectiveTerminalThemeId, terminalFont, terminalWebGLRenderer } = storeToRefs(settingsStore);
+const { effectiveTerminalThemeId, terminalFont, terminalWebGLRenderer } =
+  storeToRefs(settingsStore);
 
 const activeTerminalTheme = computed(() => {
   return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
@@ -119,23 +120,27 @@ watch(activeTerminalTheme, newTheme => {
 });
 
 // 监听终端字体设置变化，动态更新终端字体
-watch(terminalFont, newFont => {
-  if (terminal) {
-    const actualFontSize = getTerminalFontSize(newFont.fontSize);
-    terminal.options.fontFamily = newFont.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
-    terminal.options.fontSize = actualFontSize;
-    terminal.options.fontWeight = newFont.fontWeight;
-    terminal.options.fontWeightBold = newFont.fontWeightBold;
-    terminal.options.lineHeight = newFont.lineHeight;
-    terminal.options.letterSpacing = newFont.letterSpacing;
-    // 字体变化后需要重新 fit 以适应新的尺寸
-    if (fitAddon) {
-      setTimeout(() => {
-        handleResize();
-      }, 50);
+watch(
+  terminalFont,
+  newFont => {
+    if (terminal) {
+      const actualFontSize = getTerminalFontSize(newFont.fontSize);
+      terminal.options.fontFamily = newFont.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY;
+      terminal.options.fontSize = actualFontSize;
+      terminal.options.fontWeight = newFont.fontWeight;
+      terminal.options.fontWeightBold = newFont.fontWeightBold;
+      terminal.options.lineHeight = newFont.lineHeight;
+      terminal.options.letterSpacing = newFont.letterSpacing;
+      // 字体变化后需要重新 fit 以适应新的尺寸
+      if (fitAddon) {
+        setTimeout(() => {
+          handleResize();
+        }, 50);
+      }
     }
-  }
-}, { deep: true });
+  },
+  { deep: true }
+);
 
 const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
@@ -379,7 +384,10 @@ onMounted(() => {
     try {
       const webglAddon = new WebglAddon();
       terminal.loadAddon(webglAddon);
-      console.log('[Terminal] WebGL renderer loaded successfully', { webglMode, isMobile: props.isMobile });
+      console.log('[Terminal] WebGL renderer loaded successfully', {
+        webglMode,
+        isMobile: props.isMobile,
+      });
     } catch (error) {
       console.warn('[Terminal] WebGL renderer failed to load, using Canvas fallback', error);
     }

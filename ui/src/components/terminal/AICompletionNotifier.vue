@@ -83,7 +83,9 @@ function handleAIWorking(event: any) {
   if (notificationInstance) {
     notificationInstance.destroy();
     activeNotifications.delete(sessionId);
-    console.log(`[AICompletionNotifier] Cleared completion notification for session ${sessionId} (AI resumed work)`);
+    console.log(
+      `[AICompletionNotifier] Cleared completion notification for session ${sessionId} (AI resumed work)`
+    );
   }
 }
 
@@ -95,7 +97,9 @@ function handleTerminalViewed(event: any) {
   if (notificationInstance) {
     notificationInstance.destroy();
     activeNotifications.delete(sessionId);
-    console.log(`[AICompletionNotifier] Cleared notification for session ${sessionId} (user viewed terminal)`);
+    console.log(
+      `[AICompletionNotifier] Cleared notification for session ${sessionId} (user viewed terminal)`
+    );
   }
 }
 

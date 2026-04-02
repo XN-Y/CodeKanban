@@ -8,10 +8,18 @@
         <n-ellipsis class="branch-name">
           {{ branch.name }}
         </n-ellipsis>
-        <n-tag v-if="mode === 'remote'" size="small" :bordered="false">{{ t('branch.remote') }}</n-tag>
-        <n-tag v-if="isDefault" size="small" type="info" :bordered="false">{{ t('branch.default') }}</n-tag>
-        <n-tag v-if="branch.isCurrent" size="small" type="success" :bordered="false">{{ t('branch.current') }}</n-tag>
-        <n-tag v-if="branch.hasWorktree" size="small" type="warning" :bordered="false">Worktree</n-tag>
+        <n-tag v-if="mode === 'remote'" size="small" :bordered="false">{{
+          t('branch.remote')
+        }}</n-tag>
+        <n-tag v-if="isDefault" size="small" type="info" :bordered="false">{{
+          t('branch.default')
+        }}</n-tag>
+        <n-tag v-if="branch.isCurrent" size="small" type="success" :bordered="false">{{
+          t('branch.current')
+        }}</n-tag>
+        <n-tag v-if="branch.hasWorktree" size="small" type="warning" :bordered="false"
+          >Worktree</n-tag
+        >
       </n-space>
       <n-dropdown
         v-if="actionOptions.length"
@@ -42,10 +50,14 @@
         </template>
         <div class="branch-card__commit-popover">
           <span class="branch-card__commit-hash">{{ popoverHash || t('worktree.noCommit') }}</span>
-          <span v-if="popoverMessage" class="branch-card__commit-message">{{ popoverMessage }}</span>
+          <span v-if="popoverMessage" class="branch-card__commit-message">{{
+            popoverMessage
+          }}</span>
         </div>
       </n-popover>
-      <n-text v-else depth="3">{{ t('branch.latestCommit') }}: {{ t('worktree.noCommitInfo') }}</n-text>
+      <n-text v-else depth="3"
+        >{{ t('branch.latestCommit') }}: {{ t('worktree.noCommitInfo') }}</n-text
+      >
     </div>
   </div>
 </template>

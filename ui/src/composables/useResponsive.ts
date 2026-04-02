@@ -4,11 +4,11 @@ import { ref, computed, onMounted, onUnmounted } from 'vue';
  * 响应式断点定义 (与 Tailwind CSS 标准一致)
  */
 export const BREAKPOINTS = {
-  xs: 0,      // < 640px  小屏手机
-  sm: 640,    // 640-767  大屏手机
-  md: 768,    // 768-1023 平板竖屏
-  lg: 1024,   // 1024-1199 平板横屏/小桌面
-  xl: 1200,   // >= 1200  桌面
+  xs: 0, // < 640px  小屏手机
+  sm: 640, // 640-767  大屏手机
+  md: 768, // 768-1023 平板竖屏
+  lg: 1024, // 1024-1199 平板横屏/小桌面
+  xl: 1200, // >= 1200  桌面
 } as const;
 
 export type BreakpointKey = keyof typeof BREAKPOINTS;
@@ -33,14 +33,22 @@ export function useResponsive() {
 
   // 设备类型判断
   const isMobile = computed(() => windowWidth.value < BREAKPOINTS.md); // < 768px
-  const isTablet = computed(() => windowWidth.value >= BREAKPOINTS.md && windowWidth.value < BREAKPOINTS.lg); // 768-1023
+  const isTablet = computed(
+    () => windowWidth.value >= BREAKPOINTS.md && windowWidth.value < BREAKPOINTS.lg
+  ); // 768-1023
   const isDesktop = computed(() => windowWidth.value >= BREAKPOINTS.lg); // >= 1024
 
   // 更细粒度的断点判断
   const isXs = computed(() => windowWidth.value < BREAKPOINTS.sm);
-  const isSm = computed(() => windowWidth.value >= BREAKPOINTS.sm && windowWidth.value < BREAKPOINTS.md);
-  const isMd = computed(() => windowWidth.value >= BREAKPOINTS.md && windowWidth.value < BREAKPOINTS.lg);
-  const isLg = computed(() => windowWidth.value >= BREAKPOINTS.lg && windowWidth.value < BREAKPOINTS.xl);
+  const isSm = computed(
+    () => windowWidth.value >= BREAKPOINTS.sm && windowWidth.value < BREAKPOINTS.md
+  );
+  const isMd = computed(
+    () => windowWidth.value >= BREAKPOINTS.md && windowWidth.value < BREAKPOINTS.lg
+  );
+  const isLg = computed(
+    () => windowWidth.value >= BREAKPOINTS.lg && windowWidth.value < BREAKPOINTS.xl
+  );
   const isXl = computed(() => windowWidth.value >= BREAKPOINTS.xl);
 
   // 断点范围判断

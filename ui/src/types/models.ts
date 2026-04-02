@@ -134,7 +134,7 @@ export interface ProjectAISessions {
   hasCodex: boolean;
   claudeSessions: AISessionSummary[];
   codexSessions: AISessionSummary[];
-  claudeScanPhase?: ScanPhase;  // 扫描阶段：recent=24小时内, extended=1-15天, complete=完成
+  claudeScanPhase?: ScanPhase; // 扫描阶段：recent=24小时内, extended=1-15天, complete=完成
   codexScanPhase?: ScanPhase;
 }
 

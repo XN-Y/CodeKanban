@@ -136,7 +136,8 @@ const getInitialWidth = (): number => {
 
 const isCollapsed = ref(getInitialCollapsedState());
 const panelWidth = ref(getInitialWidth());
-const { zIndex: notepadPanelZIndex, bringToFront: bringNotepadToFront } = usePanelStack('notepad-panel');
+const { zIndex: notepadPanelZIndex, bringToFront: bringNotepadToFront } =
+  usePanelStack('notepad-panel');
 const notepadStyle = computed(() => ({
   width: `${panelWidth.value}px`,
   zIndex: notepadPanelZIndex.value,
@@ -166,7 +167,7 @@ const currentProjectId = computed(() => {
 });
 
 const activeTab = computed(() => {
-  return tabs.value.find((tab) => tab.id === activeTabId.value);
+  return tabs.value.find(tab => tab.id === activeTabId.value);
 });
 
 const setActiveTab = (tabId?: string | null) => {
@@ -184,7 +185,11 @@ const toggleCollapse = () => {
 const handlePanelPointerDown = () => {
   bringNotepadToFront();
 };
-const shortcutTooltip = computed(() => t('notepad.shortcutLabel', { shortcut: notepadShortcut.value.display || notepadShortcut.value.code }));
+const shortcutTooltip = computed(() =>
+  t('notepad.shortcutLabel', {
+    shortcut: notepadShortcut.value.display || notepadShortcut.value.code,
+  })
+);
 const shortcutCode = computed(() => notepadShortcut.value.code);
 
 if (typeof window !== 'undefined') {
@@ -195,7 +200,9 @@ if (typeof window !== 'undefined') {
     if (!isNotepadShortcut(event)) {
       return;
     }
-    const activeElement = (typeof document !== 'undefined' ? document.activeElement : null) as HTMLElement | null;
+    const activeElement = (
+      typeof document !== 'undefined' ? document.activeElement : null
+    ) as HTMLElement | null;
     if (isNotepadElement(activeElement) || isEditableElement(activeElement)) {
       return;
     }
@@ -272,7 +279,9 @@ const loadTabs = async () => {
     activeTabId.value = '';
 
     const projectId =
-      currentScope.value === 'project' && currentProjectId.value ? currentProjectId.value : undefined;
+      currentScope.value === 'project' && currentProjectId.value
+        ? currentProjectId.value
+        : undefined;
     const data = await notepadApi.list(projectId);
     tabs.value = [...data].sort((a, b) => a.orderIndex - b.orderIndex);
 
@@ -292,7 +301,9 @@ const loadTabs = async () => {
 const handleAddTab = async () => {
   try {
     const projectId =
-      currentScope.value === 'project' && currentProjectId.value ? currentProjectId.value : undefined;
+      currentScope.value === 'project' && currentProjectId.value
+        ? currentProjectId.value
+        : undefined;
     const createData: { projectId?: string; name: string; content: string } = {
       name: t('notepad.newTab'),
       content: '',
@@ -311,7 +322,7 @@ const handleAddTab = async () => {
 };
 
 const handleCloseTab = async (tabId: string) => {
-  const tabToClose = tabs.value.find((tab) => tab.id === tabId);
+  const tabToClose = tabs.value.find(tab => tab.id === tabId);
 
   // 检查标签是否有内容，如果有则弹窗确认
   if (tabToClose && tabToClose.content && tabToClose.content.trim() !== '') {
@@ -333,7 +344,7 @@ const handleCloseTab = async (tabId: string) => {
 const performCloseTab = async (tabId: string) => {
   try {
     await notepadApi.delete(tabId);
-    const index = tabs.value.findIndex((tab) => tab.id === tabId);
+    const index = tabs.value.findIndex(tab => tab.id === tabId);
     if (index > -1) {
       tabs.value.splice(index, 1);
     }
@@ -366,7 +377,7 @@ const handleRenameTab = (tab: NotePad) => {
       if (newName && newName !== tab.name) {
         try {
           const updated = await notepadApi.update(tab.id, { name: newName });
-          const index = tabs.value.findIndex((t) => t.id === tab.id);
+          const index = tabs.value.findIndex(t => t.id === tab.id);
           if (index > -1) {
             tabs.value[index] = updated;
           }
@@ -438,7 +449,7 @@ const handleTabDragEnd = async ({ oldIndex, newIndex }: DragEndEvent) => {
   movedTab.orderIndex = newOrderIndex;
   try {
     const updated = await notepadApi.move(movedTab.id, newOrderIndex);
-    const targetIndex = tabs.value.findIndex((tab) => tab.id === updated.id);
+    const targetIndex = tabs.value.findIndex(tab => tab.id === updated.id);
     if (targetIndex > -1) {
       tabs.value[targetIndex] = updated;
     }
@@ -477,18 +488,18 @@ watch(
     if (currentScope.value === 'project') {
       loadTabs();
     }
-  },
+  }
 );
 
 // 监听路由变化，回到项目列表页时自动折叠
 watch(
   () => route.name,
-  (newRouteName) => {
+  newRouteName => {
     if (newRouteName === 'projects') {
       isCollapsed.value = true;
       localStorage.setItem('notepad-collapsed', JSON.stringify(true));
     }
-  },
+  }
 );
 
 onMounted(() => {
@@ -543,7 +554,9 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background-color 0.2s, top 0.3s ease;
+  transition:
+    background-color 0.2s,
+    top 0.3s ease;
   box-shadow: -2px 0 4px var(--n-box-shadow-color, rgba(0, 0, 0, 0.05));
 }
 
@@ -609,13 +622,20 @@ onMounted(() => {
   color: var(--n-text-color-2, #333333);
   cursor: grab;
   user-select: none;
-  transition: border-color 0.2s, background-color 0.2s, color 0.2s;
+  transition:
+    border-color 0.2s,
+    background-color 0.2s,
+    color 0.2s;
 }
 
 .tab-item.active {
   border-color: var(--n-primary-color, #1890ff);
   color: var(--n-primary-color, #1890ff);
-  background: color-mix(in srgb, var(--n-primary-color, #1890ff) 8%, var(--app-surface-color, #ffffff));
+  background: color-mix(
+    in srgb,
+    var(--n-primary-color, #1890ff) 8%,
+    var(--app-surface-color, #ffffff)
+  );
 }
 
 .tab-item:active {

@@ -3,10 +3,10 @@
     <n-page-header @back="handleBack">
       <template #title>
         <n-space align="center" :wrap="false">
-          <n-icon size="24" style="display: flex;">
+          <n-icon size="24" style="display: flex">
             <SettingsOutline />
           </n-icon>
-          <span style="line-height: 24px;">{{ t('settings.title') }}</span>
+          <span style="line-height: 24px">{{ t('settings.title') }}</span>
         </n-space>
       </template>
       <template #extra>
@@ -30,7 +30,12 @@
         <n-form label-placement="left" label-width="160">
           <n-form-item :label="t('settings.recentProjectsLimit')">
             <n-space vertical size="small">
-              <n-input-number v-model:value="recentProjectsLimitValue" :min="1" :max="20" :step="1" />
+              <n-input-number
+                v-model:value="recentProjectsLimitValue"
+                :min="1"
+                :max="20"
+                :step="1"
+              />
               <span class="form-tip">{{ t('settings.recentProjectsLimitTip') }}</span>
             </n-space>
           </n-form-item>
@@ -68,7 +73,9 @@
               </n-input>
               <n-space>
                 <n-button size="small" @click="handleStartShortcutCapture('terminal')">
-                  {{ isCapturing('terminal') ? t('settings.recording') : t('settings.recordNewKey') }}
+                  {{
+                    isCapturing('terminal') ? t('settings.recording') : t('settings.recordNewKey')
+                  }}
                 </n-button>
                 <n-button
                   size="small"
@@ -98,7 +105,9 @@
               </n-input>
               <n-space>
                 <n-button size="small" @click="handleStartShortcutCapture('notepad')">
-                  {{ isCapturing('notepad') ? t('settings.recording') : t('settings.recordNewKey') }}
+                  {{
+                    isCapturing('notepad') ? t('settings.recording') : t('settings.recordNewKey')
+                  }}
                 </n-button>
                 <n-button
                   size="small"
@@ -149,7 +158,7 @@
                   v-model:value="customShellCommand"
                   :placeholder="t('settings.customShellPlaceholder')"
                   :status="customShellStatus"
-                  style="max-width: 320px; margin-top: 8px;"
+                  style="max-width: 320px; margin-top: 8px"
                   @blur="handleCustomShellBlur"
                 />
               </n-collapse-transition>
@@ -166,7 +175,10 @@
         <n-form label-placement="left" label-width="160">
           <n-form-item :label="t('settings.terminalQuickActionsList')">
             <n-space vertical size="small" style="width: 100%">
-              <n-dynamic-input v-model:value="terminalQuickActionsLocal" :on-create="createTerminalQuickAction">
+              <n-dynamic-input
+                v-model:value="terminalQuickActionsLocal"
+                :on-create="createTerminalQuickAction"
+              >
                 <template #default="{ value }">
                   <div class="terminal-quick-action-item">
                     <div class="terminal-quick-action-row terminal-quick-action-row-switches">
@@ -202,7 +214,11 @@
                           :value="option.value"
                           :title="option.label"
                         >
-                          <span v-if="'svg' in option && option.svg" class="terminal-quick-action-svg" v-html="option.svg"></span>
+                          <span
+                            v-if="'svg' in option && option.svg"
+                            class="terminal-quick-action-svg"
+                            v-html="option.svg"
+                          ></span>
                           <n-icon v-else :size="16">
                             <component :is="option.icon" />
                           </n-icon>
@@ -213,7 +229,11 @@
                 </template>
                 <template #action="{ index, remove, create }">
                   <n-button-group size="small">
-                    <n-button quaternary circle @click="handleRemoveTerminalQuickAction(index, remove)">
+                    <n-button
+                      quaternary
+                      circle
+                      @click="handleRemoveTerminalQuickAction(index, remove)"
+                    >
                       <template #icon>
                         <n-icon>
                           <Remove />
@@ -547,31 +567,59 @@
             <n-color-picker v-model:value="terminalTabBg" :modes="['hex']" :actions="['confirm']" />
           </n-form-item>
           <n-form-item :label="t('settings.terminalTabActiveBg')">
-            <n-color-picker v-model:value="terminalTabActiveBg" :modes="['hex']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalTabActiveBg"
+              :modes="['hex']"
+              :actions="['confirm']"
+            />
           </n-form-item>
 
           <n-divider style="margin: 16px 0">{{ t('theme.statusColors') }}</n-divider>
 
           <n-form-item :label="t('settings.terminalTabCompletionBg')">
-            <n-color-picker v-model:value="terminalTabCompletionBg" :modes="['hex', 'rgb']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalTabCompletionBg"
+              :modes="['hex', 'rgb']"
+              :actions="['confirm']"
+            />
           </n-form-item>
           <n-form-item :label="t('settings.terminalTabCompletionBorder')">
-            <n-color-picker v-model:value="terminalTabCompletionBorder" :modes="['hex', 'rgb']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalTabCompletionBorder"
+              :modes="['hex', 'rgb']"
+              :actions="['confirm']"
+            />
           </n-form-item>
           <n-form-item :label="t('settings.terminalTabApprovalBg')">
-            <n-color-picker v-model:value="terminalTabApprovalBg" :modes="['hex', 'rgb']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalTabApprovalBg"
+              :modes="['hex', 'rgb']"
+              :actions="['confirm']"
+            />
           </n-form-item>
           <n-form-item :label="t('settings.terminalTabApprovalBorder')">
-            <n-color-picker v-model:value="terminalTabApprovalBorder" :modes="['hex', 'rgb']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalTabApprovalBorder"
+              :modes="['hex', 'rgb']"
+              :actions="['confirm']"
+            />
           </n-form-item>
 
           <n-divider style="margin: 16px 0">{{ t('theme.floatingButtonColors') }}</n-divider>
 
           <n-form-item :label="t('settings.terminalFloatingButtonBg')">
-            <n-color-picker v-model:value="terminalFloatingButtonBg" :modes="['hex']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalFloatingButtonBg"
+              :modes="['hex']"
+              :actions="['confirm']"
+            />
           </n-form-item>
           <n-form-item :label="t('settings.terminalFloatingButtonFg')">
-            <n-color-picker v-model:value="terminalFloatingButtonFg" :modes="['hex']" :actions="['confirm']" />
+            <n-color-picker
+              v-model:value="terminalFloatingButtonFg"
+              :modes="['hex']"
+              :actions="['confirm']"
+            />
           </n-form-item>
         </n-form>
       </n-card>
@@ -643,7 +691,13 @@ import {
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
-import { lightenColor, darkenColor, ensureHexWithHash, isDarkHex, getReadableTextColor } from '@/utils/color';
+import {
+  lightenColor,
+  darkenColor,
+  ensureHexWithHash,
+  isDarkHex,
+  getReadableTextColor,
+} from '@/utils/color';
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
@@ -729,12 +783,12 @@ const aiStatusDirty = computed(() => {
   );
 });
 
-const { send: fetchAIStatus, loading: aiStatusLoading } = useReq(
-  () => Apis.system.aiAssistantStatusGet()
+const { send: fetchAIStatus, loading: aiStatusLoading } = useReq(() =>
+  Apis.system.aiAssistantStatusGet()
 );
 
-const { send: updateAIStatus, loading: saveLoading } = useReq(
-  (config: AIAssistantStatusConfig) => Apis.system.aiAssistantStatusUpdate({ data: config })
+const { send: updateAIStatus, loading: saveLoading } = useReq((config: AIAssistantStatusConfig) =>
+  Apis.system.aiAssistantStatusUpdate({ data: config })
 );
 
 const developerForm = reactive<DeveloperConfig>({
@@ -748,14 +802,15 @@ const developerDirty = computed(() => {
     return false;
   }
   return (
-    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback
-    || developerForm.renameSessionTitleEachCommand !== developerOriginal.value.renameSessionTitleEachCommand
-    || developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork
+    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback ||
+    developerForm.renameSessionTitleEachCommand !==
+      developerOriginal.value.renameSessionTitleEachCommand ||
+    developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork
   );
 });
 
-const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(
-  () => http.Get<ItemResponse<DeveloperConfig>>('/system/developer-config')
+const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(() =>
+  http.Get<ItemResponse<DeveloperConfig>>('/system/developer-config')
 );
 
 const { send: updateDeveloperConfig, loading: developerSaving } = useReq(
@@ -915,16 +970,16 @@ const selectedShellId = ref<string>(SHELL_AUTO_VALUE);
 const customShellCommand = ref('');
 const customShellValid = ref(true);
 
-const { send: fetchShells, loading: shellsLoading } = useReq(
-  () => http.Get<ItemResponse<AvailableShellsResponse>>('/system/terminal-shells')
+const { send: fetchShells, loading: shellsLoading } = useReq(() =>
+  http.Get<ItemResponse<AvailableShellsResponse>>('/system/terminal-shells')
 );
 
-const { send: updateShell } = useReq(
-  (shell: string) => http.Post('/system/terminal-shells/update', { shell })
+const { send: updateShell } = useReq((shell: string) =>
+  http.Post('/system/terminal-shells/update', { shell })
 );
 
-const { send: validateShell } = useReq(
-  (shell: string) => http.Post<{ valid: boolean; message?: string }>('/system/terminal-shells/validate', { shell })
+const { send: validateShell } = useReq((shell: string) =>
+  http.Post<{ valid: boolean; message?: string }>('/system/terminal-shells/validate', { shell })
 );
 
 async function loadShellsConfig() {
@@ -1009,10 +1064,14 @@ const customShellStatus = computed(() => {
 const platformDisplayName = computed(() => {
   const platform = shellsData.value?.platform;
   switch (platform) {
-    case 'windows': return 'Windows';
-    case 'darwin': return 'macOS';
-    case 'linux': return 'Linux';
-    default: return platform || '';
+    case 'windows':
+      return 'Windows';
+    case 'darwin':
+      return 'macOS';
+    case 'linux':
+      return 'Linux';
+    default:
+      return platform || '';
   }
 });
 
@@ -1135,14 +1194,18 @@ const terminalTabActiveBg = computed({
 const terminalTabCompletionBg = computed({
   get: () => theme.value.terminalTabCompletionBg || 'rgba(16, 185, 129, 0.25)',
   set: value => {
-    settingsStore.applyCustomTheme({ terminalTabCompletionBg: value || 'rgba(16, 185, 129, 0.25)' });
+    settingsStore.applyCustomTheme({
+      terminalTabCompletionBg: value || 'rgba(16, 185, 129, 0.25)',
+    });
   },
 });
 
 const terminalTabCompletionBorder = computed({
   get: () => theme.value.terminalTabCompletionBorder || 'rgba(16, 185, 129, 0.5)',
   set: value => {
-    settingsStore.applyCustomTheme({ terminalTabCompletionBorder: value || 'rgba(16, 185, 129, 0.5)' });
+    settingsStore.applyCustomTheme({
+      terminalTabCompletionBorder: value || 'rgba(16, 185, 129, 0.5)',
+    });
   },
 });
 
@@ -1156,7 +1219,9 @@ const terminalTabApprovalBg = computed({
 const terminalTabApprovalBorder = computed({
   get: () => theme.value.terminalTabApprovalBorder || 'rgba(247, 144, 9, 0.5)',
   set: value => {
-    settingsStore.applyCustomTheme({ terminalTabApprovalBorder: value || 'rgba(247, 144, 9, 0.5)' });
+    settingsStore.applyCustomTheme({
+      terminalTabApprovalBorder: value || 'rgba(247, 144, 9, 0.5)',
+    });
   },
 });
 
@@ -1178,9 +1243,7 @@ const previewPanelStyle = computed(() => {
   const primaryHex = ensureHexWithHash(primaryColor.value || '#3B69A9', '#3B69A9');
   const surfaceHex = ensureHexWithHash(surfaceColor.value || '#ffffff', '#ffffff');
   const surfaceIsDark = isDarkHex(surfaceHex);
-  const contentBg = surfaceIsDark
-    ? lightenColor(surfaceHex, 0.08)
-    : darkenColor(surfaceHex, 0.04);
+  const contentBg = surfaceIsDark ? lightenColor(surfaceHex, 0.08) : darkenColor(surfaceHex, 0.04);
   return {
     '--preview-panel-bg': surfaceHex,
     '--preview-banner-bg': primaryHex,
@@ -1216,7 +1279,7 @@ const debouncedUpdateRecentProjectsLimit = useDebounceFn((value: number) => {
 
 const recentProjectsLimitValue = computed({
   get: () => recentProjectsLimitLocal.value,
-  set: (value) => {
+  set: value => {
     recentProjectsLimitLocal.value = value ?? 10;
     debouncedUpdateRecentProjectsLimit(value ?? 10);
   },
@@ -1230,7 +1293,7 @@ const debouncedUpdateTerminalLimit = useDebounceFn((value: number) => {
 
 const terminalLimitValue = computed({
   get: () => terminalLimitLocal.value,
-  set: (value) => {
+  set: value => {
     terminalLimitLocal.value = value ?? 12;
     debouncedUpdateTerminalLimit(value ?? 12);
   },
@@ -1253,17 +1316,42 @@ function normalizeSvgSize(svg: string, sizePx: number) {
 }
 
 const terminalQuickActionIconButtons = computed(() => {
-  const agentOptions: { label: string; value: TerminalQuickActionIcon; svg?: string; icon?: any }[] = [
-    { label: t('settings.terminalQuickActionIconClaude'), value: 'claude', svg: normalizeSvgSize(getAssistantIconByType('claude-code'), 16) },
-    { label: t('settings.terminalQuickActionIconCodex'), value: 'codex', svg: normalizeSvgSize(getAssistantIconByType('codex'), 16) },
-    { label: t('settings.terminalQuickActionIconQwen'), value: 'qwen', svg: normalizeSvgSize(getAssistantIconByType('qwen-code'), 16) },
-    { label: t('settings.terminalQuickActionIconGemini'), value: 'gemini', svg: normalizeSvgSize(getAssistantIconByType('gemini'), 16) },
+  const agentOptions: {
+    label: string;
+    value: TerminalQuickActionIcon;
+    svg?: string;
+    icon?: any;
+  }[] = [
+    {
+      label: t('settings.terminalQuickActionIconClaude'),
+      value: 'claude',
+      svg: normalizeSvgSize(getAssistantIconByType('claude-code'), 16),
+    },
+    {
+      label: t('settings.terminalQuickActionIconCodex'),
+      value: 'codex',
+      svg: normalizeSvgSize(getAssistantIconByType('codex'), 16),
+    },
+    {
+      label: t('settings.terminalQuickActionIconQwen'),
+      value: 'qwen',
+      svg: normalizeSvgSize(getAssistantIconByType('qwen-code'), 16),
+    },
+    {
+      label: t('settings.terminalQuickActionIconGemini'),
+      value: 'gemini',
+      svg: normalizeSvgSize(getAssistantIconByType('gemini'), 16),
+    },
     { label: t('settings.terminalQuickActionIconCursor'), value: 'cursor', icon: NavigateOutline },
     { label: t('settings.terminalQuickActionIconCopilot'), value: 'copilot', icon: LogoGithub },
   ];
 
   const genericOptions: { label: string; value: TerminalQuickActionIcon; icon: any }[] = [
-    { label: t('settings.terminalQuickActionIconTerminal'), value: 'terminal', icon: TerminalOutline },
+    {
+      label: t('settings.terminalQuickActionIconTerminal'),
+      value: 'terminal',
+      icon: TerminalOutline,
+    },
     { label: t('settings.terminalQuickActionIconChat'), value: 'chat', icon: ChatbubblesOutline },
     { label: t('settings.terminalQuickActionIconCode'), value: 'code', icon: CodeOutline },
     { label: t('settings.terminalQuickActionIconRocket'), value: 'rocket', icon: RocketOutline },
@@ -1274,7 +1362,9 @@ const terminalQuickActionIconButtons = computed(() => {
   return options;
 });
 
-const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(terminalQuickActions.value.map(item => ({ ...item })));
+const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(
+  terminalQuickActions.value.map(item => ({ ...item }))
+);
 let syncingTerminalQuickActions = false;
 const debouncedUpdateTerminalQuickActions = useDebounceFn((actions: TerminalQuickAction[]) => {
   settingsStore.updateTerminalQuickActions(actions);
@@ -1289,7 +1379,7 @@ watch(
       syncingTerminalQuickActions = false;
     }, 0);
   },
-  { deep: true },
+  { deep: true }
 );
 
 watch(
@@ -1300,7 +1390,7 @@ watch(
     }
     debouncedUpdateTerminalQuickActions(next.map(item => ({ ...item })));
   },
-  { deep: true },
+  { deep: true }
 );
 
 function createTerminalQuickAction(): TerminalQuickAction {
@@ -1406,13 +1496,17 @@ function handleResetFontFamily() {
 }
 
 const terminalShortcutValue = computed(
-  () => terminalShortcut.value.display || terminalShortcut.value.code,
+  () => terminalShortcut.value.display || terminalShortcut.value.code
 );
-const notepadShortcutValue = computed(() => notepadShortcut.value.display || notepadShortcut.value.code);
+const notepadShortcutValue = computed(
+  () => notepadShortcut.value.display || notepadShortcut.value.code
+);
 const isTerminalShortcutDefault = computed(
-  () => terminalShortcut.value.code === DEFAULT_TERMINAL_SHORTCUT.code,
+  () => terminalShortcut.value.code === DEFAULT_TERMINAL_SHORTCUT.code
 );
-const isNotepadShortcutDefault = computed(() => notepadShortcut.value.code === DEFAULT_NOTEPAD_SHORTCUT.code);
+const isNotepadShortcutDefault = computed(
+  () => notepadShortcut.value.code === DEFAULT_NOTEPAD_SHORTCUT.code
+);
 
 function handleBack() {
   router.back();

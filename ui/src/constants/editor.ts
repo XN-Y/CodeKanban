@@ -15,7 +15,7 @@ export const EDITOR_LABEL_MAP: Record<EditorPreference, string> = EDITOR_OPTIONS
     acc[option.value] = option.label;
     return acc;
   },
-  {} as Record<EditorPreference, string>,
+  {} as Record<EditorPreference, string>
 );
 
 const EDITOR_VALUE_SET = new Set<EditorPreference>(EDITOR_OPTIONS.map(option => option.value));

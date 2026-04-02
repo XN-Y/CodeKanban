@@ -12,7 +12,12 @@
           <n-icon><FolderOutline /></n-icon>
         </template>
       </n-input>
-      <n-button size="small" :disabled="!parentPath" @click="loadDirectory(parentPath)" style="padding: 0 8px;">
+      <n-button
+        size="small"
+        :disabled="!parentPath"
+        @click="loadDirectory(parentPath)"
+        style="padding: 0 8px"
+      >
         <n-icon><ArrowUpOutline /></n-icon>
       </n-button>
       <n-button size="small" @click="navigateToPath" :disabled="!inputPath">
@@ -70,7 +75,10 @@
         </div>
 
         <!-- 空状态 -->
-        <div v-if="!loading && directories.length === 0 && currentPath && !searchQuery" class="empty-state">
+        <div
+          v-if="!loading && directories.length === 0 && currentPath && !searchQuery"
+          class="empty-state"
+        >
           {{ t('common.noSubdirectories') }}
         </div>
 
@@ -92,7 +100,12 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import { useMessage } from 'naive-ui';
-import { FolderOutline, ArrowUpOutline, ChevronForwardOutline, SearchOutline } from '@vicons/ionicons5';
+import {
+  FolderOutline,
+  ArrowUpOutline,
+  ChevronForwardOutline,
+  SearchOutline,
+} from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 
@@ -180,11 +193,15 @@ function navigateToPath() {
 }
 
 // 监听 initialPath 变化
-watch(() => props.initialPath, (newPath) => {
-  if (newPath) {
-    loadDirectory(newPath);
-  }
-}, { immediate: true });
+watch(
+  () => props.initialPath,
+  newPath => {
+    if (newPath) {
+      loadDirectory(newPath);
+    }
+  },
+  { immediate: true }
+);
 
 // 暴露方法供外部调用
 defineExpose({

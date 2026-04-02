@@ -45,7 +45,8 @@ export default {
     home: 'Home',
     visitProject: 'Visit Project',
     visitProjectConfirm: 'Would you like to visit the CodeKanban project page?',
-    visitProjectMessage: 'If you find this project helpful, please give us a Star ⭐ on GitHub! Your support motivates us to keep improving. Sponsorship is also welcome to help sustain the project.',
+    visitProjectMessage:
+      'If you find this project helpful, please give us a Star ⭐ on GitHub! Your support motivates us to keep improving. Sponsorship is also welcome to help sustain the project.',
     visitNow: 'Visit Now',
     kanban: 'Kanban',
     terminal: 'Terminal',
@@ -67,12 +68,14 @@ export default {
     deleteConfirm: 'Are you sure you want to delete this project',
     openProject: 'Open Project',
     hidePath: 'Hide Path',
-    hidePathHint: 'When enabled, absolute paths will no longer be displayed in the project list and sidebar.',
+    hidePathHint:
+      'When enabled, absolute paths will no longer be displayed in the project list and sidebar.',
     terminalCount: 'Terminal Count',
     noProjects: 'No projects yet, click the top right corner to create one',
     projectDirectory: 'Project Directory',
     pathPlaceholder: 'Select or enter local project directory, e.g., C:\\Projects\\demo',
-    pathHint: 'You can select any local folder; if there is no .git in the directory, branch and Worktree features will not be available.',
+    pathHint:
+      'You can select any local folder; if there is no .git in the directory, branch and Worktree features will not be available.',
     namePlaceholder: 'Enter project name',
     descriptionPlaceholder: 'Enter project description (optional)',
     selectProjectFirst: 'Please select a project first',
@@ -86,7 +89,8 @@ export default {
     ascending: 'Ascending',
     descending: 'Descending',
     respectPriority: 'Respect Priority',
-    respectPriorityHint: 'When checked, projects with priority settings will always appear first (higher priority on top)',
+    respectPriorityHint:
+      'When checked, projects with priority settings will always appear first (higher priority on top)',
     pinProject: 'Pin Project',
     unpinProject: 'Unpin',
     setPriority: 'Set Priority',
@@ -98,7 +102,8 @@ export default {
     removeFromRecent: 'Remove from Recent',
     priorityLevel: 'Priority {level}',
     closeAllTerminals: 'Close All Terminals',
-    closeAllTerminalsConfirm: 'Are you sure you want to close all {count} terminals for project "{name}"?',
+    closeAllTerminalsConfirm:
+      'Are you sure you want to close all {count} terminals for project "{name}"?',
   },
   branch: {
     title: 'Branch Management',
@@ -212,6 +217,18 @@ export default {
     copyNotSupported: 'Copy not supported in current environment',
     taskNameCopied: 'Task name copied',
     copyTaskNameFailed: 'Failed to copy task name',
+    archiveDialogTitle: 'Archive completed tasks',
+    archiveDialogHint:
+      'Summarize tasks in the "Done" column, copy them, then select items to archive.',
+    archiveCopy: 'Copy summary',
+    archiveCopied: 'Summary copied',
+    archiveCopyFailed: 'Failed to copy summary',
+    archiveSelectAll: 'Select all',
+    archiveSelectRequired: 'Please select tasks to archive',
+    archiveAction: 'Archive selected',
+    archiveSuccess: 'Archived {count} task(s)',
+    archivePartialFailed: 'Failed to archive {count} task(s), please retry',
+    archiveEmptyHint: 'No completed tasks to archive',
     noAvailableWorktree: 'No available worktree branch found',
     terminalCreatedAndTaskUpdated: 'Terminal created and task status updated',
     startWorkFailed: 'Failed to start work',
@@ -272,6 +289,7 @@ export default {
       inProgress: 'In Progress',
       review: 'Review',
       done: 'Done',
+      archived: 'Archived',
     },
     priority: {
       normal: 'Normal',
@@ -295,7 +313,8 @@ export default {
     refreshStatus: 'Refresh Status',
     noWorktrees: 'No Worktrees',
     featureUnavailable: 'Worktree Feature Unavailable',
-    notGitRepo: 'The current project directory is not a Git repository, unable to create or refresh Worktrees; other features like tasks are still available.',
+    notGitRepo:
+      'The current project directory is not a Git repository, unable to create or refresh Worktrees; other features like tasks are still available.',
     openInEditor: 'Open in Editor',
     openInExplorer: 'Open in Explorer',
     openInExplorer2: 'Open File Manager',
@@ -318,14 +337,16 @@ export default {
     deleting: 'Deleting...',
     createFailed: 'Failed to create',
     // Refresh messages
-    notGitRepoCannotRefresh: 'Current project is not a Git repository, cannot refresh Worktree status',
+    notGitRepoCannotRefresh:
+      'Current project is not a Git repository, cannot refresh Worktree status',
     allWorktreesRefreshed: 'All Worktree statuses refreshed',
     statusRefreshed: 'Status refreshed',
     // Delete messages
     confirmDeleteTitle: 'Confirm Delete',
     confirmDeleteContent: 'Are you sure you want to delete worktree "{name}"?',
     forceDeleteTitle: 'Force Delete Worktree?',
-    forceDeleteContent: 'Detected uncommitted or untracked files in this worktree. Force deleting will discard all changes. Continue?',
+    forceDeleteContent:
+      'Detected uncommitted or untracked files in this worktree. Force deleting will discard all changes. Continue?',
     forceDelete: 'Force Delete',
     worktreeDeleted: 'Worktree deleted',
     deleteFailed: 'Failed to delete',
@@ -339,7 +360,8 @@ export default {
     // Branch operation messages
     branchOperation: 'Branch Operation',
     noUpstreamBranch: 'No upstream branch available, please create one in branch management first',
-    noTargetWorktree: 'No target Worktree available, please create a Worktree for the corresponding branch first',
+    noTargetWorktree:
+      'No target Worktree available, please create a Worktree for the corresponding branch first',
     mergeDescription: 'Will merge "{source}" to branch {target} using {strategy} strategy.',
     targetWorktreeNotFound: 'Target Worktree for branch not found',
     // Commit messages
@@ -355,11 +377,15 @@ export default {
     actionDisabledGeneric: 'This action is currently unavailable for the selected Worktree.',
     rebaseDisabledNoDefault: 'Configure a default branch for the project before running Rebase.',
     rebaseDisabledOnDefault: 'You are already on the default branch, rebase is unnecessary.',
-    rebaseDisabledDirty: 'Rebase requires a clean working tree. Commit or stash tracked changes first.',
-    mergeDisabledNoMainWorktree: 'The main Worktree is missing. Refresh Worktrees to sync it before merging.',
-    mergeDisabledOnDefault: 'The default branch cannot be used as the source branch for this merge.',
+    rebaseDisabledDirty:
+      'Rebase requires a clean working tree. Commit or stash tracked changes first.',
+    mergeDisabledNoMainWorktree:
+      'The main Worktree is missing. Refresh Worktrees to sync it before merging.',
+    mergeDisabledOnDefault:
+      'The default branch cannot be used as the source branch for this merge.',
     mergeDisabledDirty: 'Please commit or stash tracked changes before merging.',
-    commitDisabledGit: 'Git features are unavailable until the main Worktree is detected for this project.',
+    commitDisabledGit:
+      'Git features are unavailable until the main Worktree is detected for this project.',
     commitDisabledClean: 'There are no changes to commit in this Worktree.',
   },
   terminal: {
@@ -409,11 +435,14 @@ export default {
     confirmCloseTitle: 'Confirm Close Terminal',
     confirmCloseContent: 'Are you sure you want to close "{title}"?',
     confirmCloseButton: 'Confirm Close',
+    confirmCloseCompleteTask: 'Mark linked task as done',
+    completeLinkedTaskFailed: 'Failed to update linked task status',
     terminalClosed: 'Terminal closed',
     closeFailed: 'Failed to close terminal',
     duplicateSuccess: 'Tab duplicated',
     duplicateFailed: 'Failed to duplicate',
-    limitReached: 'Terminal limit reached for current project ({limit}), can be adjusted in global settings.',
+    limitReached:
+      'Terminal limit reached for current project ({limit}), can be adjusted in global settings.',
     renameTitle: 'Rename Tab',
     renamePlaceholder: 'Enter new tab name',
     save: 'Save',
@@ -583,17 +612,21 @@ export default {
     recentProjectsLimit: 'Recent Projects Limit',
     recentProjectsLimitTip: 'Control the number of recent projects displayed',
     terminalLimit: 'Terminal Limit Per Project',
-    terminalLimitTip: 'Limit the number of terminal tabs that can be opened simultaneously per project',
+    terminalLimitTip:
+      'Limit the number of terminal tabs that can be opened simultaneously per project',
     confirmTerminalClose: 'Confirm Terminal Close',
-    confirmTerminalCloseTip: 'Show confirmation dialog before closing terminal to avoid accidental closures',
+    confirmTerminalCloseTip:
+      'Show confirmation dialog before closing terminal to avoid accidental closures',
     sendResizeOnSwitch: 'Send resize on terminal switch',
-    sendResizeOnSwitchTip: 'Send resize command when switching to a terminal, helps retrieve more complete terminal history',
+    sendResizeOnSwitchTip:
+      'Send resize command when switching to a terminal, helps retrieve more complete terminal history',
     terminalQuickActions: 'Terminal Quick Actions',
     terminalQuickActionsList: 'Actions',
     terminalQuickActionStackLabel: 'Stack into unified button',
     terminalQuickActionStackTip: 'Stack into unified quick button; unchecked actions stay outside',
     terminalQuickActionRemoveConfirm: 'Remove this quick action?',
-    terminalQuickActionsTip: 'Clicking an action creates a new terminal on the current branch and runs the command',
+    terminalQuickActionsTip:
+      'Clicking an action creates a new terminal on the current branch and runs the command',
     terminalQuickActionNamePlaceholder: 'Name',
     terminalQuickActionCommandPlaceholder: 'Command (e.g. codex)',
     terminalQuickActionIcon: 'Icon',
@@ -614,7 +647,8 @@ export default {
     terminalFontDefault: 'Recommended',
     terminalFontFamily: 'Font Family',
     terminalFontFamilyPlaceholder: 'Select or enter font name',
-    terminalFontFamilyTip: 'Recommended uses Cascadia Mono, JetBrains Mono, etc. with CJK font fallback',
+    terminalFontFamilyTip:
+      'Recommended uses Cascadia Mono, JetBrains Mono, etc. with CJK font fallback',
     terminalFontCustomHint: 'Type to enter custom font',
     terminalFontSize: 'Font Size',
     terminalFontSizeTip: 'Terminal font size, range 8-32 pixels',
@@ -628,9 +662,12 @@ export default {
     webglAuto: 'Auto',
     webglForce: 'Force Enable',
     webglDisable: 'Force Disable',
-    webglAutoTip: 'Auto mode: Uses WebGL on desktop for better performance, Canvas on mobile for proper font rendering',
-    webglForceTip: 'Force WebGL renderer. Better performance but may cause blurry fonts or scaling issues on some devices (especially high-DPI mobile)',
-    webglDisableTip: 'Force disable WebGL renderer, use Canvas instead. Better compatibility but slightly lower performance',
+    webglAutoTip:
+      'Auto mode: Uses WebGL on desktop for better performance, Canvas on mobile for proper font rendering',
+    webglForceTip:
+      'Force WebGL renderer. Better performance but may cause blurry fonts or scaling issues on some devices (especially high-DPI mobile)',
+    webglDisableTip:
+      'Force disable WebGL renderer, use Canvas instead. Better compatibility but slightly lower performance',
     terminalShortcut: 'Terminal Shortcut',
     terminalShortcutTip: 'Used to expand/collapse the bottom terminal panel, default `',
     notepadShortcut: 'Notepad Shortcut',
@@ -638,7 +675,8 @@ export default {
     defaultEditor: 'Default Editor',
     defaultEditorTip: 'Used for "Open in Editor" action on Worktree cards',
     customCommand: 'Custom Command',
-    customCommandTip: 'Use {{path}} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
+    customCommandTip:
+      'Use {{path}} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
     customCommandPlaceholder: 'For example: code --reuse-window {{path}}',
     recordNewKey: 'Record New Key',
     recording: 'Recording...',
@@ -656,7 +694,8 @@ export default {
     keyNotSupported: 'This key is not supported, please choose another key',
     // AI Coding Agent Status Tracking
     aiAssistantStatusTracking: 'AI Coding Agent Status Tracking (Beta)',
-    aiAssistantStatusTrackingTip: 'Control whether to track AI coding agent working status (thinking, executing, waiting for input, etc.)',
+    aiAssistantStatusTrackingTip:
+      'Control whether to track AI coding agent working status (thinking, executing, waiting for input, etc.)',
     aiAssistantClaudeCode: 'Claude Code',
     aiAssistantCodex: 'OpenAI Codex',
     aiAssistantQwenCode: 'Qwen Code',
@@ -675,19 +714,24 @@ export default {
     aiStatusRestartNotice: 'New settings will take effect for newly created terminals',
     developerOptions: 'Developer Options',
     developerScrollback: 'Terminal Output Recording',
-    developerScrollbackTip: 'When disabled, the server stops caching PTY output to help debug stalls and reduce memory usage (default off, applies to all terminals immediately after saving).',
+    developerScrollbackTip:
+      'When disabled, the server stops caching PTY output to help debug stalls and reduce memory usage (default off, applies to all terminals immediately after saving).',
     renameSessionTitleEachCommand: 'Auto-update tab title on every instruction',
-    renameSessionTitleEachCommandTip: 'When enabled, each captured AI command refreshes the terminal title; when disabled, only the first captured command updates the title.',
+    renameSessionTitleEachCommandTip:
+      'When enabled, each captured AI command refreshes the terminal title; when disabled, only the first captured command updates the title.',
     autoCreateTaskOnStartWork: 'Auto-create task when work starts',
-    autoCreateTaskOnStartWorkTip: 'Code Agents automatically create and link a task the first time work starts so their output is tracked even without a pre-selected task.',
+    autoCreateTaskOnStartWorkTip:
+      'Code Agents automatically create and link a task the first time work starts so their output is tracked even without a pre-selected task.',
     // Terminal Shell Settings
     terminalShell: 'Default Terminal',
-    terminalShellTip: 'Select the shell to use when creating new terminals. Changes apply to new terminals only.',
+    terminalShellTip:
+      'Select the shell to use when creating new terminals. Changes apply to new terminals only.',
     shellAuto: 'Auto (Recommended)',
     shellCustom: 'Custom...',
     shellNotInstalled: 'Not installed',
     shellInvalid: 'Invalid shell command',
-    gitbash_ai_detection_warning: 'AI Agent detection unavailable: child processes detach from parent in Git Bash',
+    gitbash_ai_detection_warning:
+      'AI Agent detection unavailable: child processes detach from parent in Git Bash',
     shellSaveSuccess: 'Terminal settings saved. New terminals will use the selected shell.',
     customShellPlaceholder: 'Enter custom shell command, e.g.: pwsh.exe -NoLogo',
     currentPlatform: 'Current platform',
@@ -699,7 +743,8 @@ export default {
     warm: 'Warm',
     presetTheme: 'Preset Theme',
     followSystem: 'Follow System Theme',
-    followSystemHint: 'When enabled, theme will automatically switch based on system dark/light mode',
+    followSystemHint:
+      'When enabled, theme will automatically switch based on system dark/light mode',
     customTheme: 'Custom Theme',
     customThemeHint: 'Customizing colors will override preset theme settings',
     terminalColors: 'Terminal Colors',

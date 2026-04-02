@@ -50,7 +50,7 @@
       {{ t('worktree.notGitRepo') }}
     </n-alert>
 
-    <n-scrollbar style="max-height: calc(100vh - 80px)">
+    <n-scrollbar class="worktree-scrollbar">
       <div v-if="projectStore.worktrees.length" class="worktree-items">
         <WorktreeCard
           v-for="worktree in projectStore.worktrees"
@@ -103,7 +103,11 @@
             :placeholder="t('worktree.selectBranch')"
           />
           <n-alert v-else type="warning" show-icon>
-            {{ branchOperation.type === 'merge' ? t('worktree.noTargetWorktree') : t('worktree.noUpstreamBranch') }}
+            {{
+              branchOperation.type === 'merge'
+                ? t('worktree.noTargetWorktree')
+                : t('worktree.noUpstreamBranch')
+            }}
           </n-alert>
         </div>
         <div v-if="branchOperation.type === 'merge'">
@@ -115,7 +119,9 @@
         <div v-if="showSquashCommitOptions">
           <n-space vertical size="small">
             <n-space align="center">
-              <n-checkbox v-model:checked="branchOperation.commitImmediately">{{ t('branch.commitImmediately') }}</n-checkbox>
+              <n-checkbox v-model:checked="branchOperation.commitImmediately">{{
+                t('branch.commitImmediately')
+              }}</n-checkbox>
               <n-text depth="3">{{ t('branch.commitImmediatelyHint') }}</n-text>
             </n-space>
             <n-input
@@ -129,7 +135,9 @@
         </div>
       </n-space>
       <template #action>
-        <n-button @click="closeBranchOperation" :disabled="branchOperationLoading">{{ t('common.cancel') }}</n-button>
+        <n-button @click="closeBranchOperation" :disabled="branchOperationLoading">{{
+          t('common.cancel')
+        }}</n-button>
         <n-button
           type="primary"
           :loading="branchOperationLoading"
@@ -159,7 +167,9 @@
         />
       </n-space>
       <template #action>
-        <n-button @click="closeCommitDialog" :disabled="commitWorktreeReq.loading.value">{{ t('common.cancel') }}</n-button>
+        <n-button @click="closeCommitDialog" :disabled="commitWorktreeReq.loading.value">{{
+          t('common.cancel')
+        }}</n-button>
         <n-button
           type="primary"
           :loading="commitWorktreeReq.loading.value"
@@ -204,34 +214,36 @@ const { editorSettings } = storeToRefs(settingsStore);
 const { t } = useLocale();
 
 const defaultEditorPreference = computed<EditorPreference>(
-  () => editorSettings.value.defaultEditor ?? DEFAULT_EDITOR,
+  () => editorSettings.value.defaultEditor ?? DEFAULT_EDITOR
 );
 const customEditorCommand = computed(() => editorSettings.value.customCommand?.trim() ?? '');
 const worktreeEditorOptions = computed(() =>
   EDITOR_OPTIONS.map(option => ({
     ...option,
     disabled: option.value === 'custom' && !customEditorCommand.value,
-  })),
+  }))
 );
 
 const showCreateDialog = ref(false);
 
 // 刷新所有 worktree 状态
-const refreshAllWorktreesReq = useReq(
-  (projectId: string) => Apis.worktree.refreshAllByProject({
-    pathParams: { projectId }
+const refreshAllWorktreesReq = useReq((projectId: string) =>
+  Apis.worktree.refreshAllByProject({
+    pathParams: { projectId },
   })
 );
 
 // 刷新单个 worktree 状态
-const refreshWorktreeStatusReq = useReq(
-  (worktreeId: string) => Apis.worktree.refreshStatus({
-    pathParams: { id: worktreeId }
+const refreshWorktreeStatusReq = useReq((worktreeId: string) =>
+  Apis.worktree.refreshStatus({
+    pathParams: { id: worktreeId },
   })
 );
 
 const defaultBranch = computed(() => projectStore.currentProject?.defaultBranch ?? '');
-const mainWorktree = computed(() => projectStore.worktrees.find(worktree => worktree.isMain) ?? null);
+const mainWorktree = computed(
+  () => projectStore.worktrees.find(worktree => worktree.isMain) ?? null
+);
 const hasMainWorktree = computed(() => Boolean(mainWorktree.value));
 const gitFeaturesAvailable = computed(() => {
   if (!projectStore.currentProject) {
@@ -248,10 +260,7 @@ const showGitWarning = computed(
 
 // 判断worktree是否有未提交的更改
 function hasTrackedChanges(worktree: Worktree): boolean {
-  return (
-    (worktree.statusModified ?? 0) > 0 ||
-    (worktree.statusStaged ?? 0) > 0
-  );
+  return (worktree.statusModified ?? 0) > 0 || (worktree.statusStaged ?? 0) > 0;
 }
 
 function hasPendingChanges(worktree: Worktree): boolean {
@@ -345,7 +354,7 @@ const branchOperation = reactive({
 const branchOperationLoading = ref(false);
 const showSquashCommitOptions = computed(() => branchOperation.strategy === 'squash');
 const shouldCommitAfterSquash = computed(
-  () => showSquashCommitOptions.value && branchOperation.commitImmediately,
+  () => showSquashCommitOptions.value && branchOperation.commitImmediately
 );
 const commitDialog = reactive({
   visible: false,
@@ -353,12 +362,11 @@ const commitDialog = reactive({
   message: '',
 });
 const deletingWorktreeId = ref<string | null>(null);
-const commitWorktreeReq = useReq(
-  (worktreeId: string, commitMessage: string) =>
-    Apis.worktree.commit({
-      pathParams: { id: worktreeId },
-      data: { message: commitMessage },
-    }),
+const commitWorktreeReq = useReq((worktreeId: string, commitMessage: string) =>
+  Apis.worktree.commit({
+    pathParams: { id: worktreeId },
+    data: { message: commitMessage },
+  })
 );
 
 const branchMergeReq = useReq(
@@ -370,20 +378,19 @@ const branchMergeReq = useReq(
       strategy: 'merge' | 'rebase' | 'squash';
       commit: boolean;
       commitMessage: string;
-    },
+    }
   ) =>
     Apis.branch.merge({
       pathParams: { id: worktreeId },
       data: payload,
-    }),
+    })
 );
 
-const branchListReq = useReq(
-  (projectId: string, force = false) =>
-    Apis.branch.list({
-      pathParams: { projectId },
-      ...(force ? { params: { force: true } } : {}),
-    } as any),
+const branchListReq = useReq((projectId: string, force = false) =>
+  Apis.branch.list({
+    pathParams: { projectId },
+    ...(force ? { params: { force: true } } : {}),
+  } as any)
 );
 
 const branchList = computed<BranchListResult>(() => {
@@ -395,7 +402,7 @@ const localBranchOptions = computed(() =>
   branchList.value.local.map(branch => ({
     label: branch.name,
     value: branch.name,
-  })),
+  }))
 );
 
 const mergeTargetOptions = computed(() =>
@@ -404,7 +411,7 @@ const mergeTargetOptions = computed(() =>
     .map(worktree => ({
       label: worktree.branchName,
       value: worktree.branchName,
-    })),
+    }))
 );
 
 watch(
@@ -416,7 +423,7 @@ watch(
       branchListReq.data.value = undefined as any;
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 watch(gitFeaturesAvailable, enabled => {
@@ -460,7 +467,11 @@ async function handleRefreshAll() {
     await branchListReq.forceReload(projectStore.currentProject.id, true);
     message.success(t('worktree.allWorktreesRefreshed'));
   } catch (error: any) {
-    message.error(error?.message ?? t('branch.refreshFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('branch.refreshFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   }
 }
 
@@ -473,10 +484,13 @@ async function handleRefresh(id: string) {
     }
     message.success(t('worktree.statusRefreshed'));
   } catch (error: any) {
-    message.error(error?.message ?? t('branch.refreshFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('branch.refreshFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   }
 }
-
 
 function confirmDelete(worktree: Worktree) {
   dialog.warning({
@@ -497,7 +511,7 @@ type DeleteWorktreeOptions = {
 
 async function performDeleteWorktree(
   worktree: Worktree,
-  options: DeleteWorktreeOptions = {},
+  options: DeleteWorktreeOptions = {}
 ): Promise<void> {
   const force = options.force ?? false;
   const deleteBranch = options.deleteBranch ?? true;
@@ -520,7 +534,11 @@ async function performDeleteWorktree(
       });
       return;
     }
-    message.error(errorMessage || t('worktree.deleteFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(errorMessage || t('worktree.deleteFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   } finally {
     deletingWorktreeId.value = null;
   }
@@ -557,7 +575,11 @@ async function handleOpenExplorer(path: string) {
   try {
     await projectStore.openInExplorer(path);
   } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openExplorerFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('worktree.openExplorerFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   }
 }
 
@@ -578,12 +600,16 @@ async function handleOpenEditor(payload: { worktree: Worktree; editor: EditorPre
     await projectStore.openInEditor(
       worktree.path,
       editor,
-      editor === 'custom' ? customEditorCommand.value : undefined,
+      editor === 'custom' ? customEditorCommand.value : undefined
     );
     const label = EDITOR_LABEL_MAP[editor] ?? t('worktree.editor');
     message.success(t('worktree.openedInEditor', { editor: label }));
   } catch (error: any) {
-    message.error(error?.message ?? t('worktree.openEditorFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('worktree.openEditorFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   }
 }
 
@@ -613,7 +639,11 @@ function goToBranchManagement() {
 function openSyncDialog(worktree: Worktree) {
   const initial = resolveSyncBranchDefault();
   if (!initial) {
-    message.error(t('worktree.noUpstreamBranch'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(t('worktree.noUpstreamBranch'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
     return;
   }
   branchOperation.visible = true;
@@ -626,7 +656,11 @@ function openSyncDialog(worktree: Worktree) {
 function openMergeDialog(payload: { worktree: Worktree; strategy?: 'merge' | 'squash' }) {
   const initial = resolveMergeTargetDefault();
   if (!initial) {
-    message.error(t('worktree.noTargetWorktree'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(t('worktree.noTargetWorktree'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
     return;
   }
   branchOperation.visible = true;
@@ -663,7 +697,7 @@ const branchOperationDescription = computed(() => {
   if (branchOperation.type === 'rebase') {
     return t('worktree.rebaseDescription', {
       branch: branchOperation.worktree.branchName,
-      source: branchOperation.targetBranch || defaultBranch.value || ''
+      source: branchOperation.targetBranch || defaultBranch.value || '',
     });
   }
   const strategyLabel = branchOperation.strategy === 'squash' ? 'squash' : 'merge';
@@ -671,7 +705,7 @@ const branchOperationDescription = computed(() => {
   return t('worktree.mergeDescription', {
     strategy: strategyLabel,
     source: branchOperation.worktree.branchName,
-    target
+    target,
   });
 });
 
@@ -699,7 +733,7 @@ watch(
       branchOperation.targetBranch = options[0].value;
     }
   },
-  { deep: true },
+  { deep: true }
 );
 
 watch(
@@ -719,7 +753,7 @@ watch(
       }
       branchOperation.targetBranch = resolveMergeTargetDefault();
     }
-  },
+  }
 );
 
 watch(
@@ -729,7 +763,7 @@ watch(
       branchOperation.commitMessage = '';
       branchOperation.commitImmediately = true;
     }
-  },
+  }
 );
 
 function openCommitDialog(worktree: Worktree) {
@@ -763,7 +797,11 @@ async function submitCommit() {
     message.success(t('worktree.commitSuccess'));
     closeCommitDialog();
   } catch (error: any) {
-    message.error(error?.message ?? t('worktree.commitFailed'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('worktree.commitFailed'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   }
 }
 
@@ -791,7 +829,7 @@ async function confirmBranchOperation() {
       }
     } else {
       const targetWorktree = projectStore.worktrees.find(
-        worktree => worktree.branchName === branchOperation.targetBranch,
+        worktree => worktree.branchName === branchOperation.targetBranch
       );
       if (!targetWorktree) {
         throw new Error(t('worktree.targetWorktreeNotFound'));
@@ -806,23 +844,27 @@ async function confirmBranchOperation() {
         commit: shouldCommit,
         commitMessage: commitMsg,
       });
-      const refreshIds = Array.from(
-        new Set([targetWorktree.id, branchOperation.worktree.id]),
+      const refreshIds = Array.from(new Set([targetWorktree.id, branchOperation.worktree.id]));
+      await Promise.all(
+        refreshIds.map(async id => {
+          const result = await refreshWorktreeStatusReq.send(id);
+          const updated = extractItem(result);
+          if (updated) {
+            projectStore.updateWorktreeInList(id, updated);
+          }
+        })
       );
-      await Promise.all(refreshIds.map(async (id) => {
-        const result = await refreshWorktreeStatusReq.send(id);
-        const updated = extractItem(result);
-        if (updated) {
-          projectStore.updateWorktreeInList(id, updated);
-        }
-      }));
       if (shouldCommit) {
         branchOperation.commitMessage = '';
       }
     }
     closeBranchOperation();
   } catch (error: any) {
-    message.error(error?.message ?? t('common.error'), { duration: 0, closable: true, keepAliveOnHover: true });
+    message.error(error?.message ?? t('common.error'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
   } finally {
     branchOperationLoading.value = false;
   }
@@ -836,7 +878,7 @@ async function performMerge(
     strategy: 'merge' | 'rebase' | 'squash';
     commit?: boolean;
     commitMessage?: string;
-  },
+  }
 ) {
   const response = await branchMergeReq.send(worktreeId, {
     targetBranch: payload.targetBranch,
@@ -853,8 +895,14 @@ async function performMerge(
   if (result.success) {
     message.success(result.message || t('common.success'));
   } else {
-    const conflicts = result.conflicts?.length ? t('worktree.conflictFiles', { files: result.conflicts.join(', ') }) : '';
-    message.warning(result.message || t('worktree.hasConflictsManual'), { duration: 0, closable: true, keepAliveOnHover: true });
+    const conflicts = result.conflicts?.length
+      ? t('worktree.conflictFiles', { files: result.conflicts.join(', ') })
+      : '';
+    message.warning(result.message || t('worktree.hasConflictsManual'), {
+      duration: 0,
+      closable: true,
+      keepAliveOnHover: true,
+    });
     if (conflicts) {
       message.info(conflicts, { duration: 0, closable: true, keepAliveOnHover: true });
     }
@@ -867,11 +915,17 @@ async function performMerge(
   height: 100%;
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .list-header {
   padding: 16px;
   border-bottom: 1px solid var(--n-border-color);
+}
+
+.worktree-scrollbar {
+  flex: 1;
+  min-height: 0;
 }
 
 .worktree-items {

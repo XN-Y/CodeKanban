@@ -8,11 +8,7 @@
     :closable="true"
     @close="handleClose"
   >
-    <DirectoryPicker
-      ref="pickerRef"
-      :initial-path="initialPath"
-      @select="handleSelect"
-    />
+    <DirectoryPicker ref="pickerRef" :initial-path="initialPath" @select="handleSelect" />
     <template #footer>
       <n-space justify="end">
         <n-button @click="handleClose">{{ t('common.cancel') }}</n-button>
@@ -61,7 +57,7 @@ function handleClose() {
   showModal.value = false;
 }
 
-watch(showModal, (show) => {
+watch(showModal, show => {
   if (show) {
     // 打开时重新加载目录
     if (props.initialPath) {

@@ -14,7 +14,7 @@ export function createThemeOverrides(
   theme: ThemeSettings,
   resolvedTextColor: string,
   inputBorderColor: string,
-  inputBorderHoverColor: string,
+  inputBorderHoverColor: string
 ): GlobalThemeOverrides {
   const { primaryColor, bodyColor, surfaceColor } = theme;
 

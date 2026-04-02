@@ -14,10 +14,7 @@
       </n-form-item>
       <n-form-item :label="t('project.projectDirectory')" path="path">
         <n-input-group>
-          <n-input
-            v-model:value="formData.path"
-            :placeholder="t('project.pathPlaceholder')"
-          />
+          <n-input v-model:value="formData.path" :placeholder="t('project.pathPlaceholder')" />
           <n-button @click="showDirectoryPicker = true">
             <template #icon>
               <n-icon><FolderOpenOutline /></n-icon>
@@ -116,8 +113,12 @@ async function fetchHomeDir() {
 fetchHomeDir();
 
 const rules: FormRules = {
-  name: [{ required: true, message: t('validation.projectNameRequired'), trigger: ['blur', 'input'] }],
-  path: [{ required: true, message: t('validation.projectPathRequired'), trigger: ['blur', 'input'] }],
+  name: [
+    { required: true, message: t('validation.projectNameRequired'), trigger: ['blur', 'input'] },
+  ],
+  path: [
+    { required: true, message: t('validation.projectPathRequired'), trigger: ['blur', 'input'] },
+  ],
 };
 
 watch(visible, newVal => {

@@ -28,7 +28,7 @@ const languageOptions = [
 ];
 
 const currentLanguageLabel = computed(() => {
-  return languageOptions.find((item) => item.key === locale.value)?.label || '简体中文';
+  return languageOptions.find(item => item.key === locale.value)?.label || '简体中文';
 });
 
 const handleSelect = (key: string) => {

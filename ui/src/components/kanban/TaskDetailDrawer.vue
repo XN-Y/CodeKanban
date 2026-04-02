@@ -74,19 +74,31 @@
               <n-list-item v-for="session in linkedAiSessions" :key="session.id">
                 <div class="linked-session-item">
                   <div class="linked-session-info">
-                    <div class="linked-session-title">{{ session.title || t('terminal.untitledSession') }}</div>
+                    <div class="linked-session-title">
+                      {{ session.title || t('terminal.untitledSession') }}
+                    </div>
                     <div class="linked-session-meta">
-                      <n-tag size="tiny" :type="session.type === 'claude_code' ? 'info' : 'success'">
+                      <n-tag
+                        size="tiny"
+                        :type="session.type === 'claude_code' ? 'info' : 'success'"
+                      >
                         {{ session.type === 'claude_code' ? 'Claude' : 'Codex' }}
                       </n-tag>
-                      <span class="linked-session-time">{{ formatDate(session.sessionStartedAt) }}</span>
+                      <span class="linked-session-time">{{
+                        formatDate(session.sessionStartedAt)
+                      }}</span>
                       <span class="linked-session-count">{{ session.messageCount }} msgs</span>
                     </div>
                   </div>
                   <n-space :size="4">
                     <n-tooltip>
                       <template #trigger>
-                        <n-button size="tiny" quaternary type="default" @click.stop="copySessionId(session)">
+                        <n-button
+                          size="tiny"
+                          quaternary
+                          type="default"
+                          @click.stop="copySessionId(session)"
+                        >
                           <template #icon>
                             <n-icon size="14"><CopyOutline /></n-icon>
                           </template>
@@ -94,12 +106,22 @@
                       </template>
                       {{ t('task.copySessionId') }}
                     </n-tooltip>
-                    <n-button size="tiny" quaternary type="info" @click="viewLinkedConversation(session)">
+                    <n-button
+                      size="tiny"
+                      quaternary
+                      type="info"
+                      @click="viewLinkedConversation(session)"
+                    >
                       {{ t('task.viewConversation') }}
                     </n-button>
                     <n-tooltip>
                       <template #trigger>
-                        <n-button size="tiny" quaternary type="default" @click="confirmUnlinkSession(session)">
+                        <n-button
+                          size="tiny"
+                          quaternary
+                          type="default"
+                          @click="confirmUnlinkSession(session)"
+                        >
                           <template #icon>
                             <n-icon size="14"><CloseOutline /></n-icon>
                           </template>
@@ -211,7 +233,9 @@
           >
             <n-radio :value="session.id" />
             <div class="available-session-info">
-              <div class="available-session-title">{{ session.title || t('terminal.untitledSession') }}</div>
+              <div class="available-session-title">
+                {{ session.title || t('terminal.untitledSession') }}
+              </div>
               <div class="available-session-meta">
                 <n-tag size="tiny" :type="session.type === 'claude_code' ? 'info' : 'success'">
                   {{ session.type === 'claude_code' ? 'Claude' : 'Codex' }}
@@ -224,7 +248,10 @@
           </div>
         </n-radio-group>
       </div>
-      <n-empty v-else-if="!availableSessionsLoading" :description="t('task.noAvailableAiSessions')" />
+      <n-empty
+        v-else-if="!availableSessionsLoading"
+        :description="t('task.noAvailableAiSessions')"
+      />
     </n-spin>
     <template #footer>
       <n-space justify="end">
@@ -271,7 +298,7 @@ const drawerWidth = computed(() => {
 });
 
 // 移动端从底部弹出
-const drawerPlacement = computed(() => isMobile.value ? 'bottom' : 'right');
+const drawerPlacement = computed(() => (isMobile.value ? 'bottom' : 'right'));
 
 const props = defineProps<{
   show: boolean;
@@ -422,9 +449,9 @@ async function loadData() {
 async function loadLinkedAISessions(taskId: string) {
   linkedSessionsLoading.value = true;
   try {
-    const response = await http.Get<{ items: TaskAISessionWithDetails[] }>(
-      `/tasks/${taskId}/ai-sessions`
-    ).send();
+    const response = await http
+      .Get<{ items: TaskAISessionWithDetails[] }>(`/tasks/${taskId}/ai-sessions`)
+      .send();
     linkedAiSessions.value = response?.items ?? [];
   } catch (error: any) {
     console.error('Failed to load linked AI sessions:', error);
@@ -449,9 +476,11 @@ async function handleUnlinkSession(session: TaskAISessionWithDetails) {
   if (!props.taskId) return;
 
   try {
-    await http.Post(`/tasks/${props.taskId}/ai-sessions/unlink`, {
-      aiSessionId: session.aiSessionDbId,
-    }).send();
+    await http
+      .Post(`/tasks/${props.taskId}/ai-sessions/unlink`, {
+        aiSessionId: session.aiSessionDbId,
+      })
+      .send();
     message.success(t('task.aiSessionUnlinked'));
     // 从列表中移除
     linkedAiSessions.value = linkedAiSessions.value.filter(s => s.id !== session.id);
@@ -469,9 +498,9 @@ async function viewLinkedConversation(session: TaskAISessionWithDetails) {
   currentConversation.value = null;
 
   try {
-    const response = await http.Get<{ item: ConversationResponse }>(
-      `/ai-sessions/${session.aiSessionDbId}/conversation`
-    ).send();
+    const response = await http
+      .Get<{ item: ConversationResponse }>(`/ai-sessions/${session.aiSessionDbId}/conversation`)
+      .send();
     if (response?.item) {
       currentConversation.value = response.item;
     }
@@ -502,9 +531,9 @@ async function openLinkSessionModal() {
   availableSessions.value = [];
 
   try {
-    const response = await http.Get<{ item: ProjectAISessions }>(
-      `/projects/${props.projectId}/ai-sessions`
-    ).send();
+    const response = await http
+      .Get<{ item: ProjectAISessions }>(`/projects/${props.projectId}/ai-sessions`)
+      .send();
 
     if (response?.item) {
       // 合并 Claude 和 Codex sessions，排除已关联的
@@ -535,9 +564,11 @@ async function handleLinkSession() {
   if (!props.taskId || !selectedSessionId.value) return;
 
   try {
-    await http.Post(`/tasks/${props.taskId}/ai-sessions/link`, {
-      aiSessionId: selectedSessionId.value,
-    }).send();
+    await http
+      .Post(`/tasks/${props.taskId}/ai-sessions/link`, {
+        aiSessionId: selectedSessionId.value,
+      })
+      .send();
     message.success(t('task.aiSessionLinked'));
     showLinkSessionModal.value = false;
     // 重新加载已关联的 sessions
@@ -716,7 +747,6 @@ const formatDate = (value: string) => dayjs(value).format('YYYY-MM-DD HH:mm');
 .linked-session-count {
   color: var(--n-text-color-3);
 }
-
 
 /* 可用 AI Session 列表 */
 .available-sessions-list {

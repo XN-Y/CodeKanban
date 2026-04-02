@@ -33,9 +33,7 @@
 
     <n-tooltip v-if="(worktree.statusUntracked ?? 0) > 0" trigger="hover" placement="bottom">
       <template #trigger>
-        <n-tag size="small" :bordered="false">
-          ?{{ worktree.statusUntracked ?? 0 }}
-        </n-tag>
+        <n-tag size="small" :bordered="false"> ?{{ worktree.statusUntracked ?? 0 }} </n-tag>
       </template>
       未跟踪的新文件数
     </n-tooltip>

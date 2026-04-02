@@ -14,8 +14,12 @@ import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
 
 const settingsStore = useSettingsStore();
-const { activeTheme: theme, followSystemTheme, currentPresetId, terminalDisplayMode } =
-  storeToRefs(settingsStore);
+const {
+  activeTheme: theme,
+  followSystemTheme,
+  currentPresetId,
+  terminalDisplayMode,
+} = storeToRefs(settingsStore);
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
 const route = useRoute();
@@ -66,7 +70,9 @@ const resolvedTextColor = computed(() => {
 
 const inputBorderColor = computed(() => (isDarkTheme.value ? '#4B4B4B' : '#D0D5DD'));
 const inputBorderHoverColor = computed(() =>
-  isDarkTheme.value ? lightenColor(inputBorderColor.value, 0.12) : darkenColor(inputBorderColor.value, 0.12),
+  isDarkTheme.value
+    ? lightenColor(inputBorderColor.value, 0.12)
+    : darkenColor(inputBorderColor.value, 0.12)
 );
 
 // 根据当前语言动态切换 Naive UI 的 locale
@@ -82,7 +88,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
     theme.value,
     resolvedTextColor.value,
     inputBorderColor.value,
-    inputBorderHoverColor.value,
+    inputBorderHoverColor.value
   );
 });
 
@@ -96,7 +102,8 @@ const defaultApprovalBorder = 'rgba(247, 144, 9, 0.35)';
 
 // 解析终端头部边框值：支持 boolean | string
 const resolvedTerminalHeaderBorder = computed(() => {
-  const borderValue = theme.value.terminalHeaderBorder ?? presetTerminalTabColors.value.headerBorder;
+  const borderValue =
+    theme.value.terminalHeaderBorder ?? presetTerminalTabColors.value.headerBorder;
 
   if (borderValue === false) {
     return 'none';
@@ -119,27 +126,55 @@ const cssVarsToSet = computed(() => ({
   '--app-surface-color': theme.value.surfaceColor,
   '--kanban-terminal-bg': theme.value.terminalBg,
   '--kanban-terminal-fg': theme.value.terminalFg,
-  '--kanban-terminal-tab-bg': theme.value.terminalTabBg || presetTerminalTabColors.value.tabBg || theme.value.bodyColor,
-  '--kanban-terminal-tab-active-bg': theme.value.terminalTabActiveBg || presetTerminalTabColors.value.tabActiveBg || theme.value.surfaceColor,
+  '--kanban-terminal-tab-bg':
+    theme.value.terminalTabBg || presetTerminalTabColors.value.tabBg || theme.value.bodyColor,
+  '--kanban-terminal-tab-active-bg':
+    theme.value.terminalTabActiveBg ||
+    presetTerminalTabColors.value.tabActiveBg ||
+    theme.value.surfaceColor,
   '--kanban-terminal-header-border': resolvedTerminalHeaderBorder.value,
   // 完成提醒颜色
-  '--kanban-terminal-tab-completion-bg': theme.value.terminalTabCompletionBg || presetTerminalTabColors.value.completionBg || defaultCompletionBg,
-  '--kanban-terminal-tab-completion-border': theme.value.terminalTabCompletionBorder || presetTerminalTabColors.value.completionBorder || defaultCompletionBorder,
+  '--kanban-terminal-tab-completion-bg':
+    theme.value.terminalTabCompletionBg ||
+    presetTerminalTabColors.value.completionBg ||
+    defaultCompletionBg,
+  '--kanban-terminal-tab-completion-border':
+    theme.value.terminalTabCompletionBorder ||
+    presetTerminalTabColors.value.completionBorder ||
+    defaultCompletionBorder,
   // 审批提醒颜色
-  '--kanban-terminal-tab-approval-bg': theme.value.terminalTabApprovalBg || presetTerminalTabColors.value.approvalBg || defaultApprovalBg,
-  '--kanban-terminal-tab-approval-border': theme.value.terminalTabApprovalBorder || presetTerminalTabColors.value.approvalBorder || defaultApprovalBorder,
+  '--kanban-terminal-tab-approval-bg':
+    theme.value.terminalTabApprovalBg ||
+    presetTerminalTabColors.value.approvalBg ||
+    defaultApprovalBg,
+  '--kanban-terminal-tab-approval-border':
+    theme.value.terminalTabApprovalBorder ||
+    presetTerminalTabColors.value.approvalBorder ||
+    defaultApprovalBorder,
   // 浮动按钮颜色
-  '--kanban-terminal-floating-button-bg': theme.value.terminalFloatingButtonBg || theme.value.surfaceColor,
-  '--kanban-terminal-floating-button-fg': theme.value.terminalFloatingButtonFg || theme.value.textColor,
+  '--kanban-terminal-floating-button-bg':
+    theme.value.terminalFloatingButtonBg || theme.value.surfaceColor,
+  '--kanban-terminal-floating-button-fg':
+    theme.value.terminalFloatingButtonFg || theme.value.textColor,
   // 空终端引导文字颜色
   '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
   // AI 通知按钮颜色
-  '--kanban-notification-button-border': theme.value.notificationButtonBorder || 'rgba(0, 0, 0, 0.2)',
+  '--kanban-notification-button-border':
+    theme.value.notificationButtonBorder || 'rgba(0, 0, 0, 0.2)',
   '--kanban-notification-button-fg': theme.value.notificationButtonFg || theme.value.textColor,
   // 看板颜色
-  '--kanban-board-bg': theme.value.kanbanBoardBg || presetTerminalTabColors.value.kanbanBoardBg || theme.value.bodyColor,
-  '--kanban-card-bg': theme.value.kanbanCardBg || presetTerminalTabColors.value.kanbanCardBg || theme.value.surfaceColor,
-  '--kanban-border': (theme.value.kanbanBorderEnabled ?? presetTerminalTabColors.value.kanbanBorderEnabled ?? true) ? '1px solid var(--n-border-color)' : 'none',
+  '--kanban-board-bg':
+    theme.value.kanbanBoardBg ||
+    presetTerminalTabColors.value.kanbanBoardBg ||
+    theme.value.bodyColor,
+  '--kanban-card-bg':
+    theme.value.kanbanCardBg ||
+    presetTerminalTabColors.value.kanbanCardBg ||
+    theme.value.surfaceColor,
+  '--kanban-border':
+    (theme.value.kanbanBorderEnabled ?? presetTerminalTabColors.value.kanbanBorderEnabled ?? true)
+      ? '1px solid var(--n-border-color)'
+      : 'none',
   '--app-text-color': resolvedTextColor.value,
   '--app-input-border-color': inputBorderColor.value,
   '--app-input-border-hover-color': inputBorderHoverColor.value,
@@ -147,7 +182,7 @@ const cssVarsToSet = computed(() => ({
 
 watch(
   cssVarsToSet,
-  (vars) => {
+  vars => {
     if (typeof document !== 'undefined') {
       const root = document.documentElement;
       Object.entries(vars).forEach(([key, value]) => {
@@ -155,18 +190,18 @@ watch(
       });
     }
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 );
 
 // 只更新 body 背景色（CSS变量已由 useCssVars 处理）
 watch(
   () => theme.value.bodyColor,
-  (newColor) => {
+  newColor => {
     if (typeof document !== 'undefined') {
       document.body.style.backgroundColor = newColor;
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 // 监听系统主题变化
@@ -232,7 +267,10 @@ onBeforeUnmount(() => {
   color: var(--app-text-color, var(--n-text-color-1, #1f1f1f));
   border-color: var(--n-border-color, transparent);
   box-shadow: 0 2px 8px var(--n-box-shadow-color, rgba(0, 0, 0, 0.12));
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .n-layout-toggle-button:hover,

@@ -11,13 +11,20 @@
           <n-ellipsis style="max-width: 160px">
             {{ worktree.branchName }}
           </n-ellipsis>
-          <n-tag v-if="worktree.isMain" size="small" round type="info">{{ t('worktree.default') }}</n-tag>
+          <n-tag v-if="worktree.isMain" size="small" round type="info">{{
+            t('worktree.default')
+          }}</n-tag>
         </n-space>
         <n-space align="center" :size="0" class="worktree-card__actions-header">
           <n-button-group size="tiny">
             <n-tooltip trigger="hover" placement="bottom">
               <template #trigger>
-                <n-button text size="tiny" @click.stop="handleEditorButtonClick" class="action-button">
+                <n-button
+                  text
+                  size="tiny"
+                  @click.stop="handleEditorButtonClick"
+                  class="action-button"
+                >
                   <n-icon :size="14"><CodeSlashOutline /></n-icon>
                 </n-button>
               </template>
@@ -31,20 +38,30 @@
           </n-button-group>
           <n-tooltip trigger="hover" placement="bottom">
             <template #trigger>
-              <n-button text size="tiny" @click.stop="emit('refresh', worktree.id)" class="action-button">
+              <n-button
+                text
+                size="tiny"
+                @click.stop="emit('refresh', worktree.id)"
+                class="action-button"
+              >
                 <n-icon :size="14"><RefreshOutline /></n-icon>
               </n-button>
             </template>
             <div>
               <div>{{ t('worktree.refreshStatus') }}</div>
-              <div style="font-size: 12px; opacity: 0.7;">
+              <div style="font-size: 12px; opacity: 0.7">
                 {{ formatRefreshTime(worktree.statusUpdatedAt) }}
               </div>
             </div>
           </n-tooltip>
           <n-tooltip trigger="hover" placement="bottom">
             <template #trigger>
-              <n-button text size="tiny" @click.stop="emit('open-terminal', worktree)" class="action-button">
+              <n-button
+                text
+                size="tiny"
+                @click.stop="emit('open-terminal', worktree)"
+                class="action-button"
+              >
                 <n-icon :size="14"><Terminal /></n-icon>
               </n-button>
             </template>
@@ -72,8 +89,12 @@
             </n-text>
           </template>
           <div class="worktree-card__commit-popover">
-            <span class="worktree-card__commit-hash">{{ popoverCommitHash || t('worktree.noCommit') }}</span>
-            <span v-if="popoverCommitMessage" class="worktree-card__commit-message">{{ popoverCommitMessage }}</span>
+            <span class="worktree-card__commit-hash">{{
+              popoverCommitHash || t('worktree.noCommit')
+            }}</span>
+            <span v-if="popoverCommitMessage" class="worktree-card__commit-message">{{
+              popoverCommitMessage
+            }}</span>
           </div>
         </n-popover>
       </template>
@@ -87,23 +108,20 @@
     </n-space>
 
     <div class="worktree-card__actions" @click.stop>
-      <n-popover
-        trigger="hover"
-        placement="bottom"
-        :disabled="!syncDisabledReason"
-      >
+      <n-popover trigger="hover" placement="bottom" :disabled="!syncDisabledReason">
         <template #trigger>
-          <n-button size="tiny" tertiary :disabled="!canSync" @click="emit('sync-default', worktree)">
+          <n-button
+            size="tiny"
+            tertiary
+            :disabled="!canSync"
+            @click="emit('sync-default', worktree)"
+          >
             Rebase
           </n-button>
         </template>
         <span>{{ syncDisabledReason }}</span>
       </n-popover>
-      <n-popover
-        trigger="hover"
-        placement="bottom"
-        :disabled="!mergeDisabledReason"
-      >
+      <n-popover trigger="hover" placement="bottom" :disabled="!mergeDisabledReason">
         <template #trigger>
           <n-button
             size="tiny"
@@ -116,11 +134,7 @@
         </template>
         <span>{{ mergeDisabledReason }}</span>
       </n-popover>
-      <n-popover
-        trigger="hover"
-        placement="bottom"
-        :disabled="!commitDisabledReason"
-      >
+      <n-popover trigger="hover" placement="bottom" :disabled="!commitDisabledReason">
         <template #trigger>
           <n-button
             size="tiny"
@@ -142,11 +156,22 @@ import { computed } from 'vue';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import type { DropdownOption } from 'naive-ui';
-import { ChevronDownOutline, CodeSlashOutline, EllipsisHorizontalOutline, RefreshOutline, Terminal } from '@vicons/ionicons5';
+import {
+  ChevronDownOutline,
+  CodeSlashOutline,
+  EllipsisHorizontalOutline,
+  RefreshOutline,
+  Terminal,
+} from '@vicons/ionicons5';
 import GitStatusBadge from '@/components/common/GitStatusBadge.vue';
 import type { Worktree } from '@/types/models';
 import type { EditorPreference } from '@/stores/settings';
-import { DEFAULT_EDITOR, EDITOR_OPTIONS, EDITOR_LABEL_MAP, isEditorPreference } from '@/constants/editor';
+import {
+  DEFAULT_EDITOR,
+  EDITOR_OPTIONS,
+  EDITOR_LABEL_MAP,
+  isEditorPreference,
+} from '@/constants/editor';
 import { useLocale } from '@/composables/useLocale';
 
 const { t, locale } = useLocale();
@@ -159,25 +184,28 @@ type EditorOption = {
   disabled?: boolean;
 };
 
-const props = withDefaults(defineProps<{
-  worktree: Worktree;
-  selected?: boolean;
-  canSync?: boolean;
-  canMerge?: boolean;
-  canCommit?: boolean;
-  syncDisabledReason?: string;
-  mergeDisabledReason?: string;
-  commitDisabledReason?: string;
-  isDeleting?: boolean;
-  defaultEditor?: EditorPreference;
-  editorOptions?: EditorOption[];
-}>(), {
-  defaultEditor: DEFAULT_EDITOR,
-  editorOptions: () => EDITOR_OPTIONS.map(option => ({ ...option })),
-  syncDisabledReason: '',
-  mergeDisabledReason: '',
-  commitDisabledReason: '',
-});
+const props = withDefaults(
+  defineProps<{
+    worktree: Worktree;
+    selected?: boolean;
+    canSync?: boolean;
+    canMerge?: boolean;
+    canCommit?: boolean;
+    syncDisabledReason?: string;
+    mergeDisabledReason?: string;
+    commitDisabledReason?: string;
+    isDeleting?: boolean;
+    defaultEditor?: EditorPreference;
+    editorOptions?: EditorOption[];
+  }>(),
+  {
+    defaultEditor: DEFAULT_EDITOR,
+    editorOptions: () => EDITOR_OPTIONS.map(option => ({ ...option })),
+    syncDisabledReason: '',
+    mergeDisabledReason: '',
+    commitDisabledReason: '',
+  }
+);
 
 const emit = defineEmits<{
   refresh: [id: string];
@@ -231,14 +259,15 @@ const actions = computed<DropdownOption[]>(() => {
 });
 
 const resolvedDefaultEditor = computed<EditorPreference>(() =>
-  props.defaultEditor && isEditorPreference(props.defaultEditor) ? props.defaultEditor : DEFAULT_EDITOR,
+  props.defaultEditor && isEditorPreference(props.defaultEditor)
+    ? props.defaultEditor
+    : DEFAULT_EDITOR
 );
 
 const resolvedEditorOptions = computed<EditorOption[]>(() =>
-  (props.editorOptions && props.editorOptions.length
-    ? props.editorOptions
-    : EDITOR_OPTIONS
-  ).map(option => ({ ...option })),
+  (props.editorOptions && props.editorOptions.length ? props.editorOptions : EDITOR_OPTIONS).map(
+    option => ({ ...option })
+  )
 );
 
 const editorDropdownOptions = computed<DropdownOption[]>(() =>
@@ -246,10 +275,12 @@ const editorDropdownOptions = computed<DropdownOption[]>(() =>
     label: option.label,
     key: option.value,
     disabled: option.disabled,
-  })),
+  }))
 );
 
-const defaultEditorLabel = computed(() => EDITOR_LABEL_MAP[resolvedDefaultEditor.value] ?? '编辑器');
+const defaultEditorLabel = computed(
+  () => EDITOR_LABEL_MAP[resolvedDefaultEditor.value] ?? '编辑器'
+);
 
 const commitHash = computed(() => (props.worktree.headCommit || '').trim());
 const commitMessage = computed(() => (props.worktree.headCommitMessage || '').trim());
@@ -330,7 +361,9 @@ function handleSelect() {
 .worktree-card {
   margin-bottom: 8px;
   cursor: pointer;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .worktree-card:hover {

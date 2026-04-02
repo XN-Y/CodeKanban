@@ -3,10 +3,16 @@
     <div class="board-header">
       <n-space justify="space-between" align="center">
         <div>
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-            <h2 style="margin: 0;">{{ t('task.kanbanTitle') }}</h2>
-            <n-button size="tiny" text :disabled="!projectId || boardLoading" :loading="boardLoading"
-              @click="fetchTasks(currentProjectId)" style="font-size: 16px;">
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px">
+            <h2 style="margin: 0">{{ t('task.kanbanTitle') }}</h2>
+            <n-button
+              size="tiny"
+              text
+              :disabled="!projectId || boardLoading"
+              :loading="boardLoading"
+              @click="fetchTasks(currentProjectId)"
+              style="font-size: 16px"
+            >
               <template #icon>
                 <n-icon size="16">
                   <RefreshOutline />
@@ -22,15 +28,31 @@
               <RouterLink to="/">{{ t('project.title') }}</RouterLink>
             </n-breadcrumb-item>
             <n-breadcrumb-item>
-              <RouterLink v-if="currentProjectId" :to="{ name: 'project', params: { id: currentProjectId } }">
+              <RouterLink
+                v-if="currentProjectId"
+                :to="{ name: 'project', params: { id: currentProjectId } }"
+              >
                 {{ currentProjectName }}
               </RouterLink>
               <span v-else>{{ t('task.noProject') }}</span>
             </n-breadcrumb-item>
           </n-breadcrumb>
-          <n-select style="width: 200px" size="small" :disabled="!projectId" v-model:value="worktreeFilterValue"
-            :options="worktreeFilterOptions" :placeholder="t('task.allBranches')" clearable :consistent-menu-width="false" />
-          <n-button size="small" type="primary" :disabled="!projectId" @click="openCreateDialog('todo')">
+          <n-select
+            style="width: 200px"
+            size="small"
+            :disabled="!projectId"
+            v-model:value="worktreeFilterValue"
+            :options="worktreeFilterOptions"
+            :placeholder="t('task.allBranches')"
+            clearable
+            :consistent-menu-width="false"
+          />
+          <n-button
+            size="small"
+            type="primary"
+            :disabled="!projectId"
+            @click="openCreateDialog('todo')"
+          >
             <template #icon>
               <n-icon>
                 <AddOutline />
@@ -71,6 +93,7 @@
                   @task-copy="handleTaskCopy"
                   @task-start-work="handleTaskStartWork"
                   @view-terminal="handleTaskViewTerminal"
+                  @archive-click="handleArchiveClick"
                   @add-click="handleColumnQuickAdd(column.key)"
                 />
               </div>
@@ -96,17 +119,33 @@
             @task-copy="handleTaskCopy"
             @task-start-work="handleTaskStartWork"
             @view-terminal="handleTaskViewTerminal"
+            @archive-click="handleArchiveClick"
             @add-click="handleColumnQuickAdd(column.key)"
           />
         </div>
       </n-spin>
     </div>
 
-    <TaskCreateDialog v-if="projectId" v-model:show="showCreateDialog" :project-id="projectId"
-      :default-status="createTargetStatus" @created="handleTaskCreated" />
+    <TaskCreateDialog
+      v-if="projectId"
+      v-model:show="showCreateDialog"
+      :project-id="projectId"
+      :default-status="createTargetStatus"
+      @created="handleTaskCreated"
+    />
 
-    <TaskDetailDrawer v-model:show="showDetailDrawer" :project-id="projectId" :task-id="taskStore.selectedTaskId"
-      @closed="taskStore.selectTask(null)" />
+    <TaskDetailDrawer
+      v-model:show="showDetailDrawer"
+      :project-id="projectId"
+      :task-id="taskStore.selectedTaskId"
+      @closed="taskStore.selectTask(null)"
+    />
+
+    <TaskArchiveDialog
+      v-model:show="showArchiveDialog"
+      :tasks="archiveDialogTasks"
+      @archived="handleTasksArchived"
+    />
   </div>
 </template>
 
@@ -120,10 +159,11 @@ import { storeToRefs } from 'pinia';
 import { useResponsive } from '@/composables/useResponsive';
 import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
+import TaskArchiveDialog from './TaskArchiveDialog.vue';
 import TaskDetailDrawer from './TaskDetailDrawer.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { useTaskStore } from '@/stores/task';
-import { useTerminalStore } from '@/stores/terminal';
+import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal';
 import { taskActions } from '@/composables/useTaskActions';
 import { useProjectStore } from '@/stores/project';
 import { useLocale } from '@/composables/useLocale';
@@ -165,6 +205,8 @@ const showCreateDialog = ref(false);
 const showDetailDrawer = ref(false);
 const boardLoading = ref(false);
 const deletingTaskId = ref<string | null>(null);
+const showArchiveDialog = ref(false);
+const archiveDialogTasks = ref<Task[]>([]);
 
 type ColumnConfig = {
   key: Task['status'];
@@ -176,10 +218,13 @@ const columns = computed<ColumnConfig[]>(() => [
   { key: 'todo', title: t('task.status.todo'), allowQuickAdd: true },
   { key: 'in_progress', title: t('task.status.inProgress'), allowQuickAdd: true },
   { key: 'done', title: t('task.status.done') },
+  { key: 'archived', title: t('task.status.archived') },
 ]);
 
 const currentProjectId = computed(() => props.projectId ?? '');
-const currentProjectName = computed(() => projectStore.currentProject?.name ?? t('task.unnamedProject'));
+const currentProjectName = computed(
+  () => projectStore.currentProject?.name ?? t('task.unnamedProject')
+);
 
 const createTargetStatus = ref<Task['status']>('todo');
 
@@ -244,7 +289,7 @@ watch(
       taskStore.setTasks([]);
     }
   },
-  { immediate: true },
+  { immediate: true }
 );
 
 onMounted(() => {
@@ -268,7 +313,12 @@ async function fetchTasks(projectId: string) {
   }
 }
 
-async function handleTaskMoved(event: { taskId: string; newStatus: Task['status']; newIndex: number; orderedTasks: Task[] }) {
+async function handleTaskMoved(event: {
+  taskId: string;
+  newStatus: Task['status'];
+  newIndex: number;
+  orderedTasks: Task[];
+}) {
   const { taskId, newStatus, newIndex, orderedTasks } = event;
   const siblings = orderedTasks;
   let orderIndex = 1000;
@@ -284,7 +334,8 @@ async function handleTaskMoved(event: { taskId: string; newStatus: Task['status'
   } else {
     const prev = siblings[newIndex - 1];
     const next = siblings[newIndex + 1];
-    orderIndex = prev && next ? (prev.orderIndex + next.orderIndex) / 2 : prev?.orderIndex ?? 1000;
+    orderIndex =
+      prev && next ? (prev.orderIndex + next.orderIndex) / 2 : (prev?.orderIndex ?? 1000);
   }
 
   try {
@@ -362,6 +413,22 @@ function handleTaskCreated(task: Task) {
   taskStore.upsertTask(task);
 }
 
+function handleArchiveClick() {
+  const doneTasks = filteredTasksByStatus.value['done'] ?? [];
+  if (!doneTasks.length) {
+    message.info(t('task.archiveEmptyHint'));
+    return;
+  }
+  archiveDialogTasks.value = [...doneTasks];
+  showArchiveDialog.value = true;
+}
+
+function handleTasksArchived(tasks: Task[]) {
+  for (const task of tasks) {
+    taskStore.upsertTask(task);
+  }
+}
+
 function focusLinkedTerminal(task: Task): boolean {
   const session = terminalStore.getSessionByTask(task.id, currentProjectId.value);
   if (!session) {
@@ -395,7 +462,9 @@ function normalizeTerminalEnter(value: string) {
 }
 
 function resolveAgentCommand(agent: Exclude<StartWorkAction, 'terminal'>): string {
-  const configured = terminalQuickActions.value.find(action => action.id === agent)?.command?.trim();
+  const configured = terminalQuickActions.value
+    .find(action => action.id === agent)
+    ?.command?.trim();
   if (configured) {
     return configured;
   }
@@ -465,7 +534,7 @@ function waitForTerminalReady(sessionId: string): Promise<void> {
 async function sendAgentCommandAndPrompt(
   sessionId: string,
   agent: Exclude<StartWorkAction, 'terminal'>,
-  prompt: string,
+  prompt: string
 ): Promise<boolean> {
   const command = resolveAgentCommand(agent);
   const commandInput = normalizeTerminalEnter(command);
@@ -486,7 +555,10 @@ async function sendAgentCommandAndPrompt(
   return await sendWithRetry(sessionId, promptInput);
 }
 
-function promptAgentPrompt(task: Task, agent: Exclude<StartWorkAction, 'terminal'>): Promise<string | null> {
+function promptAgentPrompt(
+  task: Task,
+  agent: Exclude<StartWorkAction, 'terminal'>
+): Promise<string | null> {
   return new Promise(resolve => {
     let settled = false;
     const resolveOnce = (value: string | null) => {
@@ -498,7 +570,8 @@ function promptAgentPrompt(task: Task, agent: Exclude<StartWorkAction, 'terminal
     };
 
     const valueRef = ref(task.title);
-    const agentLabel = agent === 'claude' ? t('task.startWorkMenuClaude') : t('task.startWorkMenuCodex');
+    const agentLabel =
+      agent === 'claude' ? t('task.startWorkMenuClaude') : t('task.startWorkMenuCodex');
 
     dialog.create({
       title: t('task.startWorkPromptTitle', { agent: agentLabel }),
@@ -536,9 +609,16 @@ async function handleTaskStartWork(task: Task, action: StartWorkAction = 'termin
       }
     }
 
+    if (!currentProjectId.value) {
+      message.warning(t('task.noProject'));
+      return;
+    }
+
     // 确定要使用的worktree
     let targetWorktreeId = task.worktreeId;
-    let targetWorktree = targetWorktreeId ? projectStore.worktrees.find(w => w.id === targetWorktreeId) : null;
+    let targetWorktree = targetWorktreeId
+      ? projectStore.worktrees.find(w => w.id === targetWorktreeId)
+      : null;
 
     // 如果任务没有关联分支，或者关联的分支不存在，使用主分支
     if (!targetWorktree) {
@@ -550,18 +630,34 @@ async function handleTaskStartWork(task: Task, action: StartWorkAction = 'termin
       targetWorktreeId = targetWorktree.id;
     }
 
+    const terminalOptions: TerminalCreateOptions = {
+      worktreeId: targetWorktreeId!,
+      title: task.title,
+      workingDir: targetWorktree.path,
+      taskId: task.id,
+    };
+
+    const createTaskTerminal = async (): Promise<string | undefined> => {
+      if (terminalPanelRef?.value?.createTerminal) {
+        const sessionId = await terminalPanelRef.value.createTerminal(terminalOptions);
+        if (sessionId) {
+          terminalStore.focusSession(currentProjectId.value, sessionId);
+        }
+        return sessionId;
+      }
+
+      const sessionId = await terminalStore.createSession(currentProjectId.value, terminalOptions);
+      terminalStore.focusSession(currentProjectId.value, sessionId);
+      return sessionId;
+    };
+
     if (action !== 'terminal') {
       const prompt = await promptAgentPrompt(task, action);
       if (!prompt) {
         return;
       }
 
-      const sessionId = await terminalPanelRef?.value?.createTerminal({
-        worktreeId: targetWorktreeId!,
-        title: task.title,
-        workingDir: targetWorktree.path,
-        taskId: task.id,
-      });
+      const sessionId = await createTaskTerminal();
       if (!sessionId) {
         return;
       }
@@ -574,15 +670,13 @@ async function handleTaskStartWork(task: Task, action: StartWorkAction = 'termin
       message.success(
         t('task.agentStarted', {
           agent: action === 'claude' ? t('task.startWorkMenuClaude') : t('task.startWorkMenuCodex'),
-        }),
+        })
       );
-    } else if (terminalPanelRef?.value) {
-      await terminalPanelRef.value.createTerminal({
-        worktreeId: targetWorktreeId!,
-        title: task.title,
-        workingDir: targetWorktree.path,
-        taskId: task.id,
-      });
+    } else {
+      const sessionId = await createTaskTerminal();
+      if (!sessionId) {
+        return;
+      }
     }
 
     // 更新任务状态为"进行中"
@@ -656,7 +750,7 @@ function handleTaskViewEvent(event: { taskId?: string; projectId?: string }) {
 
 .board-columns {
   display: grid;
-  grid-template-columns: repeat(3, minmax(280px, 1fr));
+  grid-template-columns: repeat(4, minmax(280px, 1fr));
   grid-template-rows: 100%;
   gap: 16px;
   height: calc(100vh - 160px);

@@ -1,6 +1,11 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
-import { THEME_PRESETS, DEFAULT_PRESET_ID, getPresetById, getDefaultPreset } from '@/constants/themes';
+import {
+  THEME_PRESETS,
+  DEFAULT_PRESET_ID,
+  getPresetById,
+  getDefaultPreset,
+} from '@/constants/themes';
 import { DEFAULT_TERMINAL_THEME_ID } from '@/constants/terminalThemes';
 
 /**
@@ -54,7 +59,18 @@ export interface TerminalFontSettings {
 /**
  * 字体粗细选项
  */
-export type FontWeight = 'normal' | 'bold' | '100' | '200' | '300' | '400' | '500' | '600' | '700' | '800' | '900';
+export type FontWeight =
+  | 'normal'
+  | 'bold'
+  | '100'
+  | '200'
+  | '300'
+  | '400'
+  | '500'
+  | '600'
+  | '700'
+  | '800'
+  | '900';
 
 /**
  * 终端显示模式
@@ -308,7 +324,7 @@ export const useSettingsStore = defineStore('settings', () => {
     newSettings => {
       saveSettings(newSettings);
     },
-    { deep: true },
+    { deep: true }
   );
 
   function updateTheme(partial: Partial<ThemeSettings>) {
@@ -345,11 +361,17 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function updateTerminalShortcut(shortcut: PanelShortcutSetting) {
-    settings.value.panelShortcuts.terminal = sanitizePanelShortcut(shortcut, settings.value.panelShortcuts.terminal);
+    settings.value.panelShortcuts.terminal = sanitizePanelShortcut(
+      shortcut,
+      settings.value.panelShortcuts.terminal
+    );
   }
 
   function updateNotepadShortcut(shortcut: PanelShortcutSetting) {
-    settings.value.panelShortcuts.notepad = sanitizePanelShortcut(shortcut, settings.value.panelShortcuts.notepad);
+    settings.value.panelShortcuts.notepad = sanitizePanelShortcut(
+      shortcut,
+      settings.value.panelShortcuts.notepad
+    );
   }
 
   function resetTerminalShortcut() {
@@ -428,9 +450,10 @@ export const useSettingsStore = defineStore('settings', () => {
       // 切换到跟随系统模式时，清除自定义主题
       settings.value.customTheme = null;
       // 根据当前系统主题更新预设ID
-      const prefersDark = typeof window !== 'undefined'
-        ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        : false;
+      const prefersDark =
+        typeof window !== 'undefined'
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : false;
       const autoPresetId = prefersDark ? 'dark' : 'light';
       const preset = getPresetById(autoPresetId);
       if (preset) {
@@ -527,7 +550,8 @@ function loadSettings(): GeneralSettings {
         panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
         terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
         editor: sanitizeEditorSettings(parsed.editor),
-        confirmBeforeTerminalClose: parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
+        confirmBeforeTerminalClose:
+          parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
@@ -590,19 +614,24 @@ function sanitizeEditorSettings(value?: Partial<EditorSettings>): EditorSettings
   if (!value) {
     return { ...DEFAULT_EDITOR_SETTINGS };
   }
-  const normalized = typeof value.defaultEditor === 'string' ? value.defaultEditor.toLowerCase().trim() : '';
+  const normalized =
+    typeof value.defaultEditor === 'string' ? value.defaultEditor.toLowerCase().trim() : '';
   const supported = SUPPORTED_EDITORS.includes(normalized as EditorPreference)
     ? (normalized as EditorPreference)
     : DEFAULT_EDITOR_SETTINGS.defaultEditor;
   const customCommand =
-    typeof value.customCommand === 'string' ? value.customCommand : DEFAULT_EDITOR_SETTINGS.customCommand;
+    typeof value.customCommand === 'string'
+      ? value.customCommand
+      : DEFAULT_EDITOR_SETTINGS.customCommand;
   return {
     defaultEditor: supported,
     customCommand,
   };
 }
 
-function sanitizePanelShortcuts(value?: Partial<ShortcutSettings> | PanelShortcutSetting): ShortcutSettings {
+function sanitizePanelShortcuts(
+  value?: Partial<ShortcutSettings> | PanelShortcutSetting
+): ShortcutSettings {
   if (value && 'terminal' in (value as ShortcutSettings)) {
     const partial = value as Partial<ShortcutSettings>;
     return {
@@ -611,7 +640,10 @@ function sanitizePanelShortcuts(value?: Partial<ShortcutSettings> | PanelShortcu
     };
   }
   if (value && 'code' in (value as PanelShortcutSetting)) {
-    const shortcut = sanitizePanelShortcut(value as PanelShortcutSetting, DEFAULT_TERMINAL_SHORTCUT);
+    const shortcut = sanitizePanelShortcut(
+      value as PanelShortcutSetting,
+      DEFAULT_TERMINAL_SHORTCUT
+    );
     return {
       terminal: shortcut,
       notepad: { ...DEFAULT_NOTEPAD_SHORTCUT },
@@ -625,12 +657,14 @@ function sanitizePanelShortcuts(value?: Partial<ShortcutSettings> | PanelShortcu
 
 function sanitizePanelShortcut(
   value: Partial<PanelShortcutSetting> | undefined,
-  fallback: PanelShortcutSetting,
+  fallback: PanelShortcutSetting
 ): PanelShortcutSetting {
   const base = fallback ?? DEFAULT_TERMINAL_SHORTCUT;
   const code = typeof value?.code === 'string' && value.code.trim().length ? value.code : base.code;
   const display =
-    typeof value?.display === 'string' && value.display.trim().length ? value.display : deriveDisplayFromCode(code);
+    typeof value?.display === 'string' && value.display.trim().length
+      ? value.display
+      : deriveDisplayFromCode(code);
   return {
     code,
     display,
@@ -696,7 +730,8 @@ function sanitizeTerminalQuickActions(value?: unknown): TerminalQuickAction[] {
     const enabled = typeof raw.enabled === 'boolean' ? raw.enabled : true;
     const stacked = typeof raw.stacked === 'boolean' ? raw.stacked : false;
 
-    const baseId = typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `quick-${index + 1}`;
+    const baseId =
+      typeof raw.id === 'string' && raw.id.trim() ? raw.id.trim() : `quick-${index + 1}`;
     let id = baseId;
     let suffix = 1;
     while (usedIds.has(id)) {
@@ -727,7 +762,8 @@ function sanitizeTerminalFont(value?: Partial<TerminalFontSettings>): TerminalFo
     return { ...DEFAULT_TERMINAL_FONT };
   }
   return {
-    fontFamily: typeof value.fontFamily === 'string' ? value.fontFamily : DEFAULT_TERMINAL_FONT.fontFamily,
+    fontFamily:
+      typeof value.fontFamily === 'string' ? value.fontFamily : DEFAULT_TERMINAL_FONT.fontFamily,
     fontSize: sanitizeFontSize(value.fontSize),
     fontWeight: sanitizeFontWeight(value.fontWeight, DEFAULT_TERMINAL_FONT.fontWeight),
     fontWeightBold: sanitizeFontWeight(value.fontWeightBold, DEFAULT_TERMINAL_FONT.fontWeightBold),
@@ -736,7 +772,19 @@ function sanitizeTerminalFont(value?: Partial<TerminalFontSettings>): TerminalFo
   };
 }
 
-const VALID_FONT_WEIGHTS: FontWeight[] = ['normal', 'bold', '100', '200', '300', '400', '500', '600', '700', '800', '900'];
+const VALID_FONT_WEIGHTS: FontWeight[] = [
+  'normal',
+  'bold',
+  '100',
+  '200',
+  '300',
+  '400',
+  '500',
+  '600',
+  '700',
+  '800',
+  '900',
+];
 
 function sanitizeFontWeight(value: FontWeight | undefined, fallback: FontWeight): FontWeight {
   if (value && VALID_FONT_WEIGHTS.includes(value)) {

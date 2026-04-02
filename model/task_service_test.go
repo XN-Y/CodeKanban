@@ -33,14 +33,33 @@ func TestTaskServiceLifecycle(t *testing.T) {
 		t.Fatalf("expected status todo, got %s", task.Status)
 	}
 
+	newerTask, err := service.CreateTask(ctx, &CreateTaskRequest{
+		ProjectID:   project.ID,
+		WorktreeID:  &worktree.ID,
+		Title:       "Implement kanban board v2",
+		Description: "Step 4 task",
+		Status:      "todo",
+		Priority:    1,
+		Tags:        tables.StringArray{"backend"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTask(2) returned error: %v", err)
+	}
+	if newerTask.OrderIndex >= task.OrderIndex {
+		t.Fatalf("expected newer task order index to be smaller (top), got newer=%.2f older=%.2f", newerTask.OrderIndex, task.OrderIndex)
+	}
+
 	list, total, err := service.ListTasks(ctx, &ListTasksRequest{
 		ProjectID: project.ID,
 	})
 	if err != nil {
 		t.Fatalf("ListTasks returned error: %v", err)
 	}
-	if total != 1 || len(list) != 1 {
-		t.Fatalf("expected single task, got total=%d len=%d", total, len(list))
+	if total != 2 || len(list) != 2 {
+		t.Fatalf("expected 2 tasks, got total=%d len=%d", total, len(list))
+	}
+	if list[0].ID != newerTask.ID {
+		t.Fatalf("expected newest task to appear first, got %s", list[0].ID)
 	}
 
 	orderIndex := task.OrderIndex + 500

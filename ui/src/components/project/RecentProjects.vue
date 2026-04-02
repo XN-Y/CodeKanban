@@ -19,7 +19,13 @@
           <ThemeSwitcher />
           <n-popover trigger="hover" placement="bottom">
             <template #trigger>
-              <n-button quaternary circle size="small" :disabled="!currentProject" @click="emit('editCurrent')">
+              <n-button
+                quaternary
+                circle
+                size="small"
+                :disabled="!currentProject"
+                @click="emit('editCurrent')"
+              >
                 <template #icon>
                   <n-icon size="18">
                     <CreateOutline />
@@ -144,7 +150,12 @@
     </div>
 
     <!-- 更新提示模态框 -->
-    <n-modal v-model:show="showUpdateModal" preset="card" style="width: 420px" :title="t('update.newVersionAvailable')">
+    <n-modal
+      v-model:show="showUpdateModal"
+      preset="card"
+      style="width: 420px"
+      :title="t('update.newVersionAvailable')"
+    >
       <div style="margin-bottom: 16px">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
@@ -152,7 +163,9 @@
         </div>
         <div style="display: flex; align-items: center; gap: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
-          <n-tag type="success" :bordered="false" size="small">{{ updateInfo?.latestVersion }}</n-tag>
+          <n-tag type="success" :bordered="false" size="small">{{
+            updateInfo?.latestVersion
+          }}</n-tag>
         </div>
       </div>
 
@@ -163,7 +176,9 @@
       <template #footer>
         <n-space justify="end">
           <n-button @click="openUpdateUrl">{{ t('update.viewDetails') }}</n-button>
-          <n-button type="primary" @click="copyUpdateCommand">{{ t('update.copyCommand') }}</n-button>
+          <n-button type="primary" @click="copyUpdateCommand">{{
+            t('update.copyCommand')
+          }}</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -177,7 +192,12 @@ import { useDialog, useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useAppStore } from '@/stores/app';
-import { CreateOutline, SettingsOutline, TerminalOutline, ArrowUpCircleOutline } from '@vicons/ionicons5';
+import {
+  CreateOutline,
+  SettingsOutline,
+  TerminalOutline,
+  ArrowUpCircleOutline,
+} from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import type { ProjectPriority } from '@/stores/project';
@@ -258,10 +278,11 @@ const contextMenu = ref<ContextMenuState>({
 
 // 使用 useReq 定义优先级更新请求
 const { send: updatePriority, loading: priorityLoading } = useReq(
-  (projectId: string, priority: number | null) => Apis.project.updatePriority({
-    pathParams: { id: projectId },
-    data: { priority }
-  })
+  (projectId: string, priority: number | null) =>
+    Apis.project.updatePriority({
+      pathParams: { id: projectId },
+      data: { priority },
+    })
 );
 
 const handleSelectProject = (projectId: string) => {
@@ -558,7 +579,9 @@ onMounted(() => {
   flex-shrink: 0;
   font-size: 12px;
   line-height: 1;
-  transition: opacity 0.2s, transform 0.2s;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
 }
 
 .terminal-tag.clickable {
@@ -579,7 +602,9 @@ onMounted(() => {
   opacity: 0.85;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.15));
   cursor: pointer;
-  transition: opacity 0.2s, transform 0.2s;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
 }
 
 .pin-icon-corner:hover {

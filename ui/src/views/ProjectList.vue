@@ -6,17 +6,10 @@
           <n-icon size="24">
             <FolderOpenOutline />
           </n-icon>
-          <span
-            class="app-name-link"
-            @click="handleAppNameClick"
-          >
+          <span class="app-name-link" @click="handleAppNameClick">
             {{ appStore.appInfo.name }}
           </span>
-          <n-popover
-            v-if="updateInfo?.hasUpdate"
-            trigger="hover"
-            placement="bottom"
-          >
+          <n-popover v-if="updateInfo?.hasUpdate" trigger="hover" placement="bottom">
             <template #trigger>
               <n-tag
                 size="small"
@@ -31,13 +24,13 @@
                 </template>
               </n-tag>
             </template>
-            <div
-              style="max-width: 280px; cursor: pointer"
-              @click="showUpdateModal = true"
-            >
-              <div style="font-weight: 500; margin-bottom: 8px">{{ t('update.newVersionAvailable') }}</div>
+            <div style="max-width: 280px; cursor: pointer" @click="showUpdateModal = true">
+              <div style="font-weight: 500; margin-bottom: 8px">
+                {{ t('update.newVersionAvailable') }}
+              </div>
               <div style="font-size: 13px; margin-bottom: 4px">
-                {{ t('update.latestVersion') }}: <n-tag size="tiny" type="success">{{ updateInfo.latestVersion }}</n-tag>
+                {{ t('update.latestVersion') }}:
+                <n-tag size="tiny" type="success">{{ updateInfo.latestVersion }}</n-tag>
               </div>
               <div style="font-size: 12px; color: var(--n-text-color-3)">
                 {{ t('update.clickToView') }}
@@ -96,12 +89,7 @@
         />
         <n-tooltip :disabled="!sortType">
           <template #trigger>
-            <n-button
-              quaternary
-              circle
-              :disabled="!sortType"
-              @click="toggleSortOrder"
-            >
+            <n-button quaternary circle :disabled="!sortType" @click="toggleSortOrder">
               <template #icon>
                 <n-icon size="20">
                   <ArrowDownOutline v-if="sortOrder === 'desc'" />
@@ -117,8 +105,12 @@
             <n-checkbox v-model:checked="respectPriority" />
           </template>
           <div style="max-width: 300px">
-            <div style="font-weight: 500; margin-bottom: 4px">{{ t('project.respectPriority') }}</div>
-            <div style="font-size: 13px; color: var(--n-text-color-2)">{{ t('project.respectPriorityHint') }}</div>
+            <div style="font-weight: 500; margin-bottom: 4px">
+              {{ t('project.respectPriority') }}
+            </div>
+            <div style="font-size: 13px; color: var(--n-text-color-2)">
+              {{ t('project.respectPriorityHint') }}
+            </div>
           </div>
         </n-popover>
       </n-space>
@@ -202,9 +194,7 @@
         </n-card>
       </transition-group>
       <div v-else class="empty-container">
-        <n-empty
-          :description="searchQuery ? t('common.noData') : t('project.noProjects')"
-        />
+        <n-empty :description="searchQuery ? t('common.noData') : t('project.noProjects')" />
       </div>
     </n-spin>
 
@@ -216,7 +206,12 @@
     />
 
     <!-- 更新提示模态框 -->
-    <n-modal v-model:show="showUpdateModal" preset="card" style="width: 420px" :title="t('update.newVersionAvailable')">
+    <n-modal
+      v-model:show="showUpdateModal"
+      preset="card"
+      style="width: 420px"
+      :title="t('update.newVersionAvailable')"
+    >
       <div style="margin-bottom: 16px">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
@@ -224,7 +219,9 @@
         </div>
         <div style="display: flex; align-items: center; gap: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
-          <n-tag type="success" :bordered="false" size="small">{{ updateInfo?.latestVersion }}</n-tag>
+          <n-tag type="success" :bordered="false" size="small">{{
+            updateInfo?.latestVersion
+          }}</n-tag>
         </div>
       </div>
 
@@ -235,7 +232,9 @@
       <template #footer>
         <n-space justify="end">
           <n-button @click="openUpdateUrl">{{ t('update.viewDetails') }}</n-button>
-          <n-button type="primary" @click="copyUpdateCommand">{{ t('update.copyCommand') }}</n-button>
+          <n-button type="primary" @click="copyUpdateCommand">{{
+            t('update.copyCommand')
+          }}</n-button>
         </n-space>
       </template>
     </n-modal>
@@ -373,10 +372,11 @@ function hasProjectNotifications(projectId: string): boolean {
 
 // 使用 useReq 定义优先级更新请求
 const { send: updatePriority, loading: priorityLoading } = useReq(
-  (projectId: string, priority: number | null) => Apis.project.updatePriority({
-    pathParams: { id: projectId },
-    data: { priority }
-  })
+  (projectId: string, priority: number | null) =>
+    Apis.project.updatePriority({
+      pathParams: { id: projectId },
+      data: { priority },
+    })
 );
 
 // 搜索和排序
@@ -529,7 +529,7 @@ function getCardActions(project: Project): ProjectOption[] {
     {
       label: isPinned ? t('project.unpinProject') : t('project.pinProject'),
       key: 'toggle-pin',
-      project
+      project,
     } as ProjectOption,
     {
       label: t('project.setPriority'),
@@ -540,7 +540,7 @@ function getCardActions(project: Project): ProjectOption[] {
         { label: t('project.priority3'), key: 'priority-3', project } as ProjectOption,
         { label: t('project.priority2'), key: 'priority-2', project } as ProjectOption,
         { label: t('project.priority1'), key: 'priority-1', project } as ProjectOption,
-      ]
+      ],
     } as any,
     { type: 'divider', key: 'd2' } as any,
     { label: t('common.delete'), key: 'delete', project } as ProjectOption,
@@ -726,7 +726,8 @@ function getPriorityLabel(priority: number): string {
 }
 
 @keyframes notificationPulse {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 0 0 rgba(18, 183, 106, 0);
   }
   50% {

@@ -27,10 +27,7 @@
           <n-layout-content content-style="height: 100vh;">
             <!-- 主内容区 -->
             <!-- Dock 模式：使用 Tab 视图切换看板和终端 -->
-            <WorkspaceTabView
-              v-if="isDockMode"
-              :project-id="currentProjectId"
-            />
+            <WorkspaceTabView v-if="isDockMode" :project-id="currentProjectId" />
             <!-- 浮动模式：只显示看板 -->
             <div v-else class="workspace-content">
               <KanbanBoard :project-id="currentProjectId" />
@@ -64,7 +61,10 @@
         </div>
 
         <!-- 提醒视图 -->
-        <div v-show="mobileActiveView === 'notifications'" class="mobile-view mobile-notifications-view">
+        <div
+          v-show="mobileActiveView === 'notifications'"
+          class="mobile-view mobile-notifications-view"
+        >
           <AINotificationBar :is-mobile="true" />
         </div>
 
@@ -77,7 +77,12 @@
             @click="setMobileView('projects')"
           >
             <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"
+                />
+              </svg>
             </n-icon>
             <span>{{ t('nav.projects') }}</span>
           </button>
@@ -88,7 +93,12 @@
             @click="setMobileView('kanban')"
           >
             <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h4v4H4V4zm0 6h4v4H4v-4zm0 6h4v4H4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4zm0 6h4v4h-4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4z"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M4 4h4v4H4V4zm0 6h4v4H4v-4zm0 6h4v4H4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4zm0 6h4v4h-4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4z"
+                />
+              </svg>
             </n-icon>
             <span>{{ t('nav.kanban') }}</span>
           </button>
@@ -99,7 +109,12 @@
             @click="setMobileView('terminal')"
           >
             <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM7.293 15.707L5.586 14l1.707-1.707 1.414 1.414L7.293 15.707zm6.121-4.293l-1.414 1.414-1.414-1.414L11.879 10l1.535 1.414z"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM7.293 15.707L5.586 14l1.707-1.707 1.414 1.414L7.293 15.707zm6.121-4.293l-1.414 1.414-1.414-1.414L11.879 10l1.535 1.414z"
+                />
+              </svg>
             </n-icon>
             <span>{{ t('nav.terminal') }}</span>
           </button>
@@ -110,7 +125,12 @@
             @click="setMobileView('notifications')"
           >
             <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"/></svg>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
+                />
+              </svg>
             </n-icon>
             <span>{{ t('nav.notifications') }}</span>
           </button>

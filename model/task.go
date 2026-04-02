@@ -2,6 +2,7 @@ package model
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -107,7 +108,7 @@ func (s *TaskService) CreateTask(ctx context.Context, req *CreateTaskRequest) (*
 		branchName = worktree.BranchName
 	}
 
-	orderIndex, err := s.getNextOrderIndex(dbCtx, projectID, status)
+	orderIndex, err := s.getNewTaskOrderIndex(dbCtx, projectID, status)
 	if err != nil {
 		return nil, err
 	}
@@ -227,23 +228,27 @@ func (s *TaskService) UpdateTask(ctx context.Context, id string, updates map[str
 		return s.GetTask(ctx, id)
 	}
 
-	task, err := s.GetTask(ctx, id)
+	_, err = s.GetTask(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 
 	if value, ok := updates["worktree_id"]; ok {
-		if err := dbCtx.
-			Model(&tables.TaskTable{}).
-			Where("id = ?", id).
-			Update("worktree_id", value).Error; err != nil {
-			return nil, err
+		stmt := dbCtx.Model(&tables.TaskTable{}).Where("id = ?", id)
+		if value == nil {
+			if err := stmt.Update("worktree_id", gorm.Expr("NULL")).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			if err := stmt.Update("worktree_id", value).Error; err != nil {
+				return nil, err
+			}
 		}
 		delete(updates, "worktree_id")
 	}
 
 	if len(updates) > 0 {
-		if err := dbCtx.Model(task).Updates(updates).Error; err != nil {
+		if err := dbCtx.Model(&tables.TaskTable{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 			return nil, err
 		}
 	}
@@ -427,6 +432,27 @@ func (s *TaskService) getNextOrderIndex(dbCtx *gorm.DB, projectID, status string
 		return 0, err
 	}
 	return maxOrder + 1000, nil
+}
+
+func (s *TaskService) getNewTaskOrderIndex(dbCtx *gorm.DB, projectID, status string) (float64, error) {
+	var minOrder sql.NullFloat64
+	if err := dbCtx.
+		Model(&tables.TaskTable{}).
+		Where("project_id = ? AND status = ?", projectID, status).
+		Select("MIN(order_index)").
+		Scan(&minOrder).Error; err != nil {
+		return 0, err
+	}
+
+	if !minOrder.Valid {
+		return 1000, nil
+	}
+
+	if minOrder.Float64 <= 0 {
+		return minOrder.Float64 - 1000, nil
+	}
+
+	return minOrder.Float64 / 2, nil
 }
 
 func (s *TaskService) ensureWorktreeBelongsToProject(dbCtx *gorm.DB, worktreeID, projectID string) error {

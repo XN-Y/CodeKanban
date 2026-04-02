@@ -14,7 +14,12 @@
       </n-form-item>
 
       <n-form-item :label="t('task.fieldDescription')">
-        <n-input v-model:value="form.description" type="textarea" rows="4" :placeholder="t('task.descriptionPlaceholder')" />
+        <n-input
+          v-model:value="form.description"
+          type="textarea"
+          rows="4"
+          :placeholder="t('task.descriptionPlaceholder')"
+        />
       </n-form-item>
 
       <n-form-item :label="t('task.fieldPriority')">
@@ -31,7 +36,12 @@
       </n-form-item>
 
       <n-form-item :label="t('task.dueDate')">
-        <n-date-picker v-model:formatted-value="form.dueDate" value-format="yyyy-MM-dd" type="date" clearable />
+        <n-date-picker
+          v-model:formatted-value="form.dueDate"
+          value-format="yyyy-MM-dd"
+          type="date"
+          clearable
+        />
       </n-form-item>
 
       <n-form-item :label="t('task.tags')">
@@ -42,7 +52,9 @@
     <template #footer>
       <n-space justify="end">
         <n-button @click="emit('update:show', false)">{{ t('common.cancel') }}</n-button>
-        <n-button type="primary" :loading="createLoading" @click="handleSubmit">{{ t('common.create') }}</n-button>
+        <n-button type="primary" :loading="createLoading" @click="handleSubmit">{{
+          t('common.create')
+        }}</n-button>
       </n-space>
     </template>
   </n-modal>
@@ -100,7 +112,7 @@ const worktreeOptions = computed(() =>
   (projectStore.worktrees ?? []).map(worktree => ({
     label: worktree.branchName,
     value: worktree.id,
-  })),
+  }))
 );
 
 const createLoading = createTask.loading;
@@ -111,7 +123,7 @@ watch(
     if (!value) {
       resetForm();
     }
-  },
+  }
 );
 
 function resetForm() {

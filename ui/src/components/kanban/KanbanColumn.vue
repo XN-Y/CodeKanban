@@ -15,6 +15,22 @@
             <AddOutline />
           </n-icon>
         </n-button>
+        <n-tooltip v-if="status === 'done'" trigger="hover" placement="bottom">
+          <template #trigger>
+            <n-button
+              circle
+              size="tiny"
+              quaternary
+              :disabled="tasks.length === 0"
+              @click="emit('archive-click')"
+            >
+              <n-icon size="16">
+                <ArchiveOutline />
+              </n-icon>
+            </n-button>
+          </template>
+          {{ t('task.status.archived') }}
+        </n-tooltip>
       </div>
       <n-badge :value="tasks.length" :max="99" />
     </div>
@@ -50,11 +66,12 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue';
-import { AddOutline } from '@vicons/ionicons5';
+import { AddOutline, ArchiveOutline } from '@vicons/ionicons5';
 import draggable from 'vuedraggable';
 import TaskCard from './TaskCard.vue';
 import type { Task } from '@/types/models';
 import type { StartWorkAction } from '@/types/startWork';
+import { useLocale } from '@/composables/useLocale';
 
 type LinkedTerminalSummary = {
   sessionId: string;
@@ -73,7 +90,9 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  'task-moved': [{ taskId: string; newStatus: Task['status']; newIndex: number; orderedTasks: Task[] }];
+  'task-moved': [
+    { taskId: string; newStatus: Task['status']; newIndex: number; orderedTasks: Task[] },
+  ];
   'task-clicked': [Task];
   'task-edit': [Task];
   'task-delete': [Task];
@@ -81,16 +100,18 @@ const emit = defineEmits<{
   'task-start-work': [Task, StartWorkAction];
   'view-terminal': [Task];
   'add-click': [];
+  'archive-click': [];
 }>();
 
 const localTasks = ref<Task[]>([]);
+const { t } = useLocale();
 
 watch(
   () => props.tasks,
   value => {
     localTasks.value = [...value];
   },
-  { immediate: true, deep: true },
+  { immediate: true, deep: true }
 );
 
 function handleChange(event: any) {

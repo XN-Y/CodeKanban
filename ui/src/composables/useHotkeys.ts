@@ -20,9 +20,9 @@ export function useHotkeys(hotkeys: Hotkey[]) {
     for (const hotkey of hotkeys) {
       if (
         event.key.toLowerCase() === hotkey.key.toLowerCase() &&
-        (!!event.ctrlKey === !!hotkey.ctrl) &&
-        (!!event.altKey === !!hotkey.alt) &&
-        (!!event.shiftKey === !!hotkey.shift) &&
+        !!event.ctrlKey === !!hotkey.ctrl &&
+        !!event.altKey === !!hotkey.alt &&
+        !!event.shiftKey === !!hotkey.shift &&
         (!isFormElement || hotkey.allowInInputs)
       ) {
         event.preventDefault();

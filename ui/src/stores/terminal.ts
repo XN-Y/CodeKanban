@@ -417,7 +417,7 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   async function createSession(
     projectId: string | undefined,
-    options: TerminalCreateOptions,
+    options: TerminalCreateOptions
   ): Promise<string> {
     const resolved = ensureProjectSelected(projectId);
 
@@ -512,7 +512,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       .Post(
         `/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/link`,
         { taskId },
-        { cacheFor: 0 },
+        { cacheFor: 0 }
       )
       .send();
     const session = extractItem(response) as unknown as TerminalSession | undefined;
@@ -526,11 +526,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   async function unlinkSessionTask(projectId: string | undefined, sessionId: string) {
     const resolved = ensureProjectSelected(projectId);
     const response = await alovaInstance
-      .Post(
-        `/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`,
-        {},
-        { cacheFor: 0 },
-      )
+      .Post(`/api/v1/projects/${resolved}/terminals/${sessionId}/tasks/unlink`, {}, { cacheFor: 0 })
       .send();
     const session = extractItem(response) as unknown as TerminalSession | undefined;
     if (session) {
