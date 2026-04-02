@@ -408,6 +408,8 @@ export default {
     duplicateSuffix: ' 副本',
     emptyGuideTitle: '暂无终端',
     emptyGuideDescription: '点击下方按钮创建一个新终端',
+    emptyGuidePasteHint:
+      '支持把图片直接拖进终端。文本可直接粘贴，图片粘贴会根据本机 Codex 或浏览器上传模式自动处理。',
     createNewTerminal: '创建终端',
     quickActions: '快捷按钮',
     quickActionsManage: '快捷按钮设置',
@@ -524,6 +526,11 @@ export default {
     resumeNotSupported: '此会话类型不支持恢复',
     commandCopied: '命令已复制',
     resumeCommandCopied: 'Resume 指令已复制，终端已创建',
+    imageUploading: '正在上传图片...',
+    imageInserted: '已插入图片路径',
+    imageUploadFailed: '图片上传失败，请重试或直接把图片拖进终端。',
+    nativePasteUnavailable:
+      '当前 Codex 会话无法访问系统剪贴板。请使用 Ctrl/Cmd+V、右键粘贴，或直接把图片拖进终端。',
     loadConversationFailed: '加载对话失败',
     refreshConversation: '刷新对话（清除缓存重新解析）',
     conversationRefreshed: '对话已刷新',

@@ -1,14 +1,28 @@
 <template>
   <div class="terminal-viewport">
     <div ref="containerRef" class="terminal-shell"></div>
-    <div v-if="overlayMessage" class="terminal-overlay" :style="terminalOverlayStyle">
-      <span>{{ overlayMessage }}</span>
+    <div v-if="statusOverlayMessage" class="terminal-overlay" :style="terminalOverlayStyle">
+      <span>{{ statusOverlayMessage }}</span>
+    </div>
+    <div
+      v-if="transferCardMessage"
+      class="terminal-transfer-card"
+      :class="{ 'is-error': transferCardTone === 'error' }"
+      :style="transferCardStyle"
+    >
+      <span class="terminal-transfer-message">{{ transferCardMessage }}</span>
+      <div v-if="transferProgress !== null" class="terminal-transfer-progress">
+        <div class="terminal-transfer-progress-fill" :style="transferProgressStyle"></div>
+      </div>
+      <span v-if="transferProgress !== null" class="terminal-transfer-percent">
+        {{ transferProgress }}%
+      </span>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch, toRef } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useDebounceFn } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import type EventEmitter from 'eventemitter3';
@@ -18,6 +32,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
+import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type { TerminalTabState, ServerMessage } from '@/composables/useTerminalClient';
 import {
@@ -29,6 +44,12 @@ import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/setting
 import { useTerminalStore } from '@/stores/terminal';
 import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
 import { hexToRgba } from '@/utils/color';
+import {
+  formatTerminalPathInput,
+  uploadTerminalImage,
+  type TerminalImageUploadSource,
+} from '@/utils/terminalImageUpload';
+import { useLocale } from '@/composables/useLocale';
 
 const props = defineProps<{
   tab: TerminalTabState;
@@ -51,6 +72,8 @@ function getTerminalFontSize(baseFontSize: number): number {
 
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
+const message = useMessage();
+const { t } = useLocale();
 const { effectiveTerminalThemeId, terminalFont, terminalWebGLRenderer } =
   storeToRefs(settingsStore);
 
@@ -66,15 +89,34 @@ const terminalOverlayStyle = computed(() => {
   };
 });
 
+const transferCardStyle = computed(() => {
+  const theme = activeTerminalTheme.value.theme;
+  const background = theme.background || '#0f111a';
+  const foreground = theme.foreground || '#f6f8ff';
+
+  return {
+    '--terminal-transfer-card-bg': hexToRgba(background, 0.94),
+    '--terminal-transfer-card-fg': foreground,
+    '--terminal-transfer-card-border': hexToRgba(foreground, 0.18),
+    '--terminal-transfer-card-track': hexToRgba(foreground, 0.14),
+  };
+});
+
 const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let webglAddon: WebglAddon | null = null;
 let serializeAddon: SerializeAddon | null = null;
+let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
+let keydownCaptureHandler: ((event: KeyboardEvent) => void) | null = null;
 let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
+let transferOverlayTimer: number | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const SNAPSHOT_SCROLLBACK = 1200;
+const transferCardMessage = ref('');
+const transferCardTone = ref<'progress' | 'error'>('progress');
+const transferProgress = ref<number | null>(null);
 
 /**
  * 替换 True Color #000000 为可见颜色
@@ -145,7 +187,7 @@ watch(
 
 const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
-const overlayMessage = computed(() => {
+const statusOverlayMessage = computed(() => {
   const status = props.tab.clientStatus;
   // Removed debug log to avoid confusion with AI completion detection
   switch (status) {
@@ -159,6 +201,52 @@ const overlayMessage = computed(() => {
       return '';
   }
 });
+
+const transferProgressStyle = computed(() => {
+  return {
+    width: `${transferProgress.value ?? 0}%`,
+  };
+});
+
+function clearTransferOverlay() {
+  if (transferOverlayTimer != null) {
+    window.clearTimeout(transferOverlayTimer);
+    transferOverlayTimer = null;
+  }
+  transferCardMessage.value = '';
+  transferCardTone.value = 'progress';
+  transferProgress.value = null;
+}
+
+function showTransferOverlay(
+  messageText: string,
+  options?: {
+    duration?: number;
+    tone?: 'progress' | 'error';
+    progress?: number | null;
+  }
+) {
+  if (transferOverlayTimer != null) {
+    window.clearTimeout(transferOverlayTimer);
+    transferOverlayTimer = null;
+  }
+
+  transferCardMessage.value = messageText;
+  transferCardTone.value = options?.tone ?? 'progress';
+  transferProgress.value =
+    typeof options?.progress === 'number'
+      ? Math.max(0, Math.min(100, Math.round(options.progress)))
+      : options?.progress === null
+        ? null
+        : transferProgress.value;
+
+  if ((options?.duration ?? 0) > 0) {
+    transferOverlayTimer = window.setTimeout(() => {
+      transferOverlayTimer = null;
+      clearTransferOverlay();
+    }, options?.duration ?? 0);
+  }
+}
 
 function handleMessage(payload: ServerMessage) {
   if (!terminal) {
@@ -218,6 +306,123 @@ function base64ToUint8Array(value: string) {
     bytes[i] = binary.charCodeAt(i);
   }
   return bytes;
+}
+
+function sendTerminalInput(data: string) {
+  if (!data) {
+    return;
+  }
+
+  props.send(props.tab.id, { type: 'input', data });
+}
+
+function shouldUseBrowserPasteShortcut(event: KeyboardEvent) {
+  if (event.type !== 'keydown') {
+    return false;
+  }
+
+  return (event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v';
+}
+
+function shouldBlockCodexClipboardShortcut(event: KeyboardEvent) {
+  if (event.type !== 'keydown') {
+    return false;
+  }
+
+  if (!(props.tab.aiAssistant?.detected && props.tab.aiAssistant?.type === 'codex')) {
+    return false;
+  }
+
+  return (
+    event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === 'v'
+  );
+}
+
+function getClipboardImage(clipboardData: DataTransfer | null) {
+  if (!clipboardData) {
+    return null;
+  }
+
+  for (const item of Array.from(clipboardData.items || [])) {
+    if (!item.type.startsWith('image/')) {
+      continue;
+    }
+
+    const file = item.getAsFile();
+    if (file) {
+      return file;
+    }
+  }
+
+  for (const file of Array.from(clipboardData.files || [])) {
+    if (file.type.startsWith('image/')) {
+      return file;
+    }
+  }
+
+  return null;
+}
+
+async function uploadImageAndInsert(
+  blob: Blob | File,
+  source: TerminalImageUploadSource,
+  explicitFileName?: string
+) {
+  showTransferOverlay(t('terminal.imageUploading'), {
+    tone: 'progress',
+    progress: 0,
+  });
+
+  try {
+    const result = await uploadTerminalImage({
+      blob,
+      fileName: explicitFileName,
+      source,
+      onProgress: progress => {
+        showTransferOverlay(t('terminal.imageUploading'), {
+          tone: 'progress',
+          progress: progress.percent ?? transferProgress.value ?? 0,
+        });
+      },
+    });
+
+    sendTerminalInput(formatTerminalPathInput(result.path));
+    clearTransferOverlay();
+  } catch (error) {
+    console.warn('[Terminal] Failed to upload image:', error);
+    showTransferOverlay(t('terminal.imageUploadFailed'), {
+      tone: 'error',
+      progress: null,
+      duration: 900,
+    });
+    message.error(t('terminal.imageUploadFailed'));
+  }
+}
+
+function handlePaste(event: ClipboardEvent) {
+  const clipboardData = event.clipboardData;
+  if (!clipboardData) {
+    return;
+  }
+
+  const image = getClipboardImage(clipboardData);
+  if (image) {
+    event.preventDefault();
+    void uploadImageAndInsert(image, 'paste', image.name);
+    return;
+  }
+
+  const text = clipboardData.getData('text/plain');
+  if (!text) {
+    return;
+  }
+
+  event.preventDefault();
+  sendTerminalInput(text);
 }
 
 function restoreSnapshotIfAvailable() {
@@ -586,68 +791,35 @@ onMounted(() => {
   }
 
   terminal.onData(data => {
-    props.send(props.tab.id, { type: 'input', data });
+    sendTerminalInput(data);
   });
 
-  // 智能粘贴处理：根据剪贴板内容类型决定行为
-  // - 图片等非文本内容：发送 Ctrl+V 按键给终端，让终端程序自己处理（如 Windows Terminal、cmd）
-  // - 普通文本：拦截并发送文本内容（兼容 Claude Code 等依赖前端发送内容的终端）
-  terminal.attachCustomKeyEventHandler(event => {
-    // 拦截 Ctrl+V (Windows/Linux) 或 Cmd+V (Mac)
-    if ((event.ctrlKey || event.metaKey) && event.key === 'v' && event.type === 'keydown') {
-      event.preventDefault();
-
-      // 异步处理剪贴板内容
-      (async () => {
-        try {
-          // 读取剪贴板所有内容
-          const clipboardItems = await navigator.clipboard.read();
-
-          // 检查是否包含非文本内容（图片等）
-          let hasNonText = false;
-          for (const item of clipboardItems) {
-            // 如果包含图片类型，标记为非文本
-            if (item.types.some(type => type.startsWith('image/'))) {
-              hasNonText = true;
-              break;
-            }
-          }
-
-          if (hasNonText) {
-            // 剪贴板包含图片，发送 Ctrl+V 控制字符 (ASCII 0x16)
-            // 让终端程序自己监听系统剪贴板并处理
-            props.send(props.tab.id, { type: 'input', data: '\x16' });
-          } else {
-            // 剪贴板只有文本，读取并发送文本内容
-            const text = await navigator.clipboard.readText();
-            if (text && terminal) {
-              props.send(props.tab.id, { type: 'input', data: text });
-            }
-          }
-        } catch (err) {
-          console.warn('[Terminal] Failed to read clipboard:', err);
-          // 失败时fallback：尝试读取文本
-          try {
-            const text = await navigator.clipboard.readText();
-            if (text && terminal) {
-              props.send(props.tab.id, { type: 'input', data: text });
-            }
-          } catch (e) {
-            console.warn('[Terminal] Fallback clipboard read also failed:', e);
-          }
-        }
-      })();
-
-      return false; // 阻止 xterm.js 默认处理
+  keydownCaptureHandler = (event: KeyboardEvent) => {
+    if (shouldUseBrowserPasteShortcut(event)) {
+      // Keep browser paste enabled, but stop xterm/Codex from consuming Ctrl/Cmd+V first.
+      event.stopImmediatePropagation();
+      event.stopPropagation();
+      return;
     }
-    return true; // 其他按键正常处理
+  };
+
+  terminal.attachCustomKeyEventHandler(event => {
+    if (shouldBlockCodexClipboardShortcut(event)) {
+      event.preventDefault();
+      message.warning(t('terminal.nativePasteUnavailable'));
+      return false;
+    }
+
+    return true;
   });
 
-  // 支持拖放图片文件到终端
+  pasteHandler = (event: ClipboardEvent) => {
+    handlePaste(event);
+  };
+
   dragOverHandler = (event: DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    // 设置拖放效果
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = 'copy';
     }
@@ -662,40 +834,17 @@ onMounted(() => {
       return;
     }
 
-    // 处理所有拖放的文件
     for (const file of Array.from(files)) {
-      // 只处理图片文件
-      if (file.type.startsWith('image/')) {
-        try {
-          // 读取图片为 base64
-          const arrayBuffer = await file.arrayBuffer();
-          const base64 = btoa(
-            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-          );
-
-          // 上传图片到服务器
-          const response = await fetch('/api/v1/upload/clipboard-image', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              fileName: file.name,
-              data: base64,
-            }),
-          });
-
-          if (response.ok) {
-            const result = await response.json();
-            const filePath = result.data.path;
-            // 将文件路径作为输入发送
-            props.send(props.tab.id, { type: 'input', data: filePath + ' ' });
-          }
-        } catch (error) {
-          console.warn('[Terminal] Failed to upload dropped image:', error);
-        }
+      if (!file.type.startsWith('image/')) {
+        continue;
       }
+
+      await uploadImageAndInsert(file, 'drop', file.name);
     }
   };
 
+  container?.addEventListener('keydown', keydownCaptureHandler, true);
+  container?.addEventListener('paste', pasteHandler, true);
   container?.addEventListener('dragover', dragOverHandler);
   container?.addEventListener('drop', dropHandler);
 
@@ -752,6 +901,12 @@ onBeforeUnmount(() => {
   props.emitter.off('terminal-blur-all', handleTerminalBlurEvent);
   window.removeEventListener('resize', debouncedResize);
   if (containerRef.value) {
+    if (keydownCaptureHandler) {
+      containerRef.value.removeEventListener('keydown', keydownCaptureHandler, true);
+    }
+    if (pasteHandler) {
+      containerRef.value.removeEventListener('paste', pasteHandler, true);
+    }
     if (dragOverHandler) {
       containerRef.value.removeEventListener('dragover', dragOverHandler);
     }
@@ -767,8 +922,11 @@ onBeforeUnmount(() => {
   fitAddon = null;
   serializeAddon?.dispose();
   serializeAddon = null;
+  keydownCaptureHandler = null;
+  pasteHandler = null;
   dragOverHandler = null;
   dropHandler = null;
+  clearTransferOverlay();
 });
 </script>
 
@@ -791,9 +949,64 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
   background: var(--terminal-overlay-bg, rgba(0, 0, 0, 0.35));
   color: var(--terminal-overlay-color, var(--kanban-terminal-fg, #f6f8ff));
   font-size: 13px;
+}
+
+.terminal-transfer-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 220px;
+  max-width: min(320px, calc(100% - 32px));
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--terminal-transfer-card-border, rgba(255, 255, 255, 0.14));
+  background: var(--terminal-transfer-card-bg, rgba(15, 17, 26, 0.92));
+  color: var(--terminal-transfer-card-fg, var(--kanban-terminal-fg, #f6f8ff));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+.terminal-transfer-card.is-error {
+  border-color: rgba(255, 117, 117, 0.35);
+}
+
+.terminal-transfer-message {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.terminal-transfer-progress {
+  width: 100%;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--terminal-transfer-card-track, rgba(255, 255, 255, 0.12));
+}
+
+.terminal-transfer-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(112, 211, 255, 0.95), rgba(116, 170, 156, 0.95));
+  transition: width 120ms ease-out;
+}
+
+.terminal-transfer-card.is-error .terminal-transfer-progress-fill {
+  background: linear-gradient(90deg, rgba(255, 131, 131, 0.95), rgba(255, 180, 117, 0.95));
+}
+
+.terminal-transfer-percent {
+  font-size: 12px;
+  opacity: 0.8;
 }
 </style>
 

@@ -459,6 +459,7 @@
           </n-icon>
           <h3 class="empty-guide-title">{{ t('terminal.emptyGuideTitle') }}</h3>
           <p class="empty-guide-description">{{ t('terminal.emptyGuideDescription') }}</p>
+          <p class="empty-guide-hint">{{ t('terminal.emptyGuidePasteHint') }}</p>
           <n-dropdown
             v-if="worktrees.length > 1"
             trigger="click"
@@ -500,6 +501,7 @@
           </n-icon>
           <h3 class="empty-guide-title">{{ t('terminal.emptyGuideTitle') }}</h3>
           <p class="empty-guide-description">{{ t('terminal.emptyGuideDescription') }}</p>
+          <p class="empty-guide-hint">{{ t('terminal.emptyGuidePasteHint') }}</p>
           <n-dropdown
             v-if="worktrees.length > 1"
             trigger="click"
@@ -4405,6 +4407,14 @@ defineExpose({
   font-size: 14px;
   color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.8));
   opacity: 0.8;
+  margin: 0 0 10px 0;
+}
+
+.empty-guide-hint {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--kanban-terminal-empty-guide-fg, rgba(255, 255, 255, 0.72));
+  opacity: 0.72;
   margin: 0 0 24px 0;
 }
 

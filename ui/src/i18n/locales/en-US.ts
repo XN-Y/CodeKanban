@@ -420,6 +420,8 @@ export default {
     duplicateSuffix: ' Copy',
     emptyGuideTitle: 'No Terminal',
     emptyGuideDescription: 'Click the button below to create a new terminal',
+    emptyGuidePasteHint:
+      'You can drag images into the terminal. Text supports paste, and image paste will use local Codex passthrough or browser upload depending on the session.',
     createNewTerminal: 'Create Terminal',
     quickActions: 'Quick Actions',
     quickActionsManage: 'Manage quick actions',
@@ -537,6 +539,11 @@ export default {
     resumeNotSupported: 'Resume is not supported for this session type',
     commandCopied: 'Command copied',
     resumeCommandCopied: 'Resume command copied, new terminal created',
+    imageUploading: 'Uploading image...',
+    imageInserted: 'Image path inserted',
+    imageUploadFailed: 'Failed to upload image. Try again or drag the image into the terminal.',
+    nativePasteUnavailable:
+      'Native clipboard access is unavailable for this Codex session. Use Ctrl/Cmd+V, menu paste, or drag an image into the terminal.',
     loadConversationFailed: 'Failed to load conversation',
     refreshConversation: 'Refresh conversation (clear cache and re-parse)',
     conversationRefreshed: 'Conversation refreshed',
@@ -606,8 +613,10 @@ export default {
     projectAndTerminal: 'Project & Terminal',
     worktreeSettings: 'Worktree Settings',
     worktreeGlobalBaseDir: 'Global Worktree Directory',
-    worktreeGlobalBaseDirPlaceholder: 'e.g. D:/worktrees or /Users/you/worktrees (empty to disable)',
-    worktreeGlobalBaseDirTip: 'Used to create Worktrees in a centralized place. Must be an absolute path. Empty means not configured.',
+    worktreeGlobalBaseDirPlaceholder:
+      'e.g. D:/worktrees or /Users/you/worktrees (empty to disable)',
+    worktreeGlobalBaseDirTip:
+      'Used to create Worktrees in a centralized place. Must be an absolute path. Empty means not configured.',
     worktreeGlobalDirNamePattern: 'Global directory naming pattern',
     worktreeGlobalDirNamePatternTip:
       'Placeholders: {projectName}, {projectId}, {branch}. Default: {projectName}-{branch}. Recommend including {projectId} to avoid collisions.',
