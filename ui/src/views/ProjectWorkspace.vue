@@ -184,7 +184,7 @@ const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const { terminalDisplayMode } = storeToRefs(settingsStore);
-const { isDesktop, windowWidth } = useResponsive();
+const { windowWidth } = useResponsive();
 const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
@@ -202,7 +202,9 @@ watch(worktreeSiderCollapsed, collapsed => {
 });
 
 // Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
-const isDockMode = computed(() => isDesktop.value && terminalDisplayMode.value === 'docked');
+const isDockMode = computed(
+  () => !isMobileLayout.value && terminalDisplayMode.value === 'docked'
+);
 
 // 移动端视图切换
 type MobileView = 'kanban' | 'terminal' | 'projects' | 'notifications';
