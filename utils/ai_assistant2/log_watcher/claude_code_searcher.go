@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -125,11 +126,13 @@ func (s *ClaudeCodeFileSearcher) GetSessionDir() string {
 // Example: D:\codes\2025\aicode-kanban -> D--codes-2025-aicode-kanban
 // Example: D:\codes\2025\临时\box -> D--codes-2025----box (Chinese chars become dashes)
 func EncodePathForClaude(path string) string {
-	// Clean the path first (removes trailing slashes, normalizes separators)
-	path = filepath.Clean(path)
+	// Normalize both Unix and Windows separators first so the result is stable
+	// regardless of the OS that is executing this code.
+	path = strings.ReplaceAll(path, "\\", "/")
 
-	// Normalize path separators to forward slash
-	path = filepath.ToSlash(path)
+	// Use the slash-based path cleaner instead of filepath.Clean so Windows-style
+	// input is normalized correctly even when tests run on Linux/macOS.
+	path = pathpkg.Clean(path)
 
 	// Remove any remaining trailing slashes (for safety)
 	path = strings.TrimRight(path, "/\\")

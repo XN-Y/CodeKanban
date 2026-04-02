@@ -1,6 +1,7 @@
 package ai_assistant2
 
 import (
+	"path"
 	"strings"
 
 	"code-kanban/utils/ai_assistant2/types"
@@ -8,9 +9,10 @@ import (
 
 // DetectionRule defines how to detect a specific AI assistant from command
 type DetectionRule struct {
-	Type        types.AssistantType
-	Patterns    []string // Command line patterns to match (case-insensitive)
-	Description string
+	Type            types.AssistantType
+	Patterns        []string // Command line patterns to match (case-insensitive)
+	ExecutableNames []string // Executable names to match exactly (case-insensitive)
+	Description     string
 }
 
 var defaultRules = []DetectionRule{
@@ -21,6 +23,10 @@ var defaultRules = []DetectionRule{
 			"claude-code/cli.js",
 			"claude-code/bin/",
 		},
+		ExecutableNames: []string{
+			"claude",
+			"claude-code",
+		},
 		Description: "Detects Anthropic Claude Code CLI",
 	},
 	{
@@ -29,6 +35,9 @@ var defaultRules = []DetectionRule{
 			"@openai/codex",
 			"codex/bin/codex.js",
 			"codex.js",
+		},
+		ExecutableNames: []string{
+			"codex",
 		},
 		Description: "Detects OpenAI Codex CLI",
 	},
@@ -58,10 +67,7 @@ func (r *DetectionRule) Match(command string) bool {
 		return false
 	}
 
-	// Normalize command for case-insensitive matching
-	// Also normalize path separators (Windows uses \, patterns use /)
-	normalizedCmd := strings.ToLower(command)
-	normalizedCmd = strings.ReplaceAll(normalizedCmd, "\\", "/")
+	normalizedCmd := normalizeCommand(command)
 
 	for _, pattern := range r.Patterns {
 		normalizedPattern := strings.ToLower(pattern)
@@ -70,6 +76,126 @@ func (r *DetectionRule) Match(command string) bool {
 		}
 	}
 
+	if len(r.ExecutableNames) == 0 {
+		return false
+	}
+
+	candidates := candidateExecutables(normalizedCmd)
+	for _, candidate := range candidates {
+		if r.matchesExecutable(candidate) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func normalizeCommand(command string) string {
+	normalized := strings.ToLower(strings.TrimSpace(command))
+	return strings.ReplaceAll(normalized, "\\", "/")
+}
+
+func splitCommandTokens(command string) []string {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	tokens := make([]string, 0, len(fields))
+	for _, field := range fields {
+		token := strings.Trim(field, `"'`)
+		if token == "" {
+			continue
+		}
+		tokens = append(tokens, token)
+	}
+
+	return tokens
+}
+
+func candidateExecutables(command string) []string {
+	tokens := splitCommandTokens(command)
+	if len(tokens) == 0 {
+		return nil
+	}
+
+	candidates := make([]string, 0, 4)
+	appendCandidate := func(token string) {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			return
+		}
+		candidates = append(candidates, token)
+	}
+
+	appendCandidate(tokens[0])
+
+	if isNodeRuntime(tokens[0]) && len(tokens) > 1 {
+		appendCandidate(tokens[1])
+	}
+
+	if isShellExecutable(tokens[0]) {
+		scriptTokens := extractShellCommandTokens(tokens)
+		if len(scriptTokens) > 0 {
+			appendCandidate(scriptTokens[0])
+			if isNodeRuntime(scriptTokens[0]) && len(scriptTokens) > 1 {
+				appendCandidate(scriptTokens[1])
+			}
+		}
+	}
+
+	return candidates
+}
+
+func extractShellCommandTokens(tokens []string) []string {
+	if len(tokens) < 2 {
+		return nil
+	}
+
+	for idx := 1; idx < len(tokens); idx++ {
+		token := tokens[idx]
+		if token == "-c" || token == "-lc" || token == "-cl" {
+			if idx+1 >= len(tokens) {
+				return nil
+			}
+			return splitCommandTokens(strings.Join(tokens[idx+1:], " "))
+		}
+	}
+
+	return nil
+}
+
+func isNodeRuntime(token string) bool {
+	base := path.Base(token)
+	switch base {
+	case "node", "node.exe":
+		return true
+	default:
+		return false
+	}
+}
+
+func isShellExecutable(token string) bool {
+	base := path.Base(token)
+	switch base {
+	case "bash", "bash.exe", "sh", "sh.exe", "zsh", "zsh.exe", "fish", "fish.exe":
+		return true
+	default:
+		return false
+	}
+}
+
+func (r *DetectionRule) matchesExecutable(token string) bool {
+	base := path.Base(token)
+	for _, executable := range r.ExecutableNames {
+		executable = strings.ToLower(strings.TrimSpace(executable))
+		if executable == "" {
+			continue
+		}
+		if token == executable || base == executable {
+			return true
+		}
+	}
 	return false
 }
 

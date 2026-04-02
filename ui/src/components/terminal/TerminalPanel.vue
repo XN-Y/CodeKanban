@@ -3243,7 +3243,7 @@ function formatProcessInfo(tab: TerminalTabState): string {
   return lines.join('\n');
 }
 
-async function copyProcessInfo(tab: TerminalTabState) {
+function showProcessInfoDialog(tab: TerminalTabState) {
   if (!tab.processPid) {
     message.warning(t('terminal.noProcessInfo'));
     return;
@@ -3251,13 +3251,28 @@ async function copyProcessInfo(tab: TerminalTabState) {
 
   const info = formatProcessInfo(tab);
 
-  try {
-    await navigator.clipboard.writeText(info);
-    message.success(t('terminal.processInfoCopied'));
-  } catch (error) {
-    console.error('Failed to copy process info:', error);
-    message.error(t('terminal.copyFailed'));
-  }
+  dialog.create({
+    title: t('terminal.processInfo'),
+    content: () =>
+      h(
+        'pre',
+        {
+          style: {
+            margin: '0',
+            maxHeight: '60vh',
+            overflow: 'auto',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            fontSize: '12px',
+            lineHeight: '1.6',
+          },
+        },
+        info
+      ),
+    positiveText: t('common.confirm'),
+    showIcon: false,
+  });
 }
 
 async function copyWorkingDirectory(tab: TerminalTabState) {
@@ -3348,7 +3363,7 @@ async function handleContextMenuSelect(key: string) {
     return;
   }
   if (key === 'copy-process-info') {
-    copyProcessInfo(tab);
+    showProcessInfoDialog(tab);
     return;
   }
   if (key === 'copy-path') {
