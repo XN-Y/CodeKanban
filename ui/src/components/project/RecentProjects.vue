@@ -503,6 +503,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 0;
   background: var(--n-color);
 }
 
@@ -512,12 +513,18 @@ onMounted(() => {
 }
 
 .empty-state {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 32px 16px;
   text-align: center;
 }
 
 .projects-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
 }
@@ -635,6 +642,7 @@ onMounted(() => {
 }
 
 .version-info-container {
+  flex-shrink: 0;
   padding: 12px 16px;
   border-top: 1px solid var(--n-border-color);
   background-color: var(--n-color-target);
