@@ -1,20 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import type { DropdownOption } from 'naive-ui';
-import { useDialog, useMessage, NCheckbox } from 'naive-ui';
 import Apis from '@/api';
 import { useAutoReq } from '@/api/composable';
-import { extractItem } from '@/api/response';
-import { taskActions } from '@/composables/useTaskActions';
 import { useTerminalStore, type TerminalTabState } from '@/stores/terminal';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
-import { useTaskStore } from '@/stores/task';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
-import type { Task } from '@/types/models';
 
 // Props
 const props = withDefaults(
@@ -22,22 +17,21 @@ const props = withDefaults(
     isMobile?: boolean;
     layout?: 'overlay' | 'sidebar' | 'docked-sidebar';
     compactMode?: 'auto' | 'force-compact' | 'force-comfortable';
+    dockedCollapsed?: boolean;
   }>(),
   {
     isMobile: false,
     layout: 'overlay',
     compactMode: 'auto',
+    dockedCollapsed: false,
   }
 );
 
 const { t } = useI18n();
-const dialog = useDialog();
-const message = useMessage();
 const terminalStore = useTerminalStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
-const taskStore = useTaskStore();
-const { terminalDisplayMode, confirmBeforeTerminalClose } = storeToRefs(settingsStore);
+const { terminalDisplayMode } = storeToRefs(settingsStore);
 const isSidebar = computed(() => props.layout === 'sidebar' || props.layout === 'docked-sidebar');
 const isDockedSidebar = computed(() => props.layout === 'docked-sidebar');
 
@@ -70,8 +64,6 @@ const compactModeEnabled = computed({
 const canToggleCompactMode = computed(() => props.compactMode === 'auto');
 const currentProjectOnly = ref(false);
 
-// 项目序号过滤（不存储到 localStorage）
-const projectIndexFilter = ref<string | null>(null);
 
 // 项目序号颜色表
 const PROJECT_INDEX_COLORS = [
@@ -561,15 +553,6 @@ function getProjectIndex(notification: NotificationItem) {
   return projectIndexMap.value.get(notification.projectId);
 }
 
-// 点击项目序号切换过滤
-function toggleProjectFilter(projectId: string, event: MouseEvent) {
-  event.stopPropagation();
-  if (projectIndexFilter.value === projectId) {
-    projectIndexFilter.value = null;
-  } else {
-    projectIndexFilter.value = projectId;
-  }
-}
 
 const currentProjectId = computed(() => {
   const id = currentRoute.params.id;
@@ -712,9 +695,6 @@ const dockedSessionItems = computed<DockedSessionItem[]>(() => {
 
   const items: Omit<DockedSessionItem, 'projectIndex'>[] = [];
   dockedProjectIdsToLoad.value.forEach(projectId => {
-    if (projectIndexFilter.value !== null && projectId !== projectIndexFilter.value) {
-      return;
-    }
     const tabs = terminalStore.getTabs(projectId);
     tabs.forEach(tab => {
       if (!isAgentTerminalSession(tab)) {
@@ -792,17 +772,6 @@ const isSingleDockedProject = computed(() => {
   return ids.size <= 1;
 });
 
-watch(
-  () => dockedSessionItems.value.length,
-  newLength => {
-    if (!isDockedSidebar.value) {
-      return;
-    }
-    if (newLength === 0 && projectIndexFilter.value !== null) {
-      projectIndexFilter.value = null;
-    }
-  }
-);
 
 const filteredNotifications = computed(() => {
   if (!notificationsEnabled.value) {
@@ -819,25 +788,10 @@ const filteredNotifications = computed(() => {
         return false;
       }
     }
-    // 如果启用了项目序号过滤，只显示该项目的通知
-    if (projectIndexFilter.value !== null) {
-      if (notification.projectId !== projectIndexFilter.value) {
-        return false;
-      }
-    }
     return true;
   });
 });
 
-// 监听过滤后的通知数量，如果为0则自动取消项目序号过滤
-watch(
-  () => filteredNotifications.value.length,
-  newLength => {
-    if (newLength === 0 && projectIndexFilter.value !== null) {
-      projectIndexFilter.value = null;
-    }
-  }
-);
 
 function matchesDisplayMode(notification: NotificationItem) {
   if (notificationDisplayMode.value === 'idle-only') {
@@ -967,91 +921,6 @@ async function handleDockedSessionClick(item: DockedSessionItem) {
   terminalStore.focusSession(item.projectId, item.sessionId);
 }
 
-async function closeDockedSession(item: DockedSessionItem) {
-  const projectId = item.projectId;
-  const sessionId = item.sessionId;
-  if (!projectId || !sessionId) {
-    return;
-  }
-
-  const tabTitle = item.title || t('terminal.defaultTerminalTitle');
-  const session = terminalStore.getSessionById(sessionId);
-  const linkedTaskId = session?.taskId || terminalStore.getLinkedTaskId(sessionId);
-
-  const doClose = async (): Promise<boolean> => {
-    try {
-      await terminalStore.closeSession(projectId, sessionId);
-      return true;
-    } catch (error) {
-      console.error('[Terminal] Failed to close terminal from docked notifications', error);
-      message.error(t('terminal.closeFailed'));
-      return false;
-    }
-  };
-
-  if (!confirmBeforeTerminalClose.value) {
-    await doClose();
-    return;
-  }
-
-  const shouldCompleteTask = ref(Boolean(linkedTaskId));
-
-  dialog.warning({
-    title: t('terminal.confirmCloseTitle'),
-    content: () => {
-      const children = [
-        h('div', { class: 'terminal-close-confirm__message' }, [
-          t('terminal.confirmCloseContent', { title: tabTitle }),
-        ]),
-      ];
-      if (linkedTaskId) {
-        children.push(
-          h(
-            'div',
-            { class: 'terminal-close-confirm__checkbox' },
-            h(
-              NCheckbox,
-              {
-                checked: shouldCompleteTask.value,
-                'onUpdate:checked': (value: boolean) => {
-                  shouldCompleteTask.value = value;
-                },
-              },
-              { default: () => t('terminal.confirmCloseCompleteTask') }
-            )
-          )
-        );
-      }
-      return h('div', { class: 'terminal-close-confirm' }, children);
-    },
-    positiveText: t('terminal.confirmCloseButton'),
-    negativeText: t('common.cancel'),
-    onPositiveClick: async () => {
-      const closed = await doClose();
-      if (closed && linkedTaskId && shouldCompleteTask.value) {
-        await completeLinkedTask(linkedTaskId);
-      }
-    },
-  });
-}
-
-async function completeLinkedTask(taskId: string) {
-  const task = taskStore.tasks.find(item => item.id === taskId);
-  if (task && (task.status === 'done' || task.status === 'archived')) {
-    return;
-  }
-  try {
-    const response = await taskActions.moveTask.send(taskId, { status: 'done' });
-    const updated = extractItem(response) as unknown as Task | undefined;
-    if (updated) {
-      taskStore.upsertTask(updated);
-    } else {
-      taskActions.invalidateTaskCache();
-    }
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.completeLinkedTaskFailed'));
-  }
-}
 
 watch(
   () =>
@@ -1890,18 +1759,16 @@ watch(
         class="mobile-notification-row"
         :class="{ 'is-current-session': notification.sessionId === currentActiveSessionId }"
       >
-        <button
+        <span
           v-if="getProjectIndex(notification)"
           class="mobile-project-badge"
           :class="{
-            'is-filtered': projectIndexFilter === notification.projectId,
             'is-single-project': projectIndexMap.size <= 1,
           }"
           :style="{ '--badge-color': getProjectIndex(notification)?.color }"
-          @click="toggleProjectFilter(notification.projectId, $event)"
         >
           {{ getProjectIndex(notification)?.index }}
-        </button>
+        </span>
         <div
           :class="[
             'mobile-notification-item',
@@ -1970,6 +1837,7 @@ watch(
       'compact-mode': compactModeEnabled,
       'is-sidebar': isSidebar,
       'is-docked-sidebar': isDockedSidebar,
+      'is-docked-collapsed': isDockedSidebar && props.dockedCollapsed,
     }"
   >
     <div class="notification-toolbar">
@@ -2139,23 +2007,16 @@ watch(
           </div>
 
           <div class="docked-session-actions">
-            <button
+            <span
               v-if="item.projectIndex"
               class="project-index-badge docked-project-badge"
               :class="{
-                'is-filtered': projectIndexFilter === item.projectId,
-                'is-single-project': isSingleDockedProject && projectIndexFilter === null,
+                'is-single-project': isSingleDockedProject,
               }"
               :style="{ '--badge-color': item.projectIndex.color }"
-              @click="toggleProjectFilter(item.projectId, $event)"
-              :title="
-                projectIndexFilter === item.projectId
-                  ? t('terminal.clearProjectFilter')
-                  : t('terminal.filterByProject')
-              "
             >
               {{ item.projectIndex.index }}
-            </button>
+            </span>
             <span
               class="docked-current-indicator"
               :class="{ 'is-hidden': !item.isCurrentSession }"
@@ -2175,14 +2036,6 @@ watch(
                 <circle cx="12" cy="12" r="3"></circle>
               </svg>
             </span>
-            <button
-              type="button"
-              class="notification-close docked-close-btn"
-              @click.stop="closeDockedSession(item)"
-              :title="t('common.close')"
-            >
-              ×
-            </button>
           </div>
         </div>
       </div>
@@ -2222,25 +2075,18 @@ watch(
           </svg>
         </span>
         <!-- 项目序号标签（在卡片外面，始终占位） -->
-        <button
+        <span
           v-if="getProjectIndex(notification)"
           class="project-index-badge"
           :class="{
-            'is-filtered': projectIndexFilter === notification.projectId,
             'is-single-project': projectIndexMap.size <= 1,
           }"
           :style="{
             '--badge-color': getProjectIndex(notification)?.color,
           }"
-          @click="toggleProjectFilter(notification.projectId, $event)"
-          :title="
-            projectIndexFilter === notification.projectId
-              ? t('terminal.clearProjectFilter')
-              : t('terminal.filterByProject')
-          "
         >
           {{ getProjectIndex(notification)?.index }}
-        </button>
+        </span>
         <div
           :class="[
             'notification-item',
@@ -2351,6 +2197,10 @@ watch(
   gap: 6px;
 }
 
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .notification-toolbar {
+  gap: 6px;
+}
+
 .notification-bar-container.is-docked-sidebar .notification-toolbar {
   padding-bottom: 6px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.08);
@@ -2384,6 +2234,11 @@ watch(
   box-sizing: border-box;
 }
 
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .notification-item.docked-session-item {
+  padding: 6px;
+  gap: 6px;
+}
+
 .docked-session-main {
   flex: 1;
   min-width: 0;
@@ -2391,11 +2246,19 @@ watch(
   align-items: center;
 }
 
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-session-main {
+  flex: 0 0 auto;
+}
+
 .docked-session-title {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-session-title {
+  gap: 0;
 }
 
 .docked-session-title .notification-icon {
@@ -2422,6 +2285,11 @@ watch(
   color: var(--text-color-secondary, #666666);
 }
 
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-session-title-text,
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-session-state {
+  display: none;
+}
+
 .docked-session-actions {
   flex-shrink: 0;
   display: flex;
@@ -2430,10 +2298,39 @@ watch(
   align-self: center;
 }
 
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-session-actions {
+  margin-left: auto;
+  gap: 3px;
+}
+
 .docked-session-actions > * {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .project-index-badge.docked-project-badge,
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-current-indicator {
+  width: 14px;
+  height: 14px;
+}
+
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .project-index-badge.docked-project-badge {
+  font-size: 7px;
+  color: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: none;
+  opacity: 0.7;
+}
+
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-current-indicator {
+  border-width: 1px;
+  box-shadow: 0 1px 4px rgba(59, 130, 246, 0.28);
+}
+
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-current-indicator svg {
+  width: 10px;
+  height: 10px;
 }
 
 .project-index-badge.docked-project-badge {
@@ -2441,11 +2338,6 @@ watch(
   height: 18px;
   font-size: 10px;
   border-width: 1px;
-}
-
-.project-index-badge.docked-project-badge:hover {
-  transform: none;
-  box-shadow: none;
 }
 
 .notification-bar-container.is-docked-sidebar .docked-current-indicator {
@@ -2474,21 +2366,6 @@ watch(
 
 .notification-bar-container.is-docked-sidebar .docked-current-indicator svg {
   display: block;
-}
-
-.notification-close.docked-close-btn {
-  width: 22px;
-  height: 22px;
-  font-size: 18px;
-  opacity: 0.7;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-}
-
-.notification-close.docked-close-btn:hover {
-  opacity: 1;
 }
 
 .notification-toolbar {
@@ -2967,24 +2844,9 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition:
-    transform 0.15s ease,
-    box-shadow 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.project-index-badge:hover {
-  transform: scale(1.1);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
-.project-index-badge.is-filtered {
-  border-color: #fff;
-  box-shadow:
-    0 0 0 2px var(--badge-color, #3b82f6),
-    0 2px 8px rgba(0, 0, 0, 0.25);
+  cursor: default;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
 }
 
 .notification-list.is-compact .project-index-badge {
@@ -3231,21 +3093,10 @@ watch(
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: all 0.15s ease;
+  cursor: default;
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
   margin-top: 12px;
-}
-
-.mobile-project-badge:active {
-  transform: scale(0.95);
-}
-
-.mobile-project-badge.is-filtered {
-  border-color: #fff;
-  box-shadow:
-    0 0 0 2px var(--badge-color, #3b82f6),
-    0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
 .mobile-project-badge.is-single-project {

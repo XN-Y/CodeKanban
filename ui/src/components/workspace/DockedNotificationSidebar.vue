@@ -8,7 +8,11 @@
       class="terminal-notifications"
       :style="{ width: effectiveSidebarWidthPx + 'px', flex: 'none' }"
     >
-      <AINotificationBar layout="docked-sidebar" compact-mode="force-compact">
+      <AINotificationBar
+        layout="docked-sidebar"
+        compact-mode="force-compact"
+        :docked-collapsed="isCollapsedSidebar"
+      >
         <template #toolbar-extra>
           <n-tooltip placement="bottom" :delay="250">
             <template #trigger>
@@ -44,10 +48,11 @@ import { useStorage } from '@vueuse/core';
 import { useLocale } from '@/composables/useLocale';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 
-const MIN_NOTIFICATION_WIDTH = 220;
+const MIN_NOTIFICATION_WIDTH = 96;
 const MAX_NOTIFICATION_WIDTH = 400;
 const DEFAULT_NOTIFICATION_WIDTH = 240;
 const MIN_TERMINAL_MAIN_WIDTH = 420;
+const COLLAPSED_NOTIFICATION_WIDTH = 112;
 
 const { t } = useLocale();
 
@@ -102,6 +107,10 @@ const effectiveSidebarWidthPx = computed(() => {
   const maxWidth = maxWidthByContainer.value;
   return clamp(MIN_NOTIFICATION_WIDTH, Math.round(notificationWidthPx.value), Math.round(maxWidth));
 });
+
+const isCollapsedSidebar = computed(
+  () => effectiveSidebarWidthPx.value <= COLLAPSED_NOTIFICATION_WIDTH
+);
 
 function resetWidth() {
   notificationWidthPx.value = DEFAULT_NOTIFICATION_WIDTH;
