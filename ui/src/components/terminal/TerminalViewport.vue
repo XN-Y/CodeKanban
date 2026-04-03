@@ -415,14 +415,7 @@ function handlePaste(event: ClipboardEvent) {
     void uploadImageAndInsert(image, 'paste', image.name);
     return;
   }
-
-  const text = clipboardData.getData('text/plain');
-  if (!text) {
-    return;
-  }
-
-  event.preventDefault();
-  sendTerminalInput(text);
+  // Let xterm/browser handle text paste natively so it is only inserted once.
 }
 
 function restoreSnapshotIfAvailable() {
