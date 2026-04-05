@@ -1,0 +1,4 @@
+interface:
+  display_name: "CodeKanban Project Session"
+  short_description: "Start AI workflows and inspect project sessions"
+  default_prompt: "Use the CodeKanban project session workflow to start Codex or Claude in a project path, including plan or yolo startup profiles, or inspect terminal and AI sessions for that project."

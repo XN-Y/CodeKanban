@@ -1,0 +1,37 @@
+{
+  "name": "@codekanban/sdk",
+  "version": "0.1.0",
+  "description": "Node SDK and CLI for launching CodeKanban project workflows and reading business sessions.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./cli": "./src/cli.js"
+  },
+  "bin": {
+    "codekanban-sdk": "./bin/codekanban-sdk.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "keywords": [
+    "codekanban",
+    "sdk",
+    "codex",
+    "terminal",
+    "ai-session",
+    "workflow"
+  ],
+  "author": "fy0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fy0/CodeKanban"
+  },
+  "homepage": "https://github.com/fy0/CodeKanban#readme"
+}

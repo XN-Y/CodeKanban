@@ -1,0 +1,91 @@
+# Git
+.git
+.gitignore
+.gitattributes
+.github
+
+# Build artifacts
+CodeKanban.exe
+CodeKanban
+test.exe
+bin/
+binary/
+ui/dist/
+
+# Development files
+*.md
+docs/
+
+# Data and config
+data/
+config.yaml
+config.yaml.testbak
+*.db
+*.db-*
+
+# Node modules
+ui/node_modules/
+node_modules/
+
+# Temporary files
+tmp/
+*.tmp
+*.log
+nul
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+*_test.go
+test_*.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build.py
+build-npm.py
+build-npm-multipackage.py
+publish-all-packages.py
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Archives
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Tools and scripts
+tools/
+worktrees/
+recordings/
+
+# NPM packages
+npm-bin/
+npm-packages/
+package.json
+.npmignore
+
+# OpenAPI
+openapi.json
+
+# MCP
+.playwright-mcp/
+.claude/
+
+# Misc
+1.txt
+中文测试.txt
+aicode-kanban.zip
+.goreleaser.yml

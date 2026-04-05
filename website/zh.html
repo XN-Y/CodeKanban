@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Code Kanban - AI 时代的编程效率神器</title>
+    <meta name="description" content="统一管理终端、智能检测 AI 助手状态、可视化任务看板。让 AI 编程效率提升 10 倍。">
+
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Alpine.js CDN -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind Config -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'Noto Sans SC', 'sans-serif'],
+                    },
+                    colors: {
+                        primary: {
+                            50: '#f0f5ff',
+                            100: '#e0ebff',
+                            200: '#c7d9ff',
+                            300: '#a3bfff',
+                            400: '#7a9bff',
+                            500: '#5b75ff',
+                            600: '#4a54f5',
+                            700: '#3d42e0',
+                            800: '#3538b5',
+                            900: '#31358f',
+                        },
+                        accent: {
+                            purple: '#a855f7',
+                            pink: '#ec4899',
+                            cyan: '#22d3ee',
+                            emerald: '#10b981',
+                        }
+                    },
+                    animation: {
+                        'float': 'float 6s ease-in-out infinite',
+                        'float-delayed': 'float 6s ease-in-out 2s infinite',
+                        'pulse-slow': 'pulse 4s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'gradient': 'gradient 8s ease infinite',
+                    },
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @keyframes float {
+            0%, 100% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+        }
+
+        @keyframes gradient {
+            0%, 100% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+        }
+
+        .gradient-bg {
+            background: linear-gradient(-45deg, #667eea, #764ba2, #6B8DD6, #8E54E9);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+
+        .glass-card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .feature-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.95) 0%, rgba(249,250,251,0.95) 100%);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.15);
+        }
+
+        .blob-1 {
+            position: absolute;
+            width: 600px;
+            height: 600px;
+            background: linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(236, 72, 153, 0.2));
+            border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+            filter: blur(40px);
+        }
+
+        .blob-2 {
+            position: absolute;
+            width: 400px;
+            height: 400px;
+            background: linear-gradient(135deg, rgba(34, 211, 238, 0.3), rgba(59, 130, 246, 0.2));
+            border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+            filter: blur(40px);
+        }
+
+        .illustration-placeholder {
+            background: linear-gradient(135deg, #e0e7ff 0%, #f3e8ff 50%, #fce7f3 100%);
+            border: 3px dashed #a5b4fc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #6366f1;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body class="font-sans antialiased text-gray-800 overflow-x-hidden">
+
+    <!-- Navigation -->
+    <nav class="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-lg border-b border-gray-100" x-data="{ mobileMenu: false }">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center space-x-3">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-bold bg-gradient-to-r from-primary-600 to-accent-purple bg-clip-text text-transparent">Code Kanban</span>
+                </div>
+
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#features" class="text-gray-600 hover:text-primary-600 transition">功能特性</a>
+                    <a href="#ai-detect" class="text-gray-600 hover:text-primary-600 transition">AI 检测</a>
+                    <a href="#workflow" class="text-gray-600 hover:text-primary-600 transition">工作流</a>
+                    <a href="https://github.com/fy0/CodeKanban" target="_blank" class="text-gray-600 hover:text-primary-600 transition flex items-center gap-1">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                        GitHub
+                    </a>
+                    <!-- Language Switcher -->
+                    <a href="index.html" class="text-gray-500 hover:text-primary-600 transition text-sm font-medium flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"/>
+                        </svg>
+                        English
+                    </a>
+                    <a href="#download" class="px-5 py-2.5 bg-gradient-to-r from-primary-500 to-accent-purple text-white rounded-full font-medium hover:shadow-lg hover:shadow-primary-500/30 transition-all">
+                        立即下载
+                    </a>
+                </div>
+
+                <button @click="mobileMenu = !mobileMenu" class="md:hidden p-2">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- Mobile Menu -->
+        <div x-show="mobileMenu" x-transition class="md:hidden bg-white border-t border-gray-100">
+            <div class="px-4 py-4 space-y-3">
+                <a href="#features" class="block text-gray-600 hover:text-primary-600">功能特性</a>
+                <a href="#ai-detect" class="block text-gray-600 hover:text-primary-600">AI 检测</a>
+                <a href="#workflow" class="block text-gray-600 hover:text-primary-600">工作流</a>
+                <a href="index.html" class="block text-gray-500 hover:text-primary-600">English</a>
+                <a href="#download" class="block text-center px-5 py-2.5 bg-gradient-to-r from-primary-500 to-accent-purple text-white rounded-full font-medium">立即下载</a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative min-h-screen flex items-center pt-16 overflow-hidden">
+        <!-- Background decorations -->
+        <div class="blob-1 -top-32 -right-32 animate-float"></div>
+        <div class="blob-2 top-1/2 -left-32 animate-float-delayed"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 relative z-10">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div class="space-y-8">
+                    <div class="inline-flex items-center px-4 py-2 rounded-full bg-primary-50 text-primary-700 text-sm font-medium">
+                        <span class="w-2 h-2 rounded-full bg-accent-emerald mr-2 animate-pulse"></span>
+                        AI 时代的效率革命
+                    </div>
+
+                    <h1 class="text-5xl md:text-6xl font-extrabold leading-tight">
+                        <span class="bg-gradient-to-r from-gray-900 via-primary-800 to-gray-900 bg-clip-text text-transparent">
+                            让 AI 编程效率
+                        </span>
+                        <br>
+                        <span class="bg-gradient-to-r from-primary-500 via-accent-purple to-accent-pink bg-clip-text text-transparent">
+                            提升 10 倍
+                        </span>
+                    </h1>
+
+                    <p class="text-xl text-gray-600 leading-relaxed max-w-lg">
+                        统一管理多项目终端，智能检测 AI 助手状态，可视化任务看板。
+                        <span class="text-primary-600 font-medium">开箱即用，单文件部署。</span>
+                    </p>
+
+                    <div class="flex flex-wrap gap-4">
+                        <a href="#download" class="group px-8 py-4 bg-gradient-to-r from-primary-500 to-accent-purple text-white rounded-2xl font-semibold text-lg hover:shadow-2xl hover:shadow-primary-500/30 transition-all flex items-center gap-2">
+                            免费下载
+                            <svg class="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
+                            </svg>
+                        </a>
+                        <a href="#features" class="px-8 py-4 bg-white text-gray-700 rounded-2xl font-semibold text-lg border-2 border-gray-200 hover:border-primary-300 hover:text-primary-600 transition-all">
+                            了解更多
+                        </a>
+                    </div>
+
+                    <div class="flex items-center gap-6 pt-4">
+                        <div class="flex -space-x-2">
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border-2 border-white"></div>
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-green-400 to-green-600 border-2 border-white"></div>
+                            <div class="w-10 h-10 rounded-full bg-gradient-to-br from-purple-400 to-purple-600 border-2 border-white"></div>
+                        </div>
+                        <div class="text-sm text-gray-500">
+                            <span class="font-semibold text-gray-700">1000+</span> 开发者正在使用
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hero Illustration Placeholder -->
+                <div class="relative">
+                    <div class="illustration-placeholder w-full aspect-[4/3] rounded-3xl shadow-2xl">
+                        <svg class="w-16 h-16 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-lg">[PLACEHOLDER: Hero 主插画]</span>
+                        <span class="text-sm mt-2 opacity-70">建议: 展示开发者使用 Code Kanban 的场景插画</span>
+                        <span class="text-sm opacity-70">风格: Illustration style，明亮色彩，人物+电脑+看板元素</span>
+                    </div>
+
+                    <!-- Floating cards decoration -->
+                    <div class="absolute -top-4 -right-4 w-24 h-24 bg-white rounded-2xl shadow-xl p-4 animate-float">
+                        <div class="w-full h-full rounded-lg bg-gradient-to-br from-accent-emerald to-green-400 flex items-center justify-center">
+                            <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </div>
+                    </div>
+
+                    <div class="absolute -bottom-4 -left-4 w-32 h-20 bg-white rounded-2xl shadow-xl p-3 animate-float-delayed">
+                        <div class="flex items-center gap-2 mb-2">
+                            <div class="w-3 h-3 rounded-full bg-accent-emerald"></div>
+                            <span class="text-xs font-medium text-gray-600">AI 已完成</span>
+                        </div>
+                        <div class="text-sm font-semibold text-gray-800">Claude Code</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-24 bg-gradient-to-b from-gray-50 to-white relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <span class="text-primary-600 font-semibold text-sm uppercase tracking-wider">核心功能</span>
+                <h2 class="text-4xl md:text-5xl font-bold mt-4 mb-6 bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                    为 AI 编程而生的工作台
+                </h2>
+                <p class="text-xl text-gray-600">
+                    集成终端管理、任务看板、AI 状态监控于一体，让你专注于编程本身
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Feature 1: Multi-Terminal -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">多终端统一管理</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        一个界面管理所有项目的终端。支持多标签页、拖拽排序，快捷键 <kbd class="px-2 py-1 bg-gray-100 rounded text-sm font-mono">`</kbd> 秒开终端面板。
+                    </p>
+                </div>
+
+                <!-- Feature 2: Kanban -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">可视化任务看板</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        Kanban 风格任务管理，支持拖拽移动任务状态。任务可关联终端和 Git 分支，一目了然。
+                    </p>
+                </div>
+
+                <!-- Feature 3: AI Session History -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">AI 会话历史</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        自动记录与 AI 工具的所有对话。一键回溯代码修改历程，快速定位任何一次 AI 交互。
+                    </p>
+                </div>
+
+                <!-- Feature 4: Worktree -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-orange-500 to-amber-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">Git Worktree 管理</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        可视化管理 Git Worktree 分支。支持创建、合并、删除分支，让多任务并行开发更轻松。
+                    </p>
+                </div>
+
+                <!-- Feature 5: Notes -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-rose-500 to-pink-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">多标签笔记</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        快捷键 <kbd class="px-2 py-1 bg-gray-100 rounded text-sm font-mono">1</kbd> 即开笔记。支持项目级/全局笔记切换，粘贴图片，自动保存。
+                    </p>
+                </div>
+
+                <!-- Feature 6: Single File Deploy -->
+                <div class="feature-card rounded-3xl p-8 shadow-lg">
+                    <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-400 flex items-center justify-center mb-6">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3 text-gray-900">开箱即用</h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        单文件部署，双击即可运行。无需安装数据库或其他依赖，支持 Windows/macOS/Linux。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- AI Detection Highlight Section -->
+    <section id="ai-detect" class="py-24 relative overflow-hidden">
+        <div class="absolute inset-0 gradient-bg opacity-5"></div>
+        <div class="blob-1 top-0 right-0 opacity-30"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div class="order-2 lg:order-1">
+                    <!-- AI Detection Illustration Placeholder -->
+                    <div class="illustration-placeholder w-full aspect-square rounded-3xl shadow-2xl">
+                        <svg class="w-20 h-20 mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                        <span class="text-lg">[PLACEHOLDER: AI 状态检测插画]</span>
+                        <span class="text-sm mt-2 opacity-70 text-center px-4">建议: 展示 AI 助手不同状态的可视化</span>
+                        <span class="text-sm opacity-70 text-center px-4">包含: 工作中(齿轮转动)、等待审批(问号)、完成(对勾) 等状态图标</span>
+                    </div>
+                </div>
+
+                <div class="order-1 lg:order-2 space-y-8">
+                    <div class="inline-flex items-center px-4 py-2 rounded-full bg-accent-purple/10 text-accent-purple text-sm font-medium">
+                        <span class="w-2 h-2 rounded-full bg-accent-purple mr-2 animate-pulse"></span>
+                        核心亮点
+                    </div>
+
+                    <h2 class="text-4xl md:text-5xl font-bold leading-tight">
+                        <span class="bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                            智能检测
+                        </span>
+                        <br>
+                        <span class="bg-gradient-to-r from-accent-purple to-accent-pink bg-clip-text text-transparent">
+                            AI 助手状态
+                        </span>
+                    </h2>
+
+                    <p class="text-xl text-gray-600 leading-relaxed">
+                        自动识别 Claude Code、Codex 等 AI 编程助手，实时监控其工作状态，在关键时刻智能通知你。
+                    </p>
+
+                    <div class="space-y-4">
+                        <div class="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-md">
+                            <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-900">工作中</h4>
+                                <p class="text-gray-600 text-sm">AI 正在执行任务时自动标记，让你一眼看出哪些终端在忙</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-md">
+                            <div class="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-900">等待审批</h4>
+                                <p class="text-gray-600 text-sm">AI 需要你确认时即时通知，不再错过任何重要操作</p>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start gap-4 p-4 bg-white rounded-2xl shadow-md">
+                            <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                                <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <h4 class="font-semibold text-gray-900">任务完成</h4>
+                                <p class="text-gray-600 text-sm">AI 完成任务后自动通知，右上角提醒栏一目了然</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Workflow Section -->
+    <section id="workflow" class="py-24 bg-gradient-to-b from-white to-gray-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <span class="text-primary-600 font-semibold text-sm uppercase tracking-wider">工作流程</span>
+                <h2 class="text-4xl md:text-5xl font-bold mt-4 mb-6 bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                    高效的 AI 编程工作流
+                </h2>
+                <p class="text-xl text-gray-600">
+                    从打开项目到完成任务，Code Kanban 让每一步都更顺畅
+                </p>
+            </div>
+
+            <div class="relative">
+                <!-- Timeline line -->
+                <div class="hidden lg:block absolute left-1/2 transform -translate-x-1/2 h-full w-1 bg-gradient-to-b from-primary-200 via-accent-purple/30 to-accent-pink/30 rounded-full"></div>
+
+                <div class="space-y-12 lg:space-y-24">
+                    <!-- Step 1 -->
+                    <div class="relative flex flex-col lg:flex-row items-center gap-8">
+                        <div class="lg:w-1/2 lg:pr-16 lg:text-right">
+                            <div class="bg-white rounded-3xl p-8 shadow-xl">
+                                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary-500 text-white font-bold text-xl mb-4">1</div>
+                                <h3 class="text-2xl font-bold text-gray-900 mb-3">打开项目工作区</h3>
+                                <p class="text-gray-600">选择你的项目，看到任务看板和所有相关终端。一切井然有序。</p>
+                            </div>
+                        </div>
+                        <div class="hidden lg:flex items-center justify-center w-8 h-8 rounded-full bg-primary-500 text-white z-10">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"/></svg>
+                        </div>
+                        <div class="lg:w-1/2 lg:pl-16">
+                            <div class="illustration-placeholder w-full aspect-video rounded-2xl">
+                                <span class="text-sm">[PLACEHOLDER: 项目工作区截图]</span>
+                                <span class="text-xs mt-1 opacity-70">展示看板+终端面板的整体界面</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 2 -->
+                    <div class="relative flex flex-col lg:flex-row-reverse items-center gap-8">
+                        <div class="lg:w-1/2 lg:pl-16 lg:text-left">
+                            <div class="bg-white rounded-3xl p-8 shadow-xl">
+                                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-accent-purple text-white font-bold text-xl mb-4">2</div>
+                                <h3 class="text-2xl font-bold text-gray-900 mb-3">启动 AI 助手开始编程</h3>
+                                <p class="text-gray-600">在终端中启动 Claude Code 或 Codex，系统自动检测并开始监控状态。</p>
+                            </div>
+                        </div>
+                        <div class="hidden lg:flex items-center justify-center w-8 h-8 rounded-full bg-accent-purple text-white z-10">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"/></svg>
+                        </div>
+                        <div class="lg:w-1/2 lg:pr-16">
+                            <div class="illustration-placeholder w-full aspect-video rounded-2xl">
+                                <span class="text-sm">[PLACEHOLDER: 终端中的 AI 助手]</span>
+                                <span class="text-xs mt-1 opacity-70">展示 Claude Code 在终端中运行的样子</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 3 -->
+                    <div class="relative flex flex-col lg:flex-row items-center gap-8">
+                        <div class="lg:w-1/2 lg:pr-16 lg:text-right">
+                            <div class="bg-white rounded-3xl p-8 shadow-xl">
+                                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-accent-pink text-white font-bold text-xl mb-4">3</div>
+                                <h3 class="text-2xl font-bold text-gray-900 mb-3">实时通知，不错过任何状态</h3>
+                                <p class="text-gray-600">AI 完成任务或需要审批时，右上角即时提醒。你可以放心切换到其他窗口工作。</p>
+                            </div>
+                        </div>
+                        <div class="hidden lg:flex items-center justify-center w-8 h-8 rounded-full bg-accent-pink text-white z-10">
+                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4"/></svg>
+                        </div>
+                        <div class="lg:w-1/2 lg:pl-16">
+                            <div class="illustration-placeholder w-full aspect-video rounded-2xl">
+                                <span class="text-sm">[PLACEHOLDER: 通知提醒效果]</span>
+                                <span class="text-xs mt-1 opacity-70">展示右上角的 AI 状态通知栏</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials / Use Cases -->
+    <section class="py-24 bg-gradient-to-br from-primary-900 via-primary-800 to-purple-900 text-white relative overflow-hidden">
+        <div class="blob-2 -top-32 -right-32 opacity-20"></div>
+        <div class="blob-1 -bottom-32 -left-32 opacity-20"></div>
+
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <h2 class="text-4xl md:text-5xl font-bold mb-6">
+                    适用于各种 AI 编程场景
+                </h2>
+                <p class="text-xl text-primary-100">
+                    无论你是个人开发者还是团队协作，Code Kanban 都能提升效率
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="glass-card rounded-3xl p-8">
+                    <div class="text-4xl mb-4">🚀</div>
+                    <h3 class="text-xl font-bold mb-3">个人效率提升</h3>
+                    <p class="text-primary-100">
+                        同时运行多个 Claude Code 会话，系统自动追踪每个任务进度，再也不会忘记等待中的 AI 回复。
+                    </p>
+                </div>
+
+                <div class="glass-card rounded-3xl p-8">
+                    <div class="text-4xl mb-4">🎯</div>
+                    <h3 class="text-xl font-bold mb-3">多项目管理</h3>
+                    <p class="text-primary-100">
+                        同时管理多个项目的终端和任务。Worktree 支持让你在不同分支间快速切换，保持上下文清晰。
+                    </p>
+                </div>
+
+                <div class="glass-card rounded-3xl p-8">
+                    <div class="text-4xl mb-4">📝</div>
+                    <h3 class="text-xl font-bold mb-3">AI 对话记录</h3>
+                    <p class="text-primary-100">
+                        自动保存所有 AI 会话历史。需要回溯某次代码修改？只需点击历史记录，一目了然。
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Download Section -->
+    <section id="download" class="py-24 relative">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-4xl md:text-5xl font-bold mb-6 bg-gradient-to-r from-gray-900 via-primary-700 to-gray-900 bg-clip-text text-transparent">
+                立即开始使用
+            </h2>
+            <p class="text-xl text-gray-600 mb-12">
+                单文件部署，下载即用。支持 Windows、macOS 和 Linux。
+            </p>
+
+            <!-- Package Manager Installation -->
+            <div class="mb-16">
+                <h3 class="text-xl font-semibold text-gray-700 mb-6">通过包管理器安装</h3>
+                <div class="max-w-2xl mx-auto space-y-4" x-data="{ copied: null }">
+                    <!-- npm -->
+                    <div class="flex items-center gap-3 bg-gray-900 rounded-xl p-4 text-left">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-red-500/20 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M0 7.334v8h6.666v1.332H12v-1.332h12v-8H0zm6.666 6.664H5.334v-4H3.999v4H1.335V8.667h5.331v5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669v-.001zm12.001 0h-1.33v-4h-1.336v4h-1.335v-4h-1.33v4h-2.671V8.667h8.002v5.331zM10.665 10H12v2.667h-1.335V10z"/>
+                            </svg>
+                        </div>
+                        <code class="flex-1 text-green-400 font-mono text-sm sm:text-base">npm install -g code-kanban</code>
+                        <button @click="navigator.clipboard.writeText('npm install -g code-kanban'); copied = 'npm'; setTimeout(() => copied = null, 2000)"
+                                class="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 transition text-gray-400 hover:text-white">
+                            <svg x-show="copied !== 'npm'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <svg x-show="copied === 'npm'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- pnpm -->
+                    <div class="flex items-center gap-3 bg-gray-900 rounded-xl p-4 text-left">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-amber-500" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M0 0v7.5h7.5V0zm8.25 0v7.5h7.498V0zm8.25 0v7.5H24V0zM8.25 8.25v7.5h7.498v-7.5zm8.25 0v7.5H24v-7.5zM0 16.5V24h7.5v-7.5zm8.25 0V24h7.498v-7.5zm8.25 0V24H24v-7.5z"/>
+                            </svg>
+                        </div>
+                        <code class="flex-1 text-green-400 font-mono text-sm sm:text-base">pnpm add -g code-kanban</code>
+                        <button @click="navigator.clipboard.writeText('pnpm add -g code-kanban'); copied = 'pnpm'; setTimeout(() => copied = null, 2000)"
+                                class="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 transition text-gray-400 hover:text-white">
+                            <svg x-show="copied !== 'pnpm'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <svg x-show="copied === 'pnpm'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- yarn -->
+                    <div class="flex items-center gap-3 bg-gray-900 rounded-xl p-4 text-left">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 0C5.375 0 0 5.375 0 12s5.375 12 12 12 12-5.375 12-12S18.625 0 12 0zm.768 4.105c.183 0 .363.053.525.157.125.083.287.185.755 1.154.31-.088.468-.042.551-.019.204.056.366.19.463.375.477.917.542 2.553.334 3.605-.241 1.232-.755 2.029-1.131 2.576.324.329.778.899 1.117 1.825.278.774.31 1.478.273 2.015a5.51 5.51 0 0 0 .602-.329c.593-.366 1.487-.917 2.553-.931.714-.009 1.269.445 1.353 1.103a1.23 1.23 0 0 1-.945 1.362c-.649.158-.95.278-1.821.843-1.232.797-2.539 1.242-3.012 1.39a1.686 1.686 0 0 1-.704.343c-.737.181-3.266.315-3.466.315h-.046c-.783 0-1.214-.241-1.45-.491-.658.329-1.51.19-2.122-.134a1.078 1.078 0 0 1-.58-1.153 1.243 1.243 0 0 1-.153-.195c-.162-.25-.528-.936-.454-1.946.056-.723.556-1.367.88-1.71a5.522 5.522 0 0 1 .408-2.256c.306-.727.885-1.348 1.32-1.737-.32-.537-.644-1.367-.329-2.21.227-.602.412-.936.82-1.08h-.005c.199-.074.389-.153.486-.259a3.418 3.418 0 0 1 2.298-1.103c.037-.093.079-.185.125-.283.31-.658.639-1.029 1.024-1.168a.94.94 0 0 1 .328-.06z"/>
+                            </svg>
+                        </div>
+                        <code class="flex-1 text-green-400 font-mono text-sm sm:text-base">yarn global add code-kanban</code>
+                        <button @click="navigator.clipboard.writeText('yarn global add code-kanban'); copied = 'yarn'; setTimeout(() => copied = null, 2000)"
+                                class="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 transition text-gray-400 hover:text-white">
+                            <svg x-show="copied !== 'yarn'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <svg x-show="copied === 'yarn'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- bun -->
+                    <div class="flex items-center gap-3 bg-gray-900 rounded-xl p-4 text-left">
+                        <div class="flex-shrink-0 w-12 h-12 rounded-lg bg-pink-500/20 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-pink-400" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 22.596c5.523 0 10-4.477 10-10s-4.477-10-10-10-10 4.477-10 10 4.477 10 10 10z"/>
+                            </svg>
+                        </div>
+                        <code class="flex-1 text-green-400 font-mono text-sm sm:text-base">bun add -g code-kanban</code>
+                        <button @click="navigator.clipboard.writeText('bun add -g code-kanban'); copied = 'bun'; setTimeout(() => copied = null, 2000)"
+                                class="flex-shrink-0 p-2 rounded-lg hover:bg-gray-700 transition text-gray-400 hover:text-white">
+                            <svg x-show="copied !== 'bun'" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+                            </svg>
+                            <svg x-show="copied === 'bun'" class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Divider -->
+            <div class="flex items-center gap-4 mb-12">
+                <div class="flex-1 h-px bg-gray-200"></div>
+                <span class="text-gray-400 text-sm font-medium">或下载可执行文件</span>
+                <div class="flex-1 h-px bg-gray-200"></div>
+            </div>
+
+            <div class="grid sm:grid-cols-3 gap-6 mb-12">
+                <!-- Windows -->
+                <a href="#" class="group p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all border-2 border-transparent hover:border-primary-200">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-blue-500" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+                    </svg>
+                    <div class="font-semibold text-gray-900 group-hover:text-primary-600 transition">Windows</div>
+                    <div class="text-sm text-gray-500">.exe 可执行文件</div>
+                </a>
+
+                <!-- macOS -->
+                <a href="#" class="group p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all border-2 border-transparent hover:border-primary-200">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-gray-700" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                    </svg>
+                    <div class="font-semibold text-gray-900 group-hover:text-primary-600 transition">macOS</div>
+                    <div class="text-sm text-gray-500">Universal Binary</div>
+                </a>
+
+                <!-- Linux -->
+                <a href="#" class="group p-6 bg-white rounded-2xl shadow-lg hover:shadow-2xl transition-all border-2 border-transparent hover:border-primary-200">
+                    <svg class="w-12 h-12 mx-auto mb-4 text-yellow-600" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139z"/>
+                    </svg>
+                    <div class="font-semibold text-gray-900 group-hover:text-primary-600 transition">Linux</div>
+                    <div class="text-sm text-gray-500">AppImage / Binary</div>
+                </a>
+            </div>
+
+            <div class="flex flex-col sm:flex-row justify-center gap-4">
+                <a href="https://github.com/fy0/CodeKanban/releases" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-4 bg-gradient-to-r from-primary-500 to-accent-purple text-white rounded-2xl font-semibold text-lg hover:shadow-2xl hover:shadow-primary-500/30 transition-all">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    在 GitHub 下载
+                </a>
+                <a href="https://github.com/fy0/CodeKanban" target="_blank" class="inline-flex items-center justify-center gap-2 px-8 py-4 bg-white text-gray-700 rounded-2xl font-semibold text-lg border-2 border-gray-200 hover:border-primary-300 hover:text-primary-600 transition-all">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/>
+                    </svg>
+                    Star 支持
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-gray-900 text-gray-400 py-16">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-4 gap-8 mb-12">
+                <div class="md:col-span-2">
+                    <div class="flex items-center space-x-3 mb-4">
+                        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-accent-purple flex items-center justify-center">
+                            <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+                            </svg>
+                        </div>
+                        <span class="text-xl font-bold text-white">Code Kanban</span>
+                    </div>
+                    <p class="text-gray-500 max-w-md">
+                        AI 时代的编程效率神器。统一管理终端、智能检测 AI 助手状态、可视化任务看板。
+                    </p>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-semibold mb-4">快速链接</h4>
+                    <ul class="space-y-2">
+                        <li><a href="#features" class="hover:text-white transition">功能特性</a></li>
+                        <li><a href="#ai-detect" class="hover:text-white transition">AI 检测</a></li>
+                        <li><a href="#download" class="hover:text-white transition">下载</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h4 class="text-white font-semibold mb-4">资源</h4>
+                    <ul class="space-y-2">
+                        <li><a href="https://github.com/fy0/CodeKanban" target="_blank" class="hover:text-white transition">GitHub</a></li>
+                        <li><a href="https://github.com/fy0/CodeKanban/issues" target="_blank" class="hover:text-white transition">问题反馈</a></li>
+                        <li><a href="https://github.com/fy0/CodeKanban/releases" target="_blank" class="hover:text-white transition">版本发布</a></li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
+                <p class="text-sm">Copyright 2024 Code Kanban. All rights reserved.</p>
+                <div class="flex items-center gap-4">
+                    <a href="index.html" class="text-sm hover:text-white transition">English</a>
+                    <a href="https://github.com/fy0/CodeKanban" target="_blank" class="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center hover:bg-gray-700 transition">
+                        <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+</body>
+</html>

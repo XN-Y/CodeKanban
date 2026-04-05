@@ -1,0 +1,71 @@
+project_name: codekanban
+
+before:
+  hooks:
+    - go mod tidy
+    - cd ui && pnpm install && pnpm build
+
+builds:
+  - id: codekanban
+    binary: codekanban
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: codekanban-archive
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: "codekanban_{{.Version}}_{{.Os}}_{{.Arch}}"
+    files:
+      - README*.md
+      - LICENSE
+
+checksum:
+  name_template: 'checksums.txt'
+
+release:
+  github:
+    owner: fy0
+    name: CodeKanban
+  draft: false
+  prerelease: auto
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+  groups:
+    - title: 🎉 新功能
+      regexp: '^feat:'
+      order: 0
+    - title: 🐛 Bug修复
+      regexp: '^fix:'
+      order: 1
+    - title: ⚡ 性能优化
+      regexp: '^perf:'
+      order: 2
+    - title: 📝 文档更新
+      regexp: '^docs:'
+      order: 3
