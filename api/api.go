@@ -73,6 +73,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 		ScrollbackBytes:           cfg.Terminal.ScrollbackBytes,
 		AIAssistantStatus:         cfg.Terminal.AIAssistantStatus,
 		ScrollbackEnabled:         cfg.Developer.EnableTerminalScrollback,
+		TerminalStateSnapshot:     cfg.Developer.EnableTerminalStateSnapshot,
 		RenameTitleEachCommand:    cfg.Developer.RenameSessionTitleEachCommand,
 		AutoCreateTaskOnStartWork: cfg.Developer.AutoCreateTaskOnStartWork,
 	}, theLogger)

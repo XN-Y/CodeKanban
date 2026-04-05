@@ -6,12 +6,34 @@ import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
 import type { Task, TerminalSession } from '@/types/models';
 import { resolveWsUrl } from '@/utils/ws';
-import { clearTerminalSnapshot } from '@/utils/terminalSnapshotCache';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
 import { taskActions } from '@/composables/useTaskActions';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
+
+export type TerminalStateSnapshot = {
+  cells: TerminalStateCell[][];
+  rows: number;
+  cols: number;
+  cursorX: number;
+  cursorY: number;
+  cursorVisible: boolean;
+  cursorMode: number;
+  cursorFg?: number;
+  cursorBg?: number;
+  cursorFgDefault?: boolean;
+  cursorBgDefault?: boolean;
+};
+
+export type TerminalStateCell = {
+  char?: string;
+  mode: number;
+  fg?: number;
+  bg?: number;
+  fgDefault?: boolean;
+  bgDefault?: boolean;
+};
 
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
@@ -19,10 +41,11 @@ export interface TerminalTabState extends TerminalSession {
 }
 
 export type ServerMessage = {
-  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata';
+  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata' | 'snapshot' | 'replay-complete';
   data?: string;
   cols?: number;
   rows?: number;
+  snapshot?: TerminalStateSnapshot;
   metadata?: {
     title?: string;
     processPid?: number;
@@ -579,7 +602,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
         setActiveTab(record.projectId, nextId);
       }
-      clearTerminalSnapshot(sessionId);
       messageBuffers.delete(sessionId); // Clean up message buffer
     }
   }

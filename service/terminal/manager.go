@@ -26,6 +26,7 @@ type Config struct {
 	ScrollbackBytes           int
 	AIAssistantStatus         utils.AIAssistantStatusConfig
 	ScrollbackEnabled         bool
+	TerminalStateSnapshot     bool
 	RenameTitleEachCommand    bool
 	AutoCreateTaskOnStartWork bool
 }
@@ -124,9 +125,10 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 			cfg := m.cfg.AIAssistantStatus
 			return &cfg
 		},
-		TaskID:                    params.TaskID,
-		RenameTitleEachCommand:    m.cfg.RenameTitleEachCommand,
-		AutoCreateTaskOnStartWork: m.cfg.AutoCreateTaskOnStartWork,
+		EnableTerminalStateSnapshot: m.cfg.TerminalStateSnapshot,
+		TaskID:                      params.TaskID,
+		RenameTitleEachCommand:      m.cfg.RenameTitleEachCommand,
+		AutoCreateTaskOnStartWork:   m.cfg.AutoCreateTaskOnStartWork,
 	})
 	if err != nil {
 		return nil, err
@@ -430,6 +432,18 @@ func (m *Manager) UpdateScrollbackEnabled(enabled bool) {
 
 	m.sessions.Range(func(_ string, session *Session) bool {
 		session.UpdateScrollbackLimit(limit)
+		return true
+	})
+}
+
+// UpdateTerminalStateSnapshotEnabled toggles server-side terminal state snapshots in real time.
+func (m *Manager) UpdateTerminalStateSnapshotEnabled(enabled bool) {
+	m.sessionMu.Lock()
+	m.cfg.TerminalStateSnapshot = enabled
+	m.sessionMu.Unlock()
+
+	m.sessions.Range(func(_ string, session *Session) bool {
+		session.SetTerminalStateSnapshotEnabled(enabled)
 		return true
 	})
 }

@@ -733,6 +733,9 @@ export default {
     autoCreateTaskOnStartWork: 'Auto-create task when work starts',
     autoCreateTaskOnStartWorkTip:
       'Code Agents automatically create and link a task the first time work starts so their output is tracked even without a pre-selected task.',
+    terminalServerStateSnapshot: 'Server Terminal State Snapshot',
+    terminalServerStateSnapshotTip:
+      'Maintain a server-side simulated screen state for each non-Windows terminal so refreshes or another browser can restore the current view (experimental).',
     // Terminal Shell Settings
     terminalShell: 'Default Terminal',
     terminalShellTip:

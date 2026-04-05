@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/xpty"
+	"github.com/tuzig/vt10x"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -89,6 +90,30 @@ type SessionMetadata struct {
 	TaskID                 string                         `json:"taskId,omitempty"`
 	AIAssistantRecentInput string                         `json:"aiAssistantRecentInput,omitempty"`
 	AISessionID            string                         `json:"aiSessionId,omitempty"`
+}
+
+type TerminalStateCell struct {
+	Char      string `json:"char,omitempty"`
+	Mode      int16  `json:"mode"`
+	FG        uint32 `json:"fg,omitempty"`
+	BG        uint32 `json:"bg,omitempty"`
+	FGDefault bool   `json:"fgDefault,omitempty"`
+	BGDefault bool   `json:"bgDefault,omitempty"`
+}
+
+type TerminalStateSnapshot struct {
+	Rows            int                   `json:"rows"`
+	Cols            int                   `json:"cols"`
+	Cells           [][]TerminalStateCell `json:"cells"`
+	CursorX         int                   `json:"cursorX"`
+	CursorY         int                   `json:"cursorY"`
+	CursorVisible   bool                  `json:"cursorVisible"`
+	CursorMode      int16                 `json:"cursorMode"`
+	CursorFG        uint32                `json:"cursorFg,omitempty"`
+	CursorBG        uint32                `json:"cursorBg,omitempty"`
+	CursorFGDefault bool                  `json:"cursorFgDefault,omitempty"`
+	CursorBGDefault bool                  `json:"cursorBgDefault,omitempty"`
+	CapturedAt      time.Time             `json:"capturedAt,omitempty"`
 }
 
 type SessionStream struct {
@@ -172,6 +197,7 @@ type Session struct {
 	renameTitleEachCommand    atomic.Bool
 	autoCreateTaskOnStartWork atomic.Bool
 	autoTitleAssigned         atomic.Bool
+	terminalStateEnabled      atomic.Bool
 
 	// LogWatcher for capturing user input from AI assistant session logs
 	logWatcherMu          sync.RWMutex
@@ -191,6 +217,10 @@ type Session struct {
 	scrollbackSize       int
 	scrollbackLimit      int
 
+	terminalStateMu         sync.Mutex
+	terminalState           vt10x.Terminal
+	terminalStateCapturedAt time.Time
+
 	subMu       sync.RWMutex
 	subscribers map[string]*sessionSubscriber
 	exitOnce    sync.Once
@@ -207,22 +237,23 @@ type Session struct {
 
 // SessionParams collects the data required to bootstrap a session.
 type SessionParams struct {
-	ID                        string
-	ProjectID                 string
-	WorktreeID                string
-	WorkingDir                string
-	Title                     string
-	Command                   []string
-	Env                       []string
-	Rows                      int
-	Cols                      int
-	Logger                    *zap.Logger
-	Encoding                  string
-	ScrollbackLimit           int
-	GetAIConfig               func() *utils.AIAssistantStatusConfig
-	TaskID                    string
-	RenameTitleEachCommand    bool
-	AutoCreateTaskOnStartWork bool
+	ID                          string
+	ProjectID                   string
+	WorktreeID                  string
+	WorkingDir                  string
+	Title                       string
+	Command                     []string
+	Env                         []string
+	Rows                        int
+	Cols                        int
+	Logger                      *zap.Logger
+	Encoding                    string
+	ScrollbackLimit             int
+	GetAIConfig                 func() *utils.AIAssistantStatusConfig
+	EnableTerminalStateSnapshot bool
+	TaskID                      string
+	RenameTitleEachCommand      bool
+	AutoCreateTaskOnStartWork   bool
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -283,6 +314,7 @@ func NewSession(params SessionParams) (*Session, error) {
 	}
 	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
 	session.autoCreateTaskOnStartWork.Store(params.AutoCreateTaskOnStartWork)
+	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
 	// Set state change callback for periodic checking
@@ -295,6 +327,10 @@ func NewSession(params SessionParams) (*Session, error) {
 
 	if session.logger == nil {
 		session.logger = utils.Logger()
+	}
+
+	if session.terminalStateEnabled.Load() {
+		session.initTerminalStateLocked(cols, rows)
 	}
 
 	session.status.Store(SessionStatusStarting)
@@ -394,6 +430,7 @@ func (s *Session) consumePTY(ctx context.Context) {
 			normalized := s.NormalizeOutput(buffer[:n])
 			if len(normalized) > 0 {
 				s.appendScrollback(normalized)
+				s.appendTerminalState(normalized)
 				s.broadcast(StreamEvent{Type: StreamEventData, Data: normalized})
 				s.enqueueAssistantOutput(normalized)
 			}
@@ -726,6 +763,7 @@ func (s *Session) Resize(cols, rows int) error {
 	if s.assistantTracker != nil {
 		s.assistantTracker.SetTerminalSize(rows, cols)
 	}
+	s.resizeTerminalState(cols, rows)
 
 	s.Touch()
 	s.resetMetadataInterval() // User interaction resets polling to short interval
@@ -786,6 +824,36 @@ func (s *Session) Scrollback() [][]byte {
 	result := make([][]byte, len(s.scrollback))
 	for i, chunk := range s.scrollback {
 		result[i] = cloneBytes(chunk)
+	}
+	return result
+}
+
+// ScrollbackSince returns buffered PTY output newer than the provided timestamp.
+func (s *Session) ScrollbackSince(since time.Time) [][]byte {
+	if since.IsZero() {
+		return s.Scrollback()
+	}
+
+	s.scrollMu.RLock()
+	defer s.scrollMu.RUnlock()
+	if len(s.scrollback) == 0 {
+		return nil
+	}
+
+	result := make([][]byte, 0, len(s.scrollback))
+	for i, chunk := range s.scrollback {
+		if i >= len(s.scrollbackTimestamps) {
+			result = append(result, cloneBytes(chunk))
+			continue
+		}
+		if !s.scrollbackTimestamps[i].After(since) {
+			continue
+		}
+		result = append(result, cloneBytes(chunk))
+	}
+
+	if len(result) == 0 {
+		return nil
 	}
 	return result
 }

@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ type DeveloperConfig struct {
 	EnableTerminalScrollback      bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
 	RenameSessionTitleEachCommand bool `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
 	AutoCreateTaskOnStartWork     bool `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
+	EnableTerminalStateSnapshot   bool `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
 }
 
 // WorktreeConfig Worktree 全局配置。
@@ -207,6 +209,7 @@ func ReadConfig() *AppConfig {
 			EnableTerminalScrollback:      false,
 			RenameSessionTitleEachCommand: false,
 			AutoCreateTaskOnStartWork:     true,
+			EnableTerminalStateSnapshot:   runtime.GOOS != "windows",
 		},
 		Worktree: WorktreeConfig{
 			GlobalBaseDir:        "",

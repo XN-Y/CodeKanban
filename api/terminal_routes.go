@@ -587,6 +587,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	}
 
 	scrollback := session.Scrollback()
+	if snapshot := session.TerminalStateSnapshot(); snapshot != nil {
+		if err := send(wsMessage{Type: "snapshot", Snapshot: snapshot}); err != nil {
+			return
+		}
+		scrollback = session.ScrollbackSince(snapshot.CapturedAt)
+	}
 	for _, chunk := range scrollback {
 		if len(chunk) == 0 {
 			continue
@@ -595,6 +601,9 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		if err := send(wsMessage{Type: "data", Data: encoded}); err != nil {
 			return
 		}
+	}
+	if err := send(wsMessage{Type: "replay-complete"}); err != nil {
+		return
 	}
 
 	if status == terminal.SessionStatusClosed || status == terminal.SessionStatusError {

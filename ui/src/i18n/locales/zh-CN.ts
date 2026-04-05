@@ -711,6 +711,9 @@ export default {
     autoCreateTaskOnStartWork: '开始工作时自动创建任务',
     autoCreateTaskOnStartWorkTip:
       '开启后，Code Agents 首次进入工作状态会自动创建并关联一个任务，方便事后追踪。',
+    terminalServerStateSnapshot: '服务端终端状态快照',
+    terminalServerStateSnapshotTip:
+      '在非 Windows 平台为每个终端维护一份服务端模拟屏幕状态，用于刷新或多浏览器恢复当前画面（实验功能）',
     // Terminal Shell Settings
     terminalShell: '默认终端',
     terminalShellTip: '选择新建终端时使用的 Shell 程序，更改后对新建终端生效',

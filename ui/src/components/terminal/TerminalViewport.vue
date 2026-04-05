@@ -31,15 +31,14 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
-import { SerializeAddon } from '@xterm/addon-serialize';
 import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
-import type { TerminalTabState, ServerMessage } from '@/composables/useTerminalClient';
-import {
-  getTerminalSnapshot,
-  saveTerminalSnapshot,
-  clearTerminalSnapshot,
-} from '@/utils/terminalSnapshotCache';
+import type {
+  TerminalStateCell,
+  TerminalTabState,
+  ServerMessage,
+  TerminalStateSnapshot,
+} from '@/composables/useTerminalClient';
 import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
 import { getTerminalThemeById, getDefaultTerminalTheme } from '@/constants/terminalThemes';
@@ -106,17 +105,37 @@ const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
 let webglAddon: WebglAddon | null = null;
-let serializeAddon: SerializeAddon | null = null;
 let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 let keydownCaptureHandler: ((event: KeyboardEvent) => void) | null = null;
 let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
 let transferOverlayTimer: number | null = null;
+let initialViewportRepairTimer: number | null = null;
+let initialViewportReady = false;
+let lastReportedCols = 0;
+let lastReportedRows = 0;
+const pendingTerminalMessages: ServerMessage[] = [];
+let pendingServerSnapshot: TerminalStateSnapshot | null = null;
+let debugRefreshHandler: (() => boolean) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
-const SNAPSHOT_SCROLLBACK = 1200;
+const INITIAL_OUTPUT_BUFFER_MAX = 5000;
 const transferCardMessage = ref('');
 const transferCardTone = ref<'progress' | 'error'>('progress');
 const transferProgress = ref<number | null>(null);
+const TERMINAL_DEBUG_FN = '__codeKanbanForceRefreshVisibleTerminal';
+const TERMINAL_DEBUG_REGISTRY = '__codeKanbanTerminalDebugHandlers';
+const VT_ATTR_REVERSE = 1 << 0;
+const VT_ATTR_UNDERLINE = 1 << 1;
+const VT_ATTR_BOLD = 1 << 2;
+const VT_ATTR_ITALIC = 1 << 4;
+const VT_ATTR_BLINK = 1 << 5;
+const VT_ATTR_FAINT = 1 << 7;
+const VT_ATTR_WIDE_DUMMY = 1 << 9;
+
+type TerminalDebugWindow = Window & {
+  [TERMINAL_DEBUG_FN]?: () => boolean;
+  [TERMINAL_DEBUG_REGISTRY]?: Map<string, () => boolean>;
+};
 
 /**
  * 替换 True Color #000000 为可见颜色
@@ -142,18 +161,6 @@ function remapInvisibleColors(data: string): string {
 // 内存中记录已经访问过的终端（刷新后清空）
 // 用于检测刷新后首次切换到终端时滚动到底部
 const visitedTerminals = new Set<string>();
-
-// 监听 clientStatus 变化
-watch(
-  () => props.tab.clientStatus,
-  (newStatus, oldStatus) => {
-    console.log('[Terminal Watch] ClientStatus changed:', {
-      sessionId: props.tab.id,
-      from: oldStatus,
-      to: newStatus,
-    });
-  }
-);
 
 // 监听终端主题变化，动态更新终端主题
 watch(activeTerminalTheme, newTheme => {
@@ -248,10 +255,132 @@ function showTransferOverlay(
   }
 }
 
-function handleMessage(payload: ServerMessage) {
+function isDeferredTerminalMessage(payload: ServerMessage) {
+  return payload.type === 'data' || payload.type === 'exit' || payload.type === 'error';
+}
+
+function cellModeHas(mode: number, flag: number) {
+  return (mode & flag) !== 0;
+}
+
+function buildSgrFromCell(cell: TerminalStateCell) {
+  const codes: Array<number | string> = [0];
+
+  if (cellModeHas(cell.mode, VT_ATTR_BOLD)) {
+    codes.push(1);
+  }
+  if (cellModeHas(cell.mode, VT_ATTR_FAINT)) {
+    codes.push(2);
+  }
+  if (cellModeHas(cell.mode, VT_ATTR_ITALIC)) {
+    codes.push(3);
+  }
+  if (cellModeHas(cell.mode, VT_ATTR_UNDERLINE)) {
+    codes.push(4);
+  }
+  if (cellModeHas(cell.mode, VT_ATTR_BLINK)) {
+    codes.push(5);
+  }
+  if (cellModeHas(cell.mode, VT_ATTR_REVERSE)) {
+    codes.push(7);
+  }
+
+  if (cell.fgDefault || typeof cell.fg !== 'number') {
+    codes.push(39);
+  } else {
+    const r = (cell.fg >> 16) & 0xff;
+    const g = (cell.fg >> 8) & 0xff;
+    const b = cell.fg & 0xff;
+    codes.push(`38;2;${r};${g};${b}`);
+  }
+
+  if (cell.bgDefault || typeof cell.bg !== 'number') {
+    codes.push(49);
+  } else {
+    const r = (cell.bg >> 16) & 0xff;
+    const g = (cell.bg >> 8) & 0xff;
+    const b = cell.bg & 0xff;
+    codes.push(`48;2;${r};${g};${b}`);
+  }
+
+  return `\x1b[${codes.join(';')}m`;
+}
+
+function buildCursorSgr(snapshot: TerminalStateSnapshot) {
+  const pseudoCell: TerminalStateCell = {
+    mode: snapshot.cursorMode ?? 0,
+    fg: snapshot.cursorFg,
+    bg: snapshot.cursorBg,
+    fgDefault: snapshot.cursorFgDefault ?? true,
+    bgDefault: snapshot.cursorBgDefault ?? true,
+  };
+  return buildSgrFromCell(pseudoCell);
+}
+
+function buildServerSnapshotSequence(snapshot: TerminalStateSnapshot) {
+  const rows = Math.max(1, snapshot.rows || 1);
+  const cols = Math.max(1, snapshot.cols || 1);
+  const grid = Array.isArray(snapshot.cells) ? snapshot.cells.slice(0, rows) : [];
+  const parts = ['\x1b[0m\x1b[2J\x1b[H'];
+  let previousStyle = '';
+
+  for (let row = 0; row < rows; row += 1) {
+    const cells = Array.isArray(grid[row]) ? grid[row] : [];
+    for (let col = 0; col < cols; col += 1) {
+      const cell = cells[col] ?? {
+        mode: 0,
+        fgDefault: true,
+        bgDefault: true,
+      };
+      if (cellModeHas(cell.mode, VT_ATTR_WIDE_DUMMY)) {
+        continue;
+      }
+      const nextStyle = buildSgrFromCell(cell);
+      if (nextStyle !== previousStyle) {
+        parts.push(nextStyle);
+        previousStyle = nextStyle;
+      }
+      parts.push(cell.char && cell.char.length > 0 ? cell.char : ' ');
+    }
+    if (row < rows - 1) {
+      parts.push('\r\n');
+    }
+  }
+
+  const cursorRow = Math.max(1, Math.min(rows, (snapshot.cursorY ?? 0) + 1));
+  const cursorCol = Math.max(1, Math.min(cols, (snapshot.cursorX ?? 0) + 1));
+  parts.push(buildCursorSgr(snapshot));
+  parts.push(`\x1b[${cursorRow};${cursorCol}H`);
+  parts.push(snapshot.cursorVisible === false ? '\x1b[?25l' : '\x1b[?25h');
+  return parts.join('');
+}
+
+function restoreServerSnapshotIfAvailable() {
+  if (!terminal || !pendingServerSnapshot) {
+    return false;
+  }
+
+  const snapshot = pendingServerSnapshot;
+  pendingServerSnapshot = null;
+
+  try {
+    if (snapshot.cols > 0 && snapshot.rows > 0) {
+      terminal.resize(snapshot.cols, snapshot.rows);
+    }
+    terminal.reset();
+    terminal.write(buildServerSnapshotSequence(snapshot));
+    return true;
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to restore server snapshot', error);
+    return false;
+  }
+}
+
+function applyTerminalMessage(payload: ServerMessage) {
   if (!terminal) {
     return;
   }
+
   switch (payload.type) {
     case 'data':
       if (payload.data) {
@@ -269,7 +398,6 @@ function handleMessage(payload: ServerMessage) {
       }
       break;
     case 'metadata':
-      // Forward metadata to parent component via emitter
       if (payload.metadata) {
         props.emitter.emit('metadata', props.tab.id, payload.metadata);
       }
@@ -277,6 +405,108 @@ function handleMessage(payload: ServerMessage) {
     default:
       break;
   }
+}
+
+function scheduleInitialViewportRepair(reason: string, delay = 48) {
+  if (initialViewportRepairTimer != null) {
+    window.clearTimeout(initialViewportRepairTimer);
+  }
+
+  initialViewportRepairTimer = window.setTimeout(() => {
+    initialViewportRepairTimer = null;
+    if (!initialViewportReady || !terminal || !isContainerVisible()) {
+      return;
+    }
+    refreshTerminalViewport(reason);
+  }, delay);
+}
+
+function flushPendingTerminalMessages(reason: string) {
+  if (!terminal || !initialViewportReady || pendingTerminalMessages.length === 0) {
+    return;
+  }
+
+  const buffered = pendingTerminalMessages.splice(0, pendingTerminalMessages.length);
+
+  for (const message of buffered) {
+    applyTerminalMessage(message);
+  }
+
+  scheduleInitialViewportRepair(`${reason}-flush`);
+}
+
+function sendResizeToServer(
+  cols: number,
+  rows: number,
+  options: { force?: boolean; reason?: string } = {}
+) {
+  if (cols <= 0 || rows <= 0) {
+    return;
+  }
+
+  const force = options.force === true;
+  if (!force && lastReportedCols === cols && lastReportedRows === rows) {
+    return;
+  }
+
+  lastReportedCols = cols;
+  lastReportedRows = rows;
+  props.send(props.tab.id, {
+    type: 'resize',
+    cols,
+    rows,
+  });
+}
+
+function finalizeInitialViewport(reason: string) {
+  if (!terminal || initialViewportReady || !isContainerVisible()) {
+    return;
+  }
+
+  const restoredFromServer = restoreServerSnapshotIfAvailable();
+  initialViewportReady = true;
+
+  flushPendingTerminalMessages(reason);
+
+  if (restoredFromServer || pendingTerminalMessages.length === 0) {
+    scheduleInitialViewportRepair(restoredFromServer ? 'server-snapshot-restored' : reason);
+  }
+}
+
+function handleMessage(payload: ServerMessage) {
+  if (!terminal) {
+    return;
+  }
+
+  if (payload.type === 'snapshot' && payload.snapshot) {
+    pendingServerSnapshot = payload.snapshot;
+    if (initialViewportReady) {
+      if (restoreServerSnapshotIfAvailable()) {
+        scheduleInitialViewportRepair('server-snapshot-live');
+      }
+    }
+    return;
+  }
+
+  if (payload.type === 'replay-complete') {
+    if (!initialViewportReady) {
+      finalizeInitialViewport('replay-complete');
+    } else {
+      flushPendingTerminalMessages('replay-complete');
+      scheduleInitialViewportRepair('replay-complete');
+    }
+    return;
+  }
+
+  if (!initialViewportReady && isDeferredTerminalMessage(payload)) {
+    if (pendingTerminalMessages.length >= INITIAL_OUTPUT_BUFFER_MAX) {
+      pendingTerminalMessages.shift();
+    }
+    pendingTerminalMessages.push(payload);
+    return;
+  }
+
+  applyTerminalMessage(payload);
 }
 
 function decodeChunk(chunk: string) {
@@ -418,54 +648,9 @@ function handlePaste(event: ClipboardEvent) {
   // Let xterm/browser handle text paste natively so it is only inserted once.
 }
 
-function restoreSnapshotIfAvailable() {
-  if (!terminal) {
-    return false;
-  }
-  const snapshot = getTerminalSnapshot(props.tab.id);
-  if (!snapshot) {
-    return false;
-  }
-  try {
-    terminal.reset();
-    terminal.write(remapInvisibleColors(snapshot.serialized));
-    console.log('[Terminal Snapshot] Restored cache for session:', props.tab.id);
-    return true;
-  } catch (error) {
-    console.warn('[Terminal Snapshot] Failed to restore cache', error);
-    clearTerminalSnapshot(props.tab.id);
-    return false;
-  }
-}
-
-function persistSnapshot() {
-  if (!terminal || !serializeAddon) {
-    return;
-  }
-  try {
-    const serialized = serializeAddon.serialize({
-      scrollback: SNAPSHOT_SCROLLBACK,
-    });
-    if (!serialized) {
-      clearTerminalSnapshot(props.tab.id);
-      return;
-    }
-    saveTerminalSnapshot(props.tab.id, {
-      serialized,
-      cols: terminal.cols,
-      rows: terminal.rows,
-    });
-    console.log('[Terminal Snapshot] Saved cache for session:', props.tab.id);
-  } catch (error) {
-    console.warn('[Terminal Snapshot] Failed to serialize terminal contents', error);
-  }
-}
-
 function isContainerVisible() {
   return Boolean(
-    containerRef.value &&
-      containerRef.value.offsetWidth > 0 &&
-      containerRef.value.offsetHeight > 0
+    containerRef.value && containerRef.value.offsetWidth > 0 && containerRef.value.offsetHeight > 0
   );
 }
 
@@ -501,13 +686,6 @@ function refreshTerminalViewport(
 
     try {
       terminal.refresh(0, Math.max(terminal.rows - 1, 0));
-      console.log('[Terminal Refresh]', {
-        sessionId: props.tab.id,
-        title: props.tab.title,
-        reason,
-        cols: terminal.cols,
-        rows: terminal.rows,
-      });
     } catch (error) {
       console.warn('[Terminal Refresh] Failed to refresh terminal viewport', {
         sessionId: props.tab.id,
@@ -524,9 +702,8 @@ function refreshTerminalViewport(
   }
 }
 
-function handleResize() {
+function syncTerminalSize(forceServerResize = false) {
   if (!terminal || !fitAddon) {
-    console.log('[Terminal Resize] Skipped: terminal or fitAddon not ready');
     return;
   }
 
@@ -536,16 +713,6 @@ function handleResize() {
     containerRef.value.offsetWidth === 0 ||
     containerRef.value.offsetHeight === 0
   ) {
-    console.log('[Terminal Resize] Skipped: container not visible', {
-      sessionId: props.tab.id,
-      title: props.tab.title,
-      containerSize: containerRef.value
-        ? {
-            width: containerRef.value.offsetWidth,
-            height: containerRef.value.offsetHeight,
-          }
-        : null,
-    });
     return;
   }
 
@@ -554,41 +721,64 @@ function handleResize() {
 
     props.tab.cols = terminal.cols;
     props.tab.rows = terminal.rows;
-    console.log('[Terminal Resize]', {
-      sessionId: props.tab.id,
-      title: props.tab.title,
-      cols: terminal.cols,
-      rows: terminal.rows,
-      containerSize: containerRef.value
-        ? {
-            width: containerRef.value.offsetWidth,
-            height: containerRef.value.offsetHeight,
-          }
-        : null,
+    sendResizeToServer(terminal.cols, terminal.rows, {
+      force: forceServerResize,
+      reason: forceServerResize ? 'forced-fit' : 'fit',
     });
-    props.send(props.tab.id, {
-      type: 'resize',
-      cols: terminal.cols,
-      rows: terminal.rows,
-    });
+    if (!initialViewportReady) {
+      finalizeInitialViewport('resize');
+    }
   } catch (error) {
     // 忽略 fit 可能出现的错误
     console.warn('Terminal resize failed:', error);
   }
 }
 
+function handleResize() {
+  syncTerminalSize(false);
+}
+
 // 防抖版本的 resize 处理，避免窗口调整时发送大量 resize 消息阻塞输入
 const debouncedResize = useDebounceFn(handleResize, 100);
 
 function handleTerminalResizeAll() {
-  console.log('[Terminal Resize Event]', {
-    sessionId: props.tab.id,
-    title: props.tab.title,
-  });
   // 延迟一下确保 DOM 更新完成，使用防抖版本避免阻塞输入
   setTimeout(() => {
     refreshTerminalViewport('terminal-resize-event');
   }, 10);
+}
+
+function installDebugForceRefreshHook() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const debugWindow = window as TerminalDebugWindow;
+  const registry = debugWindow[TERMINAL_DEBUG_REGISTRY] ?? new Map<string, () => boolean>();
+  debugWindow[TERMINAL_DEBUG_REGISTRY] = registry;
+
+  debugRefreshHandler = () => {
+    if (!terminal || !containerRef.value || !isContainerVisible()) {
+      return false;
+    }
+    syncTerminalSize(true);
+    refreshTerminalViewport('debug-force-refresh');
+    terminal.scrollToTop();
+    window.setTimeout(() => {
+      terminal?.scrollToBottom();
+    }, 60);
+    return true;
+  };
+
+  registry.set(props.tab.id, debugRefreshHandler);
+  debugWindow[TERMINAL_DEBUG_FN] = () => {
+    for (const handler of registry.values()) {
+      if (handler()) {
+        return true;
+      }
+    }
+    return false;
+  };
 }
 
 onMounted(() => {
@@ -615,25 +805,19 @@ onMounted(() => {
     letterSpacing: fontSettings.letterSpacing,
     theme: selectedTheme.theme,
   });
-  console.log('[Terminal] Created:', {
-    isMobile: props.isMobile,
-    fontSize: actualFontSize,
-    baseFontSize: fontSettings.fontSize,
-    dpr: window.devicePixelRatio,
-    screenWidth: window.screen.width,
-    innerWidth: window.innerWidth,
-    visualViewportWidth: window.visualViewport?.width,
-  });
+
+  const container = containerRef.value;
+  if (container) {
+    terminal.open(container);
+  }
 
   fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
-  serializeAddon = new SerializeAddon();
 
   terminal.loadAddon(fitAddon);
   terminal.loadAddon(webLinksAddon);
   terminal.loadAddon(searchAddon);
-  terminal.loadAddon(serializeAddon);
 
   // 根据设置决定是否使用 WebGL 渲染器
   // - auto: 桌面端使用 WebGL，移动端使用 Canvas（避免 DPR 缩放问题）
@@ -659,27 +843,12 @@ onMounted(() => {
         }, 0);
       });
       terminal.loadAddon(webglAddon);
-      console.log('[Terminal] WebGL renderer loaded successfully', {
-        webglMode,
-        isMobile: props.isMobile,
-      });
     } catch (error) {
       console.warn('[Terminal] WebGL renderer failed to load, using Canvas fallback', error);
     }
-  } else {
-    console.log('[Terminal] Using Canvas renderer', { webglMode, isMobile: props.isMobile });
   }
 
-  const restoredFromCache = restoreSnapshotIfAvailable();
-
-  const container = containerRef.value;
   if (container) {
-    terminal.open(container);
-    if (restoredFromCache) {
-      setTimeout(() => {
-        terminal?.scrollToBottom();
-      }, 0);
-    }
     // 延迟执行 fit，确保 DOM 完全渲染且面板动画完成
     // 面板展开动画 200ms + 额外缓冲 150ms = 350ms
     const performFit = (retryIfSmall = true) => {
@@ -691,17 +860,6 @@ onMounted(() => {
         containerRef.value.offsetWidth === 0 ||
         containerRef.value.offsetHeight === 0
       ) {
-        console.log('[Terminal Init Fit] Skipped: container not visible', {
-          sessionId: props.tab.id,
-          title: props.tab.title,
-          retryIfSmall,
-          containerSize: containerRef.value
-            ? {
-                width: containerRef.value.offsetWidth,
-                height: containerRef.value.offsetHeight,
-              }
-            : null,
-        });
         // 容器不可见，稍后重试
         if (retryIfSmall) {
           setTimeout(() => performFit(false), 200);
@@ -710,6 +868,19 @@ onMounted(() => {
       }
 
       fitAddon.fit();
+
+      const cols = terminal.cols;
+      const rows = terminal.rows;
+
+      // 检查计算出的尺寸是否合理
+      if ((cols < 20 || rows < 5) && retryIfSmall) {
+        console.warn('[Terminal Init] Size too small, will retry:', { cols, rows });
+        // 容器可能还没准备好，延迟再试一次
+        setTimeout(() => performFit(false), 200);
+        return;
+      }
+
+      finalizeInitialViewport('initial-fit');
 
       // 等待数据写入完成后滚动到底部
       let lastLength = terminal.buffer.active.length;
@@ -739,41 +910,15 @@ onMounted(() => {
       };
       setTimeout(checkStableAndScroll, 20);
 
-      const cols = terminal.cols;
-      const rows = terminal.rows;
-
-      console.log('[Terminal Init Fit]', {
-        sessionId: props.tab.id,
-        title: props.tab.title,
-        cols,
-        rows,
-        retryIfSmall,
-        containerSize: containerRef.value
-          ? {
-              width: containerRef.value.offsetWidth,
-              height: containerRef.value.offsetHeight,
-            }
-          : null,
-      });
-
-      // 检查计算出的尺寸是否合理
-      if ((cols < 20 || rows < 5) && retryIfSmall) {
-        console.warn('[Terminal Init] Size too small, will retry:', { cols, rows });
-        // 容器可能还没准备好，延迟再试一次
-        setTimeout(() => performFit(false), 200);
-        return;
-      }
-
       // 标记为已访问（初始化时就可见的终端）
       visitedTerminals.add(props.tab.id);
 
       // 更新状态并通知服务器
       props.tab.cols = cols;
       props.tab.rows = rows;
-      props.send(props.tab.id, {
-        type: 'resize',
-        cols,
-        rows,
+      sendResizeToServer(cols, rows, {
+        force: true,
+        reason: 'initial-fit',
       });
       if (shouldAutoFocus.value) {
         terminal.focus();
@@ -847,6 +992,7 @@ onMounted(() => {
   props.emitter.on(`terminal-activated-${props.tab.id}`, handleTerminalActivated);
   props.emitter.on('terminal-blur-all', handleTerminalBlurEvent);
   window.addEventListener('resize', debouncedResize);
+  installDebugForceRefreshHook();
 
   // Replay any buffered messages that were received while this component was unmounted
   // This ensures no data is lost when switching between projects
@@ -879,14 +1025,12 @@ function handleTerminalActivated() {
       terminal.scrollToTop();
       setTimeout(() => {
         terminal?.scrollToBottom();
-        console.log('[Terminal] First visit after refresh, scrolled to bottom:', props.tab.id);
       }, 100);
     }, 50);
   }
 }
 
 onBeforeUnmount(() => {
-  persistSnapshot();
   props.emitter.off(props.tab.id, handleMessage);
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.off(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
@@ -907,18 +1051,30 @@ onBeforeUnmount(() => {
       containerRef.value.removeEventListener('drop', dropHandler);
     }
   }
+  if (initialViewportRepairTimer != null) {
+    window.clearTimeout(initialViewportRepairTimer);
+    initialViewportRepairTimer = null;
+  }
+  initialViewportReady = false;
+  lastReportedCols = 0;
+  lastReportedRows = 0;
+  pendingTerminalMessages.length = 0;
+  pendingServerSnapshot = null;
+  if (typeof window !== 'undefined') {
+    const debugWindow = window as TerminalDebugWindow;
+    debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);
+  }
   webglAddon?.dispose();
   webglAddon = null;
   terminal?.dispose();
   terminal = null;
   fitAddon?.dispose();
   fitAddon = null;
-  serializeAddon?.dispose();
-  serializeAddon = null;
   keydownCaptureHandler = null;
   pasteHandler = null;
   dragOverHandler = null;
   dropHandler = null;
+  debugRefreshHandler = null;
   clearTransferOverlay();
 });
 </script>

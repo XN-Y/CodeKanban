@@ -788,6 +788,7 @@ const developerConfigState = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
   autoCreateTaskOnStartWork: true,
+  enableTerminalStateSnapshot: false,
 });
 const developerConfigLoaded = ref(false);
 const developerConfigLoading = ref(false);

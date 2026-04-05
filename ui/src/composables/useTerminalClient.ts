@@ -1,6 +1,12 @@
 import { computed, watch, type Ref } from 'vue';
 import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal';
-export type { TerminalCreateOptions, TerminalTabState, ServerMessage } from '@/stores/terminal';
+export type {
+  TerminalCreateOptions,
+  TerminalStateCell,
+  TerminalTabState,
+  ServerMessage,
+  TerminalStateSnapshot,
+} from '@/stores/terminal';
 
 export function useTerminalClient(projectIdRef: Ref<string>) {
   const store = useTerminalStore();

@@ -19,6 +19,7 @@ const systemTag = "system-系统工具"
 type systemTerminalManager interface {
 	UpdateAIAssistantStatusConfig(utils.AIAssistantStatusConfig)
 	UpdateScrollbackEnabled(bool)
+	UpdateTerminalStateSnapshotEnabled(bool)
 	UpdateRenameTitleEachCommand(bool)
 	UpdateAutoCreateTaskOnStartWork(bool)
 	UpdateShellConfig(utils.TerminalShellConfig)
@@ -206,6 +207,7 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 
 		if terminalManager != nil {
 			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
+			terminalManager.UpdateTerminalStateSnapshotEnabled(input.Body.EnableTerminalStateSnapshot)
 			terminalManager.UpdateRenameTitleEachCommand(input.Body.RenameSessionTitleEachCommand)
 			terminalManager.UpdateAutoCreateTaskOnStartWork(input.Body.AutoCreateTaskOnStartWork)
 		}

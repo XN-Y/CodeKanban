@@ -208,6 +208,7 @@ export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
   autoCreateTaskOnStartWork: boolean;
+  enableTerminalStateSnapshot: boolean;
 }
 
 export interface WorktreeConfig {

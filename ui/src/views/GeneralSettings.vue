@@ -337,6 +337,15 @@
                 <span class="form-tip">{{ t('settings.autoCreateTaskOnStartWorkTip') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.terminalServerStateSnapshot')">
+              <n-space vertical size="small">
+                <n-switch
+                  v-model:value="developerForm.enableTerminalStateSnapshot"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">{{ t('settings.terminalServerStateSnapshotTip') }}</span>
+              </n-space>
+            </n-form-item>
           </n-form>
         </n-spin>
       </n-card>
@@ -701,7 +710,12 @@ import {
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
-import type { AIAssistantStatusConfig, DeveloperConfig, AvailableShellsResponse, WorktreeConfig } from '@/types/models';
+import type {
+  AIAssistantStatusConfig,
+  DeveloperConfig,
+  AvailableShellsResponse,
+  WorktreeConfig,
+} from '@/types/models';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -795,6 +809,7 @@ const developerForm = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
   autoCreateTaskOnStartWork: true,
+  enableTerminalStateSnapshot: false,
 });
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const developerDirty = computed(() => {
@@ -805,7 +820,9 @@ const developerDirty = computed(() => {
     developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback ||
     developerForm.renameSessionTitleEachCommand !==
       developerOriginal.value.renameSessionTitleEachCommand ||
-    developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork
+    developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork ||
+    developerForm.enableTerminalStateSnapshot !==
+      developerOriginal.value.enableTerminalStateSnapshot
   );
 });
 
@@ -849,6 +866,7 @@ async function loadDeveloperConfig() {
       developerForm.enableTerminalScrollback = config.enableTerminalScrollback ?? false;
       developerForm.renameSessionTitleEachCommand = config.renameSessionTitleEachCommand ?? false;
       developerForm.autoCreateTaskOnStartWork = config.autoCreateTaskOnStartWork ?? true;
+      developerForm.enableTerminalStateSnapshot = config.enableTerminalStateSnapshot ?? false;
       developerOriginal.value = { ...developerForm };
     } else {
       // 如果后端没有返回配置，使用默认值并标记为已加载
@@ -917,16 +935,18 @@ const worktreeSettingsDirty = computed(() => {
   }
   return (
     worktreeSettingsForm.globalBaseDir !== worktreeSettingsOriginal.value.globalBaseDir ||
-    worktreeSettingsForm.globalDirNamePattern !== worktreeSettingsOriginal.value.globalDirNamePattern
+    worktreeSettingsForm.globalDirNamePattern !==
+      worktreeSettingsOriginal.value.globalDirNamePattern
   );
 });
 
-const { send: fetchWorktreeSettings, loading: worktreeSettingsLoading } = useReq(
-  () => http.Get<ItemResponse<WorktreeConfig>>('/system/worktree-settings')
+const { send: fetchWorktreeSettings, loading: worktreeSettingsLoading } = useReq(() =>
+  http.Get<ItemResponse<WorktreeConfig>>('/system/worktree-settings')
 );
 
 const { send: updateWorktreeSettings, loading: worktreeSettingsSaving } = useReq(
-  (config: WorktreeConfig) => http.Post<ItemResponse<WorktreeConfig>>('/system/worktree-settings/update', config)
+  (config: WorktreeConfig) =>
+    http.Post<ItemResponse<WorktreeConfig>>('/system/worktree-settings/update', config)
 );
 
 /**
