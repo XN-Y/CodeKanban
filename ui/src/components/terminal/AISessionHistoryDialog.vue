@@ -229,12 +229,59 @@
     :closable="true"
     @close="closeConversationModal"
   >
+    <template #header-extra>
+      <n-space :size="6" align="center">
+        <n-tooltip>
+          <template #trigger>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              :disabled="!conversationNavState.hasPrev"
+              @click="conversationViewerRef?.goToPrevUserMessage()"
+            >
+              <template #icon>
+                <n-icon><ChevronUpOutline /></n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ t('terminal.prevUserMessage') }}
+        </n-tooltip>
+        <span class="conversation-nav-indicator">
+          {{
+            t('terminal.userMessagePosition', {
+              current: conversationNavState.currentUserPosition,
+              total: conversationNavState.totalUserMessages,
+            })
+          }}
+        </span>
+        <n-tooltip>
+          <template #trigger>
+            <n-button
+              quaternary
+              circle
+              size="small"
+              :disabled="!conversationNavState.hasNext"
+              @click="conversationViewerRef?.goToNextUserMessage()"
+            >
+              <template #icon>
+                <n-icon><ChevronDownOutline /></n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ t('terminal.nextUserMessage') }}
+        </n-tooltip>
+      </n-space>
+    </template>
     <ConversationViewer
+      ref="conversationViewerRef"
       :messages="currentConversation?.messages ?? []"
       :loading="conversationLoading"
       :refreshing="conversationRefreshing"
+      :refresh-enabled="true"
       :session-info="currentSessionInfo"
-      @load-tool-result="loadToolResult"
+      :load-tool-result="loadToolResult"
+      @nav-state-change="updateConversationNavState"
       @refresh="refreshConversation"
     />
   </n-modal>
@@ -248,10 +295,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
 import { useMessage } from 'naive-ui';
 import {
+  ChevronDownOutline,
   ChevronForwardOutline,
+  ChevronUpOutline,
   ChatboxOutline,
   PlayOutline,
   CopyOutline,
@@ -264,7 +313,11 @@ import {
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { useTimeAgo } from '@vueuse/core';
-import ConversationViewer, { type SessionInfo } from '@/components/common/ConversationViewer.vue';
+import ConversationViewer, {
+  type ConversationMessage,
+  type ConversationViewerNavState,
+  type SessionInfo,
+} from '@/components/common/ConversationViewer.vue';
 import DirectoryPickerDialog from '@/components/common/DirectoryPickerDialog.vue';
 import { useProjectStore } from '@/stores/project';
 
@@ -353,17 +406,6 @@ const filteredCodexSessions = computed(() => {
   );
 });
 
-// Conversation viewer state
-interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  kind?: string;
-  toolUseId?: string;
-  hasMore?: boolean;
-  full?: string;
-}
-
 interface ConversationResponse {
   sessionId: string;
   title: string;
@@ -381,6 +423,17 @@ const conversationRefreshing = ref(false);
 const currentConversation = ref<ConversationResponse | null>(null);
 const currentSessionTitle = ref('');
 const currentSession = ref<AISessionSummary | null>(null);
+const conversationViewerRef = ref<{
+  goToPrevUserMessage: () => void;
+  goToNextUserMessage: () => void;
+  syncNavigationState?: () => void;
+} | null>(null);
+const conversationNavState = ref<ConversationViewerNavState>({
+  currentUserPosition: 0,
+  totalUserMessages: 0,
+  hasPrev: false,
+  hasNext: false,
+});
 
 const currentSessionInfo = computed<SessionInfo | null>(() => {
   if (!currentSession.value) return null;
@@ -638,6 +691,8 @@ async function viewConversation(session: AISessionSummary) {
 
     if (response?.item) {
       currentConversation.value = response.item;
+      await nextTick();
+      conversationViewerRef.value?.syncNavigationState?.();
     }
   } catch (error) {
     console.error('Failed to load conversation:', error);
@@ -649,25 +704,29 @@ async function viewConversation(session: AISessionSummary) {
 
 async function loadToolResult(toolUseId: string) {
   const session = currentSession.value;
-  if (!session || !toolUseId) return;
+  if (!session || !toolUseId) return null;
 
   try {
     const response = await http
       .Get<{
         item?: ToolResultResponse;
-      }>(`/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`, { cacheFor: 0 })
+      }>(`/ai-sessions/${session.id}/conversation/tool-results/${encodeURIComponent(toolUseId)}`, {
+        cacheFor: 0,
+      })
       .send();
 
     const content = response?.item?.content;
-    if (!content || !currentConversation.value) return;
+    if (!content || !currentConversation.value) return null;
 
     const msg = currentConversation.value.messages.find(m => m.toolUseId === toolUseId);
     if (msg) {
       msg.full = content;
     }
+    return content;
   } catch (error) {
     console.error('Failed to load tool result:', error);
     message.error(t('terminal.loadConversationFailed'));
+    return null;
   }
 }
 
@@ -685,6 +744,8 @@ async function refreshConversation() {
 
     if (response?.item) {
       currentConversation.value = response.item;
+      await nextTick();
+      conversationViewerRef.value?.syncNavigationState?.();
       message.success(t('terminal.conversationRefreshed'));
     }
   } catch (error) {
@@ -699,12 +760,29 @@ function closeConversationModal() {
   showConversationModal.value = false;
   currentConversation.value = null;
   currentSession.value = null;
+  conversationNavState.value = {
+    currentUserPosition: 0,
+    totalUserMessages: 0,
+    hasPrev: false,
+    hasNext: false,
+  };
+}
+
+function updateConversationNavState(state: ConversationViewerNavState) {
+  conversationNavState.value = state;
 }
 </script>
 
 <style scoped>
 .session-tabs {
   min-height: 300px;
+}
+
+.conversation-nav-indicator {
+  min-width: 52px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--n-text-color-3);
 }
 
 .search-bar {

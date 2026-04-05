@@ -1,88 +1,147 @@
 <template>
   <div class="conversation-viewer">
-    <n-spin :show="loading">
-      <div ref="containerRef" class="conversation-container">
-        <template v-if="filteredMessages.length > 0">
+    <n-spin :show="loading" class="conversation-content-wrap">
+      <n-virtual-list
+        v-if="displayMessages.length > 0"
+        ref="virtualListRef"
+        class="conversation-container"
+        :items="displayMessages"
+        :item-size="140"
+        :item-resizable="true"
+        :items-style="virtualItemsStyle"
+        key-field="key"
+        @scroll="handleVirtualListScroll"
+        @resize="scheduleNavigationSync"
+      >
+        <template #default="{ item }">
           <div
-            v-for="(msg, index) in filteredMessages"
-            :key="index"
-            :ref="el => setMessageRef(el, index)"
+            :ref="el => setMessageRef(el, item.key)"
             class="message-item"
-            :class="msg.role"
+            :class="[
+              item.message.role,
+              {
+                'message-item--active-user':
+                  item.message.role === 'user' && item.key === activeUserMessageKey,
+              },
+            ]"
           >
             <div class="message-header">
               <span class="message-role">{{
-                msg.role === 'user' ? t('terminal.user') : t('terminal.assistant')
+                item.message.role === 'user' ? t('terminal.user') : t('terminal.assistant')
               }}</span>
-              <span v-if="msg.timestamp" class="message-time">{{ formatTime(msg.timestamp) }}</span>
+              <div class="message-header-meta">
+                <div v-if="item.message.role === 'assistant'" class="message-actions">
+                  <n-button
+                    size="tiny"
+                    quaternary
+                    :type="isRawMode(item.key) ? 'primary' : 'default'"
+                    :loading="isAssistantActionLoading(item.message)"
+                    @click="toggleRawMode(item)"
+                  >
+                    {{ t('terminal.rawMode') }}
+                  </n-button>
+                </div>
+                <span v-if="item.message.timestamp" class="message-time">{{
+                  formatTime(item.message.timestamp)
+                }}</span>
+              </div>
             </div>
+
+            <pre
+              v-if="isRawMode(item.key) && getSynchronousRawContent(item.message)"
+              class="message-raw"
+            ><code>{{ getSynchronousRawContent(item.message) }}</code></pre>
             <div
+              v-else-if="getRenderedContent(item.message)"
               class="message-content"
-              v-html="
-                renderMarkdown(
-                  isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full
-                    ? msg.full
-                    : msg.content
-                )
-              "
+              v-html="renderMarkdown(getRenderedContent(item.message))"
             ></div>
+
+            <div v-if="getDisplayAttachments(item).length" class="message-attachments">
+              <n-popover
+                v-for="attachment in getDisplayAttachments(item)"
+                :key="attachment.id"
+                trigger="hover"
+                placement="bottom-start"
+                :flip="true"
+                @update:show="
+                  (visible: boolean) => handleAttachmentPreviewToggle(attachment, visible)
+                "
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="image-attachment-chip"
+                    :class="{
+                      'image-attachment-chip--previewable': attachment.previewable,
+                      'image-attachment-chip--disabled': !attachment.previewable,
+                    }"
+                    @mouseenter="primeImagePreview(attachment)"
+                    @focus="primeImagePreview(attachment)"
+                    @click="handleAttachmentClick(item, attachment)"
+                  >
+                    <n-icon :size="14"><ImageOutline /></n-icon>
+                    <span>{{ attachment.label }}</span>
+                  </button>
+                </template>
+                <div class="attachment-popover">
+                  <template v-if="!attachment.previewable">
+                    <span class="attachment-preview-hint">{{
+                      getAttachmentUnavailableReason(attachment)
+                    }}</span>
+                  </template>
+                  <template v-else>
+                    <div
+                      v-if="getImagePreviewState(attachment.id).status === 'loaded'"
+                      class="attachment-preview-loaded"
+                    >
+                      <img
+                        :src="getImagePreviewState(attachment.id).objectUrl"
+                        :alt="attachment.label"
+                        class="attachment-preview-image"
+                      />
+                    </div>
+                    <div
+                      v-else-if="getImagePreviewState(attachment.id).status === 'error'"
+                      class="attachment-preview-error"
+                    >
+                      {{ t('terminal.imagePreviewFailed') }}
+                    </div>
+                    <div v-else class="attachment-preview-loading">
+                      <n-spin size="small" />
+                    </div>
+                  </template>
+                </div>
+              </n-popover>
+            </div>
+
             <div
-              v-if="isToolResult(msg) && msg.toolUseId && (msg.hasMore || msg.full)"
+              v-if="
+                isToolResult(item.message) &&
+                item.message.toolUseId &&
+                (item.message.hasMore || item.message.full)
+              "
               class="tool-result-controls"
             >
               <n-button
                 size="tiny"
                 quaternary
-                :loading="!!toolResultLoading[msg.toolUseId]"
-                @click.stop="toggleToolResult(msg)"
+                :loading="!!toolResultLoading[item.message.toolUseId]"
+                @click.stop="toggleToolResult(item.message)"
               >
                 {{
-                  isExpanded(msg.toolUseId)
+                  isExpanded(item.message.toolUseId)
                     ? t('terminal.collapseToolResult')
                     : t('terminal.expandToolResult')
                 }}
               </n-button>
             </div>
-            <!-- 用户消息导航按钮 -->
-            <div v-if="msg.role === 'user'" class="message-nav">
-              <n-tooltip>
-                <template #trigger>
-                  <n-button
-                    size="tiny"
-                    quaternary
-                    :disabled="!hasPrevUserMessage(index)"
-                    @click="goToPrevUserMessage(index)"
-                  >
-                    <template #icon>
-                      <n-icon size="14"><ChevronUpOutline /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                {{ t('terminal.prevUserMessage') }}
-              </n-tooltip>
-              <n-tooltip>
-                <template #trigger>
-                  <n-button
-                    size="tiny"
-                    quaternary
-                    :disabled="!hasNextUserMessage(index)"
-                    @click="goToNextUserMessage(index)"
-                  >
-                    <template #icon>
-                      <n-icon size="14"><ChevronDownOutline /></n-icon>
-                    </template>
-                  </n-button>
-                </template>
-                {{ t('terminal.nextUserMessage') }}
-              </n-tooltip>
-            </div>
           </div>
         </template>
-        <n-empty v-else-if="!loading" :description="emptyText" />
-      </div>
+      </n-virtual-list>
+      <n-empty v-else-if="!loading" :description="emptyText" class="conversation-empty" />
     </n-spin>
 
-    <!-- 底部工具栏 -->
     <div class="conversation-toolbar">
       <div v-if="sessionInfo" class="session-info">
         <n-tag
@@ -114,7 +173,7 @@
         </n-button>
       </div>
       <div class="toolbar-right">
-        <n-tooltip>
+        <n-tooltip v-if="refreshEnabled">
           <template #trigger>
             <n-button size="tiny" quaternary :loading="refreshing" @click="emit('refresh')">
               <template #icon>
@@ -129,22 +188,84 @@
         </n-checkbox>
       </div>
     </div>
+
+    <n-modal v-model:show="imagePreviewVisible" preset="card" style="width: 72vw; max-width: 960px">
+      <template #header>
+        <div class="image-preview-header">
+          <span>{{ currentPreviewAttachment?.label || t('terminal.imagePreview') }}</span>
+          <span v-if="imagePreviewImages.length > 1" class="image-preview-counter">
+            {{ imagePreviewIndex + 1 }} / {{ imagePreviewImages.length }}
+          </span>
+        </div>
+      </template>
+      <template #header-extra>
+        <n-space :size="6" align="center">
+          <n-button
+            quaternary
+            circle
+            size="small"
+            :disabled="imagePreviewIndex <= 0"
+            @click="goToPreviewImage(-1)"
+          >
+            {{ '<' }}
+          </n-button>
+          <n-button
+            quaternary
+            circle
+            size="small"
+            :disabled="imagePreviewIndex >= imagePreviewImages.length - 1"
+            @click="goToPreviewImage(1)"
+          >
+            {{ '>' }}
+          </n-button>
+        </n-space>
+      </template>
+      <div class="image-preview-body">
+        <div
+          v-if="
+            currentPreviewAttachment &&
+            getImagePreviewState(currentPreviewAttachment.id).status === 'loaded'
+          "
+          class="image-preview-loaded"
+        >
+          <img
+            :src="getImagePreviewState(currentPreviewAttachment.id).objectUrl"
+            :alt="currentPreviewAttachment.label"
+            class="image-preview-full"
+          />
+        </div>
+        <div
+          v-else-if="
+            currentPreviewAttachment &&
+            getImagePreviewState(currentPreviewAttachment.id).status === 'error'
+          "
+          class="image-preview-placeholder"
+        >
+          {{ t('terminal.imagePreviewFailed') }}
+        </div>
+        <div v-else class="image-preview-placeholder">
+          <n-spin size="large" />
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
-import { useMessage } from 'naive-ui';
-import {
-  CopyOutline,
-  LogoGithub,
-  ChevronUpOutline,
-  ChevronDownOutline,
-  RefreshOutline,
-} from '@vicons/ionicons5';
-import { useLocale } from '@/composables/useLocale';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTimeAgo } from '@vueuse/core';
+import { type VirtualListInst, useMessage } from 'naive-ui';
+import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
 import { marked } from 'marked';
+import { useLocale } from '@/composables/useLocale';
+
+export interface ConversationImageAttachment {
+  id: string;
+  label: string;
+  previewable: boolean;
+  previewUrl?: string;
+  mimeType?: string;
+}
 
 export interface ConversationMessage {
   role: 'user' | 'assistant';
@@ -154,6 +275,7 @@ export interface ConversationMessage {
   toolUseId?: string;
   hasMore?: boolean;
   full?: string;
+  images?: ConversationImageAttachment[];
 }
 
 export interface SessionInfo {
@@ -161,122 +283,286 @@ export interface SessionInfo {
   type?: 'claude_code' | 'codex' | string;
 }
 
+export interface ConversationViewerNavState {
+  currentUserPosition: number;
+  totalUserMessages: number;
+  hasPrev: boolean;
+  hasNext: boolean;
+}
+
+interface DisplayMessageItem {
+  key: string;
+  sourceIndex: number;
+  message: ConversationMessage;
+}
+
+interface ImagePreviewState {
+  status: 'idle' | 'loading' | 'loaded' | 'error';
+  objectUrl?: string;
+}
+
+interface DisplayAttachment extends ConversationImageAttachment {
+  source: 'parsed' | 'placeholder';
+}
+
 const props = withDefaults(
   defineProps<{
     messages: ConversationMessage[];
     loading?: boolean;
     refreshing?: boolean;
+    refreshEnabled?: boolean;
     sessionInfo?: SessionInfo | null;
     emptyText?: string;
     useRelativeTime?: boolean;
+    loadToolResult?: ((toolUseId: string) => Promise<string | null | undefined>) | null;
   }>(),
   {
     loading: false,
     refreshing: false,
+    refreshEnabled: false,
     sessionInfo: null,
     emptyText: '',
     useRelativeTime: true,
+    loadToolResult: null,
   }
 );
 
 const emit = defineEmits<{
-  (e: 'load-tool-result', toolUseId: string): void;
   (e: 'refresh'): void;
+  (e: 'nav-state-change', state: ConversationViewerNavState): void;
 }>();
 
 const { t } = useLocale();
 const message = useMessage();
 
 const showUserOnly = ref(false);
-const containerRef = ref<HTMLElement | null>(null);
-const messageRefs = ref<Map<number, HTMLElement>>(new Map());
+const virtualListRef = ref<null | {
+  scrollTo?: (options: { key: string }) => void;
+  getScrollContainer?: () => HTMLElement | null;
+}>(null);
+const messageRefs = new Map<string, HTMLElement>();
 const expandedToolResults = ref<Record<string, boolean>>({});
 const toolResultLoading = ref<Record<string, boolean>>({});
+const rawMode = ref<Record<string, boolean>>({});
+const activeUserMessageKey = ref<string | null>(null);
+const previewCache = ref<Record<string, ImagePreviewState>>({});
+const imagePreviewVisible = ref(false);
+const imagePreviewImages = ref<ConversationImageAttachment[]>([]);
+const imagePreviewIndex = ref(0);
 
-// 设置消息元素的 ref
-function setMessageRef(el: unknown, index: number) {
-  if (el) {
-    messageRefs.value.set(index, el as HTMLElement);
-  } else {
-    messageRefs.value.delete(index);
+const toolResultRequests = new Map<string, Promise<string>>();
+const imagePreviewRequests = new Map<string, Promise<void>>();
+let navigationFrame = 0;
+const imagePlaceholderPattern = /\[Image #(\d+)\]/g;
+const virtualItemsStyle = {
+  padding: '18px 16px 12px 8px',
+};
+
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+const displayMessages = computed<DisplayMessageItem[]>(() => {
+  return props.messages
+    .map((msg, index) => ({
+      key: `msg-${index}`,
+      sourceIndex: index,
+      message: msg,
+    }))
+    .filter(item => !showUserOnly.value || item.message.role === 'user');
+});
+
+const emptyText = computed(() => props.emptyText || t('terminal.noMessages'));
+
+const userMessageKeys = computed(() => {
+  return displayMessages.value.filter(item => item.message.role === 'user').map(item => item.key);
+});
+
+const userMessageIndexMap = computed(() => {
+  return new Map(userMessageKeys.value.map((key, index) => [key, index]));
+});
+
+const navState = computed<ConversationViewerNavState>(() => {
+  const totalUserMessages = userMessageKeys.value.length;
+  if (totalUserMessages === 0) {
+    return {
+      currentUserPosition: 0,
+      totalUserMessages: 0,
+      hasPrev: false,
+      hasNext: false,
+    };
   }
-}
 
-// 清理 refs 当消息列表变化时
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+
+  return {
+    currentUserPosition: currentIndex + 1,
+    totalUserMessages,
+    hasPrev: currentIndex > 0,
+    hasNext: currentIndex < totalUserMessages - 1,
+  };
+});
+
+const currentPreviewAttachment = computed(() => {
+  return imagePreviewImages.value[imagePreviewIndex.value] ?? null;
+});
+
 watch(
-  () => props.messages,
-  () => {
-    messageRefs.value.clear();
-  }
+  navState,
+  value => {
+    emit('nav-state-change', value);
+  },
+  { immediate: true, deep: true }
 );
 
-// 过滤消息
-const filteredMessages = computed(() => {
-  if (!showUserOnly.value) {
-    return props.messages;
-  }
-  return props.messages.filter(msg => msg.role === 'user');
-});
-
-// 空文本
-const emptyText = computed(() => {
-  return props.emptyText || t('terminal.noMessages');
-});
-
-// 获取过滤后列表中所有用户消息的索引
-function getUserMessageIndices(): number[] {
-  const indices: number[] = [];
-  filteredMessages.value.forEach((msg, index) => {
-    if (msg.role === 'user') {
-      indices.push(index);
+watch(
+  displayMessages,
+  async value => {
+    if (value.length === 0) {
+      activeUserMessageKey.value = null;
+      emit('nav-state-change', {
+        currentUserPosition: 0,
+        totalUserMessages: 0,
+        hasPrev: false,
+        hasNext: false,
+      });
+      return;
     }
-  });
-  return indices;
-}
+    await nextTick();
+    scheduleNavigationSync();
+  },
+  { deep: true }
+);
 
-// 检查是否有上一条用户消息
-function hasPrevUserMessage(currentIndex: number): boolean {
-  const indices = getUserMessageIndices();
-  const currentPos = indices.indexOf(currentIndex);
-  return currentPos > 0;
-}
+watch(
+  () => props.sessionInfo?.sessionId,
+  () => {
+    rawMode.value = {};
+    expandedToolResults.value = {};
+    toolResultLoading.value = {};
+    activeUserMessageKey.value = null;
+    cleanupPreviewCache();
+    imagePreviewVisible.value = false;
+    imagePreviewImages.value = [];
+    imagePreviewIndex.value = 0;
+  },
+  { immediate: true }
+);
 
-// 检查是否有下一条用户消息
-function hasNextUserMessage(currentIndex: number): boolean {
-  const indices = getUserMessageIndices();
-  const currentPos = indices.indexOf(currentIndex);
-  return currentPos >= 0 && currentPos < indices.length - 1;
-}
+watch(showUserOnly, async () => {
+  await nextTick();
+  scheduleNavigationSync();
+});
 
-// 跳转到上一条用户消息
-function goToPrevUserMessage(currentIndex: number) {
-  const indices = getUserMessageIndices();
-  const currentPos = indices.indexOf(currentIndex);
-  if (currentPos > 0) {
-    const prevIndex = indices[currentPos - 1];
-    scrollToMessage(prevIndex);
-  }
-}
-
-// 跳转到下一条用户消息
-function goToNextUserMessage(currentIndex: number) {
-  const indices = getUserMessageIndices();
-  const currentPos = indices.indexOf(currentIndex);
-  if (currentPos >= 0 && currentPos < indices.length - 1) {
-    const nextIndex = indices[currentPos + 1];
-    scrollToMessage(nextIndex);
-  }
-}
-
-// 滚动到指定消息
-function scrollToMessage(index: number) {
-  const el = messageRefs.value.get(index);
+function setMessageRef(el: unknown, key: string) {
   if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    messageRefs.set(key, el as HTMLElement);
+    return;
   }
+  messageRefs.delete(key);
 }
 
-// 格式化时间
+function getScrollContainer(): HTMLElement | null {
+  return (
+    (
+      virtualListRef.value as unknown as { getScrollContainer?: () => HTMLElement | null }
+    )?.getScrollContainer?.() ?? null
+  );
+}
+
+function scheduleNavigationSync() {
+  if (navigationFrame) {
+    cancelAnimationFrame(navigationFrame);
+  }
+  navigationFrame = requestAnimationFrame(() => {
+    navigationFrame = 0;
+    syncActiveUserMessage();
+  });
+}
+
+function syncActiveUserMessage() {
+  const userKeys = userMessageKeys.value;
+  if (userKeys.length === 0) {
+    activeUserMessageKey.value = null;
+    return;
+  }
+
+  const container = getScrollContainer();
+  if (!container) {
+    activeUserMessageKey.value = userKeys[0];
+    return;
+  }
+
+  const containerTop = container.getBoundingClientRect().top;
+  let closestAbove: { key: string; offset: number } | null = null;
+  let closestBelow: { key: string; offset: number } | null = null;
+
+  for (const key of userKeys) {
+    const element = messageRefs.get(key);
+    if (!element) {
+      continue;
+    }
+    const offset = element.getBoundingClientRect().top - containerTop;
+    if (offset <= 16) {
+      if (!closestAbove || offset > closestAbove.offset) {
+        closestAbove = { key, offset };
+      }
+      continue;
+    }
+    if (!closestBelow || offset < closestBelow.offset) {
+      closestBelow = { key, offset };
+    }
+  }
+
+  activeUserMessageKey.value = closestAbove?.key ?? closestBelow?.key ?? userKeys[0];
+}
+
+function handleVirtualListScroll() {
+  scheduleNavigationSync();
+}
+
+function scrollToUserMessageByKey(targetKey: string) {
+  if (!targetKey) {
+    return;
+  }
+  (
+    virtualListRef.value as unknown as { scrollTo?: (options: { key: string }) => void }
+  )?.scrollTo?.({ key: targetKey });
+  activeUserMessageKey.value = targetKey;
+  void nextTick().then(() => {
+    scheduleNavigationSync();
+  });
+}
+
+function goToPrevUserMessage() {
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+  if (currentIndex <= 0) {
+    return;
+  }
+  scrollToUserMessageByKey(userMessageKeys.value[currentIndex - 1]);
+}
+
+function goToNextUserMessage() {
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+  if (currentIndex >= userMessageKeys.value.length - 1) {
+    return;
+  }
+  scrollToUserMessageByKey(userMessageKeys.value[currentIndex + 1]);
+}
+
+defineExpose({
+  goToPrevUserMessage,
+  goToNextUserMessage,
+  syncNavigationState: scheduleNavigationSync,
+});
+
 function formatTime(timestamp: string) {
   if (props.useRelativeTime) {
     return useTimeAgo(new Date(timestamp)).value;
@@ -284,18 +570,10 @@ function formatTime(timestamp: string) {
   return new Date(timestamp).toLocaleString();
 }
 
-// 配置 marked
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
-
-// 渲染 Markdown
 function renderMarkdown(content: string): string {
   try {
     return marked.parse(content) as string;
   } catch {
-    // 如果解析失败，返回转义后的原始内容
     return content
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -312,45 +590,228 @@ function isExpanded(toolUseId: string) {
   return !!expandedToolResults.value[toolUseId];
 }
 
-function toggleToolResult(msg: ConversationMessage) {
-  const toolUseId = msg.toolUseId;
-  if (!toolUseId) return;
-
-  const next = !isExpanded(toolUseId);
-  expandedToolResults.value = { ...expandedToolResults.value, [toolUseId]: next };
-  if (!next) return;
-
-  if (msg.full) return;
-  if (toolResultLoading.value[toolUseId]) return;
-
-  toolResultLoading.value = { ...toolResultLoading.value, [toolUseId]: true };
-  emit('load-tool-result', toolUseId);
+function isRawMode(key: string) {
+  return !!rawMode.value[key];
 }
 
-function markToolResultLoaded(toolUseId: string) {
-  if (!toolUseId) return;
-  if (!toolResultLoading.value[toolUseId]) return;
-  const next = { ...toolResultLoading.value };
-  delete next[toolUseId];
-  toolResultLoading.value = next;
+function getRenderedContent(msg: ConversationMessage) {
+  const content =
+    isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full
+      ? msg.full
+      : msg.content;
+  return content;
 }
 
-watch(
-  () => props.messages,
-  () => {
-    // Cleanup loading state when parent updates messages (e.g., full tool result arrives).
-    for (const msg of props.messages) {
-      if (isToolResult(msg) && msg.toolUseId && msg.full) {
-        markToolResultLoaded(msg.toolUseId);
-      }
+function getSynchronousRawContent(msg: ConversationMessage) {
+  return msg.full || msg.content || '';
+}
+
+function getInlinePlaceholderAttachments(item: DisplayMessageItem): DisplayAttachment[] {
+  const placeholders = Array.from(item.message.content.matchAll(imagePlaceholderPattern));
+  return placeholders.map((match, index) => ({
+    id: `${item.key}-placeholder-${index}`,
+    label: `Image #${match[1]}`,
+    previewable: false,
+    source: 'placeholder',
+  }));
+}
+
+function getAttachmentIdentity(label: string) {
+  const normalized = label.trim();
+  const match = normalized.match(/^\[?Image #(\d+)\]?$/i);
+  if (match) {
+    return `image-${match[1]}`;
+  }
+  return normalized.toLowerCase();
+}
+
+function getAttachmentUnavailableReason(attachment: DisplayAttachment) {
+  if (attachment.source === 'placeholder') {
+    return t('terminal.imagePreviewUnavailablePlaceholder');
+  }
+  return t('terminal.imagePreviewUnavailable');
+}
+
+function getDisplayAttachments(item: DisplayMessageItem): DisplayAttachment[] {
+  const dedupedAttachments: DisplayAttachment[] = [];
+  const seenIdentities = new Set<string>();
+
+  for (const attachment of item.message.images ?? []) {
+    const identity = getAttachmentIdentity(attachment.label);
+    if (seenIdentities.has(identity)) {
+      continue;
     }
-  },
-  { deep: true }
-);
+    seenIdentities.add(identity);
+    dedupedAttachments.push({
+      ...attachment,
+      source: 'parsed' as const,
+    });
+  }
 
-// 复制 Session ID
+  const placeholders = getInlinePlaceholderAttachments(item).filter(placeholder => {
+    return !seenIdentities.has(getAttachmentIdentity(placeholder.label));
+  });
+  return [...dedupedAttachments, ...placeholders];
+}
+
+function isAssistantActionLoading(msg: ConversationMessage) {
+  return !!(msg.toolUseId && toolResultLoading.value[msg.toolUseId]);
+}
+
+async function ensureToolResultLoaded(msg: ConversationMessage) {
+  if (!isToolResult(msg) || !msg.toolUseId) {
+    return msg.full || msg.content || '';
+  }
+  if (msg.full) {
+    return msg.full;
+  }
+  if (!msg.hasMore || !props.loadToolResult) {
+    return msg.content;
+  }
+  const existing = toolResultRequests.get(msg.toolUseId);
+  if (existing) {
+    return existing;
+  }
+
+  toolResultLoading.value = { ...toolResultLoading.value, [msg.toolUseId]: true };
+  const request = Promise.resolve(props.loadToolResult(msg.toolUseId))
+    .then(content => content || msg.full || msg.content || '')
+    .finally(() => {
+      toolResultRequests.delete(msg.toolUseId as string);
+      const next = { ...toolResultLoading.value };
+      delete next[msg.toolUseId as string];
+      toolResultLoading.value = next;
+      scheduleNavigationSync();
+    });
+
+  toolResultRequests.set(msg.toolUseId, request);
+  return request;
+}
+
+async function toggleToolResult(msg: ConversationMessage) {
+  const toolUseId = msg.toolUseId;
+  if (!toolUseId) {
+    return;
+  }
+  const nextValue = !isExpanded(toolUseId);
+  expandedToolResults.value = { ...expandedToolResults.value, [toolUseId]: nextValue };
+  if (nextValue) {
+    await ensureToolResultLoaded(msg);
+  }
+}
+
+async function toggleRawMode(item: DisplayMessageItem) {
+  const nextValue = !isRawMode(item.key);
+  rawMode.value = { ...rawMode.value, [item.key]: nextValue };
+  if (nextValue) {
+    await ensureToolResultLoaded(item.message);
+  }
+}
+
+function getImagePreviewState(attachmentId: string): ImagePreviewState {
+  return previewCache.value[attachmentId] || { status: 'idle' };
+}
+
+async function primeImagePreview(attachment: ConversationImageAttachment) {
+  if (!attachment.previewable || !attachment.previewUrl) {
+    return;
+  }
+  const existingState = getImagePreviewState(attachment.id);
+  if (existingState.status === 'loaded' || existingState.status === 'loading') {
+    return;
+  }
+  const pending = imagePreviewRequests.get(attachment.id);
+  if (pending) {
+    return pending;
+  }
+
+  previewCache.value = {
+    ...previewCache.value,
+    [attachment.id]: { status: 'loading' },
+  };
+
+  const request = fetch(attachment.previewUrl)
+    .then(async response => {
+      if (!response.ok) {
+        throw new Error('preview-request-failed');
+      }
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const prevEntry = previewCache.value[attachment.id];
+      if (prevEntry?.objectUrl) {
+        URL.revokeObjectURL(prevEntry.objectUrl);
+      }
+      previewCache.value = {
+        ...previewCache.value,
+        [attachment.id]: {
+          status: 'loaded',
+          objectUrl,
+        },
+      };
+    })
+    .catch(() => {
+      previewCache.value = {
+        ...previewCache.value,
+        [attachment.id]: { status: 'error' },
+      };
+    })
+    .finally(() => {
+      imagePreviewRequests.delete(attachment.id);
+    });
+
+  imagePreviewRequests.set(attachment.id, request);
+  return request;
+}
+
+function handleAttachmentPreviewToggle(attachment: ConversationImageAttachment, visible: boolean) {
+  if (visible) {
+    void primeImagePreview(attachment);
+  }
+}
+
+function handleAttachmentClick(item: DisplayMessageItem, attachment: DisplayAttachment) {
+  if (!attachment.previewable) {
+    message.info(getAttachmentUnavailableReason(attachment));
+    return;
+  }
+  void openImagePreview(getDisplayAttachments(item), attachment.id);
+}
+
+async function openImagePreview(images: ConversationImageAttachment[], attachmentId: string) {
+  const previewableImages = images.filter(image => image.previewable);
+  const targetIndex = previewableImages.findIndex(image => image.id === attachmentId);
+  if (targetIndex < 0) {
+    return;
+  }
+  imagePreviewImages.value = previewableImages;
+  imagePreviewIndex.value = targetIndex;
+  imagePreviewVisible.value = true;
+  await primeImagePreview(previewableImages[targetIndex]);
+}
+
+function goToPreviewImage(direction: number) {
+  const nextIndex = imagePreviewIndex.value + direction;
+  if (nextIndex < 0 || nextIndex >= imagePreviewImages.value.length) {
+    return;
+  }
+  imagePreviewIndex.value = nextIndex;
+  void primeImagePreview(imagePreviewImages.value[nextIndex]);
+}
+
+function cleanupPreviewCache() {
+  for (const entry of Object.values(previewCache.value)) {
+    if (entry.objectUrl) {
+      URL.revokeObjectURL(entry.objectUrl);
+    }
+  }
+  previewCache.value = {};
+  imagePreviewRequests.clear();
+}
+
 async function copySessionId() {
-  if (!props.sessionInfo?.sessionId) return;
+  if (!props.sessionInfo?.sessionId) {
+    return;
+  }
   try {
     await navigator.clipboard.writeText(props.sessionInfo.sessionId);
     message.success(t('terminal.aiSessionIdCopied'));
@@ -358,6 +819,13 @@ async function copySessionId() {
     message.error(t('terminal.copyFailed'));
   }
 }
+
+onBeforeUnmount(() => {
+  if (navigationFrame) {
+    cancelAnimationFrame(navigationFrame);
+  }
+  cleanupPreviewCache();
+});
 </script>
 
 <style scoped>
@@ -367,39 +835,49 @@ async function copySessionId() {
   height: 100%;
 }
 
-.conversation-container {
+.conversation-content-wrap {
   flex: 1;
+  min-height: 0;
+}
+
+.conversation-container {
+  height: 60vh;
   max-height: 60vh;
-  overflow-y: auto;
+  min-height: 240px;
   padding: 8px 0;
 }
 
-.tool-result-controls {
-  margin-top: 8px;
+.conversation-empty {
+  height: 240px;
 }
 
 .message-item {
-  position: relative;
   margin-bottom: 16px;
   padding: 12px 16px;
   border-radius: 8px;
   background: var(--n-color-embedded);
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
 }
 
 .message-item.user {
-  background: var(--n-color-embedded);
   border-left: 3px solid var(--n-primary-color);
 }
 
 .message-item.assistant {
-  background: var(--n-color-embedded);
   border-left: 3px solid var(--n-success-color);
+}
+
+.message-item--active-user {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 45%, transparent);
 }
 
 .message-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 12px;
   margin-bottom: 8px;
 }
 
@@ -416,6 +894,20 @@ async function copySessionId() {
   color: var(--n-success-color);
 }
 
+.message-header-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .message-time {
   font-size: 12px;
   color: var(--n-text-color-3);
@@ -427,22 +919,78 @@ async function copySessionId() {
   word-break: break-word;
 }
 
-/* 用户消息导航按钮 */
-.message-nav {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
+.message-raw {
+  margin: 0;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--n-code-color);
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.message-attachments {
   display: flex;
-  gap: 2px;
-  opacity: 0.5;
-  transition: opacity 0.2s;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
 }
 
-.message-item:hover .message-nav {
-  opacity: 1;
+.image-attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 35%, transparent);
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
-/* Markdown 样式 */
+.image-attachment-chip:hover,
+.image-attachment-chip:focus-visible {
+  border-color: var(--n-primary-color);
+  background: color-mix(in srgb, var(--n-primary-color) 14%, transparent);
+}
+
+.image-attachment-chip--disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.attachment-popover {
+  width: 180px;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-preview-loading,
+.attachment-preview-error,
+.attachment-preview-hint {
+  color: var(--n-text-color-3);
+  font-size: 12px;
+  text-align: center;
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 160px;
+  max-height: 120px;
+  border-radius: 8px;
+}
+
+.tool-result-controls {
+  margin-top: 8px;
+}
+
 .message-content :deep(p) {
   margin: 0 0 8px 0;
 }
@@ -501,9 +1049,11 @@ async function copySessionId() {
 .message-content :deep(h1) {
   font-size: 1.5em;
 }
+
 .message-content :deep(h2) {
   font-size: 1.3em;
 }
+
 .message-content :deep(h3) {
   font-size: 1.1em;
 }
@@ -541,11 +1091,11 @@ async function copySessionId() {
   margin: 16px 0;
 }
 
-/* 底部工具栏 */
 .conversation-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
   padding-top: 12px;
   border-top: 1px solid var(--n-border-color);
   margin-top: 8px;
@@ -571,5 +1121,45 @@ async function copySessionId() {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.image-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.image-preview-counter {
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.image-preview-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 360px;
+}
+
+.image-preview-loaded {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+}
+
+.image-preview-full {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 10px;
+}
+
+.image-preview-placeholder {
+  min-height: 240px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--n-text-color-3);
 }
 </style>

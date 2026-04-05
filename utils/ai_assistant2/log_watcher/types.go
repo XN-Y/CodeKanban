@@ -89,11 +89,12 @@ type SessionMetaPayload struct {
 
 // EventMsgPayload is the payload for event_msg entries
 type EventMsgPayload struct {
-	Type    string   `json:"type"`
-	Message string   `json:"message,omitempty"`
-	Text    string   `json:"text,omitempty"` // For agent_reasoning
-	Images  []string `json:"images,omitempty"`
-	Reason  string   `json:"reason,omitempty"`
+	Type        string   `json:"type"`
+	Message     string   `json:"message,omitempty"`
+	Text        string   `json:"text,omitempty"` // For agent_reasoning
+	Images      []string `json:"images,omitempty"`
+	LocalImages []string `json:"local_images,omitempty"`
+	Reason      string   `json:"reason,omitempty"`
 }
 
 // TurnContextPayload is the payload for turn_context entries

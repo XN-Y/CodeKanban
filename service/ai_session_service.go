@@ -3,10 +3,14 @@ package service
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
+	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -1646,14 +1650,49 @@ func (s *AISessionService) logger(ctx context.Context) *zap.Logger {
 }
 
 // ConversationMessage represents a single message in a conversation.
+type ConversationImageAttachment struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Previewable bool   `json:"previewable"`
+	PreviewURL  string `json:"previewUrl,omitempty"`
+	MimeType    string `json:"mimeType,omitempty"`
+	Source      string `json:"-"`
+}
+
 type ConversationMessage struct {
-	Role      string    `json:"role"`      // "user" or "assistant"
-	Content   string    `json:"content"`   // Message content
-	Timestamp time.Time `json:"timestamp"` // Message timestamp
-	Kind      string    `json:"kind,omitempty"`
-	ToolUseID string    `json:"toolUseId,omitempty"`
-	HasMore   bool      `json:"hasMore,omitempty"`
-	Full      string    `json:"full,omitempty"`
+	Role      string                        `json:"role"`      // "user" or "assistant"
+	Content   string                        `json:"content"`   // Message content
+	Timestamp time.Time                     `json:"timestamp"` // Message timestamp
+	Kind      string                        `json:"kind,omitempty"`
+	ToolUseID string                        `json:"toolUseId,omitempty"`
+	HasMore   bool                          `json:"hasMore,omitempty"`
+	Full      string                        `json:"full,omitempty"`
+	Images    []ConversationImageAttachment `json:"images,omitempty"`
+}
+
+type ConversationImagePreview struct {
+	MimeType string
+	FilePath string
+	Data     []byte
+}
+
+var errStopConversationScan = errors.New("stop conversation scan")
+
+type conversationParseOptions struct {
+	includeImageSources bool
+	onMessage           func(*ConversationMessage) bool
+}
+
+func emitConversationMessage(dst *[]*ConversationMessage, msg *ConversationMessage, options conversationParseOptions) error {
+	if options.onMessage != nil {
+		if !options.onMessage(msg) {
+			return errStopConversationScan
+		}
+	}
+	if dst != nil {
+		*dst = append(*dst, msg)
+	}
+	return nil
 }
 
 // ConversationResponse contains the full conversation for a session.
@@ -1774,6 +1813,8 @@ func (s *AISessionService) RefreshSessionAndGetConversation(ctx context.Context,
 		return nil, err
 	}
 
+	decorateConversationMessages(messages, sessionID)
+
 	return &ConversationResponse{
 		SessionID: sessionID,
 		Title:     title,
@@ -1827,6 +1868,8 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 		return nil, err
 	}
 
+	decorateConversationMessages(messages, session.SessionID)
+
 	// Update message counts in database (opportunistic update when viewing conversation)
 	var userCount, assistantCount int
 	for _, msg := range messages {
@@ -1864,6 +1907,10 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 
 // parseClaudeCodeConversation parses a Claude Code session file and extracts messages.
 func (s *AISessionService) parseClaudeCodeConversation(filePath string) ([]*ConversationMessage, error) {
+	return s.parseClaudeCodeConversationWithOptions(filePath, conversationParseOptions{})
+}
+
+func (s *AISessionService) parseClaudeCodeConversationWithOptions(filePath string, options conversationParseOptions) ([]*ConversationMessage, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -1871,6 +1918,10 @@ func (s *AISessionService) parseClaudeCodeConversation(filePath string) ([]*Conv
 	defer file.Close()
 
 	var messages []*ConversationMessage
+	messageSink := &messages
+	if options.onMessage != nil {
+		messageSink = nil
+	}
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2*1024*1024) // 2MB buffer for large lines
@@ -1917,41 +1968,68 @@ func (s *AISessionService) parseClaudeCodeConversation(filePath string) ([]*Conv
 				if text == "" || strings.HasPrefix(text, "<command-") || strings.HasPrefix(text, "<local-command") {
 					continue
 				}
-				messages = append(messages, &ConversationMessage{
+				if err := emitConversationMessage(messageSink, &ConversationMessage{
 					Role:      "user",
 					Content:   text,
 					Timestamp: ts,
-				})
+				}, options); err != nil {
+					if errors.Is(err, errStopConversationScan) {
+						return messages, nil
+					}
+					return nil, err
+				}
 			case []interface{}:
 				// User messages with images can also be array blocks; tool results are usually tool_result blocks.
 				if hasClaudeToolResultBlock(content) {
-					appendClaudeToolResultMessages(&messages, content, ts)
+					if err := emitClaudeToolResultMessages(messageSink, content, ts, options); err != nil {
+						if errors.Is(err, errStopConversationScan) {
+							return messages, nil
+						}
+						return nil, err
+					}
 					continue
 				}
 
-				text := strings.TrimSpace(renderClaudeContentBlocks(content))
-				if text == "" || strings.HasPrefix(text, "<command-") || strings.HasPrefix(text, "<local-command") {
+				text, images := extractClaudeMessageContent(content, filePath, options.includeImageSources)
+				text = strings.TrimSpace(text)
+				if text == "" && len(images) == 0 {
 					continue
 				}
-				messages = append(messages, &ConversationMessage{
+				if text != "" && (strings.HasPrefix(text, "<command-") || strings.HasPrefix(text, "<local-command")) {
+					continue
+				}
+				if err := emitConversationMessage(messageSink, &ConversationMessage{
 					Role:      "user",
 					Content:   text,
 					Timestamp: ts,
-				})
+					Images:    images,
+				}, options); err != nil {
+					if errors.Is(err, errStopConversationScan) {
+						return messages, nil
+					}
+					return nil, err
+				}
 			}
 		case "assistant":
 			if msgContent.Role != "assistant" {
 				continue
 			}
-			text := strings.TrimSpace(renderClaudeContentBlocks(msgContent.Content))
-			if text == "" {
+			text, images := extractClaudeMixedContent(msgContent.Content, filePath, options.includeImageSources)
+			text = strings.TrimSpace(text)
+			if text == "" && len(images) == 0 {
 				continue
 			}
-			messages = append(messages, &ConversationMessage{
+			if err := emitConversationMessage(messageSink, &ConversationMessage{
 				Role:      "assistant",
 				Content:   text,
 				Timestamp: ts,
-			})
+				Images:    images,
+			}, options); err != nil {
+				if errors.Is(err, errStopConversationScan) {
+					return messages, nil
+				}
+				return nil, err
+			}
 		}
 	}
 
@@ -1971,7 +2049,7 @@ func hasClaudeToolResultBlock(blocks []interface{}) bool {
 	return false
 }
 
-func appendClaudeToolResultMessages(dst *[]*ConversationMessage, blocks []interface{}, ts time.Time) {
+func emitClaudeToolResultMessages(dst *[]*ConversationMessage, blocks []interface{}, ts time.Time, options conversationParseOptions) error {
 	for _, block := range blocks {
 		blockMap, ok := block.(map[string]interface{})
 		if !ok {
@@ -1987,60 +2065,77 @@ func appendClaudeToolResultMessages(dst *[]*ConversationMessage, blocks []interf
 			continue
 		}
 
-		*dst = append(*dst, &ConversationMessage{
+		if err := emitConversationMessage(dst, &ConversationMessage{
 			Role:      "assistant",
 			Kind:      "tool_result",
 			ToolUseID: toolUseID,
 			HasMore:   truncated,
 			Content:   preview,
 			Timestamp: ts,
-		})
+		}, options); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func renderClaudeContentBlocks(content interface{}) string {
+	text, _ := extractClaudeMixedContent(content, "", false)
+	return text
+}
+
+func extractClaudeMixedContent(content interface{}, sessionFilePath string, includeImageSources bool) (string, []ConversationImageAttachment) {
 	switch v := content.(type) {
 	case string:
-		return v
+		return v, nil
 	case []interface{}:
-		parts := make([]string, 0, len(v))
-		for _, block := range v {
-			blockMap, ok := block.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			blockType, _ := blockMap["type"].(string)
-			switch blockType {
-			case "text":
-				if text, ok := blockMap["text"].(string); ok && text != "" {
-					parts = append(parts, text)
-				}
-			case "tool_use":
-				if rendered := formatClaudeToolUseBlock(blockMap); rendered != "" {
-					parts = append(parts, rendered)
-				}
-			}
-		}
-		return strings.Join(parts, "\n")
+		return extractClaudeMessageContent(v, sessionFilePath, includeImageSources)
 	case map[string]interface{}:
 		// Some tools embed both cleaned and raw content; prefer cleaned when present.
 		if cleaned, ok := v["cleanedText"].(string); ok && cleaned != "" {
-			return cleaned
+			return cleaned, nil
 		}
 		if text, ok := v["text"].(string); ok && text != "" {
-			return text
+			return text, nil
 		}
 		if raw, ok := v["rawContent"].(string); ok && raw != "" {
-			return raw
+			return raw, nil
 		}
 		if b, err := json.Marshal(v); err == nil {
-			return string(b)
+			return string(b), nil
 		}
-		return ""
+		return "", nil
 	default:
-		return ""
+		return "", nil
 	}
+}
+
+func extractClaudeMessageContent(blocks []interface{}, sessionFilePath string, includeImageSources bool) (string, []ConversationImageAttachment) {
+	parts := make([]string, 0, len(blocks))
+	images := make([]ConversationImageAttachment, 0)
+	for _, block := range blocks {
+		blockMap, ok := block.(map[string]interface{})
+		if !ok {
+			continue
+		}
+
+		blockType, _ := blockMap["type"].(string)
+		switch blockType {
+		case "text":
+			if text, ok := blockMap["text"].(string); ok && text != "" {
+				parts = append(parts, text)
+			}
+		case "tool_use":
+			if rendered := formatClaudeToolUseBlock(blockMap); rendered != "" {
+				parts = append(parts, rendered)
+			}
+		case "image", "input_image":
+			if attachment, ok := buildClaudeImageAttachment(blockMap, sessionFilePath, len(images), includeImageSources); ok {
+				images = append(images, attachment)
+			}
+		}
+	}
+	return strings.Join(parts, "\n"), images
 }
 
 func formatClaudeToolUseBlock(block map[string]interface{}) string {
@@ -2144,6 +2239,10 @@ func truncateText(s string, maxChars, maxLines int) (string, bool) {
 
 // parseCodexConversation parses a Codex session file and extracts messages.
 func (s *AISessionService) parseCodexConversation(filePath string) ([]*ConversationMessage, error) {
+	return s.parseCodexConversationWithOptions(filePath, conversationParseOptions{})
+}
+
+func (s *AISessionService) parseCodexConversationWithOptions(filePath string, options conversationParseOptions) ([]*ConversationMessage, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -2151,6 +2250,10 @@ func (s *AISessionService) parseCodexConversation(filePath string) ([]*Conversat
 	defer file.Close()
 
 	var messages []*ConversationMessage
+	messageSink := &messages
+	if options.onMessage != nil {
+		messageSink = nil
+	}
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2*1024*1024) // 2MB buffer for large lines
@@ -2179,41 +2282,422 @@ func (s *AISessionService) parseCodexConversation(filePath string) ([]*Conversat
 			switch msgType {
 			case "user_message":
 				msg, _ := payload["message"].(string)
-				if msg == "" {
+				images := extractCodexImageAttachments(payload, filePath, options.includeImageSources)
+				if msg == "" && len(images) == 0 {
 					continue
 				}
-				messages = append(messages, &ConversationMessage{
+				if err := emitConversationMessage(messageSink, &ConversationMessage{
 					Role:      "user",
 					Content:   msg,
 					Timestamp: ts,
-				})
+					Images:    images,
+				}, options); err != nil {
+					if errors.Is(err, errStopConversationScan) {
+						return messages, nil
+					}
+					return nil, err
+				}
 			case "agent_message":
 				// Codex uses "agent_message" for final responses
 				msg, _ := payload["message"].(string)
 				if msg == "" {
 					continue
 				}
-				messages = append(messages, &ConversationMessage{
+				if err := emitConversationMessage(messageSink, &ConversationMessage{
 					Role:      "assistant",
 					Content:   msg,
 					Timestamp: ts,
-				})
+				}, options); err != nil {
+					if errors.Is(err, errStopConversationScan) {
+						return messages, nil
+					}
+					return nil, err
+				}
 			case "agent_reasoning":
 				// Codex uses "agent_reasoning" for thinking/reasoning text
 				text, _ := payload["text"].(string)
 				if text == "" {
 					continue
 				}
-				messages = append(messages, &ConversationMessage{
+				if err := emitConversationMessage(messageSink, &ConversationMessage{
 					Role:      "assistant",
 					Content:   text,
 					Timestamp: ts,
-				})
+				}, options); err != nil {
+					if errors.Is(err, errStopConversationScan) {
+						return messages, nil
+					}
+					return nil, err
+				}
 			}
 		}
 	}
 
 	return messages, scanner.Err()
+}
+
+func decorateConversationMessages(messages []*ConversationMessage, sessionID string) {
+	for messageIndex, msg := range messages {
+		for imageIndex := range msg.Images {
+			attachment := &msg.Images[imageIndex]
+			attachment.ID = fmt.Sprintf("m%d-i%d", messageIndex, imageIndex)
+			if attachment.Previewable {
+				attachment.PreviewURL = fmt.Sprintf(
+					"/api/v1/ai-sessions/by-session-id/%s/conversation/images/%s",
+					url.PathEscape(sessionID),
+					url.PathEscape(attachment.ID),
+				)
+			}
+		}
+	}
+}
+
+func extractCodexImageAttachments(payload map[string]interface{}, sessionFilePath string, includeImageSources bool) []ConversationImageAttachment {
+	sources := make([]string, 0)
+	sources = append(sources, extractStringSlice(payload["images"])...)
+	sources = append(sources, extractStringSlice(payload["local_images"])...)
+	if len(sources) == 0 {
+		return nil
+	}
+
+	placeholders := extractCodexTextElementPlaceholders(payload["text_elements"])
+	attachments := make([]ConversationImageAttachment, 0, len(sources))
+	for index, source := range sources {
+		attachment, ok := buildConversationImageAttachment(source, sessionFilePath, index, includeImageSources)
+		if !ok {
+			continue
+		}
+		if index < len(placeholders) && placeholders[index] != "" {
+			attachment.Label = placeholders[index]
+		}
+		attachments = append(attachments, attachment)
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+	return attachments
+}
+
+func extractStringSlice(raw interface{}) []string {
+	items, ok := raw.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		value, _ := item.(string)
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func extractCodexTextElementPlaceholders(raw interface{}) []string {
+	items, ok := raw.([]interface{})
+	if !ok || len(items) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(items))
+	for _, item := range items {
+		entry, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		placeholder, _ := entry["placeholder"].(string)
+		placeholder = strings.TrimSpace(placeholder)
+		if placeholder != "" {
+			placeholders = append(placeholders, placeholder)
+		}
+	}
+	return placeholders
+}
+
+func buildClaudeImageAttachment(block map[string]interface{}, sessionFilePath string, index int, includeImageSources bool) (ConversationImageAttachment, bool) {
+	if sourceMap, ok := block["source"].(map[string]interface{}); ok {
+		sourceType, _ := sourceMap["type"].(string)
+		switch sourceType {
+		case "base64":
+			mediaType, _ := sourceMap["media_type"].(string)
+			data, _ := sourceMap["data"].(string)
+			if data != "" {
+				return buildConversationImageAttachment(fmt.Sprintf("data:%s;base64,%s", fallbackImageMimeType(mediaType), data), sessionFilePath, index, includeImageSources)
+			}
+		case "url":
+			if value, _ := sourceMap["url"].(string); value != "" {
+				return buildConversationImageAttachment(value, sessionFilePath, index, includeImageSources)
+			}
+		case "file":
+			for _, key := range []string{"path", "file_path", "filename", "fileName"} {
+				if value, _ := sourceMap[key].(string); value != "" {
+					return buildConversationImageAttachment(value, sessionFilePath, index, includeImageSources)
+				}
+			}
+		}
+	}
+
+	for _, key := range []string{"image_url", "url", "path", "file_path", "fileName", "filename"} {
+		if value, _ := block[key].(string); value != "" {
+			return buildConversationImageAttachment(value, sessionFilePath, index, includeImageSources)
+		}
+	}
+
+	return ConversationImageAttachment{}, false
+}
+
+func buildConversationImageAttachment(source string, sessionFilePath string, index int, includeImageSources bool) (ConversationImageAttachment, bool) {
+	normalized := normalizeConversationImageSource(source, sessionFilePath)
+	if normalized == "" {
+		return ConversationImageAttachment{}, false
+	}
+
+	previewable := isPreviewableConversationImageSource(normalized)
+	mimeType := detectConversationImageMimeType(normalized)
+	internalSource := ""
+	if includeImageSources {
+		internalSource = normalized
+	}
+	return ConversationImageAttachment{
+		Label:       buildConversationImageLabel(normalized, index),
+		Previewable: previewable,
+		MimeType:    mimeType,
+		Source:      internalSource,
+	}, true
+}
+
+func normalizeConversationImageSource(source string, sessionFilePath string) string {
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "data:") {
+		return trimmed
+	}
+	if looksLikeWindowsAbsPath(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" {
+		switch parsed.Scheme {
+		case "file":
+			if pathValue := filepath.FromSlash(parsed.Path); pathValue != "" {
+				if parsed.Host != "" {
+					return filepath.Clean(`\\` + parsed.Host + pathValue)
+				}
+				return filepath.Clean(pathValue)
+			}
+		case "http", "https":
+			return trimmed
+		}
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	if sessionFilePath == "" {
+		return filepath.Clean(trimmed)
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(sessionFilePath), trimmed))
+}
+
+func isPreviewableConversationImageSource(source string) bool {
+	trimmed := strings.TrimSpace(source)
+	if trimmed == "" {
+		return false
+	}
+	if strings.HasPrefix(trimmed, "data:") {
+		return true
+	}
+	if looksLikeWindowsAbsPath(trimmed) {
+		return true
+	}
+	parsed, err := url.Parse(trimmed)
+	if err == nil && parsed.Scheme != "" {
+		return parsed.Scheme == "file"
+	}
+	return true
+}
+
+func detectConversationImageMimeType(source string) string {
+	if strings.HasPrefix(source, "data:") {
+		meta := strings.TrimPrefix(source, "data:")
+		if commaIndex := strings.Index(meta, ","); commaIndex >= 0 {
+			meta = meta[:commaIndex]
+		}
+		mimeType := strings.Split(meta, ";")[0]
+		return fallbackImageMimeType(mimeType)
+	}
+	if looksLikeWindowsAbsPath(source) {
+		return fallbackImageMimeType(mime.TypeByExtension(strings.ToLower(filepath.Ext(source))))
+	}
+	if parsed, err := url.Parse(source); err == nil && parsed.Scheme != "" {
+		if parsed.Scheme == "http" || parsed.Scheme == "https" {
+			return fallbackImageMimeType(mime.TypeByExtension(strings.ToLower(path.Ext(parsed.Path))))
+		}
+	}
+	return fallbackImageMimeType(mime.TypeByExtension(strings.ToLower(filepath.Ext(source))))
+}
+
+func fallbackImageMimeType(mimeType string) string {
+	mimeType = strings.TrimSpace(mimeType)
+	if mimeType == "" {
+		return "image/png"
+	}
+	return mimeType
+}
+
+func looksLikeWindowsAbsPath(value string) bool {
+	if len(value) < 3 {
+		return false
+	}
+	if value[1] != ':' {
+		return false
+	}
+	if value[2] != '\\' && value[2] != '/' {
+		return false
+	}
+	first := value[0]
+	return (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+}
+
+func buildConversationImageLabel(source string, index int) string {
+	if source == "" {
+		return fmt.Sprintf("Image %d", index+1)
+	}
+	if strings.HasPrefix(source, "data:") {
+		return fmt.Sprintf("Embedded image %d", index+1)
+	}
+	if parsed, err := url.Parse(source); err == nil && parsed.Scheme != "" {
+		if parsed.Scheme == "http" || parsed.Scheme == "https" {
+			name := path.Base(parsed.Path)
+			if name == "" || name == "/" || name == "." {
+				return fmt.Sprintf("Remote image %d", index+1)
+			}
+			return name
+		}
+	}
+	name := filepath.Base(source)
+	if name == "" || name == "." || name == string(filepath.Separator) {
+		return fmt.Sprintf("Image %d", index+1)
+	}
+	return name
+}
+
+func parseConversationDataURI(source string) (string, []byte, error) {
+	if !strings.HasPrefix(source, "data:") {
+		return "", nil, errors.New("not a data URI")
+	}
+	body := strings.TrimPrefix(source, "data:")
+	parts := strings.SplitN(body, ",", 2)
+	if len(parts) != 2 {
+		return "", nil, errors.New("invalid data URI")
+	}
+	meta := parts[0]
+	payload := parts[1]
+	mimeType := fallbackImageMimeType(strings.Split(meta, ";")[0])
+	if strings.Contains(meta, ";base64") {
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			return "", nil, err
+		}
+		return mimeType, decoded, nil
+	}
+	decoded, err := url.QueryUnescape(payload)
+	if err != nil {
+		return "", nil, err
+	}
+	return mimeType, []byte(decoded), nil
+}
+
+func resolveConversationImagePreview(attachment ConversationImageAttachment) (*ConversationImagePreview, error) {
+	if !attachment.Previewable {
+		return nil, errors.New("image preview is not supported for this source")
+	}
+	if strings.HasPrefix(attachment.Source, "data:") {
+		mimeType, data, err := parseConversationDataURI(attachment.Source)
+		if err != nil {
+			return nil, err
+		}
+		return &ConversationImagePreview{MimeType: mimeType, Data: data}, nil
+	}
+	filePath := strings.TrimSpace(attachment.Source)
+	if filePath == "" {
+		return nil, errors.New("image source is empty")
+	}
+	if _, err := os.Stat(filePath); err != nil {
+		return nil, err
+	}
+	return &ConversationImagePreview{
+		MimeType: detectConversationImageMimeType(filePath),
+		FilePath: filePath,
+	}, nil
+}
+
+func (s *AISessionService) GetConversationImagePreviewBySessionID(ctx context.Context, sessionID, attachmentID string) (*ConversationImagePreview, error) {
+	ctx = ensureContext(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	var session tables.AISessionTable
+	if err := db.WithContext(ctx).Where("session_id = ?", sessionID).First(&session).Error; err != nil {
+		return nil, err
+	}
+
+	targetMessageIndex, targetImageIndex, err := parseConversationAttachmentID(attachmentID)
+	if err != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var result *ConversationImagePreview
+	currentMessageIndex := 0
+	visitor := func(msg *ConversationMessage) bool {
+		if currentMessageIndex == targetMessageIndex {
+			if targetImageIndex >= 0 && targetImageIndex < len(msg.Images) {
+				preview, resolveErr := resolveConversationImagePreview(msg.Images[targetImageIndex])
+				if resolveErr == nil {
+					result = preview
+					return false
+				}
+			}
+			return false
+		}
+		currentMessageIndex++
+		return true
+	}
+
+	switch session.Type {
+	case tables.AISessionTypeClaudeCode:
+		_, err = s.parseClaudeCodeConversationWithOptions(session.FilePath, conversationParseOptions{
+			includeImageSources: true,
+			onMessage:           visitor,
+		})
+	case tables.AISessionTypeCodex:
+		_, err = s.parseCodexConversationWithOptions(session.FilePath, conversationParseOptions{
+			includeImageSources: true,
+			onMessage:           visitor,
+		})
+	default:
+		return nil, errors.New("unknown session type")
+	}
+	if err != nil {
+		return nil, err
+	}
+	if result != nil {
+		return result, nil
+	}
+
+	return nil, gorm.ErrRecordNotFound
+}
+
+func parseConversationAttachmentID(attachmentID string) (int, int, error) {
+	var messageIndex, imageIndex int
+	if _, err := fmt.Sscanf(attachmentID, "m%d-i%d", &messageIndex, &imageIndex); err != nil {
+		return 0, 0, err
+	}
+	return messageIndex, imageIndex, nil
 }
 
 type ToolResultResponse struct {

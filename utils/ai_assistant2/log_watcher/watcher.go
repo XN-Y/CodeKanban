@@ -510,10 +510,12 @@ func (w *LogWatcher) parseCodexLine(line string) (*UserMessage, error) {
 
 		switch payload.Type {
 		case "user_message":
+			images := append([]string{}, payload.Images...)
+			images = append(images, payload.LocalImages...)
 			return &UserMessage{
 				Timestamp: ts,
 				Message:   payload.Message,
-				Images:    payload.Images,
+				Images:    images,
 			}, nil
 		case "agent_message":
 			// Agent final response message

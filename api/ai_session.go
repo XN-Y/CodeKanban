@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/gofiber/fiber/v2"
+	"gorm.io/gorm"
 
 	"code-kanban/api/h"
 	"code-kanban/model"
@@ -14,8 +16,30 @@ import (
 
 const aiSessionTag = "ai-session-AI会话"
 
-func registerAISessionRoutes(group *huma.Group) {
+func registerAISessionRoutes(app *fiber.App, group *huma.Group) {
 	svc := service.NewAISessionService()
+
+	app.Get("/api/v1/ai-sessions/by-session-id/:sessionId/conversation/images/:attachmentId", func(c *fiber.Ctx) error {
+		preview, err := svc.GetConversationImagePreviewBySessionID(c.UserContext(), c.Params("sessionId"), c.Params("attachmentId"))
+		if err != nil {
+			if errors.Is(err, model.ErrDBNotInitialized) {
+				return fiber.NewError(http.StatusServiceUnavailable, "database is not initialized")
+			}
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fiber.ErrNotFound
+			}
+			return fiber.NewError(http.StatusNotFound, "image preview not found")
+		}
+
+		c.Set(fiber.HeaderContentDisposition, "inline")
+		if preview.MimeType != "" {
+			c.Set(fiber.HeaderContentType, preview.MimeType)
+		}
+		if preview.FilePath != "" {
+			return c.SendFile(preview.FilePath)
+		}
+		return c.Send(preview.Data)
+	})
 
 	// Get AI sessions for a project
 	huma.Get(group, "/projects/{id}/ai-sessions", func(ctx context.Context, input *struct {
