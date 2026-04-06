@@ -50,6 +50,13 @@
           <!-- 终端面板会覆盖此区域 -->
         </div>
 
+        <div v-show="mobileActiveView === 'webSession'" class="mobile-view mobile-websession-view">
+          <WebSessionPanel
+            :project-id="currentProjectId"
+            :is-active="mobileActiveView === 'webSession'"
+          />
+        </div>
+
         <!-- 项目视图 -->
         <div v-show="mobileActiveView === 'projects'" class="mobile-view mobile-projects-view">
           <RecentProjects
@@ -89,22 +96,6 @@
           <button
             type="button"
             class="nav-item"
-            :class="{ active: mobileActiveView === 'kanban' }"
-            @click="setMobileView('kanban')"
-          >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M4 4h4v4H4V4zm0 6h4v4H4v-4zm0 6h4v4H4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4zm0 6h4v4h-4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4z"
-                />
-              </svg>
-            </n-icon>
-            <span>{{ t('nav.kanban') }}</span>
-          </button>
-          <button
-            type="button"
-            class="nav-item"
             :class="{ active: mobileActiveView === 'terminal' }"
             @click="setMobileView('terminal')"
           >
@@ -117,6 +108,38 @@
               </svg>
             </n-icon>
             <span>{{ t('nav.terminal') }}</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: mobileActiveView === 'webSession' }"
+            @click="setMobileView('webSession')"
+          >
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8l-4 4V7a2 2 0 0 1 2-2zm2 4v2h12V9H6zm0 4v2h8v-2H6z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.webSession') }}</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: mobileActiveView === 'kanban' }"
+            @click="setMobileView('kanban')"
+          >
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M4 4h4v4H4V4zm0 6h4v4H4v-4zm0 6h4v4H4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4zm0 6h4v4h-4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.kanban') }}</span>
           </button>
           <button
             type="button"
@@ -172,6 +195,7 @@ import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import WorkspaceTabView from '@/components/workspace/WorkspaceTabView.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
+import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import type { Worktree } from '@/types/models';
 import { APP_NAME } from '@/constants/app';
 
@@ -207,7 +231,7 @@ const isDockMode = computed(
 );
 
 // 移动端视图切换
-type MobileView = 'kanban' | 'terminal' | 'projects' | 'notifications';
+type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
 const mobileActiveView = ref<MobileView>('kanban');
 
 // 提供终端面板引用给子组件

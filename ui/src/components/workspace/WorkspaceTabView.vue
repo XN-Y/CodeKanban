@@ -18,6 +18,18 @@
         <button
           type="button"
           class="tab-item"
+          :class="{ active: activeTab === 'web' }"
+          @click="activeTab = 'web'"
+        >
+          <n-icon size="16">
+            <ChatbubblesOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.webSession') }}</span>
+          <span v-if="webSessionCount > 0" class="terminal-badge">{{ webSessionCount }}</span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
           :class="{ active: activeTab === 'kanban' }"
           @click="activeTab = 'kanban'"
         >
@@ -27,18 +39,18 @@
           <span class="tab-label">{{ t('nav.kanban') }}</span>
         </button>
       </div>
-      <div v-if="activeTab === 'terminal'" class="tab-actions">
+      <div v-if="activeTab === 'terminal' || activeTab === 'web'" class="tab-actions">
         <n-tooltip placement="bottom" :delay="250">
           <template #trigger>
             <button
               type="button"
               class="header-action-btn"
-              :aria-label="notificationSidebarToggleLabel"
-              :aria-pressed="isNotificationSidebarVisible"
-              @click="toggleNotificationSidebar"
+              :aria-label="rightSidebarToggleLabel"
+              :aria-pressed="isRightSidebarVisible"
+              @click="toggleRightSidebar"
             >
               <svg
-                v-if="isNotificationSidebarVisible"
+                v-if="isRightSidebarVisible"
                 class="sidebar-toggle-icon"
                 viewBox="0 0 20 20"
                 fill="none"
@@ -101,7 +113,7 @@
               </svg>
             </button>
           </template>
-          {{ notificationSidebarToggleLabel }}
+          {{ rightSidebarToggleLabel }}
         </n-tooltip>
       </div>
     </div>
@@ -116,7 +128,18 @@
           <div class="terminal-main">
             <TerminalPanel :project-id="projectId" mode="docked" />
           </div>
-          <DockedNotificationSidebar v-if="isNotificationSidebarVisible" />
+          <DockedNotificationSidebar v-if="isRightSidebarVisible" />
+        </div>
+      </div>
+      <div v-show="activeTab === 'web'" class="tab-pane web-pane">
+        <div class="terminal-split">
+          <div class="terminal-main web-main">
+            <WebSessionPanel
+              :project-id="projectId"
+              :show-sidebar="isRightSidebarVisible"
+              :is-active="activeTab === 'web'"
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -127,14 +150,16 @@
 import { computed, onBeforeUnmount, watch } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
-import { GridOutline, TerminalOutline } from '@vicons/ionicons5';
+import { ChatbubblesOutline, GridOutline, TerminalOutline } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
 import { useLocale } from '@/composables/useLocale';
 import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
+import { useWebSessionStore } from '@/stores/webSession';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
+import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 
 const props = defineProps<{
   projectId: string;
@@ -143,23 +168,22 @@ const props = defineProps<{
 const { t } = useLocale();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
+const webSessionStore = useWebSessionStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
 
 // 当前活跃的Tab，持久化存储
-const activeTab = useStorage<'kanban' | 'terminal'>('workspace-active-tab', 'terminal');
-const isNotificationSidebarVisible = useStorage('workspace-notification-sidebar-visible', true);
+const activeTab = useStorage<'kanban' | 'terminal' | 'web'>('workspace-active-tab', 'terminal');
+const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
 
 // 终端数量
 const terminalCount = computed(() => {
   return terminalStore.getTabs(props.projectId).length;
 });
 
-const notificationSidebarToggleLabel = computed(() =>
-  t(
-    isNotificationSidebarVisible.value
-      ? 'terminal.hideNotificationSidebar'
-      : 'terminal.showNotificationSidebar'
-  )
+const webSessionCount = computed(() => webSessionStore.getSessions(props.projectId).length);
+
+const rightSidebarToggleLabel = computed(() =>
+  t(isRightSidebarVisible.value ? 'webSession.hideSidebar' : 'webSession.showSidebar')
 );
 
 // 监听终端事件，如果有新终端创建或需要关注的事件，自动切换到终端Tab
@@ -219,8 +243,17 @@ function handleDockedTerminalToggleShortcut(event: KeyboardEvent) {
   activeTab.value = activeTab.value === 'terminal' ? 'kanban' : 'terminal';
 }
 
-function toggleNotificationSidebar() {
-  isNotificationSidebarVisible.value = !isNotificationSidebarVisible.value;
+watch(
+  () => webSessionStore.getSessions(props.projectId).length,
+  (newCount, oldCount) => {
+    if (typeof oldCount === 'number' && newCount > oldCount) {
+      activeTab.value = 'web';
+    }
+  }
+);
+
+function toggleRightSidebar() {
+  isRightSidebarVisible.value = !isRightSidebarVisible.value;
 }
 
 const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {
@@ -380,6 +413,15 @@ if (typeof window !== 'undefined') {
 .terminal-pane {
   display: flex;
   flex-direction: column;
+}
+
+.web-pane {
+  display: flex;
+  flex-direction: column;
+}
+
+.web-main {
+  background: linear-gradient(180deg, rgba(246, 241, 232, 0.78), rgba(255, 255, 255, 0.94));
 }
 
 .terminal-split {

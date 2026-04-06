@@ -731,6 +731,10 @@ import type {
   TerminalQuickActionIcon,
 } from '@/stores/settings';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
+import {
+  calculateCardTabIndicatorStyle,
+  hiddenCardTabIndicatorStyle,
+} from '@/utils/cardTabIndicator';
 
 type ItemResponse<T> = {
   item?: T;
@@ -1505,93 +1509,14 @@ function handleBranchFilterSelect(value: string) {
 }
 
 // 激活标签指示器的位置和宽度
-const activeTabIndicatorStyle = ref({
-  transform: 'translateX(0px)',
-  width: '0px',
-  opacity: '0',
-});
+const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
 
 // 更新激活标签指示器的位置
 function updateActiveTabIndicator() {
   nextTick(() => {
-    const container = tabsContainerRef.value;
-    if (!container || !activeId.value) {
-      activeTabIndicatorStyle.value = {
-        transform: 'translateX(0px)',
-        width: '0px',
-        opacity: '0',
-      };
-      return;
-    }
-
-    // 查找激活的标签元素
-    const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
-    if (!wrapper) {
-      activeTabIndicatorStyle.value = {
-        transform: 'translateX(0px)',
-        width: '0px',
-        opacity: '0',
-      };
-      return;
-    }
-
-    // 找到所有的标签元素
-    const tabElements = wrapper.querySelectorAll('.n-tabs-tab');
-    let activeTabElement: Element | null = null;
-
-    // 找到激活的标签
-    tabElements.forEach(el => {
-      if (el.classList.contains('n-tabs-tab--active')) {
-        activeTabElement = el;
-      }
-    });
-
-    if (!activeTabElement) {
-      activeTabIndicatorStyle.value = {
-        transform: 'translateX(0px)',
-        width: '0px',
-        opacity: '0',
-      };
-      return;
-    }
-
-    // 计算激活标签的位置和宽度
-    const wrapperRect = wrapper.getBoundingClientRect();
-    const activeRect = (activeTabElement as HTMLElement).getBoundingClientRect();
-    const tabWidth = activeRect.width;
-
-    // 根据标签宽度动态计算指示器宽度
-    // 标签越宽，指示器占比越小；标签越窄，指示器占比越大
-    let indicatorWidth: number;
-    if (tabWidth > 150) {
-      // 宽标签：使用 35% 的宽度
-      indicatorWidth = tabWidth * 0.35;
-    } else if (tabWidth > 100) {
-      // 中等宽度：使用 45% 的宽度
-      indicatorWidth = tabWidth * 0.45;
-    } else if (tabWidth > 60) {
-      // 较窄标签：使用 60% 的宽度
-      indicatorWidth = tabWidth * 0.6;
-    } else {
-      // 很窄的标签：使用 75% 的宽度
-      indicatorWidth = tabWidth * 0.75;
-    }
-
-    // 限制指示器的最小和最大宽度
-    indicatorWidth = Math.max(20, Math.min(80, indicatorWidth));
-
-    // 从 .v-x-scroll 元素获取滚动偏移（NaiveUI 使用该元素作为滚动容器）
-    // 滚动向右时 scrollLeft 为正，指示器需要减去滚动偏移来保持相对位置
-    const scrollContainer = container.querySelector('.v-x-scroll') as HTMLElement | null;
-    const scrollLeft = scrollContainer?.scrollLeft ?? 0;
-    const offsetLeft =
-      activeRect.left - wrapperRect.left - scrollLeft + (tabWidth - indicatorWidth) / 2;
-
-    activeTabIndicatorStyle.value = {
-      transform: `translateX(${offsetLeft}px)`,
-      width: `${indicatorWidth}px`,
-      opacity: '1',
-    };
+    activeTabIndicatorStyle.value = activeId.value
+      ? calculateCardTabIndicatorStyle(tabsContainerRef.value)
+      : hiddenCardTabIndicatorStyle();
   });
 }
 

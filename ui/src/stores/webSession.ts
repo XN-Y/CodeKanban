@@ -1,0 +1,1293 @@
+import EventEmitter from 'eventemitter3';
+import { defineStore } from 'pinia';
+import { computed, ref } from 'vue';
+import { webSessionApi } from '@/api/webSession';
+import type { WebSessionAttachment, WebSessionSummary } from '@/types/models';
+import { resolveWsUrl } from '@/utils/ws';
+
+type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err';
+type SessionStatus = WebSessionSummary['status'];
+
+type WireSession = {
+  id: string;
+  pid: string;
+  wid?: string | null;
+  oi?: number;
+  ag: 'claude' | 'codex';
+  md: string;
+  re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  pm: 'default' | 'plan' | 'yolo';
+  ttl: string;
+  cwd: string;
+  nsid?: string | null;
+  st: SessionStatus;
+  unr: boolean;
+  lu: number;
+  lma?: number | null;
+  usa?: {
+    in?: number;
+    cin?: number;
+    out?: number;
+  };
+  cost?: number;
+};
+
+type WireEvent = {
+  id: string;
+  sq: number;
+  tp: string;
+  rid2?: string;
+  pid2?: string;
+  ts: number;
+  p?: Record<string, any>;
+};
+
+type WireFrame = {
+  v: number;
+  k: WireFrameKind;
+  rid?: string;
+  sid?: string;
+  ts: number;
+  op?: string;
+  p?: any;
+  ok?: number;
+  s?: WireSession;
+  h?: {
+    evs: WireEvent[];
+    hm: boolean;
+    bc?: string;
+    tot: number;
+  };
+  e?: WireEvent;
+  code?: string;
+  msg?: string;
+  retry?: boolean;
+};
+
+export interface WebSessionToolBlock {
+  id: string;
+  name: string;
+  kind?: string;
+  input?: unknown;
+  output?: string;
+  status: 'running' | 'done' | 'error';
+  meta?: Record<string, unknown>;
+}
+
+export interface WebSessionBlock {
+  key: string;
+  id: string;
+  kind: 'user' | 'assistant' | 'system';
+  text: string;
+  timestamp: number;
+  attachments: Array<{
+    id: string;
+    name: string;
+    mime?: string;
+    size?: number;
+  }>;
+  tools: WebSessionToolBlock[];
+  level?: 'info' | 'warn' | 'error';
+  done?: boolean;
+}
+
+export interface WebSessionApprovalState {
+  id: string;
+  prompt: string;
+  requestedAt: number;
+}
+
+export interface WebSessionLiveState {
+  phase: 'idle' | 'starting' | 'thinking' | 'tool' | 'waiting_approval' | 'done' | 'error';
+  running: boolean;
+  updatedAt: number;
+  tool?: {
+    id: string;
+    name: string;
+    kind?: string;
+  };
+  approval?: WebSessionApprovalState | null;
+  errorMessage?: string;
+}
+
+export interface WebSessionPendingInput {
+  id: string;
+  mode: 'redirect' | 'queue';
+  text: string;
+  attachmentIds: string[];
+  createdAt: number;
+}
+
+type WebSessionAssistantDescriptor = {
+  type: 'claude-code' | 'codex';
+  name: 'Claude Code' | 'Codex';
+  displayName: 'Claude Code' | 'Codex';
+};
+
+export interface WebSessionAIEvent {
+  sessionId: string;
+  sessionTitle: string;
+  projectId: string;
+  assistant: WebSessionAssistantDescriptor;
+}
+
+export interface WebSessionApprovalEvent extends WebSessionAIEvent {
+  approval: WebSessionApprovalState;
+}
+
+type HistoryMeta = {
+  hasMore: boolean;
+  beforeCursor: string;
+  total: number;
+  loading: boolean;
+};
+
+const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
+const WS_PATH = '/api/v1/web-sessions/ws';
+
+function loadStoredActiveSessions() {
+  try {
+    const raw = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistActiveSessions(value: Record<string, string>) {
+  try {
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(value));
+  } catch (error) {
+    console.warn('[Web Session] Failed to persist active sessions', error);
+  }
+}
+
+function compareSessions(left: WebSessionSummary, right: WebSessionSummary) {
+  if (left.orderIndex !== right.orderIndex) {
+    return left.orderIndex - right.orderIndex;
+  }
+  if (left.updatedAt !== right.updatedAt) {
+    return right.updatedAt.localeCompare(left.updatedAt);
+  }
+  return left.id.localeCompare(right.id);
+}
+
+function sortSessions(sessions: WebSessionSummary[]) {
+  return [...sessions].sort(compareSessions);
+}
+
+function isWorkingPhase(phase: WebSessionLiveState['phase']) {
+  return phase === 'starting' || phase === 'thinking' || phase === 'tool';
+}
+
+export const useWebSessionStore = defineStore('web-session', () => {
+  const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
+  const eventsBySession = ref<Record<string, WireEvent[]>>({});
+  const historyBySession = ref<Record<string, HistoryMeta>>({});
+  const draftAttachmentsByProject = ref<Record<string, WebSessionAttachment[]>>({});
+  const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
+  const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
+  const loadedProjects = ref<Record<string, boolean>>({});
+  const emitter = new EventEmitter();
+
+  const connectionState = ref<'idle' | 'connecting' | 'open' | 'closed'>('idle');
+  const lastError = ref<string | null>(null);
+
+  let socket: WebSocket | null = null;
+  let connectPromise: Promise<void> | null = null;
+  let reconnectTimer: number | null = null;
+  const pending = new Map<
+    string,
+    {
+      resolve: (value: any) => void;
+      reject: (reason?: any) => void;
+    }
+  >();
+  const seenSeqBySession = new Map<string, Set<number>>();
+  const redirectAbortSessions = new Set<string>();
+  const pendingFlushTimers = new Map<string, number>();
+  const flushingSessions = new Set<string>();
+
+  const allSessionIds = computed(() => {
+    const ids = new Set<string>();
+    Object.values(sessionsByProject.value).forEach(items => {
+      items.forEach(item => ids.add(item.id));
+    });
+    return ids;
+  });
+
+  function getSessions(projectId: string) {
+    return sessionsByProject.value[projectId] ?? [];
+  }
+
+  function getActiveSessionId(projectId: string) {
+    return activeSessionIdByProject.value[projectId] ?? '';
+  }
+
+  function getActiveSession(projectId: string) {
+    const activeId = getActiveSessionId(projectId);
+    return getSessions(projectId).find(item => item.id === activeId) ?? null;
+  }
+
+  function findSessionById(sessionId: string) {
+    for (const sessions of Object.values(sessionsByProject.value)) {
+      const matched = sessions.find(item => item.id === sessionId);
+      if (matched) {
+        return matched;
+      }
+    }
+    return null;
+  }
+
+  function getLatestEventSeq(sessionId: string) {
+    const events = eventsBySession.value[sessionId] ?? [];
+    return events.length > 0 ? (events[events.length - 1]?.sq ?? 0) : 0;
+  }
+
+  function getDraftAttachments(projectId: string) {
+    return draftAttachmentsByProject.value[projectId] ?? [];
+  }
+
+  function getPendingInputs(sessionId: string) {
+    return pendingInputsBySession.value[sessionId] ?? [];
+  }
+
+  function getHistoryMeta(sessionId: string): HistoryMeta {
+    return (
+      historyBySession.value[sessionId] ?? {
+        hasMore: false,
+        beforeCursor: '',
+        total: 0,
+        loading: false,
+      }
+    );
+  }
+
+  function rememberActiveSession(projectId: string, sessionId: string) {
+    activeSessionIdByProject.value = {
+      ...activeSessionIdByProject.value,
+      [projectId]: sessionId,
+    };
+    persistActiveSessions(activeSessionIdByProject.value);
+  }
+
+  function ensureSeenSet(sessionId: string) {
+    let seen = seenSeqBySession.get(sessionId);
+    if (!seen) {
+      seen = new Set<number>();
+      seenSeqBySession.set(sessionId, seen);
+    }
+    return seen;
+  }
+
+  function normalizeSession(session: WireSession): WebSessionSummary {
+    return {
+      id: session.id,
+      projectId: session.pid,
+      worktreeId: session.wid ?? null,
+      orderIndex: Number(session.oi ?? 0),
+      agent: session.ag,
+      title: session.ttl,
+      model: session.md,
+      reasoningEffort: session.re ?? 'default',
+      permissionMode: session.pm,
+      cwd: session.cwd,
+      nativeSessionId: session.nsid ?? null,
+      status: session.st,
+      hasUnread: session.unr,
+      lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
+      createdAt: new Date(session.lu).toISOString(),
+      updatedAt: new Date(session.lu).toISOString(),
+      usage: {
+        inputTokens: session.usa?.in ?? 0,
+        cachedInputTokens: session.usa?.cin ?? 0,
+        outputTokens: session.usa?.out ?? 0,
+        cost: session.cost ?? 0,
+      },
+    };
+  }
+
+  function upsertSession(summary: WebSessionSummary) {
+    const current = sessionsByProject.value[summary.projectId] ?? [];
+    const next = [...current];
+    const index = next.findIndex(item => item.id === summary.id);
+    if (index >= 0) {
+      next.splice(index, 1, {
+        ...next[index],
+        ...summary,
+      });
+    } else {
+      next.unshift(summary);
+    }
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [summary.projectId]: sortSessions(next),
+    };
+  }
+
+  function removeSession(projectId: string, sessionId: string) {
+    const current = sessionsByProject.value[projectId] ?? [];
+    const removed = current.find(item => item.id === sessionId) ?? null;
+    const next = current.filter(item => item.id !== sessionId);
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [projectId]: next,
+    };
+    const currentActive = activeSessionIdByProject.value[projectId];
+    if (currentActive === sessionId) {
+      const nextActive = next[0]?.id ?? '';
+      activeSessionIdByProject.value = {
+        ...activeSessionIdByProject.value,
+        [projectId]: nextActive,
+      };
+      persistActiveSessions(activeSessionIdByProject.value);
+    }
+    const nextEvents = { ...eventsBySession.value };
+    delete nextEvents[sessionId];
+    eventsBySession.value = nextEvents;
+    const nextHistory = { ...historyBySession.value };
+    delete nextHistory[sessionId];
+    historyBySession.value = nextHistory;
+    const nextPendingInputs = { ...pendingInputsBySession.value };
+    delete nextPendingInputs[sessionId];
+    pendingInputsBySession.value = nextPendingInputs;
+    seenSeqBySession.delete(sessionId);
+    redirectAbortSessions.delete(sessionId);
+    flushingSessions.delete(sessionId);
+    const timer = pendingFlushTimers.get(sessionId);
+    if (timer != null) {
+      window.clearTimeout(timer);
+      pendingFlushTimers.delete(sessionId);
+    }
+    if (removed) {
+      emitter.emit('ai:closed', {
+        sessionId: removed.id,
+        sessionTitle: removed.title,
+        projectId: removed.projectId,
+        assistant: getAssistantDescriptor(removed),
+      } satisfies WebSessionAIEvent);
+    }
+  }
+
+  function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
+    pendingInputsBySession.value = {
+      ...pendingInputsBySession.value,
+      [sessionId]: items,
+    };
+  }
+
+  function enqueuePendingInput(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[],
+    mode: 'redirect' | 'queue'
+  ) {
+    const item: WebSessionPendingInput = {
+      id: `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      mode,
+      text,
+      attachmentIds: [...attachmentIds],
+      createdAt: Date.now(),
+    };
+    setPendingInputs(sessionId, [...getPendingInputs(sessionId), item]);
+    return item;
+  }
+
+  function removePendingInput(sessionId: string, pendingId: string) {
+    setPendingInputs(
+      sessionId,
+      getPendingInputs(sessionId).filter(item => item.id !== pendingId)
+    );
+  }
+
+  function schedulePendingFlush(sessionId: string, delay = 80) {
+    const previous = pendingFlushTimers.get(sessionId);
+    if (previous != null) {
+      window.clearTimeout(previous);
+    }
+    const timer = window.setTimeout(() => {
+      pendingFlushTimers.delete(sessionId);
+      void flushPendingInput(sessionId);
+    }, delay);
+    pendingFlushTimers.set(sessionId, timer);
+  }
+
+  async function flushPendingInput(sessionId: string) {
+    if (flushingSessions.has(sessionId)) {
+      return;
+    }
+    const session = findSessionById(sessionId);
+    if (!session || session.status === 'running') {
+      return;
+    }
+    const items = getPendingInputs(sessionId);
+    const next = items[0];
+    if (!next) {
+      return;
+    }
+    flushingSessions.add(sessionId);
+    setPendingInputs(sessionId, items.slice(1));
+    try {
+      await sendCommand('send', sessionId, { txt: next.text, atts: next.attachmentIds });
+    } catch (error) {
+      setPendingInputs(sessionId, [next, ...getPendingInputs(sessionId)]);
+      schedulePendingFlush(sessionId, 240);
+      throw error;
+    } finally {
+      flushingSessions.delete(sessionId);
+    }
+  }
+
+  function maybeAbortForRedirect(sessionId: string) {
+    const session = findSessionById(sessionId);
+    if (!session || session.status !== 'running' || redirectAbortSessions.has(sessionId)) {
+      return;
+    }
+    const next = getPendingInputs(sessionId)[0];
+    if (!next || next.mode !== 'redirect') {
+      return;
+    }
+    redirectAbortSessions.add(sessionId);
+    void abortSession(sessionId).catch(() => {
+      redirectAbortSessions.delete(sessionId);
+    });
+  }
+
+  function mergeEvents(sessionId: string, incoming: WireEvent[]) {
+    const seen = ensureSeenSet(sessionId);
+    const merged = [...(eventsBySession.value[sessionId] ?? [])];
+    incoming.forEach(event => {
+      if (!event || typeof event.sq !== 'number') {
+        return;
+      }
+      if (seen.has(event.sq)) {
+        return;
+      }
+      seen.add(event.sq);
+      merged.push(event);
+    });
+    merged.sort((left, right) => left.sq - right.sq);
+    eventsBySession.value = {
+      ...eventsBySession.value,
+      [sessionId]: merged,
+    };
+  }
+
+  function resetSessionEvents(sessionId: string, events: WireEvent[]) {
+    seenSeqBySession.set(
+      sessionId,
+      new Set(events.filter(event => typeof event.sq === 'number').map(event => event.sq))
+    );
+    eventsBySession.value = {
+      ...eventsBySession.value,
+      [sessionId]: [...events].sort((left, right) => left.sq - right.sq),
+    };
+  }
+
+  function updateSessionStatus(
+    sessionId: string,
+    updater: (current: WebSessionSummary) => WebSessionSummary
+  ) {
+    const entries = Object.entries(sessionsByProject.value);
+    let changed = false;
+    const nextSessions: Record<string, WebSessionSummary[]> = {};
+    entries.forEach(([projectId, sessions]) => {
+      const nextProjectSessions = sessions.map(item => {
+        if (item.id !== sessionId) {
+          return item;
+        }
+        changed = true;
+        return updater(item);
+      });
+      nextSessions[projectId] = sortSessions(nextProjectSessions);
+    });
+    if (changed) {
+      sessionsByProject.value = nextSessions;
+    }
+  }
+
+  function getAssistantDescriptor(session: WebSessionSummary): WebSessionAssistantDescriptor {
+    return session.agent === 'claude'
+      ? {
+          type: 'claude-code',
+          name: 'Claude Code',
+          displayName: 'Claude Code',
+        }
+      : {
+          type: 'codex',
+          name: 'Codex',
+          displayName: 'Codex',
+        };
+  }
+
+  function emitStateTransition(
+    sessionId: string,
+    previousState: WebSessionLiveState,
+    previousApproval: WebSessionApprovalState | null
+  ) {
+    const session = findSessionById(sessionId);
+    if (!session) {
+      return;
+    }
+
+    const nextState = getLiveState(sessionId);
+    const nextApproval = getPendingApproval(sessionId);
+    const baseEvent: WebSessionAIEvent = {
+      sessionId,
+      sessionTitle: session.title,
+      projectId: session.projectId,
+      assistant: getAssistantDescriptor(session),
+    };
+
+    if (isWorkingPhase(nextState.phase) && !isWorkingPhase(previousState.phase)) {
+      emitter.emit('ai:working', baseEvent);
+    }
+
+    if (
+      nextApproval &&
+      (!previousApproval ||
+        previousApproval.id !== nextApproval.id ||
+        previousApproval.requestedAt !== nextApproval.requestedAt)
+    ) {
+      emitter.emit('ai:approval-needed', {
+        ...baseEvent,
+        approval: nextApproval,
+      } satisfies WebSessionApprovalEvent);
+    }
+
+    if (nextState.phase === 'done' && previousState.phase !== 'done') {
+      emitter.emit('ai:completed', baseEvent);
+    }
+
+    if (
+      (nextState.phase === 'idle' || nextState.phase === 'error') &&
+      nextState.phase !== previousState.phase
+    ) {
+      emitter.emit('ai:closed', baseEvent);
+    }
+  }
+
+  function applyFrame(frame: WireFrame) {
+    if (frame.k === 'err') {
+      lastError.value = frame.msg ?? 'Unknown websocket error';
+      if (frame.rid && pending.has(frame.rid)) {
+        pending.get(frame.rid)?.reject(new Error(frame.msg ?? frame.code ?? 'unknown error'));
+        pending.delete(frame.rid);
+      }
+      return;
+    }
+
+    if (frame.k === 'ack') {
+      if (frame.rid && pending.has(frame.rid)) {
+        pending.get(frame.rid)?.resolve(frame);
+        pending.delete(frame.rid);
+      }
+      return;
+    }
+
+    if (frame.k === 'snap' && frame.sid && frame.s) {
+      const summary = normalizeSession(frame.s);
+      upsertSession(summary);
+      resetSessionEvents(frame.sid, frame.h?.evs ?? []);
+      historyBySession.value = {
+        ...historyBySession.value,
+        [frame.sid]: {
+          hasMore: frame.h?.hm ?? false,
+          beforeCursor: frame.h?.bc ?? '',
+          total: frame.h?.tot ?? frame.h?.evs?.length ?? 0,
+          loading: false,
+        },
+      };
+      return;
+    }
+
+    if (frame.k === 'evt' && frame.sid && frame.e) {
+      const previousState = getLiveState(frame.sid);
+      const previousApproval = getPendingApproval(frame.sid);
+
+      if (frame.e.tp === 'hist_ch') {
+        const historicalEvents = Array.isArray(frame.e.p?.evs)
+          ? (frame.e.p?.evs as WireEvent[])
+          : [];
+        mergeEvents(frame.sid, historicalEvents);
+        historyBySession.value = {
+          ...historyBySession.value,
+          [frame.sid]: {
+            ...getHistoryMeta(frame.sid),
+            hasMore: Boolean(frame.e.p?.hm),
+            beforeCursor: String(frame.e.p?.bc ?? ''),
+            loading: false,
+          },
+        };
+        return;
+      }
+
+      mergeEvents(frame.sid, [frame.e]);
+      updateSessionStatus(frame.sid, current => {
+        const next = { ...current };
+        next.updatedAt = new Date(frame.e?.ts ?? Date.now()).toISOString();
+        if (frame.e?.tp === 'run_st') {
+          next.status = 'running';
+        } else if (frame.e?.tp === 'run_done') {
+          next.status = 'done';
+        } else if (frame.e?.tp === 'run_fail') {
+          next.status = 'err';
+        } else if (frame.e?.tp === 'run_abort') {
+          next.status = 'idle';
+        } else if (frame.e?.tp === 'msg_u') {
+          next.lastMessageAt = new Date(frame.e?.ts ?? Date.now()).toISOString();
+        } else if (frame.e?.tp === 'usage') {
+          next.usage = {
+            inputTokens: Number(frame.e?.p?.in ?? next.usage.inputTokens),
+            cachedInputTokens: Number(frame.e?.p?.cin ?? next.usage.cachedInputTokens),
+            outputTokens: Number(frame.e?.p?.out ?? next.usage.outputTokens),
+            cost: Number(frame.e?.p?.cost ?? next.usage.cost),
+          };
+        }
+        return next;
+      });
+
+      if (frame.e.tp === 'tool_end') {
+        maybeAbortForRedirect(frame.sid);
+      }
+
+      if (frame.e.tp === 'run_done' || frame.e.tp === 'run_fail' || frame.e.tp === 'run_abort') {
+        redirectAbortSessions.delete(frame.sid);
+        schedulePendingFlush(frame.sid);
+      }
+
+      emitStateTransition(frame.sid, previousState, previousApproval);
+    }
+  }
+
+  function openSocket(): Promise<void> {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      connectionState.value = 'open';
+      return Promise.resolve();
+    }
+    if (connectPromise) {
+      return connectPromise;
+    }
+    connectionState.value = 'connecting';
+    connectPromise = new Promise((resolve, reject) => {
+      const ws = new WebSocket(resolveWsUrl(WS_PATH));
+      ws.onopen = () => {
+        socket = ws;
+        connectionState.value = 'open';
+        connectPromise = null;
+        reconnectActiveSessions();
+        resolve();
+      };
+      ws.onmessage = event => {
+        try {
+          const frame = JSON.parse(event.data) as WireFrame;
+          applyFrame(frame);
+        } catch (error) {
+          console.error('[Web Session] Failed to parse websocket frame', error);
+        }
+      };
+      ws.onerror = event => {
+        console.error('[Web Session] websocket error', event);
+      };
+      ws.onclose = () => {
+        socket = null;
+        connectionState.value = 'closed';
+        connectPromise = null;
+        if (reconnectTimer != null) {
+          window.clearTimeout(reconnectTimer);
+        }
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
+          if (allSessionIds.value.size > 0) {
+            void openSocket();
+          }
+        }, 1200);
+      };
+    });
+    return connectPromise.catch(error => {
+      connectPromise = null;
+      connectionState.value = 'closed';
+      throw error;
+    });
+  }
+
+  async function sendCommand(op: string, sessionId: string, payload: Record<string, any> = {}) {
+    await openSocket();
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      throw new Error('websocket is not connected');
+    }
+    const requestId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const frame = {
+      v: 1,
+      k: 'cmd',
+      rid: requestId,
+      sid: sessionId || undefined,
+      op,
+      p: payload,
+    };
+    const promise = new Promise<WireFrame>((resolve, reject) => {
+      pending.set(requestId, { resolve, reject });
+    });
+    socket.send(JSON.stringify(frame));
+    return promise;
+  }
+
+  function reconnectActiveSessions() {
+    Object.entries(activeSessionIdByProject.value).forEach(([projectId, sessionId]) => {
+      if (!projectId || !sessionId) {
+        return;
+      }
+      void sendCommand('connect', sessionId, {}).catch(error => {
+        console.warn('[Web Session] Failed to reconnect session', sessionId, error);
+      });
+    });
+  }
+
+  async function loadSessions(projectId: string, force = false) {
+    if (!projectId) {
+      return [];
+    }
+    if (!force && loadedProjects.value[projectId]) {
+      return sessionsByProject.value[projectId] ?? [];
+    }
+    const sessions = await webSessionApi.list(projectId);
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [projectId]: sortSessions(sessions),
+    };
+    loadedProjects.value = {
+      ...loadedProjects.value,
+      [projectId]: true,
+    };
+    if (!activeSessionIdByProject.value[projectId] && sessions[0]?.id) {
+      rememberActiveSession(projectId, sessions[0].id);
+    }
+    return sessions;
+  }
+
+  async function ensureSessionConnected(projectId: string, sessionId: string) {
+    if (!projectId || !sessionId) {
+      return;
+    }
+    rememberActiveSession(projectId, sessionId);
+    await sendCommand('connect', sessionId, {});
+  }
+
+  async function renameSession(projectId: string, sessionId: string, title: string) {
+    await sendCommand('rename', sessionId, { ttl: title });
+    rememberActiveSession(projectId, sessionId);
+  }
+
+  async function deleteSession(projectId: string, sessionId: string) {
+    await sendCommand('del', sessionId, {});
+    removeSession(projectId, sessionId);
+  }
+
+  async function sendMessage(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[],
+    mode?: 'redirect' | 'queue'
+  ) {
+    const session = findSessionById(sessionId);
+    if (session?.status === 'running' && mode) {
+      enqueuePendingInput(sessionId, text, attachmentIds, mode);
+      return;
+    }
+    await sendCommand('send', sessionId, { txt: text, atts: attachmentIds });
+  }
+
+  async function abortSession(sessionId: string) {
+    await sendCommand('abort', sessionId, {});
+  }
+
+  async function approveSession(sessionId: string) {
+    await sendCommand('approve', sessionId, {});
+  }
+
+  async function rejectSession(sessionId: string) {
+    await sendCommand('reject', sessionId, {});
+  }
+
+  async function loadMoreHistory(sessionId: string, limit = 80) {
+    const meta = getHistoryMeta(sessionId);
+    if (meta.loading || !meta.hasMore || !meta.beforeCursor) {
+      return;
+    }
+    historyBySession.value = {
+      ...historyBySession.value,
+      [sessionId]: {
+        ...meta,
+        loading: true,
+      },
+    };
+    try {
+      await sendCommand('hist', sessionId, {
+        bc: meta.beforeCursor,
+        lim: limit,
+      });
+    } catch (error) {
+      historyBySession.value = {
+        ...historyBySession.value,
+        [sessionId]: {
+          ...meta,
+          loading: false,
+        },
+      };
+      throw error;
+    }
+  }
+
+  async function updateModel(sessionId: string, model: string) {
+    await sendCommand('set_md', sessionId, { md: model });
+  }
+
+  async function updateReasoningEffort(
+    sessionId: string,
+    reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
+  ) {
+    await sendCommand('set_re', sessionId, { re: reasoningEffort });
+  }
+
+  async function updateMode(sessionId: string, permissionMode: 'default' | 'plan' | 'yolo') {
+    await sendCommand('set_pm', sessionId, { pm: permissionMode });
+  }
+
+  async function updateAgent(sessionId: string, agent: 'claude' | 'codex') {
+    await sendCommand('set_ag', sessionId, { ag: agent });
+  }
+
+  async function moveSession(projectId: string, fromIndex: number, toIndex: number) {
+    const current = getSessions(projectId);
+    if (
+      !projectId ||
+      fromIndex < 0 ||
+      toIndex < 0 ||
+      fromIndex >= current.length ||
+      toIndex >= current.length ||
+      fromIndex === toIndex
+    ) {
+      return;
+    }
+
+    const original = [...current];
+    const reordered = [...current];
+    const [moving] = reordered.splice(fromIndex, 1);
+    if (!moving) {
+      return;
+    }
+    reordered.splice(toIndex, 0, moving);
+    const reorderedWithOrder = reordered.map((session, index) => ({
+      ...session,
+      orderIndex: (index + 1) * 1000,
+    }));
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [projectId]: reorderedWithOrder,
+    };
+
+    const prevSessionId = reorderedWithOrder[toIndex - 1]?.id ?? '';
+    const nextSessionId = reorderedWithOrder[toIndex + 1]?.id ?? '';
+
+    try {
+      await sendCommand('move', moving.id, {
+        prv: prevSessionId,
+        nxt: nextSessionId,
+      });
+    } catch (error) {
+      sessionsByProject.value = {
+        ...sessionsByProject.value,
+        [projectId]: sortSessions(original),
+      };
+      await loadSessions(projectId, true);
+      throw error;
+    }
+  }
+
+  async function uploadAttachment(projectId: string, file: File) {
+    const attachment = await webSessionApi.uploadAttachment(projectId, file);
+    const current = getDraftAttachments(projectId);
+    draftAttachmentsByProject.value = {
+      ...draftAttachmentsByProject.value,
+      [projectId]: [...current, attachment],
+    };
+    return attachment;
+  }
+
+  function removeDraftAttachment(projectId: string, attachmentId: string) {
+    draftAttachmentsByProject.value = {
+      ...draftAttachmentsByProject.value,
+      [projectId]: getDraftAttachments(projectId).filter(item => item.id !== attachmentId),
+    };
+  }
+
+  function clearDraftAttachments(projectId: string) {
+    draftAttachmentsByProject.value = {
+      ...draftAttachmentsByProject.value,
+      [projectId]: [],
+    };
+  }
+
+  function buildBlocks(sessionId: string): WebSessionBlock[] {
+    const blocks: WebSessionBlock[] = [];
+    const messageIndex = new Map<string, number>();
+    const getAssistantBlock = (messageId: string, timestamp: number) => {
+      const existingIndex = messageIndex.get(messageId);
+      if (existingIndex != null) {
+        return blocks[existingIndex];
+      }
+      const block: WebSessionBlock = {
+        key: `assistant:${messageId}`,
+        id: messageId,
+        kind: 'assistant',
+        text: '',
+        timestamp,
+        attachments: [],
+        tools: [],
+        done: false,
+      };
+      messageIndex.set(messageId, blocks.length);
+      blocks.push(block);
+      return block;
+    };
+
+    (eventsBySession.value[sessionId] ?? []).forEach(event => {
+      const payload = event.p ?? {};
+      switch (event.tp) {
+        case 'msg_u': {
+          const mid = String(payload.mid ?? event.id);
+          const block: WebSessionBlock = {
+            key: `user:${mid}`,
+            id: mid,
+            kind: 'user',
+            text: String(payload.txt ?? ''),
+            timestamp: event.ts,
+            attachments: Array.isArray(payload.atts)
+              ? payload.atts.map((item: any) => ({
+                  id: String(item.id ?? ''),
+                  name: String(item.name ?? ''),
+                  mime: typeof item.mime === 'string' ? item.mime : undefined,
+                  size: typeof item.sz === 'number' ? item.sz : undefined,
+                }))
+              : [],
+            tools: [],
+          };
+          messageIndex.set(mid, blocks.length);
+          blocks.push(block);
+          break;
+        }
+        case 'msg_a_st': {
+          const mid = String(payload.mid ?? event.pid2 ?? event.id);
+          getAssistantBlock(mid, event.ts);
+          break;
+        }
+        case 'txt_d': {
+          const mid = String(payload.mid ?? event.pid2 ?? event.id);
+          const block = getAssistantBlock(mid, event.ts);
+          block.text += String(payload.txt ?? '');
+          break;
+        }
+        case 'txt_end': {
+          const mid = String(payload.mid ?? event.pid2 ?? event.id);
+          const block = getAssistantBlock(mid, event.ts);
+          block.done = true;
+          break;
+        }
+        case 'tool_st': {
+          const mid = String(event.pid2 ?? '');
+          const block = getAssistantBlock(mid || `tool-parent-${event.id}`, event.ts);
+          block.tools.push({
+            id: String(payload.tid ?? event.id),
+            name: String(payload.name ?? 'Tool'),
+            kind: typeof payload.kind === 'string' ? payload.kind : undefined,
+            input: payload.in,
+            meta: typeof payload.meta === 'object' && payload.meta ? payload.meta : undefined,
+            status: 'running',
+          });
+          break;
+        }
+        case 'tool_end': {
+          const mid = String(event.pid2 ?? '');
+          const block = getAssistantBlock(mid || `tool-parent-${event.id}`, event.ts);
+          const toolId = String(payload.tid ?? event.id);
+          const tool =
+            block.tools.find(item => item.id === toolId) ??
+            (() => {
+              const created: WebSessionToolBlock = {
+                id: toolId,
+                name: String(payload.name ?? 'Tool'),
+                status: 'running',
+              };
+              block.tools.push(created);
+              return created;
+            })();
+          tool.output = String(payload.out ?? '');
+          tool.status = payload.ok === false ? 'error' : 'done';
+          if (typeof payload.meta === 'object' && payload.meta) {
+            tool.meta = payload.meta;
+          }
+          break;
+        }
+        case 'approval_req': {
+          blocks.push({
+            key: `approval:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: String(payload.prompt ?? 'Approval required'),
+            timestamp: event.ts,
+            attachments: [],
+            tools: [],
+            level: 'warn',
+          });
+          break;
+        }
+        case 'approval_res': {
+          const action = String(payload.act ?? 'approve');
+          blocks.push({
+            key: `approval-res:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: action === 'reject' ? 'Approval rejected' : 'Approval granted',
+            timestamp: event.ts,
+            attachments: [],
+            tools: [],
+            level: action === 'reject' ? 'warn' : 'info',
+          });
+          break;
+        }
+        case 'note': {
+          blocks.push({
+            key: `note:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: String(payload.txt ?? ''),
+            timestamp: event.ts,
+            attachments: [],
+            tools: [],
+            level: payload.lvl === 'warn' ? 'warn' : payload.lvl === 'error' ? 'error' : 'info',
+          });
+          break;
+        }
+        case 'run_fail': {
+          blocks.push({
+            key: `fail:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: String(payload.msg ?? 'Run failed'),
+            timestamp: event.ts,
+            attachments: [],
+            tools: [],
+            level: 'error',
+          });
+          break;
+        }
+        case 'run_abort': {
+          blocks.push({
+            key: `abort:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: 'Run aborted',
+            timestamp: event.ts,
+            attachments: [],
+            tools: [],
+            level: 'info',
+          });
+          break;
+        }
+      }
+    });
+
+    return blocks;
+  }
+
+  const getBlocks = (sessionId: string) => buildBlocks(sessionId);
+
+  function getPendingApproval(sessionId: string): WebSessionApprovalState | null {
+    let pending: WebSessionApprovalState | null = null;
+    for (const event of eventsBySession.value[sessionId] ?? []) {
+      const payload = event.p ?? {};
+      switch (event.tp) {
+        case 'approval_req':
+          pending = {
+            id: event.id,
+            prompt: String(payload.prompt ?? ''),
+            requestedAt: event.ts,
+          };
+          break;
+        case 'approval_res':
+        case 'run_done':
+        case 'run_fail':
+        case 'run_abort':
+          pending = null;
+          break;
+      }
+    }
+    return pending;
+  }
+
+  function getLiveState(sessionId: string): WebSessionLiveState {
+    const session = findSessionById(sessionId);
+    const approval = getPendingApproval(sessionId);
+    let activeTool:
+      | {
+          id: string;
+          name: string;
+          kind?: string;
+        }
+      | undefined;
+    let sawAssistantOutput = false;
+    let assistantDone = false;
+    let errorMessage = '';
+    let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
+
+    for (const event of eventsBySession.value[sessionId] ?? []) {
+      const payload = event.p ?? {};
+      updatedAt = event.ts;
+      switch (event.tp) {
+        case 'msg_a_st':
+        case 'txt_d':
+          sawAssistantOutput = true;
+          assistantDone = false;
+          break;
+        case 'txt_end':
+          assistantDone = true;
+          break;
+        case 'tool_st':
+          activeTool = {
+            id: String(payload.tid ?? event.id),
+            name: String(payload.name ?? 'Tool'),
+            kind: typeof payload.kind === 'string' ? payload.kind : undefined,
+          };
+          break;
+        case 'tool_end': {
+          const toolId = String(payload.tid ?? event.id);
+          if (activeTool?.id === toolId) {
+            activeTool = undefined;
+          }
+          break;
+        }
+        case 'run_fail':
+          errorMessage = String(payload.msg ?? 'Run failed');
+          break;
+      }
+    }
+
+    if (approval && session?.status === 'running') {
+      return {
+        phase: 'waiting_approval',
+        running: true,
+        updatedAt: approval.requestedAt,
+        approval,
+        tool: activeTool,
+      };
+    }
+
+    if (session?.status === 'running') {
+      if (activeTool) {
+        return {
+          phase: 'tool',
+          running: true,
+          updatedAt,
+          tool: activeTool,
+        };
+      }
+      if (sawAssistantOutput && !assistantDone) {
+        return {
+          phase: 'thinking',
+          running: true,
+          updatedAt,
+        };
+      }
+      return {
+        phase: 'starting',
+        running: true,
+        updatedAt,
+      };
+    }
+
+    if (session?.status === 'done') {
+      return {
+        phase: 'done',
+        running: false,
+        updatedAt,
+      };
+    }
+
+    if (session?.status === 'err') {
+      return {
+        phase: 'error',
+        running: false,
+        updatedAt,
+        errorMessage,
+      };
+    }
+
+    return {
+      phase: 'idle',
+      running: false,
+      updatedAt,
+    };
+  }
+
+  async function createSessionViaHttp(
+    projectId: string,
+    payload: {
+      worktreeId?: string;
+      agent: 'claude' | 'codex';
+      model?: string;
+      reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+      permissionMode?: 'default' | 'plan' | 'yolo';
+      title?: string;
+    }
+  ) {
+    const session = await webSessionApi.create(projectId, payload);
+    upsertSession(session);
+    rememberActiveSession(projectId, session.id);
+    try {
+      await ensureSessionConnected(projectId, session.id);
+    } catch (error) {
+      console.warn('[Web Session] Failed to connect new session after creation', error);
+    }
+    return session;
+  }
+
+  return {
+    connectionState,
+    lastError,
+    getSessions,
+    getActiveSessionId,
+    getActiveSession,
+    getDraftAttachments,
+    getPendingInputs,
+    getHistoryMeta,
+    getBlocks,
+    getLatestEventSeq,
+    loadSessions,
+    ensureSessionConnected,
+    createSession: createSessionViaHttp,
+    renameSession,
+    deleteSession,
+    sendMessage,
+    abortSession,
+    approveSession,
+    rejectSession,
+    loadMoreHistory,
+    updateModel,
+    updateReasoningEffort,
+    updateMode,
+    updateAgent,
+    moveSession,
+    getPendingApproval,
+    getLiveState,
+    uploadAttachment,
+    removeDraftAttachment,
+    removePendingInput,
+    clearDraftAttachments,
+    openSocket,
+    emitter,
+  };
+});

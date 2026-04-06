@@ -53,7 +53,7 @@
             ><code>{{ getSynchronousRawContent(item.message) }}</code></pre>
             <div
               v-else-if="getRenderedContent(item.message)"
-              class="message-content"
+              class="message-content chat-markdown"
               v-html="renderMarkdown(getRenderedContent(item.message))"
             ></div>
 
@@ -256,8 +256,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTimeAgo } from '@vueuse/core';
 import { type VirtualListInst, useMessage } from 'naive-ui';
 import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
-import { marked } from 'marked';
 import { useLocale } from '@/composables/useLocale';
+import { renderMarkdown } from '@/utils/markdown';
 
 export interface ConversationImageAttachment {
   id: string;
@@ -357,11 +357,6 @@ const imagePlaceholderPattern = /\[Image #(\d+)\]/g;
 const virtualItemsStyle = {
   padding: '18px 16px 12px 8px',
 };
-
-marked.setOptions({
-  breaks: true,
-  gfm: true,
-});
 
 const displayMessages = computed<DisplayMessageItem[]>(() => {
   return props.messages
@@ -568,18 +563,6 @@ function formatTime(timestamp: string) {
     return useTimeAgo(new Date(timestamp)).value;
   }
   return new Date(timestamp).toLocaleString();
-}
-
-function renderMarkdown(content: string): string {
-  try {
-    return marked.parse(content) as string;
-  } catch {
-    return content
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/\n/g, '<br>');
-  }
 }
 
 function isToolResult(msg: ConversationMessage) {
@@ -914,9 +897,7 @@ onBeforeUnmount(() => {
 }
 
 .message-content {
-  font-size: 14px;
-  line-height: 1.6;
-  word-break: break-word;
+  min-width: 0;
 }
 
 .message-raw {
@@ -989,106 +970,6 @@ onBeforeUnmount(() => {
 
 .tool-result-controls {
   margin-top: 8px;
-}
-
-.message-content :deep(p) {
-  margin: 0 0 8px 0;
-}
-
-.message-content :deep(p:last-child) {
-  margin-bottom: 0;
-}
-
-.message-content :deep(pre) {
-  background: var(--n-code-color);
-  padding: 12px;
-  border-radius: 6px;
-  overflow-x: auto;
-  margin: 8px 0;
-}
-
-.message-content :deep(code) {
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 13px;
-}
-
-.message-content :deep(:not(pre) > code) {
-  background: var(--n-code-color);
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 0.9em;
-}
-
-.message-content :deep(ul),
-.message-content :deep(ol) {
-  padding-left: 20px;
-  margin: 8px 0;
-}
-
-.message-content :deep(li) {
-  margin: 4px 0;
-}
-
-.message-content :deep(blockquote) {
-  border-left: 3px solid var(--n-border-color);
-  padding-left: 12px;
-  margin: 8px 0;
-  color: var(--n-text-color-3);
-}
-
-.message-content :deep(h1),
-.message-content :deep(h2),
-.message-content :deep(h3),
-.message-content :deep(h4),
-.message-content :deep(h5),
-.message-content :deep(h6) {
-  margin: 16px 0 8px 0;
-  font-weight: 600;
-}
-
-.message-content :deep(h1) {
-  font-size: 1.5em;
-}
-
-.message-content :deep(h2) {
-  font-size: 1.3em;
-}
-
-.message-content :deep(h3) {
-  font-size: 1.1em;
-}
-
-.message-content :deep(a) {
-  color: var(--n-primary-color);
-  text-decoration: none;
-}
-
-.message-content :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.message-content :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 8px 0;
-}
-
-.message-content :deep(th),
-.message-content :deep(td) {
-  border: 1px solid var(--n-border-color);
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.message-content :deep(th) {
-  background: var(--n-color-embedded);
-  font-weight: 600;
-}
-
-.message-content :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--n-border-color);
-  margin: 16px 0;
 }
 
 .conversation-toolbar {

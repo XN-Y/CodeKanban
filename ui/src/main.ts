@@ -1,4 +1,5 @@
 import './assets/main.css';
+import './styles/chat-markdown.css';
 import './styles/variables.css';
 import './styles/fixes.css';
 

@@ -232,3 +232,39 @@ export interface AvailableShellsResponse {
   options: ShellOption[];
   customAllowed: boolean;
 }
+
+export interface WebSessionUsage {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  cost: number;
+}
+
+export interface WebSessionSummary {
+  id: string;
+  projectId: string;
+  worktreeId?: string | null;
+  orderIndex: number;
+  agent: 'claude' | 'codex';
+  title: string;
+  model: string;
+  reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+  permissionMode: 'default' | 'plan' | 'yolo';
+  cwd: string;
+  nativeSessionId?: string | null;
+  status: 'idle' | 'running' | 'done' | 'err' | 'aborting';
+  hasUnread: boolean;
+  lastMessageAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  usage: WebSessionUsage;
+}
+
+export interface WebSessionAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+  createdAt: string;
+}
