@@ -2,17 +2,30 @@
   <div class="project-workspace" :class="{ 'is-mobile': isMobileLayout }">
     <!-- 桌面端布局 -->
     <template v-if="!isMobileLayout">
-      <n-layout has-sider>
+      <div class="workspace-desktop-shell">
         <!-- 左侧最近项目侧边栏 -->
-        <n-layout-sider bordered :width="240" :min-width="200" :max-width="400" resizable>
+        <div
+          class="project-sidebar"
+          :style="{
+            width: `${effectiveLeftSidebarWidth}px`,
+            flex: `0 0 ${effectiveLeftSidebarWidth}px`,
+          }"
+        >
           <RecentProjects
             :current-project-id="currentProjectId"
             @edit-current="openProjectEditDialog"
             @toggle-terminal="toggleTerminalPanel"
           />
-        </n-layout-sider>
+        </div>
+        <div
+          class="project-sidebar-resizer"
+          :class="{ 'is-dragging': isProjectSidebarResizing }"
+          @mousedown="startProjectSidebarResize"
+        >
+          <div class="project-sidebar-resizer-handle"></div>
+        </div>
 
-        <n-layout has-sider>
+        <n-layout has-sider class="workspace-main-shell">
           <!-- 右侧工作树侧边栏 -->
           <n-layout-sider
             v-model:collapsed="worktreeSiderCollapsed"
@@ -24,7 +37,7 @@
             <WorktreeList @open-terminal="handleOpenTerminal" />
           </n-layout-sider>
 
-          <n-layout-content content-style="height: 100vh;">
+          <n-layout-content content-style="height: 100%;">
             <!-- 主内容区 -->
             <!-- Dock 模式：使用 Tab 视图切换看板和终端 -->
             <WorkspaceTabView v-if="isDockMode" :project-id="currentProjectId" />
@@ -34,7 +47,7 @@
             </div>
           </n-layout-content>
         </n-layout>
-      </n-layout>
+      </div>
     </template>
 
     <!-- 移动端布局 -->
@@ -178,9 +191,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, provide, ref, watch } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { useTitle } from '@vueuse/core';
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
+import { useStorage, useTitle } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
@@ -200,9 +213,14 @@ import type { Worktree } from '@/types/models';
 import { APP_NAME } from '@/constants/app';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
+const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
+const PROJECT_SIDEBAR_DEFAULT_WIDTH = 240;
+const PROJECT_SIDEBAR_MIN_WIDTH = 200;
+const PROJECT_SIDEBAR_MAX_WIDTH = 400;
+const WORKTREE_SIDER_WIDTH = 320;
+const MIN_MAIN_WORKSPACE_WIDTH = 320;
 
 const route = useRoute();
-const router = useRouter();
 const message = useMessage();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
@@ -215,6 +233,10 @@ const showEditDialog = ref(false);
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
+function clamp(min: number, value: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 const WORKTREE_SIDER_COLLAPSED_KEY = 'worktree-sider-collapsed';
 const getInitialWorktreeSiderCollapsedState = (): boolean => {
   const stored = localStorage.getItem(WORKTREE_SIDER_COLLAPSED_KEY);
@@ -224,6 +246,80 @@ const worktreeSiderCollapsed = ref(getInitialWorktreeSiderCollapsedState());
 watch(worktreeSiderCollapsed, collapsed => {
   localStorage.setItem(WORKTREE_SIDER_COLLAPSED_KEY, JSON.stringify(collapsed));
 });
+
+const leftProjectSidebarWidth = useStorage<number>(
+  PROJECT_SIDEBAR_WIDTH_STORAGE_KEY,
+  PROJECT_SIDEBAR_DEFAULT_WIDTH
+);
+const isProjectSidebarResizing = ref(false);
+
+const maxLeftProjectSidebarWidth = computed(() => {
+  const reservedWorktreeWidth = worktreeSiderCollapsed.value ? 0 : WORKTREE_SIDER_WIDTH;
+  const maxByViewport = windowWidth.value - reservedWorktreeWidth - MIN_MAIN_WORKSPACE_WIDTH;
+  return Math.min(
+    PROJECT_SIDEBAR_MAX_WIDTH,
+    Math.max(PROJECT_SIDEBAR_MIN_WIDTH, Math.round(maxByViewport))
+  );
+});
+
+const effectiveLeftSidebarWidth = computed(() =>
+  clamp(
+    PROJECT_SIDEBAR_MIN_WIDTH,
+    Math.round(leftProjectSidebarWidth.value),
+    Math.round(maxLeftProjectSidebarWidth.value)
+  )
+);
+
+watch([windowWidth, worktreeSiderCollapsed], () => {
+  leftProjectSidebarWidth.value = effectiveLeftSidebarWidth.value;
+}, { immediate: true });
+
+let cleanupProjectSidebarResize: (() => void) | null = null;
+
+function stopProjectSidebarResize() {
+  cleanupProjectSidebarResize?.();
+  cleanupProjectSidebarResize = null;
+}
+
+function startProjectSidebarResize(event: MouseEvent) {
+  if (isMobileLayout.value) {
+    return;
+  }
+  event.preventDefault();
+  stopProjectSidebarResize();
+
+  isProjectSidebarResizing.value = true;
+  const startX = event.clientX;
+  const startWidth = effectiveLeftSidebarWidth.value;
+
+  const onMouseMove = (moveEvent: MouseEvent) => {
+    const delta = moveEvent.clientX - startX;
+    leftProjectSidebarWidth.value = Math.round(
+      clamp(
+        PROJECT_SIDEBAR_MIN_WIDTH,
+        startWidth + delta,
+        maxLeftProjectSidebarWidth.value
+      )
+    );
+  };
+
+  const onMouseUp = () => {
+    stopProjectSidebarResize();
+  };
+
+  cleanupProjectSidebarResize = () => {
+    isProjectSidebarResizing.value = false;
+    window.removeEventListener('mousemove', onMouseMove);
+    window.removeEventListener('mouseup', onMouseUp);
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  };
+
+  window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('mouseup', onMouseUp);
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+}
 
 // Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
 const isDockMode = computed(
@@ -260,6 +356,10 @@ onMounted(() => {
   if (currentProjectId.value) {
     loadProject(currentProjectId.value);
   }
+});
+
+onBeforeUnmount(() => {
+  stopProjectSidebarResize();
 });
 
 watch(
@@ -318,8 +418,8 @@ function handleOpenTerminal(worktree: Worktree) {
       workingDir: worktree.path,
       title: worktree.branchName,
     })
-    .catch((error: any) => {
-      message.error(error?.message ?? t('terminal.createFailed'));
+    .catch((error: unknown) => {
+      message.error(error instanceof Error ? error.message : t('terminal.createFailed'));
     });
 }
 
@@ -341,20 +441,74 @@ function toggleTerminalPanel() {
 function setMobileView(view: MobileView) {
   mobileActiveView.value = view;
 }
-
-function goToProjectList() {
-  router.push('/');
-}
 </script>
 
 <style scoped>
 .project-workspace {
   height: 100vh;
+  overflow: hidden;
+}
+
+.workspace-desktop-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.project-sidebar {
+  min-height: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--n-border-color, #e0e0e0);
+  background: var(--app-surface-color, #ffffff);
+}
+
+.project-sidebar-resizer {
+  flex-shrink: 0;
+  width: 6px;
+  margin: 0 -3px;
+  cursor: col-resize;
+  position: relative;
+  z-index: 2;
+}
+
+.project-sidebar-resizer-handle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 32px;
+  border-radius: 999px;
+  background-color: transparent;
+  opacity: 0;
+  transition:
+    background-color 0.15s ease,
+    height 0.15s ease,
+    opacity 0.15s ease;
+}
+
+.project-sidebar-resizer:hover .project-sidebar-resizer-handle {
+  background-color: var(--n-border-color, #d0d0d0);
+  height: 48px;
+  opacity: 1;
+}
+
+.project-sidebar-resizer.is-dragging .project-sidebar-resizer-handle {
+  background-color: var(--n-primary-color, #18a058);
+  height: 64px;
+  opacity: 1;
+}
+
+.workspace-main-shell {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
 }
 
 .workspace-content {
   padding: 24px;
-  height: 100vh;
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   background-color: var(--app-surface-color, #ffffff);
 }
