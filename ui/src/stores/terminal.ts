@@ -4,7 +4,7 @@ import EventEmitter from 'eventemitter3';
 import Apis, { alovaInstance, urlBase } from '@/api';
 import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
-import type { Task, TerminalSession } from '@/types/models';
+import type { Task, TerminalModesSnapshot, TerminalSession } from '@/types/models';
 import {
   DEFAULT_TERMINAL_RENDER_MODE,
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -17,6 +17,8 @@ import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useTaskStore } from '@/stores/task';
 import { taskActions } from '@/composables/useTaskActions';
+
+export type { TerminalModesSnapshot } from '@/types/models';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
@@ -77,6 +79,7 @@ export type ServerMessage = {
     | 'exit'
     | 'error'
     | 'metadata'
+    | 'modes'
     | 'snapshot'
     | 'replay-complete'
     | 'render-mode';
@@ -88,6 +91,7 @@ export type ServerMessage = {
   snapshotCompressionEnabled?: boolean;
   snapshotIncrementalEnabled?: boolean;
   snapshot?: TerminalRemoteSnapshot;
+  modes?: TerminalModesSnapshot;
   metadata?: {
     title?: string;
     processPid?: number;
@@ -142,6 +146,21 @@ const TAB_RENDER_PREFERENCE_STORAGE_KEY = 'kanban-terminal-render-preferences';
 const storedTabOrders = loadStoredTabOrders();
 const storedActiveTabs = loadStoredActiveTabs();
 const storedRenderPreferences = loadStoredRenderPreferences();
+
+function cloneTerminalModesSnapshot(
+  modes?: TerminalModesSnapshot | null
+): TerminalModesSnapshot | undefined {
+  if (!modes) {
+    return undefined;
+  }
+  return {
+    mouseTracking: modes.mouseTracking,
+    mouseSgr: modes.mouseSgr,
+    focusReporting: modes.focusReporting,
+    bracketedPaste: modes.bracketedPaste,
+    alternateScreen: modes.alternateScreen,
+  };
+}
 
 function loadStoredTabOrders() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -1401,6 +1420,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         ...session,
         projectId: immutableProjectId,
         taskId: updatedTaskId ?? undefined,
+        terminalModes: cloneTerminalModesSnapshot(session.terminalModes ?? existing.tab.terminalModes),
         renderMode: existing.tab.renderMode,
         snapshotIntervalMs: existing.tab.snapshotIntervalMs,
         useGlobalRenderMode: existing.tab.useGlobalRenderMode,
@@ -1436,6 +1456,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       ...session,
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
+      terminalModes: cloneTerminalModesSnapshot(session.terminalModes),
       renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
       snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
       useGlobalRenderMode: true,
@@ -1516,6 +1537,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     };
     record.tab = bucket[index];
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
+  }
+
+  function updateTabTerminalModes(sessionId: string, modes?: TerminalModesSnapshot) {
+    const record = sessionIndex.get(sessionId);
+    if (!record) return;
+
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) return;
+
+    const index = bucket.findIndex(t => t.id === sessionId);
+    if (index === -1) return;
+
+    bucket[index] = {
+      ...bucket[index],
+      terminalModes: cloneTerminalModesSnapshot(modes),
+    };
+    record.tab = bucket[index];
   }
 
   function connect(tab: TerminalTabState) {
@@ -1601,6 +1639,8 @@ export const useTerminalStore = defineStore('terminal', () => {
             updateTabStatus(tab.id, 'closed');
           } else if (payload.type === 'error') {
             updateTabStatus(tab.id, 'error');
+          } else if (payload.type === 'modes') {
+            updateTabTerminalModes(tab.id, payload.modes);
           } else if (payload.type === 'metadata' && payload.metadata) {
             // Update tab metadata in realtime
             updateTabMetadata(tab.id, payload.metadata);

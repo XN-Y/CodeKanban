@@ -35,6 +35,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type {
+  TerminalModesSnapshot,
   TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
   TerminalTabState,
@@ -125,6 +126,9 @@ let pendingServerResizeTimer: number | null = null;
 const pendingTerminalMessages: ServerMessage[] = [];
 let pendingServerSnapshot: TerminalRemoteSnapshot | null = null;
 let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
+let pendingTerminalModes: TerminalModesSnapshot | null = cloneTerminalModesSnapshot(
+  props.tab.terminalModes
+);
 let debugRefreshHandler: (() => boolean) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const INITIAL_OUTPUT_BUFFER_MAX = 5000;
@@ -175,6 +179,21 @@ function remapInvisibleColors(data: string): string {
     .replace(TRUE_COLOR_BG_BLACK_REGEX, TRUE_COLOR_BG_BLACK_REPLACEMENT);
 }
 
+function cloneTerminalModesSnapshot(
+  modes?: TerminalModesSnapshot | null
+): TerminalModesSnapshot | null {
+  if (!modes) {
+    return null;
+  }
+  return {
+    mouseTracking: modes.mouseTracking,
+    mouseSgr: modes.mouseSgr,
+    focusReporting: modes.focusReporting,
+    bracketedPaste: modes.bracketedPaste,
+    alternateScreen: modes.alternateScreen,
+  };
+}
+
 // 内存中记录已经访问过的终端（刷新后清空）
 // 用于检测刷新后首次切换到终端时滚动到底部
 const visitedTerminals = new Set<string>();
@@ -205,6 +224,14 @@ watch(
         }, 50);
       }
     }
+  },
+  { deep: true }
+);
+
+watch(
+  () => props.tab.terminalModes,
+  modes => {
+    pendingTerminalModes = cloneTerminalModesSnapshot(modes);
   },
   { deep: true }
 );
@@ -276,6 +303,88 @@ function isDeferredTerminalMessage(payload: ServerMessage) {
   return payload.type === 'data' || payload.type === 'exit' || payload.type === 'error';
 }
 
+function buildAlternateScreenSequence(
+  modes: TerminalModesSnapshot | null,
+  fallbackAltScreen?: boolean
+) {
+  switch (modes?.alternateScreen) {
+    case '47':
+      return '\x1b[?47h';
+    case '1047':
+      return '\x1b[?1047h';
+    case '1049':
+      return '\x1b[?1049h';
+    default:
+      break;
+  }
+
+  if (fallbackAltScreen === true) {
+    return '\x1b[?1049h';
+  }
+  if (fallbackAltScreen === false) {
+    return '\x1b[?1049l';
+  }
+  return '';
+}
+
+function buildTerminalModesSequence(
+  modes: TerminalModesSnapshot | null,
+  options: { includeAlternateScreen?: boolean; fallbackAltScreen?: boolean } = {}
+) {
+  if (!modes && options.includeAlternateScreen !== false && options.fallbackAltScreen == null) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  if (options.includeAlternateScreen !== false) {
+    const alternateScreen = buildAlternateScreenSequence(modes, options.fallbackAltScreen);
+    if (alternateScreen) {
+      parts.push(alternateScreen);
+    }
+  }
+
+  if (modes?.focusReporting) {
+    parts.push('\x1b[?1004h');
+  }
+  if (modes?.bracketedPaste) {
+    parts.push('\x1b[?2004h');
+  }
+  if (modes?.mouseSgr) {
+    parts.push('\x1b[?1006h');
+  }
+
+  switch (modes?.mouseTracking) {
+    case 'x10':
+      parts.push('\x1b[?1000h');
+      break;
+    case 'button-event':
+      parts.push('\x1b[?1002h');
+      break;
+    case 'any-event':
+      parts.push('\x1b[?1003h');
+      break;
+    default:
+      break;
+  }
+
+  return parts.join('');
+}
+
+function restoreTerminalModesIfAvailable() {
+  if (!terminal || !pendingTerminalModes) {
+    return false;
+  }
+
+  const sequence = buildTerminalModesSequence(pendingTerminalModes);
+  pendingTerminalModes = null;
+  if (!sequence) {
+    return false;
+  }
+
+  terminal.write(sequence);
+  return true;
+}
+
 function restoreServerSnapshotIfAvailable() {
   if (!terminal || !pendingServerSnapshot) {
     return false;
@@ -288,8 +397,12 @@ function restoreServerSnapshotIfAvailable() {
     if (snapshot.cols > 0 && snapshot.rows > 0) {
       terminal.resize(snapshot.cols, snapshot.rows);
     }
+    const modeSequence = buildTerminalModesSequence(pendingTerminalModes, {
+      fallbackAltScreen: snapshot.altScreen,
+    });
+    pendingTerminalModes = null;
     terminal.write(
-      `${snapshot.altScreen ? '\x1b[?1049h' : '\x1b[?1049l'}${remapInvisibleColors(snapshot.content)}`
+      `${modeSequence}${remapInvisibleColors(snapshot.content)}`
     );
     return true;
   } catch (error) {
@@ -335,7 +448,9 @@ function restoreFrontendSnapshotIfAvailable() {
     if (snapshot.cols > 0 && snapshot.rows > 0) {
       terminal.resize(snapshot.cols, snapshot.rows);
     }
-    terminal.write(remapInvisibleColors(snapshot.content));
+    const modeSequence = buildTerminalModesSequence(pendingTerminalModes);
+    pendingTerminalModes = null;
+    terminal.write(`${modeSequence}${remapInvisibleColors(snapshot.content)}`);
     return true;
   } catch (error) {
     console.warn('[Terminal Snapshot] Failed to restore frontend snapshot', error);
@@ -568,6 +683,9 @@ function finalizeInitialViewport(reason: string) {
   }
 
   const restoredSource = restorePreferredSnapshotIfAvailable();
+  if (!restoredSource) {
+    restoreTerminalModesIfAvailable();
+  }
   initialViewportReady = true;
 
   flushPendingTerminalMessages(reason);
@@ -579,6 +697,11 @@ function finalizeInitialViewport(reason: string) {
 
 function handleMessage(payload: ServerMessage) {
   if (!terminal) {
+    return;
+  }
+
+  if (payload.type === 'modes') {
+    pendingTerminalModes = cloneTerminalModesSnapshot(payload.modes);
     return;
   }
 
@@ -1196,6 +1319,7 @@ onBeforeUnmount(() => {
   pendingTerminalMessages.length = 0;
   pendingServerSnapshot = null;
   pendingFrontendSnapshot = null;
+  pendingTerminalModes = null;
   if (typeof window !== 'undefined') {
     const debugWindow = window as TerminalDebugWindow;
     debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);

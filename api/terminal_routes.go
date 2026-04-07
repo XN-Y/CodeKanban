@@ -619,6 +619,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if modes := session.TerminalModesSnapshot(); modes != nil {
+		if err := send(wsMessage{Type: "modes", Modes: modes}); err != nil {
+			return
+		}
+	}
+
 	scrollback := session.Scrollback()
 	if snapshot := session.TerminalMirrorSnapshot(); snapshot != nil {
 		if err := sendSnapshot(snapshot, true); err != nil {
@@ -714,6 +720,12 @@ func (c *terminalController) forwardPTY(
 						if cancel != nil {
 							cancel()
 						}
+						return
+					}
+				}
+			case terminal.StreamEventModes:
+				if event.Modes != nil {
+					if writeErr := send(wsMessage{Type: "modes", Modes: event.Modes}); writeErr != nil {
 						return
 					}
 				}

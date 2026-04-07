@@ -3,6 +3,7 @@ import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal'
 export type {
   TerminalCreateOptions,
   ClientStatus,
+  TerminalModesSnapshot,
   TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
   TerminalTabState,
