@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"bytes"
 	"regexp"
 	"strings"
 )
@@ -154,4 +155,49 @@ func terminalModesPartialSuffix(data string) string {
 	}
 
 	return tail
+}
+
+func BuildTerminalModesReplayPrefix(snapshot *TerminalModesSnapshot, includeAlternateScreen bool) []byte {
+	var buffer bytes.Buffer
+
+	if includeAlternateScreen {
+		buffer.WriteString("\x1b[?1049l\x1b[?1047l\x1b[?47l")
+	}
+	buffer.WriteString("\x1b[?1006l\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1004l\x1b[?2004l")
+
+	if snapshot == nil {
+		return buffer.Bytes()
+	}
+
+	if includeAlternateScreen {
+		switch snapshot.AlternateScreen {
+		case "47":
+			buffer.WriteString("\x1b[?47h")
+		case "1047":
+			buffer.WriteString("\x1b[?1047h")
+		case "1049":
+			buffer.WriteString("\x1b[?1049h")
+		}
+	}
+
+	if snapshot.FocusReporting {
+		buffer.WriteString("\x1b[?1004h")
+	}
+	if snapshot.BracketedPaste {
+		buffer.WriteString("\x1b[?2004h")
+	}
+	if snapshot.MouseSGR {
+		buffer.WriteString("\x1b[?1006h")
+	}
+
+	switch snapshot.MouseTracking {
+	case "x10":
+		buffer.WriteString("\x1b[?1000h")
+	case "button-event":
+		buffer.WriteString("\x1b[?1002h")
+	case "any-event":
+		buffer.WriteString("\x1b[?1003h")
+	}
+
+	return buffer.Bytes()
 }

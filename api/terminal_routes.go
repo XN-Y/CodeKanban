@@ -628,12 +628,6 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	if modes := session.TerminalModesSnapshot(); modes != nil {
-		if err := send(wsMessage{Type: "modes", Modes: modes}); err != nil {
-			return
-		}
-	}
-
 	scrollback := session.Scrollback()
 	if snapshot := session.TerminalMirrorSnapshot(); snapshot != nil {
 		if err := sendSnapshot(snapshot, true); err != nil {
@@ -647,6 +641,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		}
 		encoded := base64.StdEncoding.EncodeToString(chunk)
 		if err := send(wsMessage{Type: "data", Data: encoded}); err != nil {
+			return
+		}
+	}
+	if prefix := terminal.BuildTerminalModesReplayPrefix(session.TerminalModesSnapshot(), false); len(prefix) > 0 {
+		encoded := base64.StdEncoding.EncodeToString(prefix)
+		if err := send(wsMessage{Type: "mode-prefix", Data: encoded}); err != nil {
 			return
 		}
 	}
@@ -733,10 +733,16 @@ func (c *terminalController) forwardPTY(
 					}
 				}
 			case terminal.StreamEventModes:
-				if event.Modes != nil {
-					if writeErr := send(wsMessage{Type: "modes", Modes: event.Modes}); writeErr != nil {
-						return
-					}
+				if renderState == nil || renderState.Mode() != terminalRenderModeSnapshot {
+					continue
+				}
+				prefix := terminal.BuildTerminalModesReplayPrefix(event.Modes, true)
+				if len(prefix) == 0 {
+					continue
+				}
+				encoded := base64.StdEncoding.EncodeToString(prefix)
+				if writeErr := send(wsMessage{Type: "mode-prefix", Data: encoded}); writeErr != nil {
+					return
 				}
 			default:
 				continue

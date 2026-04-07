@@ -4,7 +4,7 @@ import EventEmitter from 'eventemitter3';
 import Apis, { alovaInstance, urlBase } from '@/api';
 import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
-import type { Task, TerminalModesSnapshot, TerminalSession } from '@/types/models';
+import type { Task, TerminalSession } from '@/types/models';
 import {
   DEFAULT_TERMINAL_RENDER_MODE,
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -24,8 +24,6 @@ import { useSettingsStore } from '@/stores/settings';
 import { useTaskStore } from '@/stores/task';
 import { taskActions } from '@/composables/useTaskActions';
 
-export type { TerminalModesSnapshot } from '@/types/models';
-
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 export type TerminalConnectionRole = 'active' | 'mirror' | 'detached';
 
@@ -42,7 +40,6 @@ export type TerminalRemoteSnapshot = {
   capturedAt?: string;
   lines?: string[];
   cursor?: string;
-  terminalModes: TerminalModesSnapshot;
 };
 
 type TerminalRemoteSnapshotDelta = {
@@ -60,7 +57,6 @@ type TerminalRemoteSnapshotDelta = {
     content: string;
   }>;
   cursor: string;
-  terminalModes: TerminalModesSnapshot;
 };
 
 type TerminalRemoteSnapshotFrame = TerminalRemoteSnapshot | TerminalRemoteSnapshotDelta;
@@ -86,10 +82,10 @@ export type ServerMessage = {
   type:
     | 'ready'
     | 'data'
+    | 'mode-prefix'
     | 'exit'
     | 'error'
     | 'metadata'
-    | 'modes'
     | 'snapshot'
     | 'replay-complete'
     | 'render-mode';
@@ -101,7 +97,6 @@ export type ServerMessage = {
   snapshotCompressionEnabled?: boolean;
   snapshotIncrementalEnabled?: boolean;
   snapshot?: TerminalRemoteSnapshot;
-  modes?: TerminalModesSnapshot;
   metadata?: {
     title?: string;
     processPid?: number;
@@ -125,10 +120,7 @@ export type ServerMessage = {
 };
 
 const TERMINAL_SNAPSHOT_PREFIX = '\x1b[0m\x1b[2J\x1b[3J\x1b[H';
-const TERMINAL_SNAPSHOT_FRAME_VERSION = 7;
-const TERMINAL_SNAPSHOT_MODES_FLAG_MOUSE_SGR = 1 << 0;
-const TERMINAL_SNAPSHOT_MODES_FLAG_FOCUS_REPORTING = 1 << 1;
-const TERMINAL_SNAPSHOT_MODES_FLAG_BRACKETED_PASTE = 1 << 2;
+const TERMINAL_SNAPSHOT_FRAME_VERSION = 6;
 export type BufferedTerminalMessage = {
   payload: ServerMessage;
   receivedAt: number;
@@ -172,21 +164,6 @@ const TAB_RENDER_PREFERENCE_STORAGE_KEY = 'kanban-terminal-render-preferences';
 const storedTabOrders = loadStoredTabOrders();
 const storedActiveTabs = loadStoredActiveTabs();
 const storedRenderPreferences = loadStoredRenderPreferences();
-
-function cloneTerminalModesSnapshot(
-  modes?: TerminalModesSnapshot | null
-): TerminalModesSnapshot | undefined {
-  if (!modes) {
-    return undefined;
-  }
-  return {
-    mouseTracking: modes.mouseTracking,
-    mouseSgr: modes.mouseSgr,
-    focusReporting: modes.focusReporting,
-    bracketedPaste: modes.bracketedPaste,
-    alternateScreen: modes.alternateScreen,
-  };
-}
 
 function loadStoredTabOrders() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -492,60 +469,6 @@ function buildSnapshotContent(lines?: string[], cursor = '', fallbackContent = '
   return `${TERMINAL_SNAPSHOT_PREFIX}${lines.join('\r\n')}${cursor}`;
 }
 
-function readSnapshotTerminalModes(bytes: Uint8Array, offset: number) {
-  if (offset + 3 > bytes.byteLength) {
-    return null;
-  }
-
-  const flags = bytes[offset];
-  const mouseTracking = bytes[offset + 1];
-  const alternateScreen = bytes[offset + 2];
-  const terminalModes: TerminalModesSnapshot = {};
-
-  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_MOUSE_SGR) !== 0) {
-    terminalModes.mouseSgr = true;
-  }
-  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_FOCUS_REPORTING) !== 0) {
-    terminalModes.focusReporting = true;
-  }
-  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_BRACKETED_PASTE) !== 0) {
-    terminalModes.bracketedPaste = true;
-  }
-
-  switch (mouseTracking) {
-    case 1:
-      terminalModes.mouseTracking = 'x10';
-      break;
-    case 2:
-      terminalModes.mouseTracking = 'button-event';
-      break;
-    case 3:
-      terminalModes.mouseTracking = 'any-event';
-      break;
-    default:
-      break;
-  }
-
-  switch (alternateScreen) {
-    case 1:
-      terminalModes.alternateScreen = '47';
-      break;
-    case 2:
-      terminalModes.alternateScreen = '1047';
-      break;
-    case 3:
-      terminalModes.alternateScreen = '1049';
-      break;
-    default:
-      break;
-  }
-
-  return {
-    value: terminalModes,
-    nextOffset: offset + 3,
-  };
-}
-
 function parseSnapshotFramePayload(
   rows: number,
   cols: number,
@@ -595,12 +518,6 @@ function parseSnapshotFramePayload(
     if (!cursorValue) {
       return null;
     }
-    offset = cursorValue.nextOffset;
-    const terminalModesValue = readSnapshotTerminalModes(encodedContent, offset);
-    if (!terminalModesValue) {
-      return null;
-    }
-
     return {
       kind: 'delta',
       rows,
@@ -613,7 +530,6 @@ function parseSnapshotFramePayload(
       capturedAt,
       changedLines,
       cursor: cursorValue.value,
-      terminalModes: terminalModesValue.value,
     };
   }
 
@@ -631,12 +547,6 @@ function parseSnapshotFramePayload(
   if (!cursorValue) {
     return null;
   }
-  offset = cursorValue.nextOffset;
-  const terminalModesValue = readSnapshotTerminalModes(encodedContent, offset);
-  if (!terminalModesValue) {
-    return null;
-  }
-
   return {
     kind: 'full',
     rows,
@@ -649,7 +559,6 @@ function parseSnapshotFramePayload(
     capturedAt,
     lines,
     cursor: cursorValue.value,
-    terminalModes: terminalModesValue.value,
     content: buildSnapshotContent(lines, cursorValue.value),
   };
 }
@@ -711,7 +620,6 @@ function assembleServerSnapshotFrame(
     return {
       ...frame,
       kind: 'full',
-      terminalModes: cloneTerminalModesSnapshot(frame.terminalModes) ?? {},
       content: buildSnapshotContent(frame.lines, frame.cursor, frame.content),
     };
   }
@@ -752,7 +660,6 @@ function assembleServerSnapshotFrame(
     capturedAt: frame.capturedAt,
     lines,
     cursor,
-    terminalModes: cloneTerminalModesSnapshot(frame.terminalModes) ?? {},
     content: buildSnapshotContent(lines, cursor),
   };
 }
@@ -1629,7 +1536,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         ...session,
         projectId: immutableProjectId,
         taskId: updatedTaskId ?? undefined,
-        terminalModes: cloneTerminalModesSnapshot(session.terminalModes ?? existing.tab.terminalModes),
         connectionRole: existing.tab.connectionRole,
         renderMode: existing.tab.renderMode,
         snapshotIntervalMs: existing.tab.snapshotIntervalMs,
@@ -1665,7 +1571,6 @@ export const useTerminalStore = defineStore('terminal', () => {
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
       connectionRole: 'detached',
-      terminalModes: cloneTerminalModesSnapshot(session.terminalModes),
       renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
       snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
       useGlobalRenderMode: true,
@@ -1746,23 +1651,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
   }
 
-  function updateTabTerminalModes(sessionId: string, modes?: TerminalModesSnapshot) {
-    const record = sessionIndex.get(sessionId);
-    if (!record) return;
-
-    const bucket = tabStore.get(record.projectId);
-    if (!bucket) return;
-
-    const index = bucket.findIndex(t => t.id === sessionId);
-    if (index === -1) return;
-
-    bucket[index] = {
-      ...bucket[index],
-      terminalModes: cloneTerminalModesSnapshot(modes),
-    };
-    record.tab = bucket[index];
-  }
-
   function connect(tab: TerminalTabState) {
     if (!isProjectConnectionActive(tab.projectId)) {
       return;
@@ -1826,7 +1714,6 @@ export const useTerminalStore = defineStore('terminal', () => {
             if (!snapshot || sockets.get(tab.id) !== socket) {
               return;
             }
-            updateTabTerminalModes(tab.id, snapshot.terminalModes);
             payload = {
               type: 'snapshot',
               snapshot,
@@ -1847,8 +1734,6 @@ export const useTerminalStore = defineStore('terminal', () => {
             updateTabStatus(tab.id, 'closed');
           } else if (payload.type === 'error') {
             updateTabStatus(tab.id, 'error');
-          } else if (payload.type === 'modes') {
-            updateTabTerminalModes(tab.id, payload.modes);
           } else if (payload.type === 'metadata' && payload.metadata) {
             // Update tab metadata in realtime
             updateTabMetadata(tab.id, payload.metadata);
@@ -1877,6 +1762,7 @@ export const useTerminalStore = defineStore('terminal', () => {
             emitter.emit(tab.id, payload);
           } else if (
             payload.type === 'data' ||
+            payload.type === 'mode-prefix' ||
             payload.type === 'exit' ||
             payload.type === 'error'
           ) {

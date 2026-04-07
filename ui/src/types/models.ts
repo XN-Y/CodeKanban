@@ -57,14 +57,6 @@ export interface TaskComment {
   updatedAt: string;
 }
 
-export interface TerminalModesSnapshot {
-  mouseTracking?: 'x10' | 'button-event' | 'any-event';
-  mouseSgr?: boolean;
-  focusReporting?: boolean;
-  bracketedPaste?: boolean;
-  alternateScreen?: '47' | '1047' | '1049';
-}
-
 export interface TerminalSession {
   id: string;
   projectId: string;
@@ -118,7 +110,6 @@ export interface TerminalSession {
   taskId?: string;
   aiSessionId?: string;
   aiAssistantRecentInput?: string;
-  terminalModes?: TerminalModesSnapshot;
 }
 
 export interface AISessionMessage {

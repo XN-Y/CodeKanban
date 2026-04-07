@@ -8,7 +8,7 @@ import (
 	"code-kanban/service/terminal"
 )
 
-const terminalSnapshotFrameVersion = 7
+const terminalSnapshotFrameVersion = 6
 
 type terminalSnapshotFrameKind uint8
 
@@ -27,33 +27,12 @@ type terminalMirrorBaseline struct {
 	Cols          int
 	Lines         [][]byte
 	Cursor        []byte
-	TerminalModes *terminal.TerminalModesSnapshot
 	AltScreen     bool
 	CursorVisible bool
 	ModeFlags     uint32
 	CapturedAt    int64
 	Sequence      uint32
 }
-
-const (
-	terminalSnapshotModesFlagMouseSGR uint8 = 1 << iota
-	terminalSnapshotModesFlagFocusReporting
-	terminalSnapshotModesFlagBracketedPaste
-)
-
-const (
-	terminalSnapshotMouseTrackingNone uint8 = iota
-	terminalSnapshotMouseTrackingX10
-	terminalSnapshotMouseTrackingButtonEvent
-	terminalSnapshotMouseTrackingAnyEvent
-)
-
-const (
-	terminalSnapshotAlternateScreenNone uint8 = iota
-	terminalSnapshotAlternateScreen47
-	terminalSnapshotAlternateScreen1047
-	terminalSnapshotAlternateScreen1049
-)
 
 type terminalMirrorSenderState struct {
 	mu                 sync.Mutex
@@ -175,9 +154,6 @@ func terminalMirrorBaselineEqualsSnapshot(
 	if last.CursorVisible != snapshot.CursorVisible {
 		return false
 	}
-	if !terminalMirrorModesEqual(last.TerminalModes, snapshot.TerminalModes) {
-		return false
-	}
 	if !bytes.Equal(last.Cursor, snapshot.Cursor) {
 		return false
 	}
@@ -246,7 +222,6 @@ func cloneTerminalMirrorBaseline(
 		Cols:          snapshot.Cols,
 		Lines:         lines,
 		Cursor:        cloneSnapshotBytes(snapshot.Cursor),
-		TerminalModes: cloneTerminalModesSnapshot(snapshot.TerminalModes),
 		AltScreen:     snapshot.AltScreen,
 		CursorVisible: snapshot.CursorVisible,
 		ModeFlags:     snapshot.ModeFlags,
@@ -326,7 +301,6 @@ func encodeTerminalMirrorPayload(
 
 	_ = binary.Write(&buffer, binary.BigEndian, uint32(len(snapshot.Cursor)))
 	buffer.Write(snapshot.Cursor)
-	buffer.Write(encodeTerminalModesSnapshot(snapshot.TerminalModes))
 	return buffer.Bytes()
 }
 
@@ -337,67 +311,4 @@ func cloneSnapshotBytes(src []byte) []byte {
 	dst := make([]byte, len(src))
 	copy(dst, src)
 	return dst
-}
-
-func cloneTerminalModesSnapshot(snapshot *terminal.TerminalModesSnapshot) *terminal.TerminalModesSnapshot {
-	if snapshot == nil {
-		return nil
-	}
-	cloned := *snapshot
-	return &cloned
-}
-
-func terminalMirrorModesEqual(
-	left *terminal.TerminalModesSnapshot,
-	right *terminal.TerminalModesSnapshot,
-) bool {
-	switch {
-	case left == nil && right == nil:
-		return true
-	case left == nil || right == nil:
-		return false
-	}
-
-	return left.MouseTracking == right.MouseTracking &&
-		left.MouseSGR == right.MouseSGR &&
-		left.FocusReporting == right.FocusReporting &&
-		left.BracketedPaste == right.BracketedPaste &&
-		left.AlternateScreen == right.AlternateScreen
-}
-
-func encodeTerminalModesSnapshot(snapshot *terminal.TerminalModesSnapshot) []byte {
-	payload := []byte{0, 0, 0}
-	if snapshot == nil {
-		return payload
-	}
-
-	if snapshot.MouseSGR {
-		payload[0] |= terminalSnapshotModesFlagMouseSGR
-	}
-	if snapshot.FocusReporting {
-		payload[0] |= terminalSnapshotModesFlagFocusReporting
-	}
-	if snapshot.BracketedPaste {
-		payload[0] |= terminalSnapshotModesFlagBracketedPaste
-	}
-
-	switch snapshot.MouseTracking {
-	case "x10":
-		payload[1] = terminalSnapshotMouseTrackingX10
-	case "button-event":
-		payload[1] = terminalSnapshotMouseTrackingButtonEvent
-	case "any-event":
-		payload[1] = terminalSnapshotMouseTrackingAnyEvent
-	}
-
-	switch snapshot.AlternateScreen {
-	case "47":
-		payload[2] = terminalSnapshotAlternateScreen47
-	case "1047":
-		payload[2] = terminalSnapshotAlternateScreen1047
-	case "1049":
-		payload[2] = terminalSnapshotAlternateScreen1049
-	}
-
-	return payload
 }

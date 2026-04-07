@@ -1573,7 +1573,6 @@ function resolveDisplayTab(tab: TerminalTabState): TerminalTabState {
     snapshotIntervalMs: tab.snapshotIntervalMs,
     useGlobalRenderMode: tab.useGlobalRenderMode,
     useGlobalSnapshotInterval: tab.useGlobalSnapshotInterval,
-    terminalModes: tab.terminalModes,
   };
 }
 

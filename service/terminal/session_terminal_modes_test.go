@@ -1,6 +1,9 @@
 package terminal
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestTerminalModesSnapshotTracksAndClearsModes(t *testing.T) {
 	session := &Session{}
@@ -118,5 +121,61 @@ func TestSessionSnapshotIncludesTerminalModes(t *testing.T) {
 	}
 	if !snapshot.TerminalModes.FocusReporting {
 		t.Fatal("expected focus reporting to be enabled")
+	}
+}
+
+func TestBuildTerminalModesReplayPrefix(t *testing.T) {
+	prefix := BuildTerminalModesReplayPrefix(&TerminalModesSnapshot{
+		MouseTracking:   "button-event",
+		MouseSGR:        true,
+		FocusReporting:  true,
+		BracketedPaste:  true,
+		AlternateScreen: "1049",
+	}, true)
+
+	for _, expected := range [][]byte{
+		[]byte("\x1b[?1049h"),
+		[]byte("\x1b[?1004h"),
+		[]byte("\x1b[?2004h"),
+		[]byte("\x1b[?1006h"),
+		[]byte("\x1b[?1002h"),
+	} {
+		if !bytes.Contains(prefix, expected) {
+			t.Fatalf("expected prefix %q to contain %q", prefix, expected)
+		}
+	}
+}
+
+func TestBuildTerminalModesReplayPrefixSkipsAlternateScreenWhenDisabled(t *testing.T) {
+	prefix := BuildTerminalModesReplayPrefix(&TerminalModesSnapshot{
+		MouseTracking:   "button-event",
+		AlternateScreen: "1049",
+	}, false)
+
+	if bytes.Contains(prefix, []byte("\x1b[?1049h")) {
+		t.Fatalf("expected prefix %q to skip alternate screen", prefix)
+	}
+	if !bytes.Contains(prefix, []byte("\x1b[?1002h")) {
+		t.Fatalf("expected prefix %q to preserve mouse mode", prefix)
+	}
+}
+
+func TestBuildTerminalModesReplayPrefixResetsModesWhenSnapshotEmpty(t *testing.T) {
+	prefix := BuildTerminalModesReplayPrefix(nil, true)
+
+	for _, expected := range [][]byte{
+		[]byte("\x1b[?1049l"),
+		[]byte("\x1b[?1047l"),
+		[]byte("\x1b[?47l"),
+		[]byte("\x1b[?1006l"),
+		[]byte("\x1b[?1003l"),
+		[]byte("\x1b[?1002l"),
+		[]byte("\x1b[?1000l"),
+		[]byte("\x1b[?1004l"),
+		[]byte("\x1b[?2004l"),
+	} {
+		if !bytes.Contains(prefix, expected) {
+			t.Fatalf("expected prefix %q to contain reset %q", prefix, expected)
+		}
 	}
 }

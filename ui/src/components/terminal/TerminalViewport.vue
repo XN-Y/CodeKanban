@@ -36,7 +36,6 @@ import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type {
   ReplayBufferedMessagesResult,
-  TerminalModesSnapshot,
   TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
   TerminalTabState,
@@ -127,9 +126,6 @@ let pendingServerResizeTimer: number | null = null;
 const pendingTerminalMessages: ServerMessage[] = [];
 let pendingServerSnapshot: TerminalRemoteSnapshot | null = null;
 let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
-let pendingTerminalModes: TerminalModesSnapshot | null = cloneTerminalModesSnapshot(
-  props.tab.terminalModes
-);
 let debugRefreshHandler: (() => boolean) | null = null;
 let terminalTaskQueue: Promise<void> = Promise.resolve();
 let initialRestorePromise: Promise<void> | null = null;
@@ -230,21 +226,6 @@ function remapInvisibleColors(data: string): string {
   return data
     .replace(TRUE_COLOR_FG_BLACK_REGEX, TRUE_COLOR_FG_BLACK_REPLACEMENT)
     .replace(TRUE_COLOR_BG_BLACK_REGEX, TRUE_COLOR_BG_BLACK_REPLACEMENT);
-}
-
-function cloneTerminalModesSnapshot(
-  modes?: TerminalModesSnapshot | null
-): TerminalModesSnapshot | null {
-  if (!modes) {
-    return null;
-  }
-  return {
-    mouseTracking: modes.mouseTracking,
-    mouseSgr: modes.mouseSgr,
-    focusReporting: modes.focusReporting,
-    bracketedPaste: modes.bracketedPaste,
-    alternateScreen: modes.alternateScreen,
-  };
 }
 
 function publishRestoreDebugState() {
@@ -403,14 +384,6 @@ watch(
   { deep: true }
 );
 
-watch(
-  () => props.tab.terminalModes,
-  modes => {
-    pendingTerminalModes = cloneTerminalModesSnapshot(modes);
-  },
-  { deep: true }
-);
-
 const shouldAutoFocus = computed(() => props.shouldAutoFocus !== false);
 
 const statusOverlayMessage = computed(() => {
@@ -475,109 +448,22 @@ function showTransferOverlay(
 }
 
 function isDeferredTerminalMessage(payload: ServerMessage) {
-  return payload.type === 'data' || payload.type === 'exit' || payload.type === 'error';
+  return (
+    payload.type === 'data' ||
+    payload.type === 'mode-prefix' ||
+    payload.type === 'exit' ||
+    payload.type === 'error'
+  );
 }
 
-function buildAlternateScreenSequence(
-  modes: TerminalModesSnapshot | null,
-  fallbackAltScreen?: boolean
-) {
-  const parts: string[] = [];
-  let alternateScreen = modes?.alternateScreen;
-
-  if (!alternateScreen) {
-    if (fallbackAltScreen === true) {
-      alternateScreen = '1049';
-    } else if (fallbackAltScreen === false || modes) {
-      parts.push('\x1b[?1049l', '\x1b[?1047l', '\x1b[?47l');
-      return parts.join('');
-    } else {
-      return '';
-    }
+function buildAlternateScreenSequence(fallbackAltScreen?: boolean) {
+  if (fallbackAltScreen === true) {
+    return '\x1b[?1049h';
   }
-
-  parts.push('\x1b[?1049l', '\x1b[?1047l', '\x1b[?47l');
-  switch (alternateScreen) {
-    case '47':
-      parts.push('\x1b[?47h');
-      break;
-    case '1047':
-      parts.push('\x1b[?1047h');
-      break;
-    case '1049':
-      parts.push('\x1b[?1049h');
-      break;
-    default:
-      break;
+  if (fallbackAltScreen === false) {
+    return '\x1b[?1049l';
   }
-  return parts.join('');
-}
-
-function buildPrivateModeSequence(mode: string, enabled: boolean) {
-  return `\x1b[?${mode}${enabled ? 'h' : 'l'}`;
-}
-
-function buildMouseTrackingSequence(modes: TerminalModesSnapshot | null) {
-  const parts = ['\x1b[?1003l', '\x1b[?1002l', '\x1b[?1000l'];
-
-  switch (modes?.mouseTracking) {
-    case 'x10':
-      parts.push('\x1b[?1000h');
-      break;
-    case 'button-event':
-      parts.push('\x1b[?1002h');
-      break;
-    case 'any-event':
-      parts.push('\x1b[?1003h');
-      break;
-    default:
-      break;
-  }
-
-  return parts.join('');
-}
-
-function buildTerminalModesSequence(
-  modes: TerminalModesSnapshot | null,
-  options: { includeAlternateScreen?: boolean; fallbackAltScreen?: boolean } = {}
-) {
-  if (!modes && options.includeAlternateScreen !== false && options.fallbackAltScreen == null) {
-    return '';
-  }
-
-  const parts: string[] = [];
-  if (options.includeAlternateScreen !== false) {
-    const alternateScreen = buildAlternateScreenSequence(modes, options.fallbackAltScreen);
-    if (alternateScreen) {
-      parts.push(alternateScreen);
-    }
-  }
-
-  if (modes) {
-    parts.push(buildPrivateModeSequence('1004', modes.focusReporting === true));
-    parts.push(buildPrivateModeSequence('2004', modes.bracketedPaste === true));
-    parts.push(buildPrivateModeSequence('1006', modes.mouseSgr === true));
-    parts.push(buildMouseTrackingSequence(modes));
-  }
-
-  return parts.join('');
-}
-
-async function restoreTerminalModesIfAvailable() {
-  if (!terminal || !pendingTerminalModes) {
-    return false;
-  }
-
-  const sequence = buildTerminalModesSequence(pendingTerminalModes);
-  pendingTerminalModes = null;
-  if (!sequence) {
-    return false;
-  }
-
-  await enqueueTerminalTask('restore-terminal-modes', async () => {
-    await writeTerminalRaw(sequence);
-  });
-  return true;
+  return '';
 }
 
 function parseSnapshotCapturedAt(snapshot: TerminalRemoteSnapshot | null) {
@@ -621,13 +507,7 @@ async function restoreServerSnapshotIfAvailable() {
       if (snapshot.cols > 0 && snapshot.rows > 0) {
         terminal.resize(snapshot.cols, snapshot.rows);
       }
-      const modeSequence = buildTerminalModesSequence(
-        cloneTerminalModesSnapshot(snapshot.terminalModes) ?? pendingTerminalModes,
-        {
-          fallbackAltScreen: snapshot.altScreen,
-        }
-      );
-      pendingTerminalModes = null;
+      const modeSequence = buildAlternateScreenSequence(snapshot.altScreen);
       await writeTerminalRaw(`${modeSequence}${remapInvisibleColors(snapshot.content)}`);
     });
     return true;
@@ -655,9 +535,7 @@ async function restoreFrontendSnapshotIfAvailable() {
       if (snapshot.cols > 0 && snapshot.rows > 0) {
         terminal.resize(snapshot.cols, snapshot.rows);
       }
-      const modeSequence = buildTerminalModesSequence(pendingTerminalModes);
-      pendingTerminalModes = null;
-      await writeTerminalRaw(modeSequence + remapInvisibleColors(snapshot.content));
+      await writeTerminalRaw(remapInvisibleColors(snapshot.content));
     });
     return true;
   } catch (error) {
@@ -719,6 +597,14 @@ async function applyTerminalMessage(payload: ServerMessage, reason = 'live') {
       if (payload.data) {
         const data = payload.data;
         await enqueueTerminalTask(`${reason}:data`, async () => {
+          await writeTerminalRaw(remapInvisibleColors(decodeChunk(data)));
+        });
+      }
+      break;
+    case 'mode-prefix':
+      if (payload.data) {
+        const data = payload.data;
+        await enqueueTerminalTask(`${reason}:mode-prefix`, async () => {
           await writeTerminalRaw(remapInvisibleColors(decodeChunk(data)));
         });
       }
@@ -909,9 +795,6 @@ async function runInitialViewportRestore(reason: string) {
 
   const restoredSource = await restorePreferredSnapshotIfAvailable();
   setRestoreSource(restoredSource);
-  if (restoredSource === 'none') {
-    await restoreTerminalModesIfAvailable();
-  }
 
   while (pendingTerminalMessages.length > 0) {
     await flushPendingTerminalMessages(reason);
@@ -957,18 +840,8 @@ function handleMessage(payload: ServerMessage) {
     return;
   }
 
-  if (payload.type === 'modes') {
-    pendingTerminalModes = cloneTerminalModesSnapshot(payload.modes);
-    updateSnapshotDebugState();
-    if (initialViewportReady && props.tab.renderMode === 'snapshot') {
-      void restoreTerminalModesIfAvailable();
-    }
-    return;
-  }
-
   if (payload.type === 'snapshot' && payload.snapshot) {
     pendingServerSnapshot = payload.snapshot;
-    pendingTerminalModes = cloneTerminalModesSnapshot(payload.snapshot.terminalModes);
     updateSnapshotDebugState();
     if (initialViewportReady) {
       void restoreServerSnapshotIfAvailable().then(restored => {
@@ -1627,7 +1500,6 @@ onBeforeUnmount(() => {
   updateLiveBufferedCount();
   pendingServerSnapshot = null;
   pendingFrontendSnapshot = null;
-  pendingTerminalModes = null;
   if (typeof window !== 'undefined') {
     const debugWindow = window as TerminalDebugWindow;
     debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);

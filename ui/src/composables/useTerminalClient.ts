@@ -5,7 +5,6 @@ export type {
   ReplayBufferedMessagesResult,
   TerminalCreateOptions,
   ClientStatus,
-  TerminalModesSnapshot,
   TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
   TerminalTabState,

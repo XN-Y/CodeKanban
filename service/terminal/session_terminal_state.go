@@ -268,6 +268,7 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 	}
 
 	cursor := s.terminalState.Cursor()
+	altScreen := s.terminalState.Mode()&vt10x.ModeAltScreen != 0
 	var cursorBuffer bytes.Buffer
 	cursorBuffer.WriteString(buildTerminalSnapshotSGRFromColors(cursor.Attr.Mode, cursor.Attr.FG, cursor.Attr.BG))
 	cursorBuffer.WriteString(fmt.Sprintf(
@@ -287,7 +288,7 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 		Lines:         lines,
 		Cursor:        cursorBuffer.Bytes(),
 		TerminalModes: s.TerminalModesSnapshot(),
-		AltScreen:     s.terminalState.Mode()&vt10x.ModeAltScreen != 0,
+		AltScreen:     altScreen,
 		CursorVisible: s.terminalState.CursorVisible(),
 		ModeFlags:     uint32(s.terminalState.Mode()),
 		CapturedAt:    s.terminalStateCapturedAt,
