@@ -1311,7 +1311,21 @@ function ensureDefaultDraftSession() {
   createDraftSession();
 }
 
-function removeDraftSession(sessionId: string) {
+function activateRealSession(sessionId: string, connect = true) {
+  const targetSession = realSessions.value.find(session => session.id === sessionId);
+  if (!targetSession) {
+    return false;
+  }
+  activeDraftSessionId.value = '';
+  if (connect) {
+    void webSessionStore.ensureSessionConnected(props.projectId, targetSession.id);
+  } else {
+    webSessionStore.setActiveSession(props.projectId, targetSession.id);
+  }
+  return true;
+}
+
+function removeDraftSession(sessionId: string, options?: { nextRealSessionId?: string }) {
   const nextDrafts = draftSessions.value.filter(session => session.id !== sessionId);
   const removedActive = activeDraftSessionId.value === sessionId;
   draftSessions.value = nextDrafts;
@@ -1321,9 +1335,11 @@ function removeDraftSession(sessionId: string) {
   const nextActiveDraft = nextDrafts[nextDrafts.length - 1] ?? null;
   activeDraftSessionId.value = nextActiveDraft?.id ?? '';
   if (!nextActiveDraft) {
-    const nextReal = realSessions.value[0];
-    if (nextReal) {
-      void webSessionStore.ensureSessionConnected(props.projectId, nextReal.id);
+    if (options?.nextRealSessionId && activateRealSession(options.nextRealSessionId, false)) {
+      return;
+    }
+    const nextRealSessionId = realSessions.value[0]?.id;
+    if (nextRealSessionId && activateRealSession(nextRealSessionId)) {
       return;
     }
     ensureDefaultDraftSession();
@@ -2099,8 +2115,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
     });
     if (isDraftSession(source)) {
-      removeDraftSession(source.id);
-      activeDraftSessionId.value = '';
+      removeDraftSession(source.id, { nextRealSessionId: session.id });
     }
     draftAgent.value = session.agent;
     draftModel.value = session.model;
