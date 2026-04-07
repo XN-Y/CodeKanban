@@ -116,16 +116,6 @@ type TerminalStateSnapshot struct {
 	CapturedAt      time.Time             `json:"capturedAt,omitempty"`
 }
 
-type TerminalSerializedSnapshot struct {
-	Rows          int
-	Cols          int
-	Data          []byte
-	AltScreen     bool
-	CursorVisible bool
-	ModeFlags     uint32
-	CapturedAt    time.Time
-}
-
 type SessionStream struct {
 	id     string
 	events <-chan StreamEvent

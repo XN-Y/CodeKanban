@@ -546,32 +546,31 @@ function parseVersion6SnapshotFrame(
 async function parseBinarySnapshotFrame(
   payload: ArrayBuffer
 ): Promise<TerminalRemoteSnapshotFrame | null> {
-  if (!(payload instanceof ArrayBuffer) || payload.byteLength < 13) {
+  if (!(payload instanceof ArrayBuffer) || payload.byteLength < 27) {
     return null;
   }
 
   const view = new DataView(payload);
   const version = view.getUint8(0);
-  if (version < 1 || version > 6) {
+  if (version !== 6) {
     return null;
   }
 
   const rows = view.getUint16(1, false);
   const cols = view.getUint16(3, false);
   const capturedAtMs = Number(view.getBigUint64(5, false));
-  const headerSize =
-    version >= 6 ? 27 : version >= 5 ? 22 : version >= 3 ? 18 : version === 2 ? 14 : 13;
+  const headerSize = 27;
   if (payload.byteLength < headerSize) {
     return null;
   }
-  const flags = version >= 2 ? view.getUint8(13) : 0;
+  const flags = view.getUint8(13);
   const altScreen = (flags & (1 << 0)) !== 0;
-  const cursorVisible = version >= 3 ? (flags & (1 << 1)) !== 0 : true;
-  const modeFlags = version >= 3 ? view.getUint32(14, false) : 0;
-  const compressed = version >= 4 ? (flags & (1 << 2)) !== 0 : false;
-  const sequence = version >= 5 ? view.getUint32(18, false) : 0;
-  const baseSequence = version >= 6 ? view.getUint32(22, false) : 0;
-  const frameKind = version >= 6 ? view.getUint8(26) : 0;
+  const cursorVisible = (flags & (1 << 1)) !== 0;
+  const modeFlags = view.getUint32(14, false);
+  const compressed = (flags & (1 << 2)) !== 0;
+  const sequence = view.getUint32(18, false);
+  const baseSequence = view.getUint32(22, false);
+  const frameKind = view.getUint8(26);
   const encodedContent = new Uint8Array(payload, headerSize);
   const contentBytes = compressed ? await inflateSnapshotPayload(encodedContent) : encodedContent;
   const capturedAt =
@@ -579,36 +578,18 @@ async function parseBinarySnapshotFrame(
       ? new Date(capturedAtMs).toISOString()
       : undefined;
 
-  if (version >= 6) {
-    return parseVersion6SnapshotFrame(
-      rows,
-      cols,
-      frameKind,
-      sequence,
-      baseSequence,
-      altScreen,
-      cursorVisible,
-      modeFlags,
-      capturedAt,
-      contentBytes
-    );
-  }
-
-  const decoder = new TextDecoder('utf-8');
-  const content = decoder.decode(contentBytes);
-
-  return {
-    kind: 'full',
+  return parseVersion6SnapshotFrame(
     rows,
     cols,
+    frameKind,
     sequence,
     baseSequence,
-    content,
     altScreen,
     cursorVisible,
     modeFlags,
     capturedAt,
-  };
+    contentBytes
+  );
 }
 
 function assembleServerSnapshotFrame(

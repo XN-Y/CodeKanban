@@ -20,8 +20,6 @@ const (
 	terminalAttrWideDummy int16 = 1 << 9
 )
 
-const terminalSnapshotPrefix = "\x1b[0m\x1b[2J\x1b[3J\x1b[H"
-
 type TerminalMirrorSnapshot struct {
 	Rows          int
 	Cols          int
@@ -216,28 +214,6 @@ func (s *Session) TerminalStateSnapshot() *TerminalStateSnapshot {
 	}
 }
 
-func (s *Session) TerminalSerializedSnapshot() *TerminalSerializedSnapshot {
-	if !s.terminalStateEnabledForPlatform() {
-		return nil
-	}
-
-	s.terminalStateMu.Lock()
-	defer s.terminalStateMu.Unlock()
-
-	if s.terminalState == nil {
-		s.rebuildTerminalStateFromScrollbackLocked()
-	}
-	if s.terminalState == nil {
-		return nil
-	}
-
-	mirror := s.terminalMirrorSnapshotLocked()
-	if mirror == nil {
-		return nil
-	}
-	return mirror.Serialized()
-}
-
 func (s *Session) TerminalMirrorSnapshot() *TerminalMirrorSnapshot {
 	if !s.terminalStateEnabledForPlatform() {
 		return nil
@@ -320,32 +296,6 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 		CursorVisible: s.terminalState.CursorVisible(),
 		ModeFlags:     uint32(s.terminalState.Mode()),
 		CapturedAt:    s.terminalStateCapturedAt,
-	}
-}
-
-func (snapshot *TerminalMirrorSnapshot) Serialized() *TerminalSerializedSnapshot {
-	if snapshot == nil {
-		return nil
-	}
-
-	var buffer bytes.Buffer
-	buffer.WriteString(terminalSnapshotPrefix)
-	for row, line := range snapshot.Lines {
-		buffer.Write(line)
-		if row < len(snapshot.Lines)-1 {
-			buffer.WriteString("\r\n")
-		}
-	}
-	buffer.Write(snapshot.Cursor)
-
-	return &TerminalSerializedSnapshot{
-		Rows:          snapshot.Rows,
-		Cols:          snapshot.Cols,
-		Data:          buffer.Bytes(),
-		AltScreen:     snapshot.AltScreen,
-		CursorVisible: snapshot.CursorVisible,
-		ModeFlags:     snapshot.ModeFlags,
-		CapturedAt:    snapshot.CapturedAt,
 	}
 }
 

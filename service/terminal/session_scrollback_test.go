@@ -94,13 +94,13 @@ func TestTerminalMirrorSnapshotSplitsRowsForIncrementalEncoding(t *testing.T) {
 	if len(snapshot.Lines) != 3 {
 		t.Fatalf("expected 3 mirror rows, got %d", len(snapshot.Lines))
 	}
-	if !bytes.HasPrefix(snapshot.Serialized().Data, []byte(terminalSnapshotPrefix)) {
-		t.Fatalf("serialized snapshot missing terminal prefix: %q", snapshot.Serialized().Data)
-	}
 	if !bytes.Contains(snapshot.Lines[0], []byte("hi")) {
 		t.Fatalf("expected first mirror row to contain content, got %q", snapshot.Lines[0])
 	}
 	if !bytes.Contains(snapshot.Lines[1], []byte("there")) {
 		t.Fatalf("expected second mirror row to contain content, got %q", snapshot.Lines[1])
+	}
+	if !bytes.Contains(snapshot.Cursor, []byte("\x1b[")) {
+		t.Fatalf("expected cursor suffix to contain cursor control sequence, got %q", snapshot.Cursor)
 	}
 }
