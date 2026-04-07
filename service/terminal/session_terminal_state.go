@@ -248,17 +248,17 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 		var line bytes.Buffer
 		previousStyle := ""
 		for col := 0; col < cols; col++ {
-			cell := snapshotCellFromGlyph(s.terminalState.Cell(col, row))
-			if terminalCellModeHas(cell.Mode, terminalAttrWideDummy) {
+			glyph := s.terminalState.Cell(col, row)
+			if terminalCellModeHas(glyph.Mode, terminalAttrWideDummy) {
 				continue
 			}
-			nextStyle := buildTerminalSnapshotSGR(cell)
+			nextStyle := buildTerminalSnapshotSGRFromGlyph(glyph)
 			if nextStyle != previousStyle {
 				line.WriteString(nextStyle)
 				previousStyle = nextStyle
 			}
-			if cell.Char != "" {
-				line.WriteString(cell.Char)
+			if glyph.Char != 0 {
+				line.WriteRune(glyph.Char)
 			} else {
 				line.WriteByte(' ')
 			}
@@ -267,16 +267,8 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 	}
 
 	cursor := s.terminalState.Cursor()
-	cursorCell := TerminalStateCell{
-		Mode:      cursor.Attr.Mode,
-		FG:        snapshotColorValue(cursor.Attr.FG),
-		BG:        snapshotColorValue(cursor.Attr.BG),
-		FGDefault: cursor.Attr.FG == vt10x.DefaultFG,
-		BGDefault: cursor.Attr.BG == vt10x.DefaultBG,
-	}
-
 	var cursorBuffer bytes.Buffer
-	cursorBuffer.WriteString(buildTerminalSnapshotSGR(cursorCell))
+	cursorBuffer.WriteString(buildTerminalSnapshotSGRFromColors(cursor.Attr.Mode, cursor.Attr.FG, cursor.Attr.BG))
 	cursorBuffer.WriteString(fmt.Sprintf(
 		"\x1b[%d;%dH",
 		clampTerminalCoordinate(cursor.Y+1, 1, rows),
@@ -327,61 +319,76 @@ func terminalCellModeHas(mode, flag int16) bool {
 }
 
 func buildTerminalSnapshotSGR(cell TerminalStateCell) string {
+	return buildTerminalSnapshotSGRFromColors(cell.Mode, terminalSnapshotDefaultColor(cell.FG, cell.FGDefault), terminalSnapshotDefaultColor(cell.BG, cell.BGDefault))
+}
+
+func buildTerminalSnapshotSGRFromGlyph(cell vt10x.Glyph) string {
+	return buildTerminalSnapshotSGRFromColors(cell.Mode, cell.FG, cell.BG)
+}
+
+func buildTerminalSnapshotSGRFromColors(mode int16, fg, bg vt10x.Color) string {
 	codes := make([]any, 0, 10)
 
-	if terminalCellModeHas(cell.Mode, terminalAttrReverse) {
+	if terminalCellModeHas(mode, terminalAttrReverse) {
 		codes = append(codes, 7)
 	} else {
 		codes = append(codes, 27)
 	}
 
-	if terminalCellModeHas(cell.Mode, terminalAttrUnderline) {
+	if terminalCellModeHas(mode, terminalAttrUnderline) {
 		codes = append(codes, 4)
 	} else {
 		codes = append(codes, 24)
 	}
 
-	if terminalCellModeHas(cell.Mode, terminalAttrBold) {
+	if terminalCellModeHas(mode, terminalAttrBold) {
 		codes = append(codes, 1)
 	} else {
 		codes = append(codes, 22)
 	}
 
-	if terminalCellModeHas(cell.Mode, terminalAttrItalic) {
+	if terminalCellModeHas(mode, terminalAttrItalic) {
 		codes = append(codes, 3)
 	} else {
 		codes = append(codes, 23)
 	}
 
-	if terminalCellModeHas(cell.Mode, terminalAttrBlink) {
+	if terminalCellModeHas(mode, terminalAttrBlink) {
 		codes = append(codes, 5)
 	} else {
 		codes = append(codes, 25)
 	}
 
-	if terminalCellModeHas(cell.Mode, terminalAttrFaint) {
+	if terminalCellModeHas(mode, terminalAttrFaint) {
 		codes = append(codes, 2)
 	}
 
-	if cell.FGDefault {
+	if fg == vt10x.DefaultFG || fg == vt10x.DefaultBG || fg == vt10x.DefaultCursor {
 		codes = append(codes, 39)
 	} else {
-		r := (cell.FG >> 16) & 0xff
-		g := (cell.FG >> 8) & 0xff
-		b := cell.FG & 0xff
+		r := (fg >> 16) & 0xff
+		g := (fg >> 8) & 0xff
+		b := fg & 0xff
 		codes = append(codes, fmt.Sprintf("38;2;%d;%d;%d", r, g, b))
 	}
 
-	if cell.BGDefault {
+	if bg == vt10x.DefaultFG || bg == vt10x.DefaultBG || bg == vt10x.DefaultCursor {
 		codes = append(codes, 49)
 	} else {
-		r := (cell.BG >> 16) & 0xff
-		g := (cell.BG >> 8) & 0xff
-		b := cell.BG & 0xff
+		r := (bg >> 16) & 0xff
+		g := (bg >> 8) & 0xff
+		b := bg & 0xff
 		codes = append(codes, fmt.Sprintf("48;2;%d;%d;%d", r, g, b))
 	}
 
 	return fmt.Sprintf("\x1b[%sm", joinTerminalSGRCodes(codes))
+}
+
+func terminalSnapshotDefaultColor(value uint32, isDefault bool) vt10x.Color {
+	if !isDefault {
+		return vt10x.Color(value)
+	}
+	return vt10x.DefaultFG
 }
 
 func joinTerminalSGRCodes(codes []any) string {
