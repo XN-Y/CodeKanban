@@ -98,4 +98,4 @@ require (
 
 replace github.com/danielgtaylor/huma/v2 => github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c
 
-replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34
+replace github.com/tuzig/vt10x v0.0.0-20251129150011-c2f2317a3188 => github.com/fy0/vt10x v0.0.0-20260407161044-7144fb849786
