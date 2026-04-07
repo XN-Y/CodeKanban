@@ -360,26 +360,25 @@
                     <n-button-group class="composer-mode-switch">
                       <n-button
                         size="small"
-                        :type="selectedBaseMode === 'default' ? 'primary' : 'default'"
-                        @click="setBaseMode('default')"
+                        :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
+                        @click="setWorkflowMode('default')"
                       >
-                        Default
+                        {{ t('webSession.workflowDefault') }}
                       </n-button>
                       <n-button
                         size="small"
-                        :type="selectedBaseMode === 'plan' ? 'primary' : 'default'"
-                        @click="setBaseMode('plan')"
+                        :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
+                        @click="setWorkflowMode('plan')"
                       >
-                        Plan
+                        {{ t('webSession.workflowPlan') }}
                       </n-button>
                     </n-button-group>
-                    <n-checkbox
-                      v-model:checked="autoApproveEnabled"
-                      class="composer-auto-approve"
+                    <n-select
+                      v-model:value="selectedPermissionLevel"
+                      class="composer-select permission-select"
                       size="small"
-                    >
-                      {{ t('webSession.autoApproveLabel') }}
-                    </n-checkbox>
+                      :options="permissionLevelOptions"
+                    />
                   </div>
                   <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
                     {{ currentSession.cwd }}
@@ -632,7 +631,7 @@ import {
 import { useRouter } from 'vue-router';
 import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
-import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
+import { NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
   AddOutline,
   ChevronBackOutline,
@@ -714,7 +713,6 @@ const composerText = ref('');
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
-const lastNonYoloModeBySession = ref<Record<string, 'default' | 'plan'>>({});
 const showMobileTabSelector = ref(false);
 const contextMenuSession = ref<WebSessionSummary | null>(null);
 const contextMenuX = ref(0);
@@ -751,8 +749,8 @@ const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 const draftAgent = ref<'claude' | 'codex'>('codex');
 const draftModel = ref('gpt-5.4');
 const draftReasoningEffort = ref<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>('xhigh');
-const draftBaseMode = ref<'default' | 'plan'>('default');
-const draftYoloEnabled = ref(true);
+const draftWorkflowMode = ref<'default' | 'plan'>('default');
+const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
 
 const sessions = computed(() => webSessionStore.getSessions(props.projectId));
 const currentSession = computed(() => webSessionStore.getActiveSession(props.projectId));
@@ -1241,51 +1239,35 @@ const selectedReasoningEffort = computed<'default' | 'none' | 'low' | 'medium' |
   },
 });
 
-const selectedBaseMode = computed<'default' | 'plan'>(() => {
-  const session = currentSession.value;
-  if (!session) {
-    return draftBaseMode.value;
-  }
-  if (session.permissionMode === 'plan') {
-    return 'plan';
-  }
-  if (session.permissionMode === 'default') {
-    return 'default';
-  }
-  return lastNonYoloModeBySession.value[session.id] ?? 'default';
-});
+const permissionLevelOptions = computed(() => [
+  { label: t('webSession.permissionDefault'), value: 'default' },
+  { label: t('webSession.permissionElevated'), value: 'elevated' },
+  { label: t('webSession.permissionYolo'), value: 'yolo' },
+]);
 
-const isYoloMode = computed(() => {
-  const session = currentSession.value;
-  if (!session) {
-    return draftYoloEnabled.value;
-  }
-  return session.permissionMode === 'yolo';
-});
-
-const autoApproveEnabled = computed({
-  get: () => isYoloMode.value,
+const selectedWorkflowMode = computed<'default' | 'plan'>({
+  get: () => currentSession.value?.workflowMode ?? draftWorkflowMode.value,
   set: value => {
-    const next = Boolean(value);
-    const session = currentSession.value;
-    if (!session) {
-      draftYoloEnabled.value = next;
-      return;
-    }
-    if (next) {
-      lastNonYoloModeBySession.value = {
-        ...lastNonYoloModeBySession.value,
-        [session.id]: selectedBaseMode.value,
-      };
-      void webSessionStore.updateMode(session.id, 'yolo').catch(error => {
+    const next = value as 'default' | 'plan';
+    draftWorkflowMode.value = next;
+    if (currentSession.value) {
+      void webSessionStore.updateWorkflowMode(currentSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
-      return;
     }
-    const fallbackMode = lastNonYoloModeBySession.value[session.id] ?? selectedBaseMode.value;
-    void webSessionStore.updateMode(session.id, fallbackMode).catch(error => {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    });
+  },
+});
+
+const selectedPermissionLevel = computed<'default' | 'elevated' | 'yolo'>({
+  get: () => currentSession.value?.permissionLevel ?? draftPermissionLevel.value,
+  set: value => {
+    const next = value as 'default' | 'elevated' | 'yolo';
+    draftPermissionLevel.value = next;
+    if (currentSession.value) {
+      void webSessionStore.updatePermissionLevel(currentSession.value.id, next).catch(error => {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      });
+    }
   },
 });
 
@@ -1297,20 +1279,13 @@ const refreshTabSortable = useDebounceFn(() => {
 
 let tabScrollContainer: HTMLElement | null = null;
 
-function setBaseMode(mode: 'default' | 'plan') {
-  draftBaseMode.value = mode;
+function setWorkflowMode(mode: 'default' | 'plan') {
+  draftWorkflowMode.value = mode;
   const session = currentSession.value;
   if (!session) {
     return;
   }
-  lastNonYoloModeBySession.value = {
-    ...lastNonYoloModeBySession.value,
-    [session.id]: mode,
-  };
-  if (session.permissionMode === 'yolo') {
-    return;
-  }
-  void webSessionStore.updateMode(session.id, mode).catch(error => {
+  void webSessionStore.updateWorkflowMode(session.id, mode).catch(error => {
     message.error(error instanceof Error ? error.message : t('common.error'));
   });
 }
@@ -1573,16 +1548,15 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       model: draftModel.value || defaultModelForAgent(agent),
       reasoningEffort:
         agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent),
-      permissionMode: draftYoloEnabled.value ? 'yolo' : selectedBaseMode.value,
+      workflowMode: draftWorkflowMode.value,
+      permissionLevel: draftPermissionLevel.value,
     });
     draftAgent.value = session.agent;
     draftModel.value = session.model;
     draftReasoningEffort.value =
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
-    if (session.permissionMode !== 'yolo') {
-      draftBaseMode.value = session.permissionMode;
-    }
-    draftYoloEnabled.value = session.permissionMode === 'yolo';
+    draftWorkflowMode.value = session.workflowMode;
+    draftPermissionLevel.value = session.permissionLevel;
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -2398,14 +2372,8 @@ watch(
     draftModel.value = session.model || defaultModelForAgent(session.agent);
     draftReasoningEffort.value =
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
-    if (session.permissionMode !== 'yolo') {
-      draftBaseMode.value = session.permissionMode;
-      lastNonYoloModeBySession.value = {
-        ...lastNonYoloModeBySession.value,
-        [session.id]: session.permissionMode,
-      };
-    }
-    draftYoloEnabled.value = session.permissionMode === 'yolo';
+    draftWorkflowMode.value = session.workflowMode;
+    draftPermissionLevel.value = session.permissionLevel;
     expandedTools.value = {};
     autoFollowBottom.value = true;
     scrollToBottom(true);
@@ -3952,22 +3920,13 @@ onBeforeUnmount(() => {
   min-width: 54px;
 }
 
-.composer-yolo-btn {
-  width: 64px;
+.permission-select {
+  width: 144px;
   flex-shrink: 0;
 }
 
-.composer-auto-approve {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.composer-auto-approve :deep(.n-checkbox__label) {
+.permission-select :deep(.n-base-selection-label) {
   font-size: 12px;
-  padding-left: 4px;
 }
 
 .composer-path {
@@ -4220,8 +4179,8 @@ onBeforeUnmount(() => {
     flex: 1;
   }
 
-  .composer-yolo-btn {
-    width: 64px;
+  .permission-select {
+    width: 148px;
   }
 
   .composer-mode-row {

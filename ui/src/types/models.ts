@@ -249,7 +249,8 @@ export interface WebSessionSummary {
   title: string;
   model: string;
   reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
-  permissionMode: 'default' | 'plan' | 'yolo';
+  workflowMode: 'default' | 'plan';
+  permissionLevel: 'default' | 'elevated' | 'yolo';
   cwd: string;
   nativeSessionId?: string | null;
   status: 'idle' | 'running' | 'done' | 'err' | 'aborting';

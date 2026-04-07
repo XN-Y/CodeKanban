@@ -9,12 +9,19 @@ const (
 	AgentCodex  Agent = "codex"
 )
 
-type PermissionMode string
+type WorkflowMode string
 
 const (
-	PermissionModeDefault PermissionMode = "default"
-	PermissionModePlan    PermissionMode = "plan"
-	PermissionModeYolo    PermissionMode = "yolo"
+	WorkflowModeDefault WorkflowMode = "default"
+	WorkflowModePlan    WorkflowMode = "plan"
+)
+
+type PermissionLevel string
+
+const (
+	PermissionLevelDefault  PermissionLevel = "default"
+	PermissionLevelElevated PermissionLevel = "elevated"
+	PermissionLevelYolo     PermissionLevel = "yolo"
 )
 
 type Status string
@@ -54,7 +61,8 @@ type SessionSummary struct {
 	Title           string          `json:"title"`
 	Model           string          `json:"model"`
 	ReasoningEffort ReasoningEffort `json:"reasoningEffort"`
-	PermissionMode  PermissionMode  `json:"permissionMode"`
+	WorkflowMode    WorkflowMode    `json:"workflowMode"`
+	PermissionLevel PermissionLevel `json:"permissionLevel"`
 	Cwd             string          `json:"cwd"`
 	NativeSessionID *string         `json:"nativeSessionId,omitempty"`
 	Status          Status          `json:"status"`
@@ -102,6 +110,7 @@ type CreateParams struct {
 	Agent           Agent
 	Model           string
 	ReasoningEffort ReasoningEffort
-	PermissionMode  PermissionMode
+	WorkflowMode    WorkflowMode
+	PermissionLevel PermissionLevel
 	Title           string
 }

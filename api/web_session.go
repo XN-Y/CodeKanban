@@ -82,18 +82,48 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				Agent           string `json:"agent"`
 				Model           string `json:"model"`
 				ReasoningEffort string `json:"reasoningEffort"`
+				WorkflowMode    string `json:"workflowMode"`
+				PermissionLevel string `json:"permissionLevel"`
 				PermissionMode  string `json:"permissionMode"`
 				Title           string `json:"title"`
 			}
 		},
 	) (*h.ItemResponse[websession.SessionSummary], error) {
+		workflowMode := websession.WorkflowMode(input.Body.WorkflowMode)
+		permissionLevel := websession.PermissionLevel(input.Body.PermissionLevel)
+		if strings.TrimSpace(input.Body.PermissionMode) != "" {
+			switch strings.ToLower(strings.TrimSpace(input.Body.PermissionMode)) {
+			case "plan":
+				if strings.TrimSpace(input.Body.WorkflowMode) == "" {
+					workflowMode = websession.WorkflowModePlan
+				}
+				if strings.TrimSpace(input.Body.PermissionLevel) == "" {
+					permissionLevel = websession.PermissionLevelElevated
+				}
+			case "yolo":
+				if strings.TrimSpace(input.Body.WorkflowMode) == "" {
+					workflowMode = websession.WorkflowModeDefault
+				}
+				if strings.TrimSpace(input.Body.PermissionLevel) == "" {
+					permissionLevel = websession.PermissionLevelYolo
+				}
+			default:
+				if strings.TrimSpace(input.Body.WorkflowMode) == "" {
+					workflowMode = websession.WorkflowModeDefault
+				}
+				if strings.TrimSpace(input.Body.PermissionLevel) == "" {
+					permissionLevel = websession.PermissionLevelElevated
+				}
+			}
+		}
 		item, err := c.manager.CreateSession(ctx, websession.CreateParams{
 			ProjectID:       input.ProjectID,
 			WorktreeID:      input.Body.WorktreeID,
 			Agent:           websession.Agent(input.Body.Agent),
 			Model:           input.Body.Model,
 			ReasoningEffort: websession.ReasoningEffort(input.Body.ReasoningEffort),
-			PermissionMode:  websession.PermissionMode(input.Body.PermissionMode),
+			WorkflowMode:    workflowMode,
+			PermissionLevel: permissionLevel,
 			Title:           input.Body.Title,
 		})
 		if err != nil {

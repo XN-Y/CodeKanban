@@ -16,7 +16,8 @@ type WireSession = {
   ag: 'claude' | 'codex';
   md: string;
   re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
-  pm: 'default' | 'plan' | 'yolo';
+  wm: 'default' | 'plan';
+  pl: 'default' | 'elevated' | 'yolo';
   ttl: string;
   cwd: string;
   nsid?: string | null;
@@ -301,7 +302,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       title: session.ttl,
       model: session.md,
       reasoningEffort: session.re ?? 'default',
-      permissionMode: session.pm,
+      workflowMode: session.wm ?? 'default',
+      permissionLevel: session.pl ?? 'elevated',
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       status: session.st,
@@ -860,8 +862,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_re', sessionId, { re: reasoningEffort });
   }
 
-  async function updateMode(sessionId: string, permissionMode: 'default' | 'plan' | 'yolo') {
-    await sendCommand('set_pm', sessionId, { pm: permissionMode });
+  async function updateWorkflowMode(sessionId: string, workflowMode: 'default' | 'plan') {
+    await sendCommand('set_wm', sessionId, { wm: workflowMode });
+  }
+
+  async function updatePermissionLevel(
+    sessionId: string,
+    permissionLevel: 'default' | 'elevated' | 'yolo'
+  ) {
+    await sendCommand('set_pl', sessionId, { pl: permissionLevel });
   }
 
   async function updateAgent(sessionId: string, agent: 'claude' | 'codex') {
@@ -1285,7 +1294,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       agent: 'claude' | 'codex';
       model?: string;
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
-      permissionMode?: 'default' | 'plan' | 'yolo';
+      workflowMode?: 'default' | 'plan';
+      permissionLevel?: 'default' | 'elevated' | 'yolo';
       title?: string;
     }
   ) {
@@ -1327,7 +1337,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     loadMoreHistory,
     updateModel,
     updateReasoningEffort,
-    updateMode,
+    updateWorkflowMode,
+    updatePermissionLevel,
     updateAgent,
     moveSession,
     getPendingApproval,

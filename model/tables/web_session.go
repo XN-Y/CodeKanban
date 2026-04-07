@@ -15,13 +15,15 @@ type WebSessionTable struct {
 	WorktreeID *string `gorm:"type:text;index" json:"worktreeId"`
 	OrderIndex float64 `gorm:"type:real;not null;default:0;index" json:"orderIndex"`
 
-	Agent           string `gorm:"type:text;not null;index" json:"agent"`
-	Title           string `gorm:"type:text;not null" json:"title"`
-	TitleAuto       bool   `gorm:"type:boolean;not null;default:false" json:"-"`
-	Model           string `gorm:"type:text" json:"model"`
-	ReasoningEffort string `gorm:"type:text" json:"reasoningEffort"`
-	PermissionMode  string `gorm:"type:text;not null" json:"permissionMode"`
-	Cwd             string `gorm:"type:text;not null" json:"cwd"`
+	Agent                string `gorm:"type:text;not null;index" json:"agent"`
+	Title                string `gorm:"type:text;not null" json:"title"`
+	TitleAuto            bool   `gorm:"type:boolean;not null;default:false" json:"-"`
+	Model                string `gorm:"type:text" json:"model"`
+	ReasoningEffort      string `gorm:"type:text" json:"reasoningEffort"`
+	WorkflowMode         string `gorm:"type:text;not null;default:default" json:"workflowMode"`
+	PermissionLevel      string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
+	LegacyPermissionMode string `gorm:"column:permission_mode;type:text" json:"-"`
+	Cwd                  string `gorm:"type:text;not null" json:"cwd"`
 
 	NativeSessionID *string `gorm:"type:text" json:"nativeSessionId"`
 	Status          string  `gorm:"type:text;not null;index" json:"status"`

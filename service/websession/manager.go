@@ -31,6 +31,7 @@ const (
 	DefaultHistoryWindow = 80
 	MaxHistoryWindow     = 120
 	sessionOrderStep     = 1000.0
+	planPromptPreamble   = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
 )
 
 type Config struct {
@@ -111,7 +112,7 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		return nil, err
 	}
 
-	return &Manager{
+	manager := &Manager{
 		cfg:         cfg,
 		logger:      logger.Named("web-session-manager"),
 		store:       eventStore,
@@ -119,7 +120,11 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		worktreeSvc: service.NewWorktreeService(),
 		runs:        make(map[string]*activeRun),
 		clients:     make(map[*client]struct{}),
-	}, nil
+	}
+	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
+		return nil, err
+	}
+	return manager, nil
 }
 
 func (m *Manager) RegisterClient(conn wsConn) *client {
@@ -185,7 +190,8 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		TitleAuto:              strings.TrimSpace(params.Title) == "",
 		Model:                  defaultModel(normalizeAgent(params.Agent), params.Model),
 		ReasoningEffort:        string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
-		PermissionMode:         string(normalizePermissionMode(params.PermissionMode)),
+		WorkflowMode:           string(normalizeWorkflowMode(params.WorkflowMode)),
+		PermissionLevel:        string(normalizePermissionLevel(params.PermissionLevel)),
 		Cwd:                    cwd,
 		Status:                 string(StatusIdle),
 		HasUnread:              false,
@@ -305,10 +311,25 @@ func (m *Manager) UpdateReasoningEffort(
 	})
 }
 
-func (m *Manager) UpdateMode(ctx context.Context, sessionID string, mode PermissionMode) (SessionSummary, error) {
+func (m *Manager) UpdateWorkflowMode(
+	ctx context.Context,
+	sessionID string,
+	mode WorkflowMode,
+) (SessionSummary, error) {
 	return m.updateFields(ctx, sessionID, map[string]any{
-		"permission_mode": string(normalizePermissionMode(mode)),
-		"updated_at":      time.Now(),
+		"workflow_mode": string(normalizeWorkflowMode(mode)),
+		"updated_at":    time.Now(),
+	})
+}
+
+func (m *Manager) UpdatePermissionLevel(
+	ctx context.Context,
+	sessionID string,
+	level PermissionLevel,
+) (SessionSummary, error) {
+	return m.updateFields(ctx, sessionID, map[string]any{
+		"permission_level": string(normalizePermissionLevel(level)),
+		"updated_at":       time.Now(),
 	})
 }
 
@@ -435,8 +456,12 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetModelCommand(ctx, client, frame)
 	case "set_re":
 		return m.handleSetReasoningEffortCommand(ctx, client, frame)
+	case "set_wm":
+		return m.handleSetWorkflowModeCommand(ctx, client, frame)
+	case "set_pl":
+		return m.handleSetPermissionLevelCommand(ctx, client, frame)
 	case "set_pm":
-		return m.handleSetModeCommand(ctx, client, frame)
+		return m.handleLegacySetModeCommand(ctx, client, frame)
 	case "set_ag":
 		return m.handleSetAgentCommand(ctx, client, frame)
 	case "move":
@@ -545,11 +570,25 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		Agent           string `json:"ag"`
 		Model           string `json:"md"`
 		ReasoningEffort string `json:"re"`
+		WorkflowMode    string `json:"wm"`
+		PermissionLevel string `json:"pl"`
 		PermissionMode  string `json:"pm"`
 		Title           string `json:"ttl"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", "invalid create payload", false))
+	}
+
+	workflowMode := WorkflowMode(payload.WorkflowMode)
+	permissionLevel := PermissionLevel(payload.PermissionLevel)
+	if strings.TrimSpace(payload.PermissionMode) != "" {
+		legacyWorkflowMode, legacyPermissionLevel := sessionModesFromLegacy(payload.PermissionMode)
+		if strings.TrimSpace(payload.WorkflowMode) == "" {
+			workflowMode = legacyWorkflowMode
+		}
+		if strings.TrimSpace(payload.PermissionLevel) == "" {
+			permissionLevel = legacyPermissionLevel
+		}
 	}
 
 	summary, err := m.CreateSession(ctx, CreateParams{
@@ -558,7 +597,8 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		Agent:           Agent(payload.Agent),
 		Model:           payload.Model,
 		ReasoningEffort: ReasoningEffort(payload.ReasoningEffort),
-		PermissionMode:  PermissionMode(payload.PermissionMode),
+		WorkflowMode:    workflowMode,
+		PermissionLevel: permissionLevel,
 		Title:           payload.Title,
 	})
 	if err != nil {
@@ -687,14 +727,50 @@ func (m *Manager) handleSetReasoningEffortCommand(
 	return m.broadcastSnapshot(ctx, frame.SessionID)
 }
 
-func (m *Manager) handleSetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		WorkflowMode string `json:"wm"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid workflow payload", false))
+	}
+	if _, err := m.UpdateWorkflowMode(ctx, frame.SessionID, WorkflowMode(payload.WorkflowMode)); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	return m.broadcastSnapshot(ctx, frame.SessionID)
+}
+
+func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		PermissionLevel string `json:"pl"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid permission payload", false))
+	}
+	if _, err := m.UpdatePermissionLevel(ctx, frame.SessionID, PermissionLevel(payload.PermissionLevel)); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	return m.broadcastSnapshot(ctx, frame.SessionID)
+}
+
+func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		PermissionMode string `json:"pm"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
-		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid mode payload", false))
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid legacy mode payload", false))
 	}
-	if _, err := m.UpdateMode(ctx, frame.SessionID, PermissionMode(payload.PermissionMode)); err != nil {
+	workflowMode, permissionLevel := sessionModesFromLegacy(payload.PermissionMode)
+	if _, err := m.UpdateWorkflowMode(ctx, frame.SessionID, workflowMode); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if _, err := m.UpdatePermissionLevel(ctx, frame.SessionID, permissionLevel); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
@@ -836,7 +912,8 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 			"ag": string(normalizeAgent(Agent(record.Agent))),
 			"md": record.Model,
 			"re": record.ReasoningEffort,
-			"pm": record.PermissionMode,
+			"wm": effectiveWorkflowMode(record),
+			"pl": effectivePermissionLevel(record),
 		},
 	}); err != nil {
 		return err
@@ -1530,17 +1607,21 @@ func (m *Manager) resolveContext(ctx context.Context, projectID, worktreeID stri
 }
 
 func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessionTable, text string, attachments []Attachment) (*exec.Cmd, []byte, bool, error) {
+	workflowMode := effectiveWorkflowMode(session)
+	permissionLevel := effectivePermissionLevel(session)
+	preparedText := preparePromptText(text, workflowMode)
+
 	switch normalizeAgent(Agent(session.Agent)) {
 	case AgentClaude:
 		args := []string{"-p", "--output-format", "stream-json", "--verbose"}
 		if len(attachments) > 0 {
 			args = append(args, "--input-format", "stream-json")
 		}
-		switch normalizePermissionMode(PermissionMode(session.PermissionMode)) {
-		case PermissionModeYolo:
+		switch permissionLevel {
+		case PermissionLevelYolo:
 			args = append(args, "--dangerously-skip-permissions")
-		case PermissionModePlan:
-			args = append(args, "--permission-mode", "plan")
+		case PermissionLevelElevated:
+			args = append(args, "--permission-mode", "acceptEdits")
 		default:
 			args = append(args, "--permission-mode", "default")
 		}
@@ -1554,10 +1635,10 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		var stdin []byte
 		if len(attachments) > 0 {
 			content := make([]map[string]any, 0, len(attachments)+1)
-			if strings.TrimSpace(text) != "" {
+			if strings.TrimSpace(preparedText) != "" {
 				content = append(content, map[string]any{
 					"type": "text",
-					"text": text,
+					"text": preparedText,
 				})
 			}
 			for _, attachment := range attachments {
@@ -1583,7 +1664,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 			})
 			stdin = append(stdin, '\n')
 		} else {
-			trimmedText := strings.TrimSpace(text)
+			trimmedText := strings.TrimSpace(preparedText)
 			if trimmedText != "" {
 				args = append(args, trimmedText)
 			}
@@ -1594,24 +1675,15 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		return cmd, stdin, len(attachments) > 0, nil
 	case AgentCodex:
 		args := []string{"exec", "--json", "--skip-git-repo-check"}
-		mode := normalizePermissionMode(PermissionMode(session.PermissionMode))
-		trimmedText := strings.TrimSpace(text)
+		trimmedText := strings.TrimSpace(preparedText)
 		useStdinPrompt := trimmedText == ""
-		if session.NativeSessionID != nil && strings.TrimSpace(*session.NativeSessionID) != "" && mode == PermissionModePlan {
-			args = append(args, "-s", "read-only")
-		}
-		if session.NativeSessionID != nil && strings.TrimSpace(*session.NativeSessionID) != "" {
-			args = append(args, "resume")
-		}
-		switch mode {
-		case PermissionModeYolo:
+		switch permissionLevel {
+		case PermissionLevelYolo:
 			args = append(args, "--dangerously-bypass-approvals-and-sandbox")
-		case PermissionModePlan:
-			if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
-				args = append(args, "-s", "read-only")
-			}
+		case PermissionLevelElevated:
+			args = append(args, "-s", "danger-full-access", "-c", `approval_policy="on-request"`)
 		default:
-			args = append(args, "--full-auto")
+			args = append(args, "-s", "workspace-write", "-c", `approval_policy="on-request"`)
 		}
 		if strings.TrimSpace(session.Model) != "" {
 			args = append(args, "--model", strings.TrimSpace(session.Model))
@@ -1623,6 +1695,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 			args = append(args, "--image", attachment.Path)
 		}
 		if session.NativeSessionID != nil && strings.TrimSpace(*session.NativeSessionID) != "" {
+			args = append(args, "resume")
 			args = append(args, strings.TrimSpace(*session.NativeSessionID))
 			if useStdinPrompt {
 				args = append(args, "-")
@@ -1643,7 +1716,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		cmd.Dir = session.Cwd
 		cmd.Env = os.Environ()
 		if useStdinPrompt {
-			return cmd, []byte(text), true, nil
+			return cmd, []byte(preparedText), true, nil
 		}
 		// Codex appends any piped stdin as an extra <stdin> block even when a prompt
 		// argument is provided, so we must close stdin immediately for normal prompt runs.
@@ -1734,7 +1807,8 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		Title:           record.Title,
 		Model:           record.Model,
 		ReasoningEffort: ReasoningEffort(record.ReasoningEffort),
-		PermissionMode:  PermissionMode(record.PermissionMode),
+		WorkflowMode:    effectiveWorkflowMode(record),
+		PermissionLevel: effectivePermissionLevel(record),
 		Cwd:             record.Cwd,
 		NativeSessionID: record.NativeSessionID,
 		Status:          Status(record.Status),
@@ -1823,15 +1897,106 @@ func normalizeReasoningEffort(effort ReasoningEffort) ReasoningEffort {
 	}
 }
 
-func normalizePermissionMode(mode PermissionMode) PermissionMode {
-	switch mode {
-	case PermissionModePlan:
-		return PermissionModePlan
-	case PermissionModeYolo:
-		return PermissionModeYolo
+func normalizeWorkflowMode(mode WorkflowMode) WorkflowMode {
+	switch strings.ToLower(strings.TrimSpace(string(mode))) {
+	case string(WorkflowModePlan):
+		return WorkflowModePlan
 	default:
-		return PermissionModeDefault
+		return WorkflowModeDefault
 	}
+}
+
+func normalizePermissionLevel(level PermissionLevel) PermissionLevel {
+	switch strings.ToLower(strings.TrimSpace(string(level))) {
+	case string(PermissionLevelDefault):
+		return PermissionLevelDefault
+	case string(PermissionLevelYolo):
+		return PermissionLevelYolo
+	default:
+		return PermissionLevelElevated
+	}
+}
+
+func sessionModesFromLegacy(legacy string) (WorkflowMode, PermissionLevel) {
+	switch strings.ToLower(strings.TrimSpace(legacy)) {
+	case "plan":
+		return WorkflowModePlan, PermissionLevelElevated
+	case "yolo":
+		return WorkflowModeDefault, PermissionLevelYolo
+	default:
+		return WorkflowModeDefault, PermissionLevelElevated
+	}
+}
+
+func effectiveWorkflowMode(record tables.WebSessionTable) WorkflowMode {
+	if normalized := normalizeWorkflowMode(WorkflowMode(record.WorkflowMode)); normalized != WorkflowModeDefault ||
+		strings.EqualFold(strings.TrimSpace(record.WorkflowMode), string(WorkflowModeDefault)) {
+		return normalized
+	}
+	workflowMode, _ := sessionModesFromLegacy(record.LegacyPermissionMode)
+	return workflowMode
+}
+
+func effectivePermissionLevel(record tables.WebSessionTable) PermissionLevel {
+	if normalized := normalizePermissionLevel(PermissionLevel(record.PermissionLevel)); normalized != PermissionLevelElevated ||
+		strings.EqualFold(strings.TrimSpace(record.PermissionLevel), string(PermissionLevelElevated)) ||
+		strings.EqualFold(strings.TrimSpace(record.PermissionLevel), string(PermissionLevelDefault)) ||
+		strings.EqualFold(strings.TrimSpace(record.PermissionLevel), string(PermissionLevelYolo)) {
+		return normalized
+	}
+	_, permissionLevel := sessionModesFromLegacy(record.LegacyPermissionMode)
+	return permissionLevel
+}
+
+func preparePromptText(text string, workflowMode WorkflowMode) string {
+	trimmedText := strings.TrimSpace(text)
+	if normalizeWorkflowMode(workflowMode) != WorkflowModePlan {
+		return trimmedText
+	}
+	if trimmedText == "" {
+		return planPromptPreamble
+	}
+	return fmt.Sprintf("%s\n\nUser request:\n%s", planPromptPreamble, trimmedText)
+}
+
+func (m *Manager) migrateLegacySessionModes(ctx context.Context) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Select("id", "workflow_mode", "permission_level", "permission_mode").
+		Find(&records).Error; err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		updates := map[string]any{}
+		legacyMode := strings.ToLower(strings.TrimSpace(record.LegacyPermissionMode))
+		workflowMode, permissionLevel := sessionModesFromLegacy(record.LegacyPermissionMode)
+		hasBootstrapDefaults := normalizeWorkflowMode(WorkflowMode(record.WorkflowMode)) == WorkflowModeDefault &&
+			normalizePermissionLevel(PermissionLevel(record.PermissionLevel)) == PermissionLevelElevated
+
+		if strings.TrimSpace(record.WorkflowMode) == "" || (hasBootstrapDefaults && legacyMode == "plan") {
+			updates["workflow_mode"] = string(workflowMode)
+		}
+		if strings.TrimSpace(record.PermissionLevel) == "" || (hasBootstrapDefaults && legacyMode == "yolo") {
+			updates["permission_level"] = string(permissionLevel)
+		}
+		if len(updates) == 0 {
+			continue
+		}
+		updates["updated_at"] = time.Now()
+		if err := db.WithContext(ctx).
+			Model(&tables.WebSessionTable{}).
+			Where("id = ?", record.ID).
+			Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func nilIfEmpty(value string) *string {

@@ -38,6 +38,12 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	if created.OrderIndex != 3000 {
 		t.Fatalf("expected orderIndex 3000, got %.2f", created.OrderIndex)
 	}
+	if created.WorkflowMode != WorkflowModeDefault {
+		t.Fatalf("expected default workflow mode, got %q", created.WorkflowMode)
+	}
+	if created.PermissionLevel != PermissionLevelElevated {
+		t.Fatalf("expected elevated permission level, got %q", created.PermissionLevel)
+	}
 }
 
 func TestManagerMoveSessionRenormalizesProjectOrder(t *testing.T) {
@@ -114,10 +120,11 @@ func TestDetectApprovalPrompt(t *testing.T) {
 func TestBuildExecCommandCodexClosesStdinWhenPromptArgProvided(t *testing.T) {
 	manager := &Manager{cfg: Config{CodexPath: "codex"}}
 	session := tables.WebSessionTable{
-		Agent:          string(AgentCodex),
-		Model:          "gpt-5.4",
-		PermissionMode: string(PermissionModeDefault),
-		Cwd:            "/tmp/project",
+		Agent:           string(AgentCodex),
+		Model:           "gpt-5.4",
+		WorkflowMode:    string(WorkflowModeDefault),
+		PermissionLevel: string(PermissionLevelDefault),
+		Cwd:             "/tmp/project",
 	}
 
 	cmd, stdinBytes, closeStdinAfterWrite, err := manager.buildExecCommand(
@@ -141,6 +148,82 @@ func TestBuildExecCommandCodexClosesStdinWhenPromptArgProvided(t *testing.T) {
 	}
 	if !strings.Contains(joinedArgs, "say hi briefly") {
 		t.Fatalf("expected prompt to be passed as an argument, got args %v", cmd.Args)
+	}
+	if !strings.Contains(joinedArgs, "-s workspace-write") {
+		t.Fatalf("expected default codex permissions to use workspace-write sandbox, got args %v", cmd.Args)
+	}
+}
+
+func TestBuildExecCommandCodexElevatedPlanAddsPreambleAndFullAccess(t *testing.T) {
+	manager := &Manager{cfg: Config{CodexPath: "codex"}}
+	session := tables.WebSessionTable{
+		Agent:           string(AgentCodex),
+		Model:           "gpt-5.4",
+		WorkflowMode:    string(WorkflowModePlan),
+		PermissionLevel: string(PermissionLevelElevated),
+		Cwd:             "/tmp/project",
+	}
+
+	cmd, stdinBytes, closeStdinAfterWrite, err := manager.buildExecCommand(
+		context.Background(),
+		session,
+		"inspect this repo",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("buildExecCommand returned error: %v", err)
+	}
+	if closeStdinAfterWrite != true {
+		t.Fatalf("expected stdin to be closed after launch when prompt arg is provided")
+	}
+	if len(stdinBytes) != 0 {
+		t.Fatalf("expected no stdin bytes for prompt argument mode, got %q", string(stdinBytes))
+	}
+	joinedArgs := strings.Join(cmd.Args, " ")
+	if !strings.Contains(joinedArgs, "-s danger-full-access") {
+		t.Fatalf("expected elevated codex permissions to use danger-full-access, got args %v", cmd.Args)
+	}
+	if !strings.Contains(joinedArgs, "You are operating in planning mode.") {
+		t.Fatalf("expected plan preamble to be injected, got args %v", cmd.Args)
+	}
+}
+
+func TestNewManagerMigratesLegacyPermissionMode(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	legacySession := &tables.WebSessionTable{
+		ProjectID:            project.ID,
+		OrderIndex:           1000,
+		Agent:                string(AgentCodex),
+		Title:                "Legacy",
+		Model:                "gpt-5.4",
+		WorkflowMode:         "",
+		PermissionLevel:      "",
+		LegacyPermissionMode: "plan",
+		Cwd:                  t.TempDir(),
+		Status:               string(StatusIdle),
+	}
+	legacySession.Init()
+	if err := model.GetDB().Create(legacySession).Error; err != nil {
+		t.Fatalf("seed legacy web session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), legacySession.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if effectiveWorkflowMode(record) != WorkflowModePlan {
+		t.Fatalf("expected migrated workflow mode plan, got %q", effectiveWorkflowMode(record))
+	}
+	if effectivePermissionLevel(record) != PermissionLevelElevated {
+		t.Fatalf("expected migrated permission level elevated, got %q", effectivePermissionLevel(record))
 	}
 }
 
@@ -251,14 +334,16 @@ func seedProject(t *testing.T) *tables.ProjectTable {
 func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *tables.WebSessionTable {
 	t.Helper()
 	session := &tables.WebSessionTable{
-		ProjectID:      projectID,
-		OrderIndex:     orderIndex,
-		Agent:          string(AgentCodex),
-		Title:          title,
-		Model:          "gpt-5.4",
-		PermissionMode: string(PermissionModeDefault),
-		Cwd:            t.TempDir(),
-		Status:         string(StatusIdle),
+		ProjectID:            projectID,
+		OrderIndex:           orderIndex,
+		Agent:                string(AgentCodex),
+		Title:                title,
+		Model:                "gpt-5.4",
+		WorkflowMode:         string(WorkflowModeDefault),
+		PermissionLevel:      string(PermissionLevelElevated),
+		LegacyPermissionMode: "default",
+		Cwd:                  t.TempDir(),
+		Status:               string(StatusIdle),
 	}
 	session.Init()
 	if err := model.GetDB().Create(session).Error; err != nil {

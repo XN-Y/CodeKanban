@@ -45,7 +45,8 @@ type wireSess struct {
 	Agent           string    `json:"ag"`
 	Model           string    `json:"md"`
 	ReasoningEffort string    `json:"re"`
-	PermissionMode  string    `json:"pm"`
+	WorkflowMode    string    `json:"wm"`
+	PermissionLevel string    `json:"pl"`
 	Title           string    `json:"ttl"`
 	Cwd             string    `json:"cwd"`
 	NativeSessionID *string   `json:"nsid,omitempty"`
@@ -151,7 +152,8 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Agent:           string(session.Agent),
 		Model:           session.Model,
 		ReasoningEffort: string(session.ReasoningEffort),
-		PermissionMode:  string(session.PermissionMode),
+		WorkflowMode:    string(session.WorkflowMode),
+		PermissionLevel: string(session.PermissionLevel),
 		Title:           session.Title,
 		Cwd:             session.Cwd,
 		NativeSessionID: session.NativeSessionID,

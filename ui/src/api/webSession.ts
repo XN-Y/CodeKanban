@@ -21,7 +21,8 @@ export const webSessionApi = {
       agent: 'claude' | 'codex';
       model?: string;
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
-      permissionMode?: 'default' | 'plan' | 'yolo';
+      workflowMode?: 'default' | 'plan';
+      permissionLevel?: 'default' | 'elevated' | 'yolo';
       title?: string;
     }
   ): Promise<WebSessionSummary> {
@@ -32,7 +33,8 @@ export const webSessionApi = {
           agent: data.agent,
           model: data.model ?? '',
           reasoningEffort: data.reasoningEffort ?? 'default',
-          permissionMode: data.permissionMode ?? 'plan',
+          workflowMode: data.workflowMode ?? 'default',
+          permissionLevel: data.permissionLevel ?? 'elevated',
           title: data.title ?? '',
         })
         .send()) ?? {};
