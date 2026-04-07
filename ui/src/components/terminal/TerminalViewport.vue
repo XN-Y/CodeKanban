@@ -35,11 +35,10 @@ import { SearchAddon } from '@xterm/addon-search';
 import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type {
-  TerminalStateCell,
+  TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
   TerminalTabState,
   ServerMessage,
-  TerminalStateSnapshot,
 } from '@/composables/useTerminalClient';
 import { useSettingsStore, DEFAULT_TERMINAL_FONT_FAMILY } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
@@ -118,7 +117,7 @@ let initialViewportReady = false;
 let lastReportedCols = 0;
 let lastReportedRows = 0;
 const pendingTerminalMessages: ServerMessage[] = [];
-let pendingServerSnapshot: TerminalStateSnapshot | null = null;
+let pendingServerSnapshot: TerminalRemoteSnapshot | null = null;
 let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
 let debugRefreshHandler: (() => boolean) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
@@ -128,13 +127,6 @@ const transferCardTone = ref<'progress' | 'error'>('progress');
 const transferProgress = ref<number | null>(null);
 const TERMINAL_DEBUG_FN = '__codeKanbanForceRefreshVisibleTerminal';
 const TERMINAL_DEBUG_REGISTRY = '__codeKanbanTerminalDebugHandlers';
-const VT_ATTR_REVERSE = 1 << 0;
-const VT_ATTR_UNDERLINE = 1 << 1;
-const VT_ATTR_BOLD = 1 << 2;
-const VT_ATTR_ITALIC = 1 << 4;
-const VT_ATTR_BLINK = 1 << 5;
-const VT_ATTR_FAINT = 1 << 7;
-const VT_ATTR_WIDE_DUMMY = 1 << 9;
 
 type TerminalDebugWindow = Window & {
   [TERMINAL_DEBUG_FN]?: () => boolean;
@@ -263,102 +255,6 @@ function isDeferredTerminalMessage(payload: ServerMessage) {
   return payload.type === 'data' || payload.type === 'exit' || payload.type === 'error';
 }
 
-function cellModeHas(mode: number, flag: number) {
-  return (mode & flag) !== 0;
-}
-
-function buildSgrFromCell(cell: TerminalStateCell) {
-  const codes: Array<number | string> = [0];
-
-  if (cellModeHas(cell.mode, VT_ATTR_BOLD)) {
-    codes.push(1);
-  }
-  if (cellModeHas(cell.mode, VT_ATTR_FAINT)) {
-    codes.push(2);
-  }
-  if (cellModeHas(cell.mode, VT_ATTR_ITALIC)) {
-    codes.push(3);
-  }
-  if (cellModeHas(cell.mode, VT_ATTR_UNDERLINE)) {
-    codes.push(4);
-  }
-  if (cellModeHas(cell.mode, VT_ATTR_BLINK)) {
-    codes.push(5);
-  }
-  if (cellModeHas(cell.mode, VT_ATTR_REVERSE)) {
-    codes.push(7);
-  }
-
-  if (cell.fgDefault || typeof cell.fg !== 'number') {
-    codes.push(39);
-  } else {
-    const r = (cell.fg >> 16) & 0xff;
-    const g = (cell.fg >> 8) & 0xff;
-    const b = cell.fg & 0xff;
-    codes.push(`38;2;${r};${g};${b}`);
-  }
-
-  if (cell.bgDefault || typeof cell.bg !== 'number') {
-    codes.push(49);
-  } else {
-    const r = (cell.bg >> 16) & 0xff;
-    const g = (cell.bg >> 8) & 0xff;
-    const b = cell.bg & 0xff;
-    codes.push(`48;2;${r};${g};${b}`);
-  }
-
-  return `\x1b[${codes.join(';')}m`;
-}
-
-function buildCursorSgr(snapshot: TerminalStateSnapshot) {
-  const pseudoCell: TerminalStateCell = {
-    mode: snapshot.cursorMode ?? 0,
-    fg: snapshot.cursorFg,
-    bg: snapshot.cursorBg,
-    fgDefault: snapshot.cursorFgDefault ?? true,
-    bgDefault: snapshot.cursorBgDefault ?? true,
-  };
-  return buildSgrFromCell(pseudoCell);
-}
-
-function buildServerSnapshotSequence(snapshot: TerminalStateSnapshot) {
-  const rows = Math.max(1, snapshot.rows || 1);
-  const cols = Math.max(1, snapshot.cols || 1);
-  const grid = Array.isArray(snapshot.cells) ? snapshot.cells.slice(0, rows) : [];
-  const parts = ['\x1b[0m\x1b[2J\x1b[H'];
-  let previousStyle = '';
-
-  for (let row = 0; row < rows; row += 1) {
-    const cells = Array.isArray(grid[row]) ? grid[row] : [];
-    for (let col = 0; col < cols; col += 1) {
-      const cell = cells[col] ?? {
-        mode: 0,
-        fgDefault: true,
-        bgDefault: true,
-      };
-      if (cellModeHas(cell.mode, VT_ATTR_WIDE_DUMMY)) {
-        continue;
-      }
-      const nextStyle = buildSgrFromCell(cell);
-      if (nextStyle !== previousStyle) {
-        parts.push(nextStyle);
-        previousStyle = nextStyle;
-      }
-      parts.push(cell.char && cell.char.length > 0 ? cell.char : ' ');
-    }
-    if (row < rows - 1) {
-      parts.push('\r\n');
-    }
-  }
-
-  const cursorRow = Math.max(1, Math.min(rows, (snapshot.cursorY ?? 0) + 1));
-  const cursorCol = Math.max(1, Math.min(cols, (snapshot.cursorX ?? 0) + 1));
-  parts.push(buildCursorSgr(snapshot));
-  parts.push(`\x1b[${cursorRow};${cursorCol}H`);
-  parts.push(snapshot.cursorVisible === false ? '\x1b[?25l' : '\x1b[?25h');
-  return parts.join('');
-}
-
 function restoreServerSnapshotIfAvailable() {
   if (!terminal || !pendingServerSnapshot) {
     return false;
@@ -371,8 +267,7 @@ function restoreServerSnapshotIfAvailable() {
     if (snapshot.cols > 0 && snapshot.rows > 0) {
       terminal.resize(snapshot.cols, snapshot.rows);
     }
-    terminal.reset();
-    terminal.write(buildServerSnapshotSequence(snapshot));
+    terminal.write(`${snapshot.altScreen ? '\x1b[?1049h' : '\x1b[?1049l'}${remapInvisibleColors(snapshot.content)}`);
     return true;
   } catch (error) {
     console.warn('[Terminal Snapshot] Failed to restore server snapshot', error);
@@ -380,7 +275,7 @@ function restoreServerSnapshotIfAvailable() {
   }
 }
 
-function parseSnapshotCapturedAt(snapshot: TerminalStateSnapshot | null) {
+function parseSnapshotCapturedAt(snapshot: TerminalRemoteSnapshot | null) {
   const raw = snapshot?.capturedAt;
   if (!raw) {
     return 0;
@@ -391,7 +286,7 @@ function parseSnapshotCapturedAt(snapshot: TerminalStateSnapshot | null) {
 
 function shouldPreferFrontendSnapshot(
   frontendSnapshot: TerminalSerializedSnapshot | null,
-  serverSnapshot: TerminalStateSnapshot | null
+  serverSnapshot: TerminalRemoteSnapshot | null
 ) {
   if (!frontendSnapshot) {
     return false;
@@ -472,6 +367,9 @@ function applyTerminalMessage(payload: ServerMessage) {
 
   switch (payload.type) {
     case 'data':
+      if (props.tab.renderMode === 'snapshot') {
+        break;
+      }
       if (payload.data) {
         terminal.write(remapInvisibleColors(decodeChunk(payload.data)));
       }
@@ -635,6 +533,13 @@ function sendTerminalInput(data: string) {
   }
 
   props.send(props.tab.id, { type: 'input', data });
+}
+
+function requestSnapshot(reason: string) {
+  if (props.tab.renderMode !== 'snapshot') {
+    return;
+  }
+  props.send(props.tab.id, { type: 'snapshot-request', reason });
 }
 
 function shouldUseBrowserPasteShortcut(event: KeyboardEvent) {
@@ -887,6 +792,8 @@ onMounted(() => {
     rows: props.tab.rows || 24,
     cols: props.tab.cols || 80,
     cursorBlink: true,
+    cursorStyle: 'block',
+    cursorInactiveStyle: 'block',
     scrollOnUserInput: true,
     fontFamily: fontSettings.fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
     fontSize: actualFontSize,
@@ -1093,6 +1000,7 @@ onMounted(() => {
   // Replay any buffered messages that were received while this component was unmounted
   // This ensures no data is lost when switching between projects
   terminalStore.replayBufferedMessages(props.tab.id);
+  requestSnapshot('mount');
 });
 
 function handleTerminalBlurEvent() {
@@ -1104,6 +1012,7 @@ function handleTerminalActivated() {
   if (!terminal || !fitAddon) return;
 
   refreshTerminalViewport('terminal-activated');
+  requestSnapshot('activate');
 
   const isFirstVisit = !visitedTerminals.has(props.tab.id);
   if (isFirstVisit) {

@@ -1,44 +1,43 @@
 import { defineStore } from 'pinia';
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
 import EventEmitter from 'eventemitter3';
 import Apis, { alovaInstance, urlBase } from '@/api';
 import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
 import type { Task, TerminalSession } from '@/types/models';
+import {
+  DEFAULT_TERMINAL_RENDER_MODE,
+  DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  sanitizeTerminalRenderMode,
+  sanitizeTerminalSnapshotIntervalMs,
+  type TerminalRenderMode,
+} from '@/constants/terminalRenderMode';
 import { resolveWsUrl } from '@/utils/ws';
 import { useProjectStore } from '@/stores/project';
+import { useSettingsStore } from '@/stores/settings';
 import { useTaskStore } from '@/stores/task';
 import { taskActions } from '@/composables/useTaskActions';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
-export type TerminalStateSnapshot = {
-  cells: TerminalStateCell[][];
+export type TerminalRemoteSnapshot = {
+  content: string;
   rows: number;
   cols: number;
-  cursorX: number;
-  cursorY: number;
+  sequence: number;
+  altScreen: boolean;
   cursorVisible: boolean;
-  cursorMode: number;
-  cursorFg?: number;
-  cursorBg?: number;
-  cursorFgDefault?: boolean;
-  cursorBgDefault?: boolean;
+  modeFlags: number;
   capturedAt?: string;
-};
-
-export type TerminalStateCell = {
-  char?: string;
-  mode: number;
-  fg?: number;
-  bg?: number;
-  fgDefault?: boolean;
-  bgDefault?: boolean;
 };
 
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
   lastAgentCommand?: string;
+  renderMode: TerminalRenderMode;
+  snapshotIntervalMs: number;
+  useGlobalRenderMode: boolean;
+  useGlobalSnapshotInterval: boolean;
 }
 
 export type TerminalSerializedSnapshot = {
@@ -49,11 +48,22 @@ export type TerminalSerializedSnapshot = {
 };
 
 export type ServerMessage = {
-  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata' | 'snapshot' | 'replay-complete';
+  type:
+    | 'ready'
+    | 'data'
+    | 'exit'
+    | 'error'
+    | 'metadata'
+    | 'snapshot'
+    | 'replay-complete'
+    | 'render-mode';
   data?: string;
   cols?: number;
   rows?: number;
-  snapshot?: TerminalStateSnapshot;
+  mode?: TerminalRenderMode;
+  snapshotIntervalMs?: number;
+  snapshotCompressionEnabled?: boolean;
+  snapshot?: TerminalRemoteSnapshot;
   metadata?: {
     title?: string;
     processPid?: number;
@@ -92,11 +102,20 @@ type SessionRecord = {
   tab: TerminalTabState;
 };
 
+type TerminalRenderPreference = {
+  useGlobalRenderMode: boolean;
+  renderMode?: TerminalRenderMode;
+  useGlobalSnapshotInterval: boolean;
+  snapshotIntervalMs?: number;
+};
+
 const TAB_ORDER_STORAGE_KEY = 'kanban-terminal-tab-order';
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'kanban-terminal-last-active';
+const TAB_RENDER_PREFERENCE_STORAGE_KEY = 'kanban-terminal-render-preferences';
 
 const storedTabOrders = loadStoredTabOrders();
 const storedActiveTabs = loadStoredActiveTabs();
+const storedRenderPreferences = loadStoredRenderPreferences();
 
 function loadStoredTabOrders() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -255,6 +274,66 @@ function forgetStoredActiveTab(projectId: string) {
   persistStoredActiveTabs();
 }
 
+function loadStoredRenderPreferences() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return new Map<string, TerminalRenderPreference>();
+  }
+  try {
+    const raw = window.localStorage.getItem(TAB_RENDER_PREFERENCE_STORAGE_KEY);
+    if (!raw) {
+      return new Map<string, TerminalRenderPreference>();
+    }
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const result = new Map<string, TerminalRenderPreference>();
+    Object.entries(parsed).forEach(([key, value]) => {
+      if (!key || typeof value !== 'object' || value == null) {
+        return;
+      }
+      const preference = sanitizeRenderPreference(value as Partial<TerminalRenderPreference>);
+      result.set(key, preference);
+    });
+    return result;
+  } catch (error) {
+    console.warn('[Terminal Store] Failed to parse stored render preferences', error);
+    return new Map<string, TerminalRenderPreference>();
+  }
+}
+
+function persistStoredRenderPreferences() {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  if (!storedRenderPreferences.size) {
+    window.localStorage.removeItem(TAB_RENDER_PREFERENCE_STORAGE_KEY);
+    return;
+  }
+  const payload: Record<string, TerminalRenderPreference> = {};
+  storedRenderPreferences.forEach((preference, key) => {
+    payload[key] = {
+      useGlobalRenderMode: preference.useGlobalRenderMode,
+      renderMode: preference.renderMode,
+      useGlobalSnapshotInterval: preference.useGlobalSnapshotInterval,
+      snapshotIntervalMs: preference.snapshotIntervalMs,
+    };
+  });
+  window.localStorage.setItem(TAB_RENDER_PREFERENCE_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function sanitizeRenderPreference(
+  value?: Partial<TerminalRenderPreference>
+): TerminalRenderPreference {
+  return {
+    useGlobalRenderMode: value?.useGlobalRenderMode !== false,
+    renderMode: sanitizeTerminalRenderMode(value?.renderMode),
+    useGlobalSnapshotInterval: value?.useGlobalSnapshotInterval !== false,
+    snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(value?.snapshotIntervalMs),
+  };
+}
+
+function buildRenderPreferenceKey(projectId: string, sessionId: string) {
+  return `${projectId}:${sessionId}`;
+}
+
 function sortSessionsWithStoredOrder(projectId: string, sessions: TerminalSession[]) {
   if (!sessions.length) {
     return sessions;
@@ -291,6 +370,66 @@ function sortSessionsWithStoredOrder(projectId: string, sessions: TerminalSessio
   return ordered;
 }
 
+function supportsSnapshotZlibCompression() {
+  return typeof DecompressionStream !== 'undefined';
+}
+
+async function inflateSnapshotPayload(payload: Uint8Array) {
+  if (!supportsSnapshotZlibCompression()) {
+    throw new Error('zlib snapshot compression is not supported in this browser');
+  }
+
+  const stream = new Blob([payload]).stream().pipeThrough(new DecompressionStream('deflate'));
+  const buffer = await new Response(stream).arrayBuffer();
+  return new Uint8Array(buffer);
+}
+
+async function parseBinarySnapshotFrame(payload: ArrayBuffer): Promise<TerminalRemoteSnapshot | null> {
+  if (!(payload instanceof ArrayBuffer) || payload.byteLength < 13) {
+    return null;
+  }
+
+  const view = new DataView(payload);
+  const version = view.getUint8(0);
+  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) {
+    return null;
+  }
+
+  const rows = view.getUint16(1, false);
+  const cols = view.getUint16(3, false);
+  const capturedAtMs = Number(view.getBigUint64(5, false));
+  const headerSize = version >= 5 ? 22 : version >= 3 ? 18 : version === 2 ? 14 : 13;
+  if (payload.byteLength < headerSize) {
+    return null;
+  }
+  const flags = version >= 2 ? view.getUint8(13) : 0;
+  const altScreen = (flags & (1 << 0)) !== 0;
+  const cursorVisible = version >= 3 ? (flags & (1 << 1)) !== 0 : true;
+  const modeFlags = version >= 3 ? view.getUint32(14, false) : 0;
+  const compressed = version >= 4 ? (flags & (1 << 2)) !== 0 : false;
+  const sequence = version >= 5 ? view.getUint32(18, false) : 0;
+  const decoder = new TextDecoder('utf-8');
+  const encodedContent = new Uint8Array(payload, headerSize);
+  const contentBytes = compressed
+    ? await inflateSnapshotPayload(encodedContent)
+    : encodedContent;
+  const content = decoder.decode(contentBytes);
+
+  return {
+    rows,
+    cols,
+    sequence,
+    content,
+    altScreen,
+    cursorVisible,
+    modeFlags,
+    capturedAt:
+      capturedAtMs > 0 && Number.isFinite(capturedAtMs)
+        ? new Date(capturedAtMs).toISOString()
+        : undefined,
+  };
+}
+
 export const useTerminalStore = defineStore('terminal', () => {
   const tabStore = reactive(new Map<string, TerminalTabState[]>());
   const sessionIndex = new Map<string, SessionRecord>();
@@ -309,6 +448,7 @@ export const useTerminalStore = defineStore('terminal', () => {
   const aiDetectedSessions = new Set<string>();
   // Get project store for looking up project names
   const projectStore = useProjectStore();
+  const settingsStore = useSettingsStore();
   const taskStore = useTaskStore();
   const sessionToTaskMap = reactive(new Map<string, string>());
   const taskToSessionMap = reactive(new Map<string, string>());
@@ -317,8 +457,173 @@ export const useTerminalStore = defineStore('terminal', () => {
   // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
   const messageBuffers = new Map<string, ServerMessage[]>();
   const MESSAGE_BUFFER_MAX_SIZE = 5000; // Limit buffer size to prevent memory issues
-  const latestServerSnapshots = new Map<string, TerminalStateSnapshot>();
+  const latestServerSnapshots = new Map<string, TerminalRemoteSnapshot>();
+  const latestServerSnapshotSequence = new Map<string, number>();
   const serializedSnapshots = new Map<string, TerminalSerializedSnapshot>();
+
+  function getGlobalRenderMode() {
+    return sanitizeTerminalRenderMode(
+      settingsStore.defaultTerminalRenderMode ?? DEFAULT_TERMINAL_RENDER_MODE
+    );
+  }
+
+  function getGlobalSnapshotIntervalMs() {
+    return sanitizeTerminalSnapshotIntervalMs(
+      settingsStore.defaultTerminalSnapshotIntervalMs ?? DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS
+    );
+  }
+
+  function getGlobalSnapshotCompressionEnabled() {
+    return (
+      settingsStore.defaultTerminalSnapshotZlibCompression !== false &&
+      supportsSnapshotZlibCompression()
+    );
+  }
+
+  function getStoredRenderPreference(projectId: string, sessionId: string) {
+    return storedRenderPreferences.get(buildRenderPreferenceKey(projectId, sessionId));
+  }
+
+  function getEffectiveRenderMode(projectId: string, sessionId: string) {
+    const preference = getStoredRenderPreference(projectId, sessionId);
+    if (!preference || preference.useGlobalRenderMode) {
+      return getGlobalRenderMode();
+    }
+    return sanitizeTerminalRenderMode(preference.renderMode);
+  }
+
+  function getEffectiveSnapshotIntervalMs(projectId: string, sessionId: string) {
+    const preference = getStoredRenderPreference(projectId, sessionId);
+    if (!preference || preference.useGlobalSnapshotInterval) {
+      return getGlobalSnapshotIntervalMs();
+    }
+    return sanitizeTerminalSnapshotIntervalMs(preference.snapshotIntervalMs);
+  }
+
+  function applyRenderPreferenceToTab(tab: TerminalTabState) {
+    const preference = getStoredRenderPreference(tab.projectId, tab.id);
+    tab.useGlobalRenderMode = preference?.useGlobalRenderMode !== false;
+    tab.useGlobalSnapshotInterval = preference?.useGlobalSnapshotInterval !== false;
+    tab.renderMode = getEffectiveRenderMode(tab.projectId, tab.id);
+    tab.snapshotIntervalMs = getEffectiveSnapshotIntervalMs(tab.projectId, tab.id);
+    return tab;
+  }
+
+  function persistRenderPreference(
+    projectId: string,
+    sessionId: string,
+    partial: Partial<TerminalRenderPreference>
+  ) {
+    const storageKey = buildRenderPreferenceKey(projectId, sessionId);
+    const current = storedRenderPreferences.get(storageKey);
+    const next = sanitizeRenderPreference({
+      ...current,
+      ...partial,
+    });
+    storedRenderPreferences.set(storageKey, next);
+    persistStoredRenderPreferences();
+    return next;
+  }
+
+  function clearRenderPreference(projectId: string, sessionId: string) {
+    const storageKey = buildRenderPreferenceKey(projectId, sessionId);
+    if (storedRenderPreferences.delete(storageKey)) {
+      persistStoredRenderPreferences();
+    }
+  }
+
+  function buildRenderModeMessage(
+    sessionId: string
+  ): Pick<ServerMessage, 'type' | 'mode' | 'snapshotIntervalMs' | 'snapshotCompressionEnabled'> | null {
+    const record = sessionIndex.get(sessionId);
+    if (!record) {
+      return null;
+    }
+    return {
+      type: 'render-mode',
+      mode: getEffectiveRenderMode(record.projectId, sessionId),
+      snapshotIntervalMs: getEffectiveSnapshotIntervalMs(record.projectId, sessionId),
+      snapshotCompressionEnabled: getGlobalSnapshotCompressionEnabled(),
+    };
+  }
+
+  function sendRenderModePreference(sessionId: string) {
+    const message = buildRenderModeMessage(sessionId);
+    if (!message) {
+      return false;
+    }
+    return send(sessionId, message);
+  }
+
+  function updateRenderModeAck(
+    sessionId: string,
+    mode: TerminalRenderMode | undefined,
+    snapshotIntervalMs: number | undefined,
+    _snapshotCompressionEnabled: boolean | undefined
+  ) {
+    const record = sessionIndex.get(sessionId);
+    if (!record) {
+      return;
+    }
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) {
+      return;
+    }
+    const index = bucket.findIndex(tab => tab.id === sessionId);
+    if (index === -1) {
+      return;
+    }
+    bucket[index] = {
+      ...bucket[index],
+      renderMode: sanitizeTerminalRenderMode(mode ?? bucket[index].renderMode),
+      snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(
+        snapshotIntervalMs ?? bucket[index].snapshotIntervalMs
+      ),
+    };
+    record.tab = bucket[index];
+  }
+
+  function applyGlobalRenderDefaultsToTabs() {
+    sessionIndex.forEach(({ projectId }, sessionId) => {
+      const record = sessionIndex.get(sessionId);
+      if (!record) {
+        return;
+      }
+      const bucket = tabStore.get(projectId);
+      if (!bucket) {
+        return;
+      }
+      const index = bucket.findIndex(tab => tab.id === sessionId);
+      if (index === -1) {
+        return;
+      }
+      const current = bucket[index];
+      const nextRenderMode = current.useGlobalRenderMode
+        ? getGlobalRenderMode()
+        : current.renderMode;
+      const nextSnapshotIntervalMs = current.useGlobalSnapshotInterval
+        ? getGlobalSnapshotIntervalMs()
+        : current.snapshotIntervalMs;
+      bucket[index] = {
+        ...current,
+        renderMode: sanitizeTerminalRenderMode(nextRenderMode),
+        snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(nextSnapshotIntervalMs),
+      };
+      record.tab = bucket[index];
+      void sendRenderModePreference(sessionId);
+    });
+  }
+
+  watch(
+    () => [
+      settingsStore.defaultTerminalRenderMode,
+      settingsStore.defaultTerminalSnapshotIntervalMs,
+      settingsStore.defaultTerminalSnapshotZlibCompression,
+    ],
+    () => {
+      applyGlobalRenderDefaultsToTabs();
+    }
+  );
 
   // Helper function to get project name by ID
   function getProjectName(projectId: string): string | undefined {
@@ -576,6 +881,73 @@ export const useTerminalStore = defineStore('terminal', () => {
     return session;
   }
 
+  function setSessionRenderMode(
+    projectId: string | undefined,
+    sessionId: string,
+    mode: TerminalRenderMode | null
+  ) {
+    const resolved = ensureProjectSelected(projectId);
+    const record = sessionIndex.get(sessionId);
+    if (!record || record.projectId !== resolved) {
+      return false;
+    }
+
+    const nextPreference =
+      mode == null
+        ? { useGlobalRenderMode: true }
+        : { useGlobalRenderMode: false, renderMode: sanitizeTerminalRenderMode(mode) };
+    persistRenderPreference(resolved, sessionId, nextPreference);
+
+    const bucket = tabStore.get(resolved);
+    if (!bucket) {
+      return false;
+    }
+    const index = bucket.findIndex(tab => tab.id === sessionId);
+    if (index === -1) {
+      return false;
+    }
+    bucket[index] = applyRenderPreferenceToTab({
+      ...bucket[index],
+    });
+    record.tab = bucket[index];
+    return sendRenderModePreference(sessionId);
+  }
+
+  function setSessionSnapshotInterval(
+    projectId: string | undefined,
+    sessionId: string,
+    snapshotIntervalMs: number | null
+  ) {
+    const resolved = ensureProjectSelected(projectId);
+    const record = sessionIndex.get(sessionId);
+    if (!record || record.projectId !== resolved) {
+      return false;
+    }
+
+    const nextPreference =
+      snapshotIntervalMs == null
+        ? { useGlobalSnapshotInterval: true }
+        : {
+            useGlobalSnapshotInterval: false,
+            snapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(snapshotIntervalMs),
+          };
+    persistRenderPreference(resolved, sessionId, nextPreference);
+
+    const bucket = tabStore.get(resolved);
+    if (!bucket) {
+      return false;
+    }
+    const index = bucket.findIndex(tab => tab.id === sessionId);
+    if (index === -1) {
+      return false;
+    }
+    bucket[index] = applyRenderPreferenceToTab({
+      ...bucket[index],
+    });
+    record.tab = bucket[index];
+    return sendRenderModePreference(sessionId);
+  }
+
   function send(sessionId: string, message: any): boolean {
     const socket = sockets.get(sessionId);
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -639,7 +1011,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
       messageBuffers.delete(sessionId); // Clean up message buffer
       latestServerSnapshots.delete(sessionId);
+      latestServerSnapshotSequence.delete(sessionId);
       serializedSnapshots.delete(sessionId);
+      clearRenderPreference(record.projectId, sessionId);
     }
   }
 
@@ -786,6 +1160,10 @@ export const useTerminalStore = defineStore('terminal', () => {
         ...session,
         projectId: immutableProjectId,
         taskId: updatedTaskId ?? undefined,
+        renderMode: existing.tab.renderMode,
+        snapshotIntervalMs: existing.tab.snapshotIntervalMs,
+        useGlobalRenderMode: existing.tab.useGlobalRenderMode,
+        useGlobalSnapshotInterval: existing.tab.useGlobalSnapshotInterval,
       };
       // 用 splice 替换以触发 Vue 响应式更新
       const bucket = tabStore.get(immutableProjectId);
@@ -813,11 +1191,15 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
 
     const bucket = ensureBucket(resolvedProjectId);
-    const tab: TerminalTabState = {
+    const tab = applyRenderPreferenceToTab({
       ...session,
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
-    };
+      renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
+      snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
+      useGlobalRenderMode: true,
+      useGlobalSnapshotInterval: true,
+    });
     // 如果指定了 insertAfterSessionId，在其后插入；否则添加到末尾
     if (options?.insertAfterSessionId) {
       const insertIndex = bucket.findIndex(t => t.id === options.insertAfterSessionId);
@@ -907,12 +1289,23 @@ export const useTerminalStore = defineStore('terminal', () => {
       return;
     }
     pausedSocketIds.delete(tab.id);
-    const wsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
-    const socket = new WebSocket(wsURL);
+    const resolvedWsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
+    const wsURL = new URL(resolvedWsURL);
+    wsURL.searchParams.set(
+      'snapshotCompression',
+      getGlobalSnapshotCompressionEnabled() ? 'zlib' : 'none'
+    );
+    const socket = new WebSocket(wsURL.toString());
+    socket.binaryType = 'arraybuffer';
     sockets.set(tab.id, socket);
 
     socket.addEventListener('open', () => {
       updateTabStatus(tab.id, 'ready');
+      latestServerSnapshotSequence.delete(tab.id);
+      const renderModeMessage = buildRenderModeMessage(tab.id);
+      if (renderModeMessage) {
+        socket.send(JSON.stringify(renderModeMessage));
+      }
       socket.send(
         JSON.stringify({
           type: 'resize',
@@ -923,11 +1316,41 @@ export const useTerminalStore = defineStore('terminal', () => {
     });
 
     socket.addEventListener('message', event => {
-      try {
-        const payload = JSON.parse(event.data as string) as ServerMessage;
-        if (payload.type === 'snapshot' && payload.snapshot) {
-          latestServerSnapshots.set(tab.id, payload.snapshot);
-        }
+      void (async () => {
+        try {
+          if (sockets.get(tab.id) !== socket) {
+            return;
+          }
+
+          let payload: ServerMessage;
+          if (typeof event.data === 'string') {
+            payload = JSON.parse(event.data) as ServerMessage;
+          } else {
+            const snapshot = await parseBinarySnapshotFrame(event.data as ArrayBuffer);
+            if (!snapshot || sockets.get(tab.id) !== socket) {
+              return;
+            }
+            const previousSequence = latestServerSnapshotSequence.get(tab.id) ?? -1;
+            if (snapshot.sequence <= previousSequence) {
+              return;
+            }
+            latestServerSnapshotSequence.set(tab.id, snapshot.sequence);
+            payload = {
+              type: 'snapshot',
+              snapshot,
+            };
+          }
+          if (payload.type === 'snapshot' && payload.snapshot) {
+            latestServerSnapshots.set(tab.id, payload.snapshot);
+          }
+          if (payload.type === 'render-mode') {
+            updateRenderModeAck(
+              tab.id,
+              payload.mode,
+              payload.snapshotIntervalMs,
+              payload.snapshotCompressionEnabled
+            );
+          }
         if (payload.type === 'ready') {
           updateTabStatus(tab.id, 'ready');
         } else if (payload.type === 'exit') {
@@ -1118,9 +1541,11 @@ export const useTerminalStore = defineStore('terminal', () => {
             buffer.shift();
           }
         }
-      } catch {
-        // ignore malformed payloads
-      }
+        } catch (error) {
+          console.error('[Terminal] Failed to process websocket message', error);
+          // ignore malformed payloads
+        }
+      })();
     });
 
     socket.addEventListener('close', () => {
@@ -1334,6 +1759,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     getSessionById,
     linkSessionTask,
     unlinkSessionTask,
+    setSessionRenderMode,
+    setSessionSnapshotInterval,
     focusSession,
     retainProjectConnections,
     releaseProjectConnections,

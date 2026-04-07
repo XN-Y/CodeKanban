@@ -140,6 +140,13 @@
                 <span class="tab-title" :style="tabTitleStyle">
                   {{ tab.title }}
                 </span>
+                <span
+                  v-if="(tab as TerminalTabState).renderMode === 'snapshot'"
+                  class="tab-render-badge"
+                  :title="getSnapshotModeTooltip(tab as TerminalTabState)"
+                >
+                  {{ t('terminal.snapshotModeTabBadge') }}
+                </span>
                 <!-- 任务图标：独立显示，不依赖 AI 助手状态 -->
                 <span
                   v-if="
@@ -719,6 +726,11 @@ import {
   EDITOR_OPTIONS,
   isEditorPreference,
 } from '@/constants/editor';
+import {
+  TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
+  formatTerminalSnapshotInterval,
+  type TerminalRenderMode,
+} from '@/constants/terminalRenderMode';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
@@ -895,6 +907,89 @@ function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
   return tab.taskId || getLinkedTaskId(tab.id);
 }
 
+const snapshotModeSupported = computed(() => developerConfigState.enableTerminalStateSnapshot);
+
+function formatSnapshotIntervalLabel(intervalMs: number) {
+  return formatTerminalSnapshotInterval(intervalMs);
+}
+
+function getSnapshotModeTooltip(tab: TerminalTabState) {
+  return t('terminal.snapshotModeTooltip', {
+    interval: formatSnapshotIntervalLabel(tab.snapshotIntervalMs),
+  });
+}
+
+function buildSnapshotModeMenuOptions(tab: TerminalTabState | null | undefined): DropdownOption[] {
+  const globalIntervalLabel = formatSnapshotIntervalLabel(defaultTerminalSnapshotIntervalMs.value);
+  const globalRenderModeLabel = t(
+    defaultTerminalRenderMode.value === 'snapshot'
+      ? 'terminal.snapshotModeGlobalSnapshot'
+      : 'terminal.snapshotModeGlobalLive'
+  );
+  const intervalOptions: DropdownOption[] = TERMINAL_SNAPSHOT_INTERVAL_OPTIONS.map(interval => ({
+    label: formatSnapshotIntervalLabel(interval),
+    key: `snapshot-interval:${interval}`,
+    icon:
+      tab &&
+      tab.renderMode === 'snapshot' &&
+      !tab.useGlobalSnapshotInterval &&
+      tab.snapshotIntervalMs === interval
+        ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+        : undefined,
+  }));
+
+  intervalOptions.push({
+    type: 'divider',
+    key: 'snapshot-interval-divider',
+  });
+  intervalOptions.push({
+    label: t('terminal.useGlobalSnapshotInterval', { interval: globalIntervalLabel }),
+    key: 'snapshot-interval:global',
+    icon:
+      tab?.useGlobalSnapshotInterval
+        ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+        : undefined,
+  });
+
+  return [
+    {
+      label: t('terminal.enableSnapshotMode'),
+      key: 'snapshot-mode:enable',
+      icon:
+        tab?.renderMode === 'snapshot'
+          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+          : undefined,
+      disabled: !snapshotModeSupported.value,
+    },
+    {
+      label: t('terminal.disableSnapshotMode'),
+      key: 'snapshot-mode:disable',
+      icon:
+        tab?.renderMode === 'live'
+          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+          : undefined,
+    },
+    {
+      label: t('terminal.useGlobalRenderMode', { mode: globalRenderModeLabel }),
+      key: 'snapshot-mode:global',
+      icon:
+        tab?.useGlobalRenderMode
+          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+          : undefined,
+    },
+    {
+      type: 'divider',
+      key: 'snapshot-mode-divider',
+    },
+    {
+      label: t('terminal.snapshotRefreshInterval'),
+      key: 'snapshot-interval',
+      disabled: !snapshotModeSupported.value,
+      children: intervalOptions,
+    },
+  ];
+}
+
 const contextMenuOptions = computed<DropdownOption[]>(() => {
   const tabId = contextMenuTab.value;
   const tab = tabId ? tabs.value.find(t => t.id === tabId) : null;
@@ -918,6 +1013,12 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       label: t('terminal.rename'),
       key: 'rename',
       icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
+    },
+    {
+      label: t('terminal.snapshotMode'),
+      key: 'snapshot-mode',
+      icon: () => h(NIcon, null, { default: () => h(AlbumsOutline) }),
+      children: buildSnapshotModeMenuOptions(tab),
     },
     {
       label: t('terminal.copyProcessInfo'),
@@ -1063,6 +1164,14 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
       : undefined,
   },
   {
+    label: t('terminal.defaultOpenInMirrorMode'),
+    key: 'default-open-in-mirror-mode',
+    icon:
+      defaultTerminalRenderMode.value === 'snapshot'
+        ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+        : undefined,
+  },
+  {
     label: t('terminal.codeAgents'),
     key: 'code-agents',
     children: [
@@ -1112,6 +1221,8 @@ async function ensureDeveloperConfigLoaded() {
       developerConfigState.renameSessionTitleEachCommand =
         config?.renameSessionTitleEachCommand ?? false;
       developerConfigState.autoCreateTaskOnStartWork = config?.autoCreateTaskOnStartWork ?? true;
+      developerConfigState.enableTerminalStateSnapshot =
+        config?.enableTerminalStateSnapshot ?? false;
       developerConfigLoaded.value = true;
       return true;
     } catch (error) {
@@ -1142,6 +1253,7 @@ async function toggleRenameTitleEachCommandSetting() {
         enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
         renameSessionTitleEachCommand: nextValue,
         autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
+        enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
       })
       .send();
     developerConfigState.renameSessionTitleEachCommand = nextValue;
@@ -1170,6 +1282,7 @@ async function toggleAutoCreateTaskOnStartWorkSetting() {
         enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
         renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
         autoCreateTaskOnStartWork: nextValue,
+        enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
       })
       .send();
     developerConfigState.autoCreateTaskOnStartWork = nextValue;
@@ -1263,6 +1376,8 @@ const {
   reorderTabs: reorderTabsInStore,
   linkTask,
   unlinkTask,
+  setRenderMode,
+  setSnapshotInterval,
   focusSession: focusSessionInStore,
   getLinkedTaskId,
   getSessionByTask,
@@ -1277,6 +1392,8 @@ const {
   currentPresetId,
   terminalQuickActions,
   editorSettings,
+  defaultTerminalRenderMode,
+  defaultTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
 
 const defaultEditorPreference = computed<EditorPreference>(() =>
@@ -3028,6 +3145,11 @@ function formatDuration(ns: number): string {
 function getTabTooltip(tab: TerminalTabState): string {
   const lines: string[] = [tab.title];
 
+  if (tab.renderMode === 'snapshot') {
+    lines.push('');
+    lines.push(getSnapshotModeTooltip(tab));
+  }
+
   // Add AI Assistant information if detected
   if (tab.aiAssistant && tab.aiAssistant.detected) {
     lines.push('');
@@ -3310,6 +3432,30 @@ async function handleContextMenuSelect(key: string) {
   if (!tab) {
     return;
   }
+  if (key === 'snapshot-mode:enable') {
+    setRenderMode(tab.id, 'snapshot');
+    return;
+  }
+  if (key === 'snapshot-mode:disable') {
+    setRenderMode(tab.id, 'live');
+    return;
+  }
+  if (key === 'snapshot-mode:global') {
+    setRenderMode(tab.id, null);
+    return;
+  }
+  if (key === 'snapshot-interval:global') {
+    setSnapshotInterval(tab.id, null);
+    return;
+  }
+  if (key.startsWith('snapshot-interval:')) {
+    const raw = key.replace('snapshot-interval:', '');
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      setSnapshotInterval(tab.id, parsed);
+    }
+    return;
+  }
   if (key === 'duplicate') {
     await duplicateTab(tab);
     return;
@@ -3573,6 +3719,10 @@ function handleSettingsMenuSelect(key: string) {
       branchFilter.value = 'all';
       saveCurrentBranchFilter(props.projectId, 'all');
     }
+  } else if (key === 'default-open-in-mirror-mode') {
+    settingsStore.updateDefaultTerminalRenderMode(
+      defaultTerminalRenderMode.value === 'snapshot' ? 'live' : 'snapshot'
+    );
   } else if (key === 'rename-title-each-command') {
     void toggleRenameTitleEachCommandSetting();
   } else if (key === 'auto-create-task-on-start-work') {
@@ -3972,6 +4122,19 @@ defineExpose({
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-render-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  color: rgba(29, 78, 216, 0.92);
+  font-size: 10px;
+  line-height: 16px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .ai-status-pill {

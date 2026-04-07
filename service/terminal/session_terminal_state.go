@@ -1,11 +1,50 @@
 package terminal
 
 import (
+	"bytes"
+	"fmt"
+	"io"
 	"runtime"
 	"time"
 
 	"github.com/tuzig/vt10x"
 )
+
+const (
+	terminalAttrReverse   int16 = 1 << 0
+	terminalAttrUnderline int16 = 1 << 1
+	terminalAttrBold      int16 = 1 << 2
+	terminalAttrItalic    int16 = 1 << 4
+	terminalAttrBlink     int16 = 1 << 5
+	terminalAttrFaint     int16 = 1 << 7
+	terminalAttrWideDummy int16 = 1 << 9
+)
+
+type terminalStateReplyWriter struct {
+	session *Session
+}
+
+func (w terminalStateReplyWriter) Write(p []byte) (int, error) {
+	if w.session == nil {
+		return len(p), nil
+	}
+	return w.session.writeTerminalStateReply(p)
+}
+
+func (s *Session) writeTerminalStateReply(p []byte) (int, error) {
+	if len(p) == 0 || s == nil {
+		return len(p), nil
+	}
+	if s.terminalStateSuppressReplies.Load() {
+		return len(p), nil
+	}
+
+	writer := s.Writer()
+	if writer == nil {
+		return 0, io.EOF
+	}
+	return writer.Write(p)
+}
 
 func (s *Session) initTerminalStateLocked(cols, rows int) {
 	if cols <= 0 {
@@ -14,7 +53,10 @@ func (s *Session) initTerminalStateLocked(cols, rows int) {
 	if rows <= 0 {
 		rows = 24
 	}
-	s.terminalState = vt10x.New(vt10x.WithSize(cols, rows))
+	s.terminalState = vt10x.New(
+		vt10x.WithSize(cols, rows),
+		vt10x.WithWriter(terminalStateReplyWriter{session: s}),
+	)
 	s.terminalStateCapturedAt = time.Time{}
 }
 
@@ -74,6 +116,8 @@ func (s *Session) rebuildTerminalStateFromScrollbackLocked() {
 	}
 
 	s.terminalState.Resize(cols, rows)
+	s.terminalStateSuppressReplies.Store(true)
+	defer s.terminalStateSuppressReplies.Store(false)
 	_, _ = s.terminalState.Write([]byte("\x1bc\x1b[2J\x1b[H"))
 
 	s.scrollMu.RLock()
@@ -159,6 +203,84 @@ func (s *Session) TerminalStateSnapshot() *TerminalStateSnapshot {
 	}
 }
 
+func (s *Session) TerminalSerializedSnapshot() *TerminalSerializedSnapshot {
+	if !s.terminalStateEnabledForPlatform() {
+		return nil
+	}
+
+	s.terminalStateMu.Lock()
+	defer s.terminalStateMu.Unlock()
+
+	if s.terminalState == nil {
+		s.rebuildTerminalStateFromScrollbackLocked()
+	}
+	if s.terminalState == nil {
+		return nil
+	}
+
+	cols, rows := s.terminalState.Size()
+	if cols <= 0 || rows <= 0 {
+		return nil
+	}
+
+	var buffer bytes.Buffer
+	buffer.WriteString("\x1b[0m\x1b[2J\x1b[3J\x1b[H")
+	previousStyle := ""
+
+	for row := 0; row < rows; row++ {
+		for col := 0; col < cols; col++ {
+			cell := snapshotCellFromGlyph(s.terminalState.Cell(col, row))
+			if terminalCellModeHas(cell.Mode, terminalAttrWideDummy) {
+				continue
+			}
+			nextStyle := buildTerminalSnapshotSGR(cell)
+			if nextStyle != previousStyle {
+				buffer.WriteString(nextStyle)
+				previousStyle = nextStyle
+			}
+			if cell.Char != "" {
+				buffer.WriteString(cell.Char)
+			} else {
+				buffer.WriteByte(' ')
+			}
+		}
+		if row < rows-1 {
+			buffer.WriteString("\r\n")
+		}
+	}
+
+	cursor := s.terminalState.Cursor()
+	cursorCell := TerminalStateCell{
+		Mode:      cursor.Attr.Mode,
+		FG:        snapshotColorValue(cursor.Attr.FG),
+		BG:        snapshotColorValue(cursor.Attr.BG),
+		FGDefault: cursor.Attr.FG == vt10x.DefaultFG,
+		BGDefault: cursor.Attr.BG == vt10x.DefaultBG,
+	}
+
+	buffer.WriteString(buildTerminalSnapshotSGR(cursorCell))
+	buffer.WriteString(fmt.Sprintf(
+		"\x1b[%d;%dH",
+		clampTerminalCoordinate(cursor.Y+1, 1, rows),
+		clampTerminalCoordinate(cursor.X+1, 1, cols),
+	))
+	if s.terminalState.CursorVisible() {
+		buffer.WriteString("\x1b[?25h")
+	} else {
+		buffer.WriteString("\x1b[?25l")
+	}
+
+	return &TerminalSerializedSnapshot{
+		Rows:          rows,
+		Cols:          cols,
+		Data:          buffer.Bytes(),
+		AltScreen:     s.terminalState.Mode()&vt10x.ModeAltScreen != 0,
+		CursorVisible: s.terminalState.CursorVisible(),
+		ModeFlags:     uint32(s.terminalState.Mode()),
+		CapturedAt:    s.terminalStateCapturedAt,
+	}
+}
+
 func snapshotCellFromGlyph(cell vt10x.Glyph) TerminalStateCell {
 	char := ""
 	if cell.Char != 0 {
@@ -179,4 +301,91 @@ func snapshotColorValue(color vt10x.Color) uint32 {
 		return 0
 	}
 	return uint32(color)
+}
+
+func terminalCellModeHas(mode, flag int16) bool {
+	return mode&flag == flag
+}
+
+func buildTerminalSnapshotSGR(cell TerminalStateCell) string {
+	codes := make([]any, 0, 10)
+
+	if terminalCellModeHas(cell.Mode, terminalAttrReverse) {
+		codes = append(codes, 7)
+	} else {
+		codes = append(codes, 27)
+	}
+
+	if terminalCellModeHas(cell.Mode, terminalAttrUnderline) {
+		codes = append(codes, 4)
+	} else {
+		codes = append(codes, 24)
+	}
+
+	if terminalCellModeHas(cell.Mode, terminalAttrBold) {
+		codes = append(codes, 1)
+	} else {
+		codes = append(codes, 22)
+	}
+
+	if terminalCellModeHas(cell.Mode, terminalAttrItalic) {
+		codes = append(codes, 3)
+	} else {
+		codes = append(codes, 23)
+	}
+
+	if terminalCellModeHas(cell.Mode, terminalAttrBlink) {
+		codes = append(codes, 5)
+	} else {
+		codes = append(codes, 25)
+	}
+
+	if terminalCellModeHas(cell.Mode, terminalAttrFaint) {
+		codes = append(codes, 2)
+	}
+
+	if cell.FGDefault {
+		codes = append(codes, 39)
+	} else {
+		r := (cell.FG >> 16) & 0xff
+		g := (cell.FG >> 8) & 0xff
+		b := cell.FG & 0xff
+		codes = append(codes, fmt.Sprintf("38;2;%d;%d;%d", r, g, b))
+	}
+
+	if cell.BGDefault {
+		codes = append(codes, 49)
+	} else {
+		r := (cell.BG >> 16) & 0xff
+		g := (cell.BG >> 8) & 0xff
+		b := cell.BG & 0xff
+		codes = append(codes, fmt.Sprintf("48;2;%d;%d;%d", r, g, b))
+	}
+
+	return fmt.Sprintf("\x1b[%sm", joinTerminalSGRCodes(codes))
+}
+
+func joinTerminalSGRCodes(codes []any) string {
+	if len(codes) == 0 {
+		return "0"
+	}
+
+	var buffer bytes.Buffer
+	for index, code := range codes {
+		if index > 0 {
+			buffer.WriteByte(';')
+		}
+		buffer.WriteString(fmt.Sprint(code))
+	}
+	return buffer.String()
+}
+
+func clampTerminalCoordinate(value, min, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }

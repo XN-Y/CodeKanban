@@ -7,6 +7,13 @@ import {
   getDefaultPreset,
 } from '@/constants/themes';
 import { DEFAULT_TERMINAL_THEME_ID } from '@/constants/terminalThemes';
+import {
+  DEFAULT_TERMINAL_RENDER_MODE,
+  DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  sanitizeTerminalRenderMode,
+  sanitizeTerminalSnapshotIntervalMs,
+  type TerminalRenderMode,
+} from '@/constants/terminalRenderMode';
 
 /**
  * 终端主题跟随应用主题的特殊值
@@ -192,6 +199,9 @@ interface GeneralSettings {
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
   terminalDisplayMode: TerminalDisplayMode;
+  defaultTerminalRenderMode: TerminalRenderMode;
+  defaultTerminalSnapshotIntervalMs: number;
+  defaultTerminalSnapshotZlibCompression: boolean;
 }
 
 const STORAGE_KEY = 'general_settings';
@@ -254,6 +264,9 @@ const defaultSettings: GeneralSettings = {
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
   terminalDisplayMode: 'docked',
+  defaultTerminalRenderMode: DEFAULT_TERMINAL_RENDER_MODE,
+  defaultTerminalSnapshotIntervalMs: DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  defaultTerminalSnapshotZlibCompression: true,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -275,6 +288,13 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
   const terminalDisplayMode = computed(() => settings.value.terminalDisplayMode);
+  const defaultTerminalRenderMode = computed(() => settings.value.defaultTerminalRenderMode);
+  const defaultTerminalSnapshotIntervalMs = computed(
+    () => settings.value.defaultTerminalSnapshotIntervalMs
+  );
+  const defaultTerminalSnapshotZlibCompression = computed(
+    () => settings.value.defaultTerminalSnapshotZlibCompression
+  );
 
   /**
    * 获取有效的终端主题 ID
@@ -416,6 +436,18 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalDisplayMode = mode;
   }
 
+  function updateDefaultTerminalRenderMode(mode: TerminalRenderMode) {
+    settings.value.defaultTerminalRenderMode = sanitizeTerminalRenderMode(mode);
+  }
+
+  function updateDefaultTerminalSnapshotIntervalMs(value: number) {
+    settings.value.defaultTerminalSnapshotIntervalMs = sanitizeTerminalSnapshotIntervalMs(value);
+  }
+
+  function updateDefaultTerminalSnapshotZlibCompression(value: boolean) {
+    settings.value.defaultTerminalSnapshotZlibCompression = value !== false;
+  }
+
   function resetTerminalFont() {
     settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
   }
@@ -492,6 +524,9 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalFont,
     terminalWebGLRenderer,
     terminalDisplayMode,
+    defaultTerminalRenderMode,
+    defaultTerminalSnapshotIntervalMs,
+    defaultTerminalSnapshotZlibCompression,
     effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
@@ -509,6 +544,9 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTerminalFont,
     updateTerminalWebGLRenderer,
     updateTerminalDisplayMode,
+    updateDefaultTerminalRenderMode,
+    updateDefaultTerminalSnapshotIntervalMs,
+    updateDefaultTerminalSnapshotZlibCompression,
     resetTerminalFont,
     selectPreset,
     applySystemThemePreset,
@@ -556,6 +594,12 @@ function loadSettings(): GeneralSettings {
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
         terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
+        defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
+        defaultTerminalSnapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(
+          parsed.defaultTerminalSnapshotIntervalMs
+        ),
+        defaultTerminalSnapshotZlibCompression:
+          parsed.defaultTerminalSnapshotZlibCompression !== false,
       };
     }
   } catch (error) {
@@ -591,6 +635,9 @@ function cloneDefaultSettings(): GeneralSettings {
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
     terminalDisplayMode: defaultSettings.terminalDisplayMode,
+    defaultTerminalRenderMode: defaultSettings.defaultTerminalRenderMode,
+    defaultTerminalSnapshotIntervalMs: defaultSettings.defaultTerminalSnapshotIntervalMs,
+    defaultTerminalSnapshotZlibCompression: defaultSettings.defaultTerminalSnapshotZlibCompression,
   };
 }
 

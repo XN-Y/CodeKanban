@@ -57,6 +57,39 @@
               <span class="form-tip">{{ t('settings.sendResizeOnSwitchTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.terminalDefaultRenderMode')">
+            <n-space vertical size="small">
+              <n-radio-group v-model:value="defaultTerminalRenderModeValue">
+                <n-space>
+                  <n-radio value="live">{{ t('settings.terminalRenderModeLive') }}</n-radio>
+                  <n-radio value="snapshot">
+                    {{ t('settings.terminalRenderModeSnapshot') }}
+                  </n-radio>
+                </n-space>
+              </n-radio-group>
+              <span class="form-tip">{{ t('settings.terminalDefaultRenderModeTip') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalDefaultSnapshotInterval')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="defaultTerminalSnapshotIntervalValue"
+                :options="snapshotIntervalOptions"
+                style="max-width: 180px"
+              />
+              <span class="form-tip">
+                {{ t('settings.terminalDefaultSnapshotIntervalTip') }}
+              </span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.terminalSnapshotZlibCompression')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="defaultTerminalSnapshotZlibCompressionValue" />
+              <span class="form-tip">
+                {{ t('settings.terminalSnapshotZlibCompressionTip') }}
+              </span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -699,6 +732,11 @@ import {
 } from '@/stores/settings';
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
+import {
+  TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
+  formatTerminalSnapshotInterval,
+  type TerminalRenderMode,
+} from '@/constants/terminalRenderMode';
 import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
 import {
   lightenColor,
@@ -749,6 +787,9 @@ const {
   terminalThemeId,
   terminalFont,
   terminalWebGLRenderer,
+  defaultTerminalRenderMode,
+  defaultTerminalSnapshotIntervalMs,
+  defaultTerminalSnapshotZlibCompression,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
 
@@ -1322,6 +1363,26 @@ const terminalLimitValue = computed({
 const confirmTerminalCloseValue = computed({
   get: () => confirmBeforeTerminalClose.value,
   set: value => settingsStore.updateConfirmBeforeTerminalClose(value),
+});
+
+const snapshotIntervalOptions = TERMINAL_SNAPSHOT_INTERVAL_OPTIONS.map(interval => ({
+  label: formatTerminalSnapshotInterval(interval),
+  value: interval,
+}));
+
+const defaultTerminalRenderModeValue = computed({
+  get: () => defaultTerminalRenderMode.value,
+  set: (value: TerminalRenderMode) => settingsStore.updateDefaultTerminalRenderMode(value),
+});
+
+const defaultTerminalSnapshotIntervalValue = computed({
+  get: () => defaultTerminalSnapshotIntervalMs.value,
+  set: (value: number) => settingsStore.updateDefaultTerminalSnapshotIntervalMs(value),
+});
+
+const defaultTerminalSnapshotZlibCompressionValue = computed({
+  get: () => defaultTerminalSnapshotZlibCompression.value,
+  set: (value: boolean) => settingsStore.updateDefaultTerminalSnapshotZlibCompression(value),
 });
 
 // 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）

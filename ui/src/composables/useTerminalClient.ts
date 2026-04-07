@@ -2,11 +2,11 @@ import { computed, onBeforeUnmount, watch, type Ref } from 'vue';
 import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal';
 export type {
   TerminalCreateOptions,
+  ClientStatus,
+  TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
-  TerminalStateCell,
   TerminalTabState,
   ServerMessage,
-  TerminalStateSnapshot,
 } from '@/stores/terminal';
 
 export function useTerminalClient(projectIdRef: Ref<string>) {
@@ -76,6 +76,12 @@ export function useTerminalClient(projectIdRef: Ref<string>) {
     },
     unlinkTask(sessionId: string) {
       return store.unlinkSessionTask(projectIdRef.value, sessionId);
+    },
+    setRenderMode(sessionId: string, mode: 'live' | 'snapshot' | null) {
+      return store.setSessionRenderMode(projectIdRef.value, sessionId, mode);
+    },
+    setSnapshotInterval(sessionId: string, snapshotIntervalMs: number | null) {
+      return store.setSessionSnapshotInterval(projectIdRef.value, sessionId, snapshotIntervalMs);
     },
     focusSession(sessionId: string) {
       return store.focusSession(projectIdRef.value, sessionId);

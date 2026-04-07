@@ -116,6 +116,16 @@ type TerminalStateSnapshot struct {
 	CapturedAt      time.Time             `json:"capturedAt,omitempty"`
 }
 
+type TerminalSerializedSnapshot struct {
+	Rows          int
+	Cols          int
+	Data          []byte
+	AltScreen     bool
+	CursorVisible bool
+	ModeFlags     uint32
+	CapturedAt    time.Time
+}
+
 type SessionStream struct {
 	id     string
 	events <-chan StreamEvent
@@ -191,13 +201,14 @@ type Session struct {
 	assistantOutputQueue    [][]byte
 	assistantOutputQueueMax int
 
-	associatedTaskID          string
-	lockedTitle               string
-	lastRecentInput           string
-	renameTitleEachCommand    atomic.Bool
-	autoCreateTaskOnStartWork atomic.Bool
-	autoTitleAssigned         atomic.Bool
-	terminalStateEnabled      atomic.Bool
+	associatedTaskID             string
+	lockedTitle                  string
+	lastRecentInput              string
+	renameTitleEachCommand       atomic.Bool
+	autoCreateTaskOnStartWork    atomic.Bool
+	autoTitleAssigned            atomic.Bool
+	terminalStateEnabled         atomic.Bool
+	terminalStateSuppressReplies atomic.Bool
 
 	// LogWatcher for capturing user input from AI assistant session logs
 	logWatcherMu          sync.RWMutex
