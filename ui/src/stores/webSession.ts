@@ -161,7 +161,10 @@ function loadStoredActiveSessions() {
 
 function persistActiveSessions(value: Record<string, string>) {
   try {
-    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(value));
+    const persisted = Object.fromEntries(
+      Object.entries(value).filter(([, sessionId]) => typeof sessionId === 'string' && sessionId)
+    );
+    localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('[Web Session] Failed to persist active sessions', error);
   }
@@ -236,6 +239,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return activeSessionIdByProject.value[projectId] ?? '';
   }
 
+  function hasStoredActiveSession(projectId: string) {
+    return Object.prototype.hasOwnProperty.call(activeSessionIdByProject.value, projectId);
+  }
+
   function getActiveSession(projectId: string) {
     const activeId = getActiveSessionId(projectId);
     return getSessions(projectId).find(item => item.id === activeId) ?? null;
@@ -281,6 +288,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
       [projectId]: sessionId,
     };
     persistActiveSessions(activeSessionIdByProject.value);
+  }
+
+  function setActiveSession(projectId: string, sessionId: string) {
+    if (!projectId) {
+      return;
+    }
+    if (!sessionId) {
+      activeSessionIdByProject.value = {
+        ...activeSessionIdByProject.value,
+        [projectId]: '',
+      };
+      return;
+    }
+    rememberActiveSession(projectId, sessionId);
   }
 
   function ensureSeenSet(sessionId: string) {
@@ -772,7 +793,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...loadedProjects.value,
       [projectId]: true,
     };
-    if (!activeSessionIdByProject.value[projectId] && sessions[0]?.id) {
+    if (!hasStoredActiveSession(projectId) && sessions[0]?.id) {
       rememberActiveSession(projectId, sessions[0].id);
     }
     return sessions;
@@ -1319,6 +1340,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     lastError,
     getSessions,
     getActiveSessionId,
+    hasStoredActiveSession,
     getActiveSession,
     getDraftAttachments,
     getPendingInputs,
@@ -1326,6 +1348,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getBlocks,
     getLatestEventSeq,
     loadSessions,
+    setActiveSession,
     ensureSessionConnected,
     createSession: createSessionViaHttp,
     renameSession,

@@ -23,6 +23,7 @@ export const webSessionApi = {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      permissionMode?: string;
       title?: string;
     }
   ): Promise<WebSessionSummary> {
@@ -35,6 +36,7 @@ export const webSessionApi = {
           reasoningEffort: data.reasoningEffort ?? 'default',
           workflowMode: data.workflowMode ?? 'default',
           permissionLevel: data.permissionLevel ?? 'elevated',
+          permissionMode: data.permissionMode ?? '',
           title: data.title ?? '',
         })
         .send()) ?? {};

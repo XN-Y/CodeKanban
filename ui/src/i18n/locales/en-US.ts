@@ -588,7 +588,9 @@ export default {
   webSession: {
     switchProject: 'Switch Project',
     emptyTitle: 'No Sessions',
-    emptyDescription: 'Create a Claude or Codex web session to start streaming messages.',
+    emptyDescription: 'Create a Claude or Codex session to start a conversation.',
+    draftTitle: 'New Session',
+    draftDescription: 'Type below to start a new conversation.',
     allSessions: 'All Sessions',
     crossProjectSessions: 'Across projects',
     newSession: 'New Session',

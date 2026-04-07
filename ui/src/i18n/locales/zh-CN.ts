@@ -574,7 +574,9 @@ export default {
   webSession: {
     switchProject: '切换项目',
     emptyTitle: '暂无会话',
-    emptyDescription: '创建一个 Claude 或 Codex 会话，开始流式对话。',
+    emptyDescription: '创建一个 Claude 或 Codex 会话，开始对话。',
+    draftTitle: '新建会话',
+    draftDescription: '在下方输入消息，开始新的对话。',
     allSessions: '所有会话',
     crossProjectSessions: '跨项目会话列表',
     newSession: '新建会话',

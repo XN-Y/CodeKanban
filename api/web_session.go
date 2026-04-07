@@ -84,7 +84,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 				ReasoningEffort string `json:"reasoningEffort"`
 				WorkflowMode    string `json:"workflowMode"`
 				PermissionLevel string `json:"permissionLevel"`
-				PermissionMode  string `json:"permissionMode"`
+				PermissionMode  string `json:"permissionMode,omitempty"`
 				Title           string `json:"title"`
 			}
 		},

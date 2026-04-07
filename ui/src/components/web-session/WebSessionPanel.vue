@@ -96,7 +96,7 @@
               <div class="active-tab-indicator" :style="activeTabIndicatorStyle"></div>
             </div>
 
-            <div v-else class="empty-tabs-label">{{ t('webSession.emptyTitle') }}</div>
+            <div v-else class="empty-tabs-label">{{ emptyStateTitle }}</div>
 
             <n-dropdown
               trigger="manual"
@@ -116,7 +116,7 @@
                 class="new-session-button"
                 :title="t('webSession.newSession')"
                 :aria-label="t('webSession.newSession')"
-                @click="handleCreateSession()"
+                @click="handleStartDraftSession()"
               >
                 <template #icon>
                   <n-icon><AddOutline /></n-icon>
@@ -303,13 +303,7 @@
           </div>
 
           <div v-else-if="!currentSession" class="empty-state">
-            <n-empty :description="t('webSession.emptyDescription')">
-              <template #extra>
-                <n-button type="primary" @click="handleCreateSession()">
-                  {{ t('webSession.newSession') }}
-                </n-button>
-              </template>
-            </n-empty>
+            <n-empty :description="emptyStateDescription" />
           </div>
 
           <div class="composer">
@@ -452,6 +446,7 @@
               </div>
 
               <n-input
+                ref="composerInputRef"
                 v-model:value="composerText"
                 type="textarea"
                 class="composer-input"
@@ -695,6 +690,16 @@ const props = withDefaults(
   }
 );
 
+type DraftSessionTab = WebSessionSummary & {
+  isDraft: true;
+};
+
+type SessionTab = (WebSessionSummary & { isDraft?: false }) | DraftSessionTab;
+
+function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
+  return Boolean(session && 'isDraft' in session && session.isDraft);
+}
+
 const webSessionStore = useWebSessionStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
@@ -708,13 +713,14 @@ const { activeTheme, currentPresetId, confirmBeforeTerminalClose } = storeToRefs
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
+const composerInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
 const composerText = ref('');
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
 const showMobileTabSelector = ref(false);
-const contextMenuSession = ref<WebSessionSummary | null>(null);
+const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
 const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
@@ -751,31 +757,49 @@ const draftModel = ref('gpt-5.4');
 const draftReasoningEffort = ref<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>('xhigh');
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
+const draftSessions = ref<DraftSessionTab[]>([]);
+const activeDraftSessionId = ref('');
 
-const sessions = computed(() => webSessionStore.getSessions(props.projectId));
-const currentSession = computed(() => webSessionStore.getActiveSession(props.projectId));
+const realSessions = computed<SessionTab[]>(() =>
+  webSessionStore.getSessions(props.projectId).map(session => ({
+    ...session,
+    isDraft: false as const,
+  }))
+);
+const sessions = computed<SessionTab[]>(() => [...realSessions.value, ...draftSessions.value]);
+const currentSession = computed<SessionTab | null>(() => {
+  if (activeDraftSessionId.value) {
+    return draftSessions.value.find(session => session.id === activeDraftSessionId.value) ?? null;
+  }
+  const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
+  return realSessions.value.find(session => session.id === activeRealId) ?? null;
+});
+const currentRealSession = computed<WebSessionSummary | null>(() => {
+  const session = currentSession.value;
+  return session && !isDraftSession(session) ? session : null;
+});
 const blocks = computed(() =>
-  currentSession.value ? webSessionStore.getBlocks(currentSession.value.id) : []
+  currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
 );
 const liveState = computed(() =>
-  currentSession.value
-    ? webSessionStore.getLiveState(currentSession.value.id)
+  currentRealSession.value
+    ? webSessionStore.getLiveState(currentRealSession.value.id)
     : ({ phase: 'idle', running: false, updatedAt: Date.now() } as WebSessionLiveState)
 );
 const pendingApproval = computed(() =>
-  currentSession.value ? webSessionStore.getPendingApproval(currentSession.value.id) : null
+  currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
 );
 const historyMeta = computed(() =>
-  currentSession.value
-    ? webSessionStore.getHistoryMeta(currentSession.value.id)
+  currentRealSession.value
+    ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
 const draftAttachments = computed(() => webSessionStore.getDraftAttachments(props.projectId));
 const pendingInputs = computed(() =>
-  currentSession.value ? webSessionStore.getPendingInputs(currentSession.value.id) : []
+  currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
 const currentSessionLatestEventSeq = computed(() =>
-  currentSession.value ? webSessionStore.getLatestEventSeq(currentSession.value.id) : 0
+  currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
 const isRunActive = computed(() => Boolean(currentSession.value?.status === 'running'));
 const hasDraftContent = computed(
@@ -829,9 +853,9 @@ const liveStateWorking = computed(() =>
   ['starting', 'thinking', 'tool'].includes(liveState.value.phase)
 );
 const activeSessionId = computed(() => currentSession.value?.id ?? '');
-const activeSessionTitle = computed(
-  () => currentSession.value?.title ?? t('webSession.emptyTitle')
-);
+const emptyStateTitle = computed(() => t('webSession.draftTitle'));
+const emptyStateDescription = computed(() => t('webSession.draftDescription'));
+const activeSessionTitle = computed(() => currentSession.value?.title ?? emptyStateTitle.value);
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
 const currentSessionIndex = computed(() =>
   sessions.value.findIndex(session => session.id === activeSessionId.value)
@@ -940,6 +964,106 @@ function parseTimestamp(value?: string | null) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function resolveDraftContext(worktreeId?: string | null) {
+  const normalizedWorktreeId = String(worktreeId || '').trim();
+  const worktree = normalizedWorktreeId
+    ? projectStore.worktrees.find(item => item.id === normalizedWorktreeId)
+    : null;
+  return {
+    worktreeId: worktree?.id ?? (normalizedWorktreeId || null),
+    cwd: worktree?.path || projectStore.currentProject?.path || currentSession.value?.cwd || '',
+  };
+}
+
+function buildDraftTitle(agent: 'claude' | 'codex') {
+  const baseAgent = agent === 'claude' ? 'Claude' : 'Codex';
+  const projectName = projectStore.currentProject?.name?.trim();
+  const baseTitle = projectName ? `${baseAgent} · ${projectName}` : baseAgent;
+  const samePrefixCount = draftSessions.value.filter(session =>
+    session.title === baseTitle || session.title.startsWith(`${baseTitle} `)
+  ).length;
+  return samePrefixCount > 0 ? `${baseTitle} ${samePrefixCount + 1}` : baseTitle;
+}
+
+function updateDraftSession(draftId: string, updater: (draft: DraftSessionTab) => DraftSessionTab) {
+  draftSessions.value = draftSessions.value.map(session =>
+    session.id === draftId ? updater(session) : session
+  );
+}
+
+function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSessionTab) {
+  if (!activeDraftSessionId.value) {
+    return;
+  }
+  updateDraftSession(activeDraftSessionId.value, updater);
+}
+
+function createDraftSession(forceAgent?: 'claude' | 'codex') {
+  const source = currentSession.value;
+  const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
+  const context = resolveDraftContext(source?.worktreeId ?? projectStore.selectedWorktreeId ?? null);
+  const nowIso = new Date().toISOString();
+  const draft: DraftSessionTab = {
+    id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    projectId: props.projectId,
+    worktreeId: context.worktreeId,
+    orderIndex: Number.MAX_SAFE_INTEGER - draftSessions.value.length,
+    agent: nextAgent,
+    title: buildDraftTitle(nextAgent),
+    model: source?.model || draftModel.value || defaultModelForAgent(nextAgent),
+    reasoningEffort:
+      source?.reasoningEffort ||
+      draftReasoningEffort.value ||
+      defaultReasoningEffortForAgent(nextAgent),
+    workflowMode: source?.workflowMode || draftWorkflowMode.value,
+    permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+    cwd: context.cwd,
+    nativeSessionId: null,
+    status: 'idle',
+    hasUnread: false,
+    lastMessageAt: null,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+    usage: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      cost: 0,
+    },
+    isDraft: true,
+  };
+  draftSessions.value = [...draftSessions.value, draft];
+  activeDraftSessionId.value = draft.id;
+  webSessionStore.setActiveSession(props.projectId, '');
+  return draft;
+}
+
+function ensureDefaultDraftSession() {
+  if (realSessions.value.length > 0 || draftSessions.value.length > 0) {
+    return;
+  }
+  createDraftSession();
+}
+
+function removeDraftSession(sessionId: string) {
+  const nextDrafts = draftSessions.value.filter(session => session.id !== sessionId);
+  const removedActive = activeDraftSessionId.value === sessionId;
+  draftSessions.value = nextDrafts;
+  if (!removedActive) {
+    return;
+  }
+  const nextActiveDraft = nextDrafts[nextDrafts.length - 1] ?? null;
+  activeDraftSessionId.value = nextActiveDraft?.id ?? '';
+  if (!nextActiveDraft) {
+    const nextReal = realSessions.value[0];
+    if (nextReal) {
+      void webSessionStore.ensureSessionConnected(props.projectId, nextReal.id);
+      return;
+    }
+    ensureDefaultDraftSession();
+  }
+}
+
 function getSessionActivityTimestamp(session: WebSessionSummary) {
   return parseTimestamp(session.lastMessageAt || session.updatedAt || session.createdAt);
 }
@@ -966,6 +1090,9 @@ function markSessionViewed(sessionId?: string) {
 }
 
 function hasSessionUnread(session: (typeof sessions.value)[number]) {
+  if (isDraftSession(session)) {
+    return false;
+  }
   const latestSeq = webSessionStore.getLatestEventSeq(session.id);
   const viewedSeq = viewedEventSeqBySession.value[session.id] ?? -1;
   if (latestSeq > 0) {
@@ -1201,8 +1328,23 @@ const selectedAgent = computed({
       draftModel.value = 'gpt-5.4';
     }
     draftReasoningEffort.value = defaultReasoningEffortForAgent(next);
-    if (currentSession.value) {
-      void webSessionStore.updateAgent(currentSession.value.id, next).catch(error => {
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        agent: next,
+        model:
+          next === 'claude' && current.model.startsWith('gpt-')
+            ? 'opus'
+            : next === 'codex' && !current.model.startsWith('gpt-')
+              ? 'gpt-5.4'
+              : current.model,
+        reasoningEffort: defaultReasoningEffortForAgent(next),
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore.updateAgent(currentRealSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
     }
@@ -1218,8 +1360,16 @@ const selectedModel = computed({
       return;
     }
     draftModel.value = next;
-    if (currentSession.value) {
-      void webSessionStore.updateModel(currentSession.value.id, next).catch(error => {
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        model: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore.updateModel(currentRealSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
     }
@@ -1231,8 +1381,16 @@ const selectedReasoningEffort = computed<'default' | 'none' | 'low' | 'medium' |
   set: value => {
     const next = value as 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
     draftReasoningEffort.value = next;
-    if (currentSession.value) {
-      void webSessionStore.updateReasoningEffort(currentSession.value.id, next).catch(error => {
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        reasoningEffort: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore.updateReasoningEffort(currentRealSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
     }
@@ -1250,8 +1408,16 @@ const selectedWorkflowMode = computed<'default' | 'plan'>({
   set: value => {
     const next = value as 'default' | 'plan';
     draftWorkflowMode.value = next;
-    if (currentSession.value) {
-      void webSessionStore.updateWorkflowMode(currentSession.value.id, next).catch(error => {
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        workflowMode: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore.updateWorkflowMode(currentRealSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
     }
@@ -1263,8 +1429,16 @@ const selectedPermissionLevel = computed<'default' | 'elevated' | 'yolo'>({
   set: value => {
     const next = value as 'default' | 'elevated' | 'yolo';
     draftPermissionLevel.value = next;
-    if (currentSession.value) {
-      void webSessionStore.updatePermissionLevel(currentSession.value.id, next).catch(error => {
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        permissionLevel: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore.updatePermissionLevel(currentRealSession.value.id, next).catch(error => {
         message.error(error instanceof Error ? error.message : t('common.error'));
       });
     }
@@ -1283,6 +1457,14 @@ function setWorkflowMode(mode: 'default' | 'plan') {
   draftWorkflowMode.value = mode;
   const session = currentSession.value;
   if (!session) {
+    return;
+  }
+  if (isDraftSession(session)) {
+    updateActiveDraftSession(current => ({
+      ...current,
+      workflowMode: mode,
+      updatedAt: new Date().toISOString(),
+    }));
     return;
   }
   void webSessionStore.updateWorkflowMode(session.id, mode).catch(error => {
@@ -1317,6 +1499,14 @@ function openCustomModelDialog() {
       }
       draftModel.value = nextModel;
       if (!currentSession.value) {
+        return true;
+      }
+      if (isDraftSession(currentSession.value)) {
+        updateActiveDraftSession(current => ({
+          ...current,
+          model: nextModel,
+          updatedAt: new Date().toISOString(),
+        }));
         return true;
       }
       try {
@@ -1445,12 +1635,19 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
+  draftSessions.value = [];
+  activeDraftSessionId.value = '';
   const loadedSessions = await webSessionStore.loadSessions(projectId);
   await webSessionStore.openSocket();
-  const targetSessionId = webSessionStore.getActiveSessionId(projectId) || loadedSessions[0]?.id;
+  const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
+  const targetSessionId = webSessionStore.hasStoredActiveSession(projectId)
+    ? rememberedSessionId
+    : loadedSessions[0]?.id;
   if (targetSessionId) {
     await webSessionStore.ensureSessionConnected(projectId, targetSessionId);
+    return;
   }
+  ensureDefaultDraftSession();
 }
 
 async function handleSessionSelect(sessionId: string) {
@@ -1458,6 +1655,14 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   showMobileTabSelector.value = false;
+  const draft = draftSessions.value.find(session => session.id === sessionId);
+  if (draft) {
+    activeDraftSessionId.value = draft.id;
+    webSessionStore.setActiveSession(props.projectId, '');
+    scrollToBottom(true);
+    return;
+  }
+  activeDraftSessionId.value = '';
   await webSessionStore.ensureSessionConnected(props.projectId, sessionId);
   scrollToBottom(true);
 }
@@ -1472,6 +1677,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       scrollToBottom(true);
       return;
     }
+    activeDraftSessionId.value = '';
     await webSessionStore.ensureSessionConnected(item.projectId, sessionId);
     if (item.projectId !== props.projectId) {
       projectStore.addRecentProject(item.projectId);
@@ -1541,16 +1747,25 @@ function startSidebarResize(event: MouseEvent) {
 
 async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   try {
-    const agent = forceAgent ?? selectedAgent.value;
+    const source = currentSession.value;
+    const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
+    const worktreeId = isDraftSession(source)
+      ? source.worktreeId ?? undefined
+      : projectStore.selectedWorktreeId ?? source?.worktreeId ?? undefined;
     const session = await webSessionStore.createSession(props.projectId, {
-      worktreeId: projectStore.selectedWorktreeId ?? undefined,
+      worktreeId,
       agent,
-      model: draftModel.value || defaultModelForAgent(agent),
+      model: source?.model || draftModel.value || defaultModelForAgent(agent),
       reasoningEffort:
-        agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent),
-      workflowMode: draftWorkflowMode.value,
-      permissionLevel: draftPermissionLevel.value,
+        source?.reasoningEffort ||
+        (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
+      workflowMode: source?.workflowMode || draftWorkflowMode.value,
+      permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
     });
+    if (isDraftSession(source)) {
+      removeDraftSession(source.id);
+      activeDraftSessionId.value = '';
+    }
     draftAgent.value = session.agent;
     draftModel.value = session.model;
     draftReasoningEffort.value =
@@ -1558,9 +1773,28 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
     scrollToBottom(true);
+    return session;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
+    return null;
   }
+}
+
+function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  const draft = createDraftSession(forceAgent);
+  draftAgent.value = draft.agent;
+  draftModel.value = draft.model || defaultModelForAgent(draft.agent);
+  draftReasoningEffort.value =
+    draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
+  draftWorkflowMode.value = draft.workflowMode;
+  draftPermissionLevel.value = draft.permissionLevel;
+  showMobileTabSelector.value = false;
+  contextMenuSession.value = null;
+  expandedTools.value = {};
+  autoFollowBottom.value = true;
+  scrollToBottom(true);
+  updateActiveTabIndicator();
+  focusComposer();
 }
 
 async function handleRenameSession(sessionId: string) {
@@ -1596,6 +1830,15 @@ async function handleRenameSession(sessionId: string) {
       if (nextTitle === session.title) {
         return true;
       }
+      if (isDraftSession(session)) {
+        updateDraftSession(session.id, current => ({
+          ...current,
+          title: nextTitle,
+          updatedAt: new Date().toISOString(),
+        }));
+        message.success(t('webSession.renameSuccess'));
+        return true;
+      }
       try {
         await webSessionStore.renameSession(props.projectId, sessionId, nextTitle);
         message.success(t('webSession.renameSuccess'));
@@ -1611,6 +1854,11 @@ async function handleRenameSession(sessionId: string) {
 function handleDeleteSession(sessionId: string) {
   const session = sessions.value.find(item => item.id === sessionId);
   if (!session) {
+    return;
+  }
+
+  if (isDraftSession(session)) {
+    removeDraftSession(sessionId);
     return;
   }
 
@@ -1639,6 +1887,8 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     const nextSession = webSessionStore.getActiveSession(props.projectId);
     if (nextSession?.id) {
       await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
+    } else {
+      ensureDefaultDraftSession();
     }
     return true;
   } catch (error) {
@@ -1793,15 +2043,21 @@ function removeAttachment(attachmentId: string) {
   webSessionStore.removeDraftAttachment(props.projectId, attachmentId);
 }
 
+function focusComposer() {
+  nextTick(() => {
+    composerInputRef.value?.focus();
+  });
+}
+
 async function handleSubmit() {
   if (isRunActive.value || !hasDraftContent.value) {
     return;
   }
   try {
-    let session = currentSession.value;
-    if (!session) {
-      await handleCreateSession();
-      session = webSessionStore.getActiveSession(props.projectId);
+    let session = currentRealSession.value;
+    if (!session || isDraftSession(currentSession.value)) {
+      const created = await handleCreateSession();
+      session = created ?? webSessionStore.getActiveSession(props.projectId);
     }
     if (!session) {
       return;
@@ -1822,13 +2078,13 @@ async function handleSubmit() {
 }
 
 async function handlePreinput(mode: 'redirect' | 'queue') {
-  if (!currentSession.value || !hasDraftContent.value) {
+  if (!currentRealSession.value || !hasDraftContent.value) {
     return;
   }
   try {
     const attachments = draftAttachments.value;
     await webSessionStore.sendMessage(
-      currentSession.value.id,
+      currentRealSession.value.id,
       composerText.value,
       attachments.map(item => item.id),
       mode
@@ -1868,33 +2124,33 @@ function pendingInputPreview(item: WebSessionPendingInput) {
 }
 
 function handleRemovePendingInput(pendingId: string) {
-  if (!currentSession.value) {
+  if (!currentRealSession.value) {
     return;
   }
-  webSessionStore.removePendingInput(currentSession.value.id, pendingId);
+  webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
 }
 
 async function handleApproval(action: 'approve' | 'reject') {
-  if (!currentSession.value) {
+  if (!currentRealSession.value) {
     return;
   }
   try {
     if (action === 'approve') {
-      await webSessionStore.approveSession(currentSession.value.id);
+      await webSessionStore.approveSession(currentRealSession.value.id);
       return;
     }
-    await webSessionStore.rejectSession(currentSession.value.id);
+    await webSessionStore.rejectSession(currentRealSession.value.id);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
 }
 
 async function handleAbortCurrent() {
-  if (!currentSession.value) {
+  if (!currentRealSession.value) {
     return;
   }
   try {
-    await webSessionStore.abortSession(currentSession.value.id);
+    await webSessionStore.abortSession(currentRealSession.value.id);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -1951,16 +2207,16 @@ function handleTimelineScroll(event: Event) {
   if (
     nearTop &&
     !pendingHistoryAnchor.value &&
-    currentSession.value &&
+    currentRealSession.value &&
     historyMeta.value.hasMore &&
     !historyMeta.value.loading
   ) {
     pendingHistoryAnchor.value = {
-      sessionId: currentSession.value.id,
+      sessionId: currentRealSession.value.id,
       previousHeight: container.scrollHeight,
       previousTop: container.scrollTop,
     };
-    void webSessionStore.loadMoreHistory(currentSession.value.id).catch(error => {
+    void webSessionStore.loadMoreHistory(currentRealSession.value.id).catch(error => {
       pendingHistoryAnchor.value = null;
       console.error('[Web Session] Failed to load more history', error);
     });
@@ -2064,6 +2320,9 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
 }
 
 function getSessionAssistantStateClass(session: (typeof sessions.value)[number]) {
+  if (isDraftSession(session)) {
+    return 'waiting_input';
+  }
   const live = webSessionStore.getLiveState(session.id);
   switch (live.phase) {
     case 'starting':
@@ -2113,6 +2372,9 @@ function getSessionAssistantIcon(session: (typeof sessions.value)[number]) {
 function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
   const label = getSessionStatusLabel(session);
   const agentName = session.agent === 'claude' ? 'Claude Code' : 'Codex';
+  if (isDraftSession(session)) {
+    return agentName;
+  }
   return label ? `${agentName} · ${label}` : agentName;
 }
 
@@ -2175,6 +2437,9 @@ function getSessionPillSizeClass() {
 }
 
 function shouldShowSessionStatusDot(session: (typeof sessions.value)[number]) {
+  if (isDraftSession(session)) {
+    return false;
+  }
   return session.status === 'err';
 }
 
@@ -2202,7 +2467,7 @@ async function handleContextMenuSelect(key: string | number) {
   const session = contextMenuSession.value;
   contextMenuSession.value = null;
   if (action === 'new') {
-    await handleCreateSession();
+    handleStartDraftSession();
     return;
   }
   if (!session) {
@@ -2247,7 +2512,7 @@ function setupTabSorting() {
     return;
   }
   const container = tabsContainerRef.value;
-  if (!container || sessions.value.length <= 1) {
+  if (!container || sessions.value.length <= 1 || draftSessions.value.length > 0) {
     destroyTabSorting();
     return;
   }
@@ -2258,7 +2523,7 @@ function setupTabSorting() {
   }
   if (tabDragSortable.value) {
     if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option('disabled', sessions.value.length <= 1);
+      tabDragSortable.value.option('disabled', sessions.value.length <= 1 || draftSessions.value.length > 0);
       return;
     }
     destroyTabSorting();
@@ -2275,7 +2540,7 @@ function setupTabSorting() {
     dragClass: 'web-session-tab-dragging',
     onEnd: handleTabDragEnd,
   });
-  tabDragSortable.value.option('disabled', sessions.value.length <= 1);
+  tabDragSortable.value.option('disabled', sessions.value.length <= 1 || draftSessions.value.length > 0);
 }
 
 function destroyTabSorting() {
@@ -2286,6 +2551,9 @@ function destroyTabSorting() {
 }
 
 function handleTabDragEnd(event: SortableEvent) {
+  if (draftSessions.value.length > 0) {
+    return;
+  }
   const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
   const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
   if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
@@ -2378,7 +2646,9 @@ watch(
     autoFollowBottom.value = true;
     scrollToBottom(true);
     updateActiveTabIndicator();
-    markSessionViewed(session.id);
+    if (!isDraftSession(session)) {
+      markSessionViewed(session.id);
+    }
   },
   { immediate: true }
 );
@@ -2389,13 +2659,13 @@ watch(
     if (!active) {
       return;
     }
-    markSessionViewed(currentSession.value?.id);
+    markSessionViewed(currentRealSession.value?.id);
   },
   { immediate: true }
 );
 
 watch(currentSessionLatestEventSeq, () => {
-  markSessionViewed(currentSession.value?.id);
+  markSessionViewed(currentRealSession.value?.id);
 });
 
 watch(
@@ -2443,7 +2713,7 @@ watch(
 watch(timelineContentVersion, async () => {
   await nextTick();
   if (restoreHistoryAnchor()) {
-    markSessionViewed(currentSession.value?.id);
+    markSessionViewed(currentRealSession.value?.id);
     return;
   }
   const container = timelineScrollRef.value;
@@ -2455,7 +2725,7 @@ watch(timelineContentVersion, async () => {
   } else {
     updateBottomState(container);
   }
-  markSessionViewed(currentSession.value?.id);
+  markSessionViewed(currentRealSession.value?.id);
 });
 
 watch(
