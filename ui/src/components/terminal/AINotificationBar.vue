@@ -4,9 +4,13 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import type { DropdownOption } from 'naive-ui';
-import Apis from '@/api';
-import { useAutoReq } from '@/api/composable';
 import { useTerminalStore } from '@/stores/terminal';
+import {
+  useTerminalReminderStore,
+  type TerminalApprovalRecord,
+  type TerminalCompletionRecord,
+} from '@/stores/terminalReminder';
+import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
@@ -30,9 +34,13 @@ const props = withDefaults(
 
 const { t } = useI18n();
 const terminalStore = useTerminalStore();
+const reminderStore = useTerminalReminderStore();
+const sessionSnapshotStore = useTerminalSessionSnapshotStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const { terminalDisplayMode } = storeToRefs(settingsStore);
+const { completionRecords, approvalRecords } = storeToRefs(reminderStore);
+const { sessionsByProject, sessionsById } = storeToRefs(sessionSnapshotStore);
 const isSidebar = computed(() => props.layout === 'sidebar' || props.layout === 'docked-sidebar');
 const isDockedSidebar = computed(() => props.layout === 'docked-sidebar');
 
@@ -78,7 +86,7 @@ const PROJECT_INDEX_COLORS = [
   '#6366f1', // 靛蓝色
 ];
 
-const SIDEBAR_SESSION_POLL_MS = 5000;
+const sessionSnapshotScopeId = `terminal-notification-bar-${Math.random().toString(36).slice(2, 8)}`;
 
 type NotificationDisplayMode = 'standard' | 'idle-only' | 'exclude-idle';
 const DISPLAY_MODE_SEQUENCE: NotificationDisplayMode[] = ['standard', 'idle-only', 'exclude-idle'];
@@ -221,31 +229,8 @@ function clearReadStateForNotifications(notificationIds: string[]) {
   saveClickedNotifications();
 }
 
-const completionReadInFlight = new Set<string>();
-
 async function submitCompletionRecordsRead(recordIds: string[]) {
-  const uniqueIds = Array.from(new Set(recordIds.filter(Boolean)));
-  const tasks = uniqueIds
-    .filter(recordId => !completionReadInFlight.has(recordId))
-    .map(async recordId => {
-      completionReadInFlight.add(recordId);
-      try {
-        await Apis.terminalSession
-          .terminalCompletionRecordRead({
-            pathParams: { recordId },
-            cacheFor: 0,
-          })
-          .send();
-      } catch (error) {
-        console.error('[AI Notification] Failed to mark completion record read', recordId, error);
-      } finally {
-        completionReadInFlight.delete(recordId);
-      }
-    });
-
-  if (tasks.length) {
-    await Promise.all(tasks);
-  }
+  await reminderStore.markCompletionRecordsRead(recordIds);
 }
 
 function markSessionCompletionNotificationsAsRead(sessionId: string) {
@@ -366,31 +351,6 @@ interface AssistantInfo {
   displayName?: string;
 }
 
-interface CompletionRecordResponse {
-  id: string;
-  sessionId: string;
-  projectId: string;
-  projectName?: string;
-  title: string;
-  assistant?: AssistantInfo;
-  completedAt?: string;
-  readAt?: string;
-  dismissed?: boolean;
-  state?: 'completed' | 'working';
-  lastUserInput?: string;
-}
-
-interface ApprovalRecordResponse {
-  id: string;
-  sessionId: string;
-  projectId: string;
-  projectName?: string;
-  title: string;
-  assistant?: AssistantInfo;
-  requestedAt?: string;
-  dismissed?: boolean;
-}
-
 const defaultAssistantIcon = getAssistantIconByType();
 const defaultAssistantColor = getAssistantColorByType();
 const worktreeBranchCache = new Map<string, { branchName: string; projectId?: string }>();
@@ -412,41 +372,16 @@ const pendingCompletionSessions = computed(() => {
   return sessionIds;
 });
 
-// 使用 useAutoReq 实现自动请求：页面激活时刷新、聚焦刷新、网络重连刷新、30秒轮询
-const completionsReq = useAutoReq(
-  () => Apis.terminalSession.terminalCompletionRecordsList({ cacheFor: 0 }),
-  {
-    enableVisibility: true,
-    enableFocus: true,
-    enableNetwork: true,
-    pollingTime: 30000,
-    throttle: 1000,
-    skipShowError: true,
-  }
-);
-
-const approvalsReq = useAutoReq(
-  () => Apis.terminalSession.terminalApprovalRecordsList({ cacheFor: 0 }),
-  {
-    enableVisibility: true,
-    enableFocus: true,
-    enableNetwork: true,
-    pollingTime: 30000,
-    throttle: 1000,
-    skipShowError: true,
-  }
-);
-
 // 跟踪已有的完成通知 ID，用于检测新通知并播放声音
 const existingCompletionIds = ref<Set<string>>(new Set());
 
-// 监听完成记录数据变化
 watch(
-  () => completionsReq.data.value,
-  response => {
-    if (!response) return;
-    const records = (response?.items ?? []) as CompletionRecordResponse[];
-    const items = records.filter(record => !record.dismissed).map(mapCompletionRecord);
+  completionRecords,
+  records => {
+    const approvalSessionIds = new Set(approvalRecords.value.map(item => item.sessionId));
+    const items = records
+      .filter(record => !approvalSessionIds.has(record.sessionId))
+      .map(mapCompletionRecord);
 
     // 检测是否有新通知，播放提示音
     const hasNewNotification = items.some(item => !existingCompletionIds.value.has(item.recordId));
@@ -458,50 +393,21 @@ watch(
     existingCompletionIds.value = new Set(items.map(item => item.recordId));
 
     setNotificationsForType('completion', items);
-  }
+  },
+  { immediate: true }
 );
 
-// 监听审批记录数据变化
 watch(
-  () => approvalsReq.data.value,
-  async response => {
-    if (!response) return;
-    const records = (response?.items ?? []) as ApprovalRecordResponse[];
-    const items = records.filter(record => !record.dismissed).map(mapApprovalRecord);
-
-    // 获取所有审批通知的 sessionId 集合
+  approvalRecords,
+  records => {
+    const items = records.map(mapApprovalRecord);
     const approvalSessionIds = new Set(items.map(item => item.sessionId));
-
-    // 找到需要被顶掉的完成通知
-    const completionsToRemove = notifications.value.filter(
-      item => item.type === 'completion' && approvalSessionIds.has(item.sessionId)
-    );
-
-    // 真正地 dismiss 这些完成通知（调用后端 API）
-    for (const completion of completionsToRemove) {
-      try {
-        await Apis.terminalSession
-          .terminalCompletionRecordDismiss({
-            pathParams: { recordId: completion.recordId },
-            cacheFor: 0,
-          })
-          .send();
-      } catch (error) {
-        console.error(
-          '[AI Notification] Failed to dismiss completion record',
-          completion.recordId,
-          error
-        );
-      }
-    }
-
-    // 从前端列表中移除这些完成通知
     notifications.value = notifications.value.filter(
       item => !(item.type === 'completion' && approvalSessionIds.has(item.sessionId))
     );
-
     setNotificationsForType('approval', items);
-  }
+  },
+  { immediate: true }
 );
 
 function getDisplayModeLabel(mode: NotificationDisplayMode) {
@@ -609,112 +515,6 @@ const dockedProjectIdsToLoad = computed(() => {
   return Array.from(ids);
 });
 
-const backendSessionsByProject = ref<Map<string, TerminalSession[]>>(new Map());
-const backendSessionsById = computed(() => {
-  const result = new Map<string, TerminalSession>();
-  backendSessionsByProject.value.forEach(sessions => {
-    sessions.forEach(session => {
-      result.set(session.id, session);
-    });
-  });
-  return result;
-});
-
-let dockedSessionRefreshToken = 0;
-let dockedSessionPollTimer: number | null = null;
-
-function stopDockedSessionPolling() {
-  if (dockedSessionPollTimer != null) {
-    window.clearTimeout(dockedSessionPollTimer);
-    dockedSessionPollTimer = null;
-  }
-}
-
-function scheduleDockedSessionPolling(delay = SIDEBAR_SESSION_POLL_MS) {
-  stopDockedSessionPolling();
-  if (!isDockedSidebar.value || !notificationsEnabled.value) {
-    return;
-  }
-  dockedSessionPollTimer = window.setTimeout(async () => {
-    dockedSessionPollTimer = null;
-    await refreshDockedSessions('poll');
-    scheduleDockedSessionPolling();
-  }, delay);
-}
-
-function normalizeBackendSession(projectId: string, session: TerminalSession): TerminalSession {
-  return {
-    ...session,
-    projectId: session.projectId || projectId,
-  };
-}
-
-async function refreshDockedSessions(reason: string) {
-  if (!isDockedSidebar.value || !notificationsEnabled.value) {
-    if (backendSessionsByProject.value.size > 0) {
-      backendSessionsByProject.value = new Map();
-    }
-    return;
-  }
-
-  const projectIds = Array.from(new Set(dockedProjectIdsToLoad.value.filter(Boolean)));
-  const token = ++dockedSessionRefreshToken;
-  const previous = backendSessionsByProject.value;
-  const next = new Map<string, TerminalSession[]>();
-
-  await Promise.all(
-    projectIds.map(async projectId => {
-      try {
-        const response = await Apis.terminalSession
-          .list({
-            pathParams: { projectId },
-            cacheFor: 0,
-          })
-          .send();
-        const sessions = ((response?.items ?? []) as unknown as TerminalSession[]).map(session =>
-          normalizeBackendSession(projectId, session)
-        );
-        next.set(projectId, sessions);
-      } catch (error) {
-        console.error('[AI Notification] Failed to refresh docked terminal sessions', {
-          projectId,
-          reason,
-          error,
-        });
-        next.set(projectId, previous.get(projectId) ?? []);
-      }
-    })
-  );
-
-  if (token !== dockedSessionRefreshToken) {
-    return;
-  }
-
-  backendSessionsByProject.value = next;
-}
-
-function triggerDockedSessionRefresh(reason: string, delay = 0) {
-  if (!isDockedSidebar.value || !notificationsEnabled.value) {
-    return;
-  }
-  if (delay > 0) {
-    window.setTimeout(() => {
-      void refreshDockedSessions(reason);
-      scheduleDockedSessionPolling();
-    }, delay);
-    return;
-  }
-  void refreshDockedSessions(reason);
-  scheduleDockedSessionPolling();
-}
-
-function handleDockedSessionVisibilityRefresh() {
-  if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-    return;
-  }
-  triggerDockedSessionRefresh('visibility');
-}
-
 // 当前激活的终端 session ID
 const currentActiveSessionId = computed(() => {
   if (!currentProjectId.value) {
@@ -785,7 +585,7 @@ const dockedSessionItems = computed<DockedSessionItem[]>(() => {
 
   const items: Omit<DockedSessionItem, 'projectIndex'>[] = [];
   dockedProjectIdsToLoad.value.forEach(projectId => {
-    const sessions = backendSessionsByProject.value.get(projectId) ?? [];
+    const sessions = sessionsByProject.value.get(projectId) ?? [];
     sessions.forEach(session => {
       if (!isAgentTerminalSession(session)) {
         return;
@@ -854,7 +654,7 @@ const isSingleDockedProject = computed(() => {
   }
   const ids = new Set<string>();
   dockedProjectIdsToLoad.value.forEach(projectId => {
-    const sessions = backendSessionsByProject.value.get(projectId) ?? [];
+    const sessions = sessionsByProject.value.get(projectId) ?? [];
     if (sessions.some(session => isAgentTerminalSession(session))) {
       ids.add(projectId);
     }
@@ -1188,8 +988,8 @@ function getProjectNameById(projectId?: string, fallback?: string) {
   return project?.name || fallback;
 }
 
-function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem {
-  const session = backendSessionsById.value.get(record.sessionId);
+function mapCompletionRecord(record: TerminalCompletionRecord): NotificationItem {
+  const session = sessionsById.value.get(record.sessionId);
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
@@ -1223,8 +1023,8 @@ function mapCompletionRecord(record: CompletionRecordResponse): NotificationItem
   };
 }
 
-function mapApprovalRecord(record: ApprovalRecordResponse): NotificationItem {
-  const session = backendSessionsById.value.get(record.sessionId);
+function mapApprovalRecord(record: TerminalApprovalRecord): NotificationItem {
+  const session = sessionsById.value.get(record.sessionId);
   const worktreeId = session?.worktreeId;
   const branchName = resolveBranchName(record.projectId, worktreeId);
   const assistantType = record.assistant?.type;
@@ -1295,74 +1095,6 @@ function getNotificationClass(notification: NotificationItem) {
   return 'notification-approval';
 }
 
-function handleAIWorking(event: any) {
-  const { sessionId } = event || {};
-  if (!sessionId) {
-    return;
-  }
-
-  // AI 开始工作时，移除该 session 的 idle 通知
-  notifications.value = notifications.value.filter(
-    n => !(n.sessionId === sessionId && n.type === 'idle')
-  );
-
-  const eventCommand =
-    typeof event?.latestCommand === 'string' && event.latestCommand.trim()
-      ? event.latestCommand.trim()
-      : '';
-  const latestCommand = eventCommand;
-
-  const stateUpdatedIds: string[] = [];
-  let changed = false;
-
-  notifications.value = notifications.value.map(notification => {
-    if (notification.type === 'completion' && notification.sessionId === sessionId) {
-      const shouldUpdateState = notification.state !== 'working';
-      const shouldUpdateCommand =
-        Boolean(latestCommand) && latestCommand !== notification.lastAgentCommand;
-
-      if (shouldUpdateState || shouldUpdateCommand) {
-        changed = true;
-        if (shouldUpdateState) {
-          stateUpdatedIds.push(notification.id);
-        }
-        return {
-          ...notification,
-          state: 'working',
-          lastAgentCommand: shouldUpdateCommand ? latestCommand : notification.lastAgentCommand,
-          // 更新时间戳，使活动会话排在通知列表顶部
-          timestamp: new Date(),
-        };
-      }
-    }
-    return notification;
-  });
-
-  if (stateUpdatedIds.length) {
-    clearReadStateForNotifications(stateUpdatedIds);
-  }
-
-  if (changed) {
-    // 重新排序，让刚转入工作状态的通知排到顶部
-    notifications.value = sortNotifications(notifications.value);
-    console.log('[AI Notification] Updated working completion', { sessionId, latestCommand });
-  } else {
-    // 如果当前列表里没有对应记录（可能是第一次就进入 working 状态），主动刷新
-    void fetchCompletionRecords();
-  }
-  triggerDockedSessionRefresh('ai-working', 150);
-}
-
-// 手动刷新完成记录（事件触发时使用）
-function fetchCompletionRecords() {
-  void completionsReq.send();
-}
-
-// 手动刷新审批记录（事件触发时使用）
-function fetchApprovalRecords() {
-  void approvalsReq.send();
-}
-
 // 播放完成提示音
 function playCompletionSound() {
   try {
@@ -1384,102 +1116,6 @@ function playCompletionSound() {
   } catch (error) {
     console.warn('Failed to play completion sound:', error);
   }
-}
-
-// 处理完成事件
-function handleAICompletion() {
-  window.setTimeout(() => {
-    // 播放声音的逻辑已移到 watch 中，检测到新通知时自动播放
-    void fetchCompletionRecords();
-    triggerDockedSessionRefresh('ai-completed');
-  }, 150);
-}
-
-// 处理审批事件
-function handleAIApproval() {
-  window.setTimeout(() => {
-    void fetchApprovalRecords();
-    triggerDockedSessionRefresh('ai-approval');
-  }, 150);
-}
-
-// 处理 AI 关闭事件
-function handleAIClosed(data: { sessionId: string }) {
-  const { sessionId } = data;
-  console.log('[AI Notification] AI closed, removing all notifications for session', { sessionId });
-
-  // 移除该 session 的所有通知（idle、completion、approval）
-  notifications.value = notifications.value.filter(n => n.sessionId !== sessionId);
-
-  // 刷新通知列表以确保后端状态同步
-  window.setTimeout(() => {
-    void fetchCompletionRecords();
-    void fetchApprovalRecords();
-    triggerDockedSessionRefresh('ai-closed');
-  }, 150);
-}
-
-// 处理 AI Agent 检测事件
-interface AIDetectedEvent {
-  sessionId: string;
-  sessionTitle: string;
-  projectId: string;
-  projectName?: string;
-  worktreeId?: string;
-  detectedAt: Date;
-  assistantName?: string;
-  assistantType?: string;
-}
-
-function handleAIDetected(event: AIDetectedEvent) {
-  const {
-    sessionId,
-    sessionTitle,
-    projectId,
-    projectName,
-    worktreeId,
-    detectedAt,
-    assistantName,
-    assistantType,
-  } = event;
-
-  // 检查是否已存在该 session 的通知
-  const existingNotification = notifications.value.find(
-    n => n.sessionId === sessionId && n.type === 'idle'
-  );
-  if (existingNotification) {
-    return;
-  }
-
-  // 解析分支名
-  const branchName = resolveBranchName(projectId, worktreeId);
-
-  // 创建空闲通知
-  const idleNotification: NotificationItem = {
-    id: `idle-${sessionId}`,
-    recordId: `idle-${sessionId}`,
-    type: 'idle',
-    sessionId,
-    projectId,
-    projectName: projectName || getProjectNameById(projectId),
-    worktreeId,
-    branchName,
-    title: sessionTitle || 'Terminal',
-    assistantName: assistantName || '',
-    assistantType,
-    assistantIcon: getAssistantIconByType(assistantType),
-    assistantColor: getAssistantColorByType(assistantType),
-    timestamp: detectedAt,
-    processStatus: 'idle',
-  };
-
-  notifications.value = sortNotifications([...notifications.value, idleNotification]);
-  console.log('[AI Notification] AI Agent detected, adding idle notification', {
-    sessionId,
-    projectId,
-    assistantName,
-  });
-  triggerDockedSessionRefresh('ai-detected', 150);
 }
 
 // 点击通知，切换到对应的终端
@@ -1522,25 +1158,10 @@ async function handleNotificationClick(notification: NotificationItem) {
 // 关闭通知
 async function dismissNotification(notification: NotificationItem) {
   try {
-    if (notification.type === 'idle') {
-      // idle 类型通知只是本地的，直接移除
-      removeNotificationLocally(notification.recordId);
-      return;
-    }
     if (notification.type === 'completion') {
-      await Apis.terminalSession
-        .terminalCompletionRecordDismiss({
-          pathParams: { recordId: notification.recordId },
-          cacheFor: 0,
-        })
-        .send();
-    } else {
-      await Apis.terminalSession
-        .terminalApprovalRecordDismiss({
-          pathParams: { recordId: notification.recordId },
-          cacheFor: 0,
-        })
-        .send();
+      await reminderStore.dismissCompletionRecord(notification.recordId);
+    } else if (notification.type === 'approval') {
+      await reminderStore.dismissApprovalRecord(notification.recordId);
     }
     removeNotificationLocally(notification.recordId);
   } catch (error) {
@@ -1555,56 +1176,30 @@ onMounted(() => {
   loadCompactModeSetting();
   loadDisplayModeSetting();
   loadCurrentProjectOnlySetting();
+  reminderStore.retain();
 
-  terminalStore.emitter.on('ai:completed', handleAICompletion);
-  terminalStore.emitter.on('ai:approval-needed', handleAIApproval);
-  terminalStore.emitter.on('ai:working', handleAIWorking);
-  terminalStore.emitter.on('ai:closed', handleAIClosed);
-  terminalStore.emitter.on('ai:detected', handleAIDetected);
   terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
-
-  // useAutoReq 已设置 immediate: true，会自动发起首次请求
-  // 同时也会自动处理页面可见性变化、聚焦、网络重连时的刷新
-  if (typeof window !== 'undefined') {
-    window.addEventListener('focus', handleDockedSessionVisibilityRefresh);
-    window.addEventListener('online', handleDockedSessionVisibilityRefresh);
-  }
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', handleDockedSessionVisibilityRefresh);
-  }
 });
 
 onUnmounted(() => {
-  terminalStore.emitter.off('ai:completed', handleAICompletion);
-  terminalStore.emitter.off('ai:approval-needed', handleAIApproval);
-  terminalStore.emitter.off('ai:working', handleAIWorking);
-  terminalStore.emitter.off('ai:closed', handleAIClosed);
-  terminalStore.emitter.off('ai:detected', handleAIDetected);
   terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
-  stopDockedSessionPolling();
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('focus', handleDockedSessionVisibilityRefresh);
-    window.removeEventListener('online', handleDockedSessionVisibilityRefresh);
-  }
-  if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', handleDockedSessionVisibilityRefresh);
-  }
+  reminderStore.release();
+  sessionSnapshotStore.releaseScope(sessionSnapshotScopeId);
 });
 
 watch(
-  [dockedProjectIdsToLoad, isDockedSidebar, notificationsEnabled],
+  [dockedProjectIdsToLoad, notificationsEnabled],
   () => {
-    if (!isDockedSidebar.value || !notificationsEnabled.value) {
-      stopDockedSessionPolling();
-      backendSessionsByProject.value = new Map();
+    if (!notificationsEnabled.value) {
+      sessionSnapshotStore.releaseScope(sessionSnapshotScopeId);
       return;
     }
-    triggerDockedSessionRefresh('projects-changed');
+    sessionSnapshotStore.retainScope(sessionSnapshotScopeId, dockedProjectIdsToLoad.value);
   },
   { immediate: true }
 );
 
-// 注：页面可见性变化、聚焦、网络重连时的刷新已由 useAutoReq 自动处理
+// 注：提醒记录轮询由 terminalReminderStore 统一负责
 </script>
 
 <template>

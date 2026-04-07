@@ -70,6 +70,21 @@
               <span class="form-tip">{{ t('settings.terminalDefaultRenderModeTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.terminalConnectionPolicy')">
+            <n-space vertical size="small">
+              <n-radio-group v-model:value="terminalConnectionPolicyValue">
+                <n-space vertical size="small">
+                  <n-radio value="active-only">
+                    {{ t('settings.terminalConnectionPolicyActiveOnly') }}
+                  </n-radio>
+                  <n-radio value="active-plus-mirror">
+                    {{ t('settings.terminalConnectionPolicyActivePlusMirror') }}
+                  </n-radio>
+                </n-space>
+              </n-radio-group>
+              <span class="form-tip">{{ t('settings.terminalConnectionPolicyTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalDefaultSnapshotInterval')">
             <n-space vertical size="small">
               <n-select
@@ -79,6 +94,19 @@
               />
               <span class="form-tip">
                 {{ t('settings.terminalDefaultSnapshotIntervalTip') }}
+              </span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.inactiveTerminalSnapshotInterval')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="inactiveTerminalSnapshotIntervalValue"
+                :options="inactiveSnapshotIntervalOptions"
+                style="max-width: 180px"
+                :disabled="terminalConnectionPolicyValue !== 'active-plus-mirror'"
+              />
+              <span class="form-tip">
+                {{ t('settings.inactiveTerminalSnapshotIntervalTip') }}
               </span>
             </n-space>
           </n-form-item>
@@ -744,6 +772,10 @@ import {
   formatTerminalSnapshotInterval,
   type TerminalRenderMode,
 } from '@/constants/terminalRenderMode';
+import {
+  DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  type TerminalConnectionPolicy,
+} from '@/constants/terminalConnectionPolicy';
 import { useThemeOptions, useTerminalThemeOptions } from '@/composables/useThemeOptions';
 import {
   lightenColor,
@@ -798,6 +830,8 @@ const {
   defaultTerminalRenderMode,
   defaultTerminalSnapshotIntervalMs,
   defaultTerminalSnapshotZlibCompression,
+  terminalConnectionPolicy,
+  inactiveTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
 
@@ -1384,6 +1418,13 @@ const snapshotIntervalOptions = computed(() => [
   })),
 ]);
 
+const inactiveSnapshotIntervalOptions = computed(() =>
+  TERMINAL_SNAPSHOT_INTERVAL_OPTIONS.map(interval => ({
+    label: formatTerminalSnapshotInterval(interval),
+    value: interval,
+  }))
+);
+
 const defaultTerminalRenderModeValue = computed({
   get: () => defaultTerminalRenderMode.value,
   set: (value: TerminalRenderMode) => settingsStore.updateDefaultTerminalRenderMode(value),
@@ -1402,6 +1443,20 @@ const defaultTerminalSnapshotZlibCompressionValue = computed({
 const showWebSessionReasoningValue = computed({
   get: () => showWebSessionReasoning.value,
   set: value => settingsStore.updateShowWebSessionReasoning(value),
+});
+
+const terminalConnectionPolicyValue = computed({
+  get: () => terminalConnectionPolicy.value,
+  set: (value: TerminalConnectionPolicy) => settingsStore.updateTerminalConnectionPolicy(value),
+});
+
+const inactiveTerminalSnapshotIntervalValue = computed({
+  get: () =>
+    inactiveTerminalSnapshotIntervalMs.value ?? DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  set: (value: number | null) =>
+    settingsStore.updateInactiveTerminalSnapshotIntervalMs(
+      value ?? DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS
+    ),
 });
 
 // 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）

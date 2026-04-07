@@ -725,8 +725,16 @@ export default {
       '控制新终端页签默认使用实时流还是镜像模式；页签右键可以单独覆盖。',
     terminalRenderModeLive: '实时流',
     terminalRenderModeSnapshot: '镜像模式',
+    terminalConnectionPolicy: '终端连接策略',
+    terminalConnectionPolicyTip:
+      '控制项目中的终端标签如何建立连接。默认只连接当前活跃标签，其余标签不再维持终端 WebSocket。',
+    terminalConnectionPolicyActiveOnly: '仅活跃标签连接',
+    terminalConnectionPolicyActivePlusMirror: '非活跃标签低频镜像',
     terminalDefaultSnapshotInterval: '默认快照刷新频率',
     terminalDefaultSnapshotIntervalTip: '镜像模式下，后端向前端推送整屏快照的默认间隔。',
+    inactiveTerminalSnapshotInterval: '非活跃镜像刷新频率',
+    inactiveTerminalSnapshotIntervalTip:
+      '当连接策略为“非活跃标签低频镜像”时，非活跃终端会强制使用镜像模式和这个刷新频率。',
     terminalSnapshotZlibCompression: '快照 zlib 压缩',
     terminalSnapshotZlibCompressionTip:
       '默认开启。对快照帧头后的 ANSI payload 使用快速 zlib 压缩，减少带宽占用。',

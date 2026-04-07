@@ -752,9 +752,17 @@ export default {
       'Choose whether new terminal tabs start in live streaming mode or mirror mode. Right-clicking a tab can override it.',
     terminalRenderModeLive: 'Live Stream',
     terminalRenderModeSnapshot: 'Mirror Mode',
+    terminalConnectionPolicy: 'Terminal Connection Policy',
+    terminalConnectionPolicyTip:
+      'Controls how terminal tabs connect inside a project. The default keeps only the active tab attached and disconnects background terminal websockets.',
+    terminalConnectionPolicyActiveOnly: 'Active Tab Only',
+    terminalConnectionPolicyActivePlusMirror: 'Background Mirror Tabs',
     terminalDefaultSnapshotInterval: 'Default Snapshot Refresh Interval',
     terminalDefaultSnapshotIntervalTip:
       'Default interval for the backend to push full-screen snapshots while mirror mode is active.',
+    inactiveTerminalSnapshotInterval: 'Background Mirror Refresh Interval',
+    inactiveTerminalSnapshotIntervalTip:
+      'When the connection policy keeps background tabs in mirror mode, they will use this forced snapshot refresh interval.',
     terminalSnapshotZlibCompression: 'Snapshot zlib Compression',
     terminalSnapshotZlibCompressionTip:
       'Enabled by default. Applies fast zlib compression to the ANSI snapshot payload after the frame header to reduce bandwidth.',

@@ -14,6 +14,12 @@ import {
   sanitizeTerminalSnapshotIntervalMs,
   type TerminalRenderMode,
 } from '@/constants/terminalRenderMode';
+import {
+  DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  DEFAULT_TERMINAL_CONNECTION_POLICY,
+  sanitizeTerminalConnectionPolicy,
+  type TerminalConnectionPolicy,
+} from '@/constants/terminalConnectionPolicy';
 
 /**
  * 终端主题跟随应用主题的特殊值
@@ -203,6 +209,8 @@ interface GeneralSettings {
   defaultTerminalRenderMode: TerminalRenderMode;
   defaultTerminalSnapshotIntervalMs: number | null;
   defaultTerminalSnapshotZlibCompression: boolean;
+  terminalConnectionPolicy: TerminalConnectionPolicy;
+  inactiveTerminalSnapshotIntervalMs: number;
 }
 
 const STORAGE_KEY = 'general_settings';
@@ -270,6 +278,8 @@ const defaultSettings: GeneralSettings = {
   defaultTerminalRenderMode: DEFAULT_TERMINAL_RENDER_MODE,
   defaultTerminalSnapshotIntervalMs: null,
   defaultTerminalSnapshotZlibCompression: true,
+  terminalConnectionPolicy: DEFAULT_TERMINAL_CONNECTION_POLICY,
+  inactiveTerminalSnapshotIntervalMs: DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
 };
 
 export const useSettingsStore = defineStore('settings', () => {
@@ -298,6 +308,10 @@ export const useSettingsStore = defineStore('settings', () => {
   );
   const defaultTerminalSnapshotZlibCompression = computed(
     () => settings.value.defaultTerminalSnapshotZlibCompression
+  );
+  const terminalConnectionPolicy = computed(() => settings.value.terminalConnectionPolicy);
+  const inactiveTerminalSnapshotIntervalMs = computed(
+    () => settings.value.inactiveTerminalSnapshotIntervalMs
   );
 
   /**
@@ -458,6 +472,14 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.defaultTerminalSnapshotZlibCompression = value !== false;
   }
 
+  function updateTerminalConnectionPolicy(value: TerminalConnectionPolicy) {
+    settings.value.terminalConnectionPolicy = sanitizeTerminalConnectionPolicy(value);
+  }
+
+  function updateInactiveTerminalSnapshotIntervalMs(value: number) {
+    settings.value.inactiveTerminalSnapshotIntervalMs = sanitizeInactiveSnapshotIntervalMs(value);
+  }
+
   function resetTerminalFont() {
     settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
   }
@@ -538,6 +560,8 @@ export const useSettingsStore = defineStore('settings', () => {
     defaultTerminalRenderMode,
     defaultTerminalSnapshotIntervalMs,
     defaultTerminalSnapshotZlibCompression,
+    terminalConnectionPolicy,
+    inactiveTerminalSnapshotIntervalMs,
     effectiveTerminalThemeId,
     updateTheme,
     resetTheme,
@@ -559,6 +583,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateDefaultTerminalRenderMode,
     updateDefaultTerminalSnapshotIntervalMs,
     updateDefaultTerminalSnapshotZlibCompression,
+    updateTerminalConnectionPolicy,
+    updateInactiveTerminalSnapshotIntervalMs,
     resetTerminalFont,
     selectPreset,
     applySystemThemePreset,
@@ -616,6 +642,12 @@ function loadSettings(): GeneralSettings {
         ),
         defaultTerminalSnapshotZlibCompression:
           parsed.defaultTerminalSnapshotZlibCompression !== false,
+        terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
+          parsed.terminalConnectionPolicy
+        ),
+        inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
+          parsed.inactiveTerminalSnapshotIntervalMs
+        ),
       };
     }
   } catch (error) {
@@ -657,6 +689,10 @@ function cloneDefaultSettings(): GeneralSettings {
       defaultSettings.defaultTerminalSnapshotIntervalMs
     ),
     defaultTerminalSnapshotZlibCompression: defaultSettings.defaultTerminalSnapshotZlibCompression,
+    terminalConnectionPolicy: defaultSettings.terminalConnectionPolicy,
+    inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
+      defaultSettings.inactiveTerminalSnapshotIntervalMs
+    ),
   };
 }
 
@@ -665,6 +701,13 @@ function sanitizeDefaultTerminalSnapshotIntervalMs(value: unknown) {
     return null;
   }
   return sanitizeTerminalSnapshotIntervalMs(value, DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS);
+}
+
+function sanitizeInactiveSnapshotIntervalMs(value: unknown) {
+  return sanitizeTerminalSnapshotIntervalMs(
+    value,
+    DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS
+  );
 }
 
 function sanitizeRecentProjectsLimit(value: number | undefined) {

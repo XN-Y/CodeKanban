@@ -266,6 +266,7 @@ import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
+import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useAppStore } from '@/stores/app';
 import { useLocale } from '@/composables/useLocale';
 import type { Project } from '@/types/models';
@@ -281,6 +282,7 @@ useTitle(`${t('project.title')} - ${appStore.appInfo.name}`);
 const router = useRouter();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
+const reminderStore = useTerminalReminderStore();
 const message = useMessage();
 const dialog = useDialog();
 const showCreateDialog = ref(false);
@@ -339,35 +341,9 @@ const handleAppNameClick = () => {
 
 const terminalCounts = terminalStore.terminalCounts;
 
-// Track projects with unviewed notifications (completion or approval needed)
-const projectNotifications = ref<Map<string, number>>(new Map());
-
-// Handle AI completion notification
-function handleAICompletionForProject(event: any) {
-  const { projectId } = event;
-  if (projectId) {
-    const currentCount = projectNotifications.value.get(projectId) || 0;
-    projectNotifications.value.set(projectId, currentCount + 1);
-  }
-}
-
-// Handle AI approval needed notification
-function handleAIApprovalForProject(event: any) {
-  const { projectId } = event;
-  if (projectId) {
-    const currentCount = projectNotifications.value.get(projectId) || 0;
-    projectNotifications.value.set(projectId, currentCount + 1);
-  }
-}
-
-// Clear notifications for a project
-function clearProjectNotifications(projectId: string) {
-  projectNotifications.value.delete(projectId);
-}
-
 // Check if a project has notifications
 function hasProjectNotifications(projectId: string): boolean {
-  return (projectNotifications.value.get(projectId) || 0) > 0;
+  return (reminderStore.projectNotificationCountMap[projectId] || 0) > 0;
 }
 
 // 使用 useReq 定义优先级更新请求
@@ -483,18 +459,13 @@ const filteredAndSortedProjects = computed(() => {
 onMounted(() => {
   projectStore.fetchProjects();
   terminalStore.loadTerminalCounts();
+  reminderStore.retain();
   // 延迟检查更新，避免阻塞页面加载
   setTimeout(checkForUpdates, 2000);
-
-  // Listen for AI notifications
-  terminalStore.emitter.on('ai:completed', handleAICompletionForProject);
-  terminalStore.emitter.on('ai:approval-needed', handleAIApprovalForProject);
 });
 
 onUnmounted(() => {
-  // Clean up event listeners
-  terminalStore.emitter.off('ai:completed', handleAICompletionForProject);
-  terminalStore.emitter.off('ai:approval-needed', handleAIApprovalForProject);
+  reminderStore.release();
 });
 
 watch(showEditDialog, value => {
@@ -504,8 +475,6 @@ watch(showEditDialog, value => {
 });
 
 function goToProject(id: string) {
-  // Clear notifications for this project when user navigates to it
-  clearProjectNotifications(id);
   router.push({ name: 'project', params: { id } });
 }
 

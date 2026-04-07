@@ -718,6 +718,8 @@ import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
+import { useTerminalReminderStore } from '@/stores/terminalReminder';
+import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
 import { taskActions } from '@/composables/useTaskActions';
 import { getPresetById } from '@/constants/themes';
 import {
@@ -777,6 +779,11 @@ const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
 const taskStore = useTaskStore();
 const { tasksByStatus } = storeToRefs(taskStore);
+const reminderStore = useTerminalReminderStore();
+const sessionSnapshotStore = useTerminalSessionSnapshotStore();
+const { unreadCompletionSessionMap, approvalSessionMap } = storeToRefs(reminderStore);
+const { sessionsById: terminalSessionsById } = storeToRefs(sessionSnapshotStore);
+const terminalSessionSnapshotScopeId = `terminal-panel-${Math.random().toString(36).slice(2, 8)}`;
 const storedExpanded = useStorage('terminal-panel-expanded', true);
 const expanded = computed({
   get: () => (isDocked.value || isMobile.value ? true : storedExpanded.value),
@@ -1551,12 +1558,33 @@ const shouldShowBranchFilter = computed(
 // 合并真实终端标签和空标签
 type CombinedTab = TerminalTabState | EmptyTab;
 
+function resolveDisplayTab(tab: TerminalTabState): TerminalTabState {
+  const snapshot = terminalSessionsById.value.get(tab.id);
+  if (!snapshot) {
+    return tab;
+  }
+  return {
+    ...tab,
+    ...snapshot,
+    projectId: tab.projectId || snapshot.projectId,
+    clientStatus: tab.clientStatus,
+    connectionRole: tab.connectionRole,
+    renderMode: tab.renderMode,
+    snapshotIntervalMs: tab.snapshotIntervalMs,
+    useGlobalRenderMode: tab.useGlobalRenderMode,
+    useGlobalSnapshotInterval: tab.useGlobalSnapshotInterval,
+    terminalModes: tab.terminalModes,
+  };
+}
+
+const displayTabs = computed(() => tabs.value.map(resolveDisplayTab));
+
 const visibleTabs = computed<CombinedTab[]>(() => {
   let realTabs: TerminalTabState[];
   if (branchFilter.value === 'all') {
-    realTabs = tabs.value;
+    realTabs = displayTabs.value;
   } else {
-    realTabs = tabs.value.filter(tab => tab.worktreeId === branchFilter.value);
+    realTabs = displayTabs.value.filter(tab => tab.worktreeId === branchFilter.value);
   }
   // 将空标签和真实标签合并，空标签放在最后
   return [...realTabs, ...emptyTabs.value];
@@ -1674,7 +1702,9 @@ function resolveEditorPath(tab: TerminalTabState | null | undefined): string {
   return tab.workingDir?.trim() ?? '';
 }
 
-const activeTerminalTab = computed(() => tabs.value.find(tab => tab.id === activeId.value) ?? null);
+const activeTerminalTab = computed(
+  () => displayTabs.value.find(tab => tab.id === activeId.value) ?? null
+);
 const activeEditorPath = computed(() => resolveEditorPath(activeTerminalTab.value));
 const canOpenEditor = computed(() => Boolean(activeEditorPath.value));
 
@@ -1890,12 +1920,7 @@ onMounted(() => {
   refreshTabSortable();
   updateActiveTabIndicator();
   setupTabScrollListener();
-
-  // Listen for AI completion events
-  emitter.on('ai:completed', handleAICompletion);
-
-  // Listen for AI approval events
-  emitter.on('ai:approval-needed', handleAIApproval);
+  reminderStore.retain();
   emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
 
   // 初始化时检查并调整边距
@@ -1903,41 +1928,25 @@ onMounted(() => {
   void ensureDeveloperConfigLoaded();
 });
 
-function handleAICompletion(event: any) {
-  const { sessionId } = event;
-  if (sessionId && activeId.value !== sessionId) {
-    // Only mark as unviewed if the tab is not currently active
-    const newSet = new Set(unviewedCompletions.value);
-    newSet.add(sessionId);
-    unviewedCompletions.value = newSet;
-    console.log('[Terminal Panel] Marked session as having unviewed completion:', {
-      sessionId,
-      totalUnviewed: newSet.size,
-    });
-  }
-}
-
-function handleAIApproval(event: any) {
-  const { sessionId } = event;
-  if (sessionId && activeId.value !== sessionId) {
-    // Only mark as needing approval if the tab is not currently active
-    const newSet = new Set(unviewedApprovals.value);
-    newSet.add(sessionId);
-    unviewedApprovals.value = newSet;
-    console.log('[Terminal Panel] Marked session as needing approval:', {
-      sessionId,
-      totalUnviewedApprovals: newSet.size,
-    });
-  }
-}
-
 onBeforeUnmount(() => {
   destroyTabSorting();
   cleanupTabScrollListener();
-  emitter.off('ai:completed', handleAICompletion);
-  emitter.off('ai:approval-needed', handleAIApproval);
   emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
+  reminderStore.release();
+  sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
 });
+
+watch(
+  projectIdRef,
+  projectId => {
+    if (!projectId) {
+      sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
+      return;
+    }
+    sessionSnapshotStore.retainScope(terminalSessionSnapshotScopeId, [projectId]);
+  },
+  { immediate: true }
+);
 
 // 处理窗口大小变化 - 不再自动调整边距，保持 padding 值不变
 // 窗口缩小时允许终端超出屏幕，而不是挤压终端
@@ -2106,30 +2115,9 @@ watch(
       return;
     }
 
-    // Clear unviewed completion indicator when user views the tab
-    if (unviewedCompletions.value.has(newId)) {
-      const newSet = new Set(unviewedCompletions.value);
-      newSet.delete(newId);
-      unviewedCompletions.value = newSet;
-      console.log('[Terminal Panel] Cleared unviewed completion for session:', {
-        sessionId: newId,
-        remainingUnviewed: newSet.size,
-      });
-    }
+    void reminderStore.markSessionCompletionsRead(newId);
 
-    // Clear unviewed approval indicator when user views the tab
-    if (unviewedApprovals.value.has(newId)) {
-      const newSet = new Set(unviewedApprovals.value);
-      newSet.delete(newId);
-      unviewedApprovals.value = newSet;
-      console.log('[Terminal Panel] Cleared unviewed approval for session:', {
-        sessionId: newId,
-        remainingUnviewedApprovals: newSet.size,
-      });
-    }
-
-    // Notify AICompletionNotifier to clear notification for this session
-    // This ensures notifications are dismissed when user manually switches to the terminal
+    // Notify the backend-driven notification layer that this terminal has been viewed
     emitter.emit('terminal:viewed', {
       sessionId: newId,
     });
@@ -3215,41 +3203,19 @@ function getAssistantTooltip(tab: TerminalTabState) {
   return `${name} · ${label}`;
 }
 
-// Track unviewed AI completions
-const unviewedCompletions = ref<Set<string>>(new Set());
-
-// Computed map for better reactivity
-const unviewedCompletionsMap = computed(() => {
-  const map: Record<string, boolean> = {};
-  unviewedCompletions.value.forEach(id => {
-    map[id] = true;
-  });
-  return map;
-});
-
 function hasUnviewedCompletion(tab: TerminalTabState): boolean {
-  return unviewedCompletionsMap.value[tab.id] === true;
+  return unreadCompletionSessionMap.value[tab.id] === true;
 }
 
-// Track unviewed AI approvals
-const unviewedApprovals = ref<Set<string>>(new Set());
-
-// Computed map for better reactivity
-const unviewedApprovalsMap = computed(() => {
-  const map: Record<string, boolean> = {};
-  unviewedApprovals.value.forEach(id => {
-    map[id] = true;
-  });
-  return map;
-});
-
 function hasUnviewedApproval(tab: TerminalTabState): boolean {
-  return unviewedApprovalsMap.value[tab.id] === true;
+  return approvalSessionMap.value[tab.id] === true;
 }
 
 // Total count of unviewed completions and approvals
 const totalUnviewedCount = computed(() => {
-  return unviewedCompletions.value.size + unviewedApprovals.value.size;
+  const completionCount = Object.keys(unreadCompletionSessionMap.value).length;
+  const approvalCount = Object.keys(approvalSessionMap.value).length;
+  return completionCount + approvalCount;
 });
 
 function getAssistantIcon(tab: TerminalTabState): string {

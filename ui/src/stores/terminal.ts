@@ -12,6 +12,12 @@ import {
   sanitizeTerminalSnapshotIntervalMs,
   type TerminalRenderMode,
 } from '@/constants/terminalRenderMode';
+import {
+  DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  DEFAULT_TERMINAL_CONNECTION_POLICY,
+  sanitizeTerminalConnectionPolicy,
+  type TerminalConnectionPolicy,
+} from '@/constants/terminalConnectionPolicy';
 import { resolveWsUrl } from '@/utils/ws';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
@@ -21,6 +27,7 @@ import { taskActions } from '@/composables/useTaskActions';
 export type { TerminalModesSnapshot } from '@/types/models';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
+export type TerminalConnectionRole = 'active' | 'mirror' | 'detached';
 
 export type TerminalRemoteSnapshot = {
   kind: 'full';
@@ -58,6 +65,7 @@ type TerminalRemoteSnapshotFrame = TerminalRemoteSnapshot | TerminalRemoteSnapsh
 
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
+  connectionRole: TerminalConnectionRole;
   lastAgentCommand?: string;
   renderMode: TerminalRenderMode;
   snapshotIntervalMs: number;
@@ -687,12 +695,6 @@ export const useTerminalStore = defineStore('terminal', () => {
   const emitter = new EventEmitter();
   const cachedCounts = reactive(new Map<string, number>());
   const projectConnectionRefCounts = reactive(new Map<string, number>());
-  // Track AI assistant state for each session to detect state changes
-  const aiPreviousStates = new Map<string, string>();
-  // Track whether AI agent has been detected for each session (to emit ai:detected only once)
-  const aiDetectedSessions = new Set<string>();
-  // Get project store for looking up project names
-  const projectStore = useProjectStore();
   const settingsStore = useSettingsStore();
   const taskStore = useTaskStore();
   const sessionToTaskMap = reactive(new Map<string, string>());
@@ -723,6 +725,19 @@ export const useTerminalStore = defineStore('terminal', () => {
     return (
       settingsStore.defaultTerminalSnapshotZlibCompression !== false &&
       supportsSnapshotZlibCompression()
+    );
+  }
+
+  function getGlobalConnectionPolicy(): TerminalConnectionPolicy {
+    return sanitizeTerminalConnectionPolicy(
+      settingsStore.terminalConnectionPolicy ?? DEFAULT_TERMINAL_CONNECTION_POLICY
+    );
+  }
+
+  function getInactiveSnapshotIntervalMs() {
+    return sanitizeTerminalSnapshotIntervalMs(
+      settingsStore.inactiveTerminalSnapshotIntervalMs ??
+        DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS
     );
   }
 
@@ -792,10 +807,19 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (!record) {
       return null;
     }
+    const tab = record.tab;
+    const mode =
+      tab.connectionRole === 'mirror'
+        ? 'snapshot'
+        : getEffectiveRenderMode(record.projectId, sessionId);
+    const snapshotIntervalMs =
+      tab.connectionRole === 'mirror'
+        ? getInactiveSnapshotIntervalMs()
+        : getEffectiveSnapshotIntervalMs(record.projectId, sessionId);
     return {
       type: 'render-mode',
-      mode: getEffectiveRenderMode(record.projectId, sessionId),
-      snapshotIntervalMs: getEffectiveSnapshotIntervalMs(record.projectId, sessionId),
+      mode,
+      snapshotIntervalMs,
       snapshotCompressionEnabled: getGlobalSnapshotCompressionEnabled(),
       snapshotIncrementalEnabled: true,
     };
@@ -880,11 +904,19 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
   );
 
-  // Helper function to get project name by ID
-  function getProjectName(projectId: string): string | undefined {
-    const project = projectStore.projects.find(p => p.id === projectId);
-    return project?.name;
-  }
+  watch(
+    () => [
+      settingsStore.terminalConnectionPolicy,
+      settingsStore.inactiveTerminalSnapshotIntervalMs,
+    ],
+    () => {
+      projectConnectionRefCounts.forEach((count, projectId) => {
+        if (count > 0) {
+          applyConnectionPolicy(projectId);
+        }
+      });
+    }
+  );
 
   function updateSessionTaskMapping(sessionId: string, nextTaskId?: string | null) {
     const previousTaskId = sessionToTaskMap.get(sessionId);
@@ -974,12 +1006,14 @@ export const useTerminalStore = defineStore('terminal', () => {
         activeTabByProject.set(projectId, normalized);
       }
       rememberStoredActiveTab(projectId, normalized);
+      applyConnectionPolicy(projectId);
       return;
     }
     if (activeTabByProject.has(projectId)) {
       activeTabByProject.delete(projectId);
     }
     forgetStoredActiveTab(projectId);
+    applyConnectionPolicy(projectId);
   }
 
   function prepareProject(projectId: string) {
@@ -1257,8 +1291,6 @@ export const useTerminalStore = defineStore('terminal', () => {
         }
       }
       sessionIndex.delete(sessionId);
-      aiPreviousStates.delete(sessionId); // Clean up AI state tracking
-      aiDetectedSessions.delete(sessionId); // Clean up AI detected tracking
       updateSessionTaskMapping(sessionId);
       if (activeTabByProject.get(record.projectId) === sessionId) {
         const nextId = tabStore.get(record.projectId)?.[0]?.id;
@@ -1340,6 +1372,87 @@ export const useTerminalStore = defineStore('terminal', () => {
 
     latestServerSnapshots.set(sessionId, assembled);
     return assembled;
+  }
+
+  function resolveConnectionRole(
+    projectId: string,
+    sessionId: string
+  ): TerminalConnectionRole {
+    if (!isProjectConnectionActive(projectId)) {
+      return 'detached';
+    }
+
+    const activeSessionId = activeTabByProject.get(projectId) ?? '';
+    if (activeSessionId && activeSessionId === sessionId) {
+      return 'active';
+    }
+
+    return getGlobalConnectionPolicy() === 'active-plus-mirror' ? 'mirror' : 'detached';
+  }
+
+  function updateConnectionRole(
+    sessionId: string,
+    role: TerminalConnectionRole
+  ): TerminalTabState | undefined {
+    const record = sessionIndex.get(sessionId);
+    if (!record) {
+      return undefined;
+    }
+    if (record.tab.connectionRole === role) {
+      return record.tab;
+    }
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) {
+      return record.tab;
+    }
+    const index = bucket.findIndex(tab => tab.id === sessionId);
+    if (index === -1) {
+      return record.tab;
+    }
+
+    bucket[index] = {
+      ...bucket[index],
+      connectionRole: role,
+    };
+    record.tab = bucket[index];
+    return record.tab;
+  }
+
+  function applyConnectionPolicy(projectId: string | undefined) {
+    if (!projectId) {
+      return;
+    }
+
+    const bucket = tabStore.get(projectId);
+    if (!bucket || bucket.length === 0) {
+      return;
+    }
+
+    bucket.forEach(tab => {
+      const desiredRole = resolveConnectionRole(projectId, tab.id);
+      const nextTab = updateConnectionRole(tab.id, desiredRole) ?? tab;
+      const socket = sockets.get(tab.id);
+
+      if (desiredRole === 'detached') {
+        if (socket) {
+          pauseSocket(tab.id);
+        }
+        return;
+      }
+
+      if (
+        !socket ||
+        socket.readyState === WebSocket.CLOSING ||
+        socket.readyState === WebSocket.CLOSED
+      ) {
+        connect(nextTab);
+        return;
+      }
+
+      if (socket.readyState === WebSocket.OPEN) {
+        sendRenderModePreference(tab.id);
+      }
+    });
   }
 
   function ensureBucket(projectId: string) {
@@ -1443,6 +1556,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         projectId: immutableProjectId,
         taskId: updatedTaskId ?? undefined,
         terminalModes: cloneTerminalModesSnapshot(session.terminalModes ?? existing.tab.terminalModes),
+        connectionRole: existing.tab.connectionRole,
         renderMode: existing.tab.renderMode,
         snapshotIntervalMs: existing.tab.snapshotIntervalMs,
         useGlobalRenderMode: existing.tab.useGlobalRenderMode,
@@ -1461,9 +1575,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       if (options?.activate) {
         setActiveTab(immutableProjectId, session.id);
       }
-      if (!sockets.has(session.id) && isProjectConnectionActive(immutableProjectId)) {
-        connect(updatedTab);
-      }
+      applyConnectionPolicy(immutableProjectId);
       return updatedTab;
     }
 
@@ -1478,6 +1590,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       ...session,
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
+      connectionRole: 'detached',
       terminalModes: cloneTerminalModesSnapshot(session.terminalModes),
       renderMode: getEffectiveRenderMode(resolvedProjectId, session.id),
       snapshotIntervalMs: getEffectiveSnapshotIntervalMs(resolvedProjectId, session.id),
@@ -1508,9 +1621,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         setActiveTab(resolvedProjectId, tab.id);
       }
     }
-    if (isProjectConnectionActive(resolvedProjectId)) {
-      connect(tab);
-    }
+    applyConnectionPolicy(resolvedProjectId);
     return tab;
   }
 
@@ -1684,147 +1795,6 @@ export const useTerminalStore = defineStore('terminal', () => {
 
               taskActions.invalidateTaskCache();
             }
-
-            // 🎯 Detect AI assistant completion
-            // Only trigger notification when transitioning from working state to waiting_input
-            const assistant = payload.metadata.aiAssistant;
-            const currentState = assistant?.state;
-            const previousState = aiPreviousStates.get(tab.id);
-
-            // 🔍 Detect AI assistant detection/closure
-            const isAgentDetected = assistant?.detected === true;
-
-            // Detect AI agent first appearance - emit ai:detected only once per session
-            if (isAgentDetected && !aiDetectedSessions.has(tab.id)) {
-              aiDetectedSessions.add(tab.id);
-              console.log(
-                `[Terminal] AI Agent Detected: ${assistant?.displayName || 'AI'} detected in session ${tab.id}`,
-                {
-                  sessionId: tab.id,
-                  sessionTitle: tab.title,
-                  assistant,
-                }
-              );
-              emitter.emit('ai:detected', {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                projectId: tab.projectId,
-                projectName: getProjectName(tab.projectId),
-                worktreeId: tab.worktreeId,
-                detectedAt: new Date(),
-                assistantName: assistant?.displayName || assistant?.name,
-                assistantType: assistant?.type,
-              });
-            }
-
-            // When agent is closed, clear any existing notifications
-            if (!isAgentDetected) {
-              // If assistant info is missing or marked as not detected, treat it as closed/detached.
-              // This prevents stale state from triggering false completion notifications when the agent restarts.
-              if (aiDetectedSessions.has(tab.id)) {
-                aiDetectedSessions.delete(tab.id);
-                console.log(
-                  `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
-                  {
-                    sessionId: tab.id,
-                    sessionTitle: tab.title,
-                    assistant,
-                  }
-                );
-                emitter.emit('ai:closed', {
-                  sessionId: tab.id,
-                });
-              }
-              aiPreviousStates.delete(tab.id);
-            } else {
-              // Detect approval requests
-              if (currentState === 'waiting_approval') {
-                console.log(
-                  `[Terminal] AI Approval Needed: ${assistant?.displayName || 'AI'} is waiting for approval`,
-                  {
-                    sessionId: tab.id,
-                    sessionTitle: tab.title,
-                    previousState,
-                    currentState,
-                    assistant,
-                  }
-                );
-                emitter.emit('ai:approval-needed', {
-                  sessionId: tab.id,
-                  sessionTitle: tab.title,
-                  projectId: tab.projectId,
-                  projectName: getProjectName(tab.projectId),
-                  assistant,
-                });
-              }
-
-              // Detect AI starting to work again (after being idle/completed)
-              if (currentState === 'working' && previousState && previousState !== 'working') {
-                console.log(
-                  `[Terminal] AI Started Working: ${assistant?.displayName || 'AI'} resumed work`,
-                  {
-                    sessionId: tab.id,
-                    sessionTitle: tab.title,
-                    previousState,
-                    currentState,
-                    assistant,
-                  }
-                );
-                emitter.emit('ai:working', {
-                  sessionId: tab.id,
-                  sessionTitle: tab.title,
-                  projectId: tab.projectId,
-                  projectName: getProjectName(tab.projectId),
-                  assistant,
-                  latestCommand: trimmedAssistantInput,
-                });
-              }
-
-              if (currentState === 'waiting_input' && previousState) {
-                // Check if transitioning from working state
-                const isFromWorkingState = previousState === 'working';
-                const wasInterrupted = assistant?.interrupted === true;
-
-                if (isFromWorkingState && !wasInterrupted) {
-                  // Valid completion: working state → waiting input (NOT interrupted)
-                  console.log(
-                    `[Terminal] AI Completion Detected: ${assistant?.displayName || 'AI'} completed execution`,
-                    {
-                      sessionId: tab.id,
-                      sessionTitle: tab.title,
-                      previousState,
-                      currentState,
-                      assistant,
-                    }
-                  );
-                  emitter.emit('ai:completed', {
-                    sessionId: tab.id,
-                    sessionTitle: tab.title,
-                    projectId: tab.projectId,
-                    projectName: getProjectName(tab.projectId),
-                    assistant,
-                  });
-                } else if (isFromWorkingState && wasInterrupted) {
-                  // User interrupted the execution
-                  console.log(
-                    `[Terminal] AI Interrupted: ${assistant?.displayName || 'AI'} was interrupted by user`,
-                    {
-                      sessionId: tab.id,
-                      sessionTitle: tab.title,
-                      previousState,
-                      currentState,
-                      assistant,
-                    }
-                  );
-                  // Don't emit ai:completed for interrupted executions
-                }
-              }
-
-              // Update previous state for next comparison
-              if (currentState) {
-                aiPreviousStates.set(tab.id, currentState);
-              }
-            }
           }
           // Check if there are any listeners for this session
           // If not, buffer the message for later replay when component remounts
@@ -1870,15 +1840,19 @@ export const useTerminalStore = defineStore('terminal', () => {
         updateTabStatus(tab.id, 'closed');
         return;
       }
-      if (sessionIndex.has(tab.id) && isProjectConnectionActive(tab.projectId)) {
+      const record = sessionIndex.get(tab.id);
+      if (record && resolveConnectionRole(record.projectId, tab.id) !== 'detached') {
         updateTabStatus(tab.id, 'connecting');
         setTimeout(() => {
-          if (sessionIndex.has(tab.id) && isProjectConnectionActive(tab.projectId)) {
-            connect(tab);
+          const nextRecord = sessionIndex.get(tab.id);
+          if (
+            nextRecord &&
+            resolveConnectionRole(nextRecord.projectId, tab.id) !== 'detached'
+          ) {
+            connect(nextRecord.tab);
           }
         }, 1000);
       } else {
-        const record = sessionIndex.get(tab.id);
         if (record && !isProjectConnectionActive(record.projectId)) {
           return;
         }
@@ -2004,13 +1978,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (nextCount !== 1) {
       return;
     }
-    const bucket = tabStore.get(projectId);
-    if (!bucket) {
-      return;
-    }
-    bucket.forEach(tab => {
-      connect(tab);
-    });
+    applyConnectionPolicy(projectId);
   }
 
   function releaseProjectConnections(projectId: string | undefined) {
@@ -2025,6 +1993,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         return;
       }
       bucket.forEach(tab => {
+        updateConnectionRole(tab.id, 'detached');
         pauseSocket(tab.id);
       });
       return;
