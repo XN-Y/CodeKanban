@@ -151,8 +151,49 @@
                     <span class="item-time">{{ formatTime(item.timestamp) }}</span>
                   </div>
 
-                  <div v-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
-                    <div class="tool-card timeline-tool-card">
+                  <div
+                    v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
+                    class="timeline-tool-shell"
+                  >
+                    <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
+                      <div class="tool-body plan-tool-body">
+                        <div class="plan-tool-header">
+                          <span class="plan-tool-badge">{{ t('webSession.planCardBadge') }}</span>
+                          <span class="plan-tool-caption">{{ t('webSession.planCardCaption') }}</span>
+                        </div>
+                        <div
+                          v-if="item.tool.output"
+                          class="plan-tool-content chat-markdown"
+                          v-html="renderMarkdown(item.tool.output)"
+                        ></div>
+                        <div v-if="showPlanActions(item.tool.id)" class="plan-tool-actions">
+                          <div class="plan-tool-action-row">
+                            <n-button
+                              size="small"
+                              type="primary"
+                              class="plan-tool-action-primary"
+                              @click="handlePlanCardImplement"
+                            >
+                              {{ t('webSession.planActionImplement') }}
+                            </n-button>
+                            <n-button
+                              size="small"
+                              secondary
+                              class="plan-tool-action-secondary"
+                              @click="handlePlanCardCancel"
+                            >
+                              {{ t('webSession.planActionCancel') }}
+                            </n-button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div v-else-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
+                    <div
+                      class="tool-card timeline-tool-card"
+                    >
                       <button
                         type="button"
                         class="tool-header"
@@ -334,10 +375,7 @@
                   </div>
                 </div>
 
-                <div
-                  v-if="liveState.phase !== 'idle' || pendingApproval || pendingUserInput"
-                  class="runtime-strip"
-                >
+                <div v-if="showRuntimeStrip" class="runtime-strip">
                   <button
                     type="button"
                     class="live-card"
@@ -416,7 +454,7 @@
                   </div>
 
                   <div
-                    v-else-if="pendingUserInput"
+                    v-else-if="pendingUserInput && !inlinePlanChoice"
                     class="approval-card user-input-card"
                     :class="{ 'is-stale': pendingUserInput.stale }"
                   >
@@ -847,6 +885,7 @@ import {
   type WebSessionHistoryAnswerEntry,
   type WebSessionLiveState,
   type WebSessionPendingInput,
+  type WebSessionUserInputOption,
   type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
 import type { WebSessionSummary } from '@/types/models';
@@ -899,6 +938,17 @@ type DraftSessionTab = WebSessionSummary & {
 
 type SessionTab = (WebSessionSummary & { isDraft?: false }) | DraftSessionTab;
 
+type InlinePlanChoiceOption = {
+  label: string;
+  isExecute: boolean;
+};
+
+type InlinePlanChoice = {
+  questionId: string;
+  prompt: string;
+  options: InlinePlanChoiceOption[];
+};
+
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -937,6 +987,7 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
+const dismissedPlanActions = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const viewedEventSeqBySession = ref<Record<string, number>>({});
@@ -990,11 +1041,84 @@ const blocks = computed(() =>
 function isReasoningBlock(block: WebSessionBlock) {
   return block.tool?.kind === 'reasoning';
 }
+function normalizeChoiceText(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+function isPlanTool(tool?: { name: string; kind?: string; meta?: Record<string, unknown> | undefined }) {
+  if (!tool) {
+    return false;
+  }
+  const meta = tool.meta ?? {};
+  const candidates: string[] = [
+    tool.name,
+    tool.kind ?? '',
+    typeof meta.kind === 'string' ? meta.kind : '',
+    typeof meta.title === 'string' ? meta.title : '',
+  ];
+  return candidates.some(value => normalizeChoiceText(value) === 'plan');
+}
+function isExecutePlanOption(option: WebSessionUserInputOption) {
+  const text = normalizeChoiceText(`${option.label} ${option.description}`);
+  const mentionsPlan = /计划|plan/.test(text);
+  const mentionsExecute = /开始|执行|实现|实施|继续|start|execute|implement|proceed/.test(text);
+  const mentionsCancel = /取消|暂不|稍后|later|cancel|dismiss|hold/.test(text);
+  return mentionsExecute && (mentionsPlan || !mentionsCancel);
+}
+function isCancelPlanOption(option: WebSessionUserInputOption) {
+  const text = normalizeChoiceText(`${option.label} ${option.description}`);
+  return /取消|暂不|稍后|稍后再说|later|cancel|dismiss|hold|keep planning|stay in plan/.test(text);
+}
+function isPlanChoiceQuestion(question?: WebSessionUserInputQuestion) {
+  if (!question || question.options.length !== 2) {
+    return false;
+  }
+  const hasExecute = question.options.some(isExecutePlanOption);
+  const hasCancel = question.options.some(isCancelPlanOption);
+  return hasExecute && hasCancel;
+}
+function isPlanChoiceRequestBlock(block: WebSessionBlock) {
+  return (
+    block.kind === 'system' &&
+    block.detail?.type === 'user_input_request' &&
+    isPlanChoiceQuestion(block.detail.questions?.[0])
+  );
+}
 const visibleBlocks = computed(() =>
-  showWebSessionReasoning.value
-    ? blocks.value
-    : blocks.value.filter(block => !isReasoningBlock(block))
+  blocks.value.filter(block => {
+    if (!showWebSessionReasoning.value && isReasoningBlock(block)) {
+      return false;
+    }
+    if (isPlanChoiceRequestBlock(block)) {
+      return false;
+    }
+    return true;
+  })
 );
+const latestPlanToolId = computed(() => {
+  for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
+    const block = blocks.value[index];
+    if (block?.kind === 'tool' && block.tool && isPlanTool(block.tool)) {
+      return block.tool.id;
+    }
+  }
+  return '';
+});
+const hasUserMessageAfterLatestPlan = computed(() => {
+  const planToolId = latestPlanToolId.value;
+  if (!planToolId) {
+    return false;
+  }
+  const planIndex = blocks.value.findIndex(
+    block => block.kind === 'tool' && block.tool?.id === planToolId
+  );
+  if (planIndex < 0) {
+    return false;
+  }
+  return blocks.value.slice(planIndex + 1).some(block => block.kind === 'user');
+});
 const liveState = computed(() =>
   currentRealSession.value
     ? webSessionStore.getLiveState(currentRealSession.value.id)
@@ -1006,6 +1130,36 @@ const pendingApproval = computed(() =>
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
+const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
+  const request = pendingUserInput.value;
+  if (!request || request.stale || !latestPlanToolId.value) {
+    return null;
+  }
+  const question = request.questions[0];
+  if (request.questions.length !== 1 || !isPlanChoiceQuestion(question)) {
+    return null;
+  }
+  return {
+    questionId: question.id,
+    prompt: request.prompt?.trim() || question.question?.trim() || question.header?.trim() || '',
+    options: question.options.map(option => ({
+      label: option.label,
+      isExecute: isExecutePlanOption(option),
+    })),
+  };
+});
+const showRuntimeStrip = computed(() => {
+  if (pendingApproval.value || pendingUserInput.value) {
+    return true;
+  }
+  if (liveState.value.phase === 'idle') {
+    return false;
+  }
+  if (liveState.value.phase === 'done' && latestPlanToolId.value && !hasUserMessageAfterLatestPlan.value) {
+    return false;
+  }
+  return true;
+});
 const hasRecoveredRuntimeRequest = computed(() =>
   Boolean(pendingApproval.value?.stale || pendingUserInput.value?.stale)
 );
@@ -1868,6 +2022,26 @@ function toggleToolExpanded(toolId: string) {
   };
 }
 
+function showPlanActions(toolId: string) {
+  return Boolean(
+    currentRealSession.value &&
+      latestPlanToolId.value === toolId &&
+      (!liveState.value.running || inlinePlanChoice.value) &&
+      !dismissedPlanActions.value[toolId] &&
+      !hasUserMessageAfterLatestPlan.value
+  );
+}
+
+function setPlanActionsDismissed(toolId: string, dismissed: boolean) {
+  if (!toolId) {
+    return;
+  }
+  dismissedPlanActions.value = {
+    ...dismissedPlanActions.value,
+    [toolId]: dismissed,
+  };
+}
+
 function toolKindLabel(tool: { name: string; kind?: string }) {
   const kind = (tool.kind || '').trim();
   if (!kind) {
@@ -2521,6 +2695,64 @@ function formatSessionInteractionError(error: unknown) {
     return t('webSession.recoveredActionExpired');
   }
   return rawMessage || t('common.error');
+}
+
+function findInlinePlanChoiceOption(mode: 'execute' | 'plan') {
+  if (!inlinePlanChoice.value) {
+    return null;
+  }
+  return (
+    inlinePlanChoice.value.options.find(option => option.isExecute === (mode === 'execute')) ?? null
+  );
+}
+
+async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
+  if (!currentRealSession.value || !pendingUserInput.value || !inlinePlanChoice.value) {
+    return false;
+  }
+  const option = findInlinePlanChoiceOption(mode);
+  if (!option || !inlinePlanChoice.value.questionId) {
+    return false;
+  }
+  await webSessionStore.answerUserInput(
+    currentRealSession.value.id,
+    pendingUserInput.value.itemId,
+    {
+      [inlinePlanChoice.value.questionId]: [option.label],
+    }
+  );
+  userInputSelections.value = {};
+  userInputDrafts.value = {};
+  return true;
+}
+
+async function handlePlanCardImplement() {
+  if (!currentRealSession.value) {
+    return;
+  }
+
+  try {
+    if (currentRealSession.value.workflowMode === 'plan') {
+      await webSessionStore.updateWorkflowMode(currentRealSession.value.id, 'default');
+    }
+
+    const answered = await answerInlinePlanChoice('execute');
+    if (answered) {
+      return;
+    }
+
+    await webSessionStore.sendMessage(currentRealSession.value.id, 'Implement the plan.', []);
+    autoFollowBottom.value = true;
+    scrollToBottom(true);
+  } catch (error) {
+    message.error(formatSessionInteractionError(error));
+  }
+}
+
+async function handlePlanCardCancel() {
+  const toolId = latestPlanToolId.value;
+  setPlanActionsDismissed(toolId, true);
+  focusComposer();
 }
 
 async function handleUserInputSubmit() {
@@ -4062,6 +4294,32 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
+.tool-card.is-plan-tool {
+  border-color: rgba(14, 116, 144, 0.22);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(236, 253, 245, 0.98) 0%,
+      rgba(240, 249, 255, 0.96) 52%,
+      rgba(255, 255, 255, 0.98) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 18px 36px rgba(8, 47, 73, 0.08);
+}
+
+.tool-card.is-plan-tool.is-static-plan-tool {
+  overflow: hidden;
+  position: relative;
+}
+
+.tool-card.is-plan-tool.is-static-plan-tool::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: linear-gradient(90deg, #14b8a6 0%, #0ea5e9 55%, #38bdf8 100%);
+}
+
 .timeline-tool-card {
   width: 100%;
 }
@@ -4167,6 +4425,36 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
+.plan-tool-body {
+  padding: 18px 18px 20px;
+  gap: 18px;
+}
+
+.plan-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.plan-tool-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.plan-tool-caption {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #155e75;
+}
+
 .tool-section {
   display: flex;
   flex-direction: column;
@@ -4191,6 +4479,40 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
   border-radius: 8px;
   padding: 10px;
+}
+
+.plan-tool-content {
+  padding: 18px 20px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(14, 116, 144, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    0 10px 24px rgba(14, 116, 144, 0.06);
+}
+
+.plan-tool-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+  margin-top: 2px;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.plan-tool-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
+.plan-tool-action-primary,
+.plan-tool-action-secondary {
+  min-width: 148px;
 }
 
 .runtime-strip {

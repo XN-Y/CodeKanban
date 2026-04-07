@@ -1049,7 +1049,29 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function updateWorkflowMode(sessionId: string, workflowMode: 'default' | 'plan') {
-    await sendCommand('set_wm', sessionId, { wm: workflowMode });
+    const session = findSessionById(sessionId);
+    const previousWorkflowMode = session?.workflowMode;
+    const shouldOptimisticallyUpdate =
+      Boolean(session) && previousWorkflowMode !== workflowMode;
+
+    if (shouldOptimisticallyUpdate) {
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        workflowMode,
+      }));
+    }
+
+    try {
+      await sendCommand('set_wm', sessionId, { wm: workflowMode });
+    } catch (error) {
+      if (shouldOptimisticallyUpdate && previousWorkflowMode) {
+        updateSessionStatus(sessionId, current => ({
+          ...current,
+          workflowMode: previousWorkflowMode,
+        }));
+      }
+      throw error;
+    }
   }
 
   async function updatePermissionLevel(
