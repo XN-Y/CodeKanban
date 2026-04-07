@@ -733,6 +733,7 @@ import {
 import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
+  DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
   TERMINAL_SNAPSHOT_INTERVAL_OPTIONS,
   formatTerminalSnapshotInterval,
   type TerminalRenderMode,
@@ -1365,10 +1366,16 @@ const confirmTerminalCloseValue = computed({
   set: value => settingsStore.updateConfirmBeforeTerminalClose(value),
 });
 
-const snapshotIntervalOptions = TERMINAL_SNAPSHOT_INTERVAL_OPTIONS.map(interval => ({
-  label: formatTerminalSnapshotInterval(interval),
-  value: interval,
-}));
+const snapshotIntervalOptions = computed(() => [
+  {
+    label: `${t('common.default')} (${formatTerminalSnapshotInterval(DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS)})`,
+    value: null,
+  },
+  ...TERMINAL_SNAPSHOT_INTERVAL_OPTIONS.map(interval => ({
+    label: formatTerminalSnapshotInterval(interval),
+    value: interval,
+  })),
+]);
 
 const defaultTerminalRenderModeValue = computed({
   get: () => defaultTerminalRenderMode.value,
@@ -1377,7 +1384,7 @@ const defaultTerminalRenderModeValue = computed({
 
 const defaultTerminalSnapshotIntervalValue = computed({
   get: () => defaultTerminalSnapshotIntervalMs.value,
-  set: (value: number) => settingsStore.updateDefaultTerminalSnapshotIntervalMs(value),
+  set: (value: number | null) => settingsStore.updateDefaultTerminalSnapshotIntervalMs(value),
 });
 
 const defaultTerminalSnapshotZlibCompressionValue = computed({

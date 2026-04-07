@@ -909,7 +909,7 @@ function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
 
 const snapshotModeSupported = computed(() => developerConfigState.enableTerminalStateSnapshot);
 
-function formatSnapshotIntervalLabel(intervalMs: number) {
+function formatSnapshotIntervalLabel(intervalMs: number | null | undefined) {
   return formatTerminalSnapshotInterval(intervalMs);
 }
 

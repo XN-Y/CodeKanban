@@ -1,11 +1,12 @@
 export type TerminalRenderMode = 'live' | 'snapshot';
 
 export const DEFAULT_TERMINAL_RENDER_MODE: TerminalRenderMode = 'live';
-export const DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS = 1000;
-export const MIN_TERMINAL_SNAPSHOT_INTERVAL_MS = 50;
+export const DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS = 50;
+export const MIN_TERMINAL_SNAPSHOT_INTERVAL_MS = 33;
 export const MAX_TERMINAL_SNAPSHOT_INTERVAL_MS = 10000;
 
 export const TERMINAL_SNAPSHOT_INTERVAL_OPTIONS = [
+  33,
   50,
   100,
   250,
@@ -34,7 +35,7 @@ export function sanitizeTerminalSnapshotIntervalMs(
   return clampSnapshotInterval(parsed);
 }
 
-export function formatTerminalSnapshotInterval(intervalMs: number) {
+export function formatTerminalSnapshotInterval(intervalMs: number | null | undefined) {
   const normalized = sanitizeTerminalSnapshotIntervalMs(intervalMs);
   if (normalized < 1000) {
     return `${normalized}ms`;

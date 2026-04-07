@@ -200,7 +200,7 @@ interface GeneralSettings {
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
   terminalDisplayMode: TerminalDisplayMode;
   defaultTerminalRenderMode: TerminalRenderMode;
-  defaultTerminalSnapshotIntervalMs: number;
+  defaultTerminalSnapshotIntervalMs: number | null;
   defaultTerminalSnapshotZlibCompression: boolean;
 }
 
@@ -265,7 +265,7 @@ const defaultSettings: GeneralSettings = {
   terminalWebGLRenderer: 'auto',
   terminalDisplayMode: 'docked',
   defaultTerminalRenderMode: DEFAULT_TERMINAL_RENDER_MODE,
-  defaultTerminalSnapshotIntervalMs: DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
+  defaultTerminalSnapshotIntervalMs: null,
   defaultTerminalSnapshotZlibCompression: true,
 };
 
@@ -440,8 +440,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.defaultTerminalRenderMode = sanitizeTerminalRenderMode(mode);
   }
 
-  function updateDefaultTerminalSnapshotIntervalMs(value: number) {
-    settings.value.defaultTerminalSnapshotIntervalMs = sanitizeTerminalSnapshotIntervalMs(value);
+  function updateDefaultTerminalSnapshotIntervalMs(value: number | null) {
+    settings.value.defaultTerminalSnapshotIntervalMs = sanitizeDefaultTerminalSnapshotIntervalMs(
+      value
+    );
   }
 
   function updateDefaultTerminalSnapshotZlibCompression(value: boolean) {
@@ -595,7 +597,7 @@ function loadSettings(): GeneralSettings {
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
         terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
         defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
-        defaultTerminalSnapshotIntervalMs: sanitizeTerminalSnapshotIntervalMs(
+        defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
           parsed.defaultTerminalSnapshotIntervalMs
         ),
         defaultTerminalSnapshotZlibCompression:
@@ -636,9 +638,18 @@ function cloneDefaultSettings(): GeneralSettings {
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
     terminalDisplayMode: defaultSettings.terminalDisplayMode,
     defaultTerminalRenderMode: defaultSettings.defaultTerminalRenderMode,
-    defaultTerminalSnapshotIntervalMs: defaultSettings.defaultTerminalSnapshotIntervalMs,
+    defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
+      defaultSettings.defaultTerminalSnapshotIntervalMs
+    ),
     defaultTerminalSnapshotZlibCompression: defaultSettings.defaultTerminalSnapshotZlibCompression,
   };
+}
+
+function sanitizeDefaultTerminalSnapshotIntervalMs(value: unknown) {
+  if (value == null) {
+    return null;
+  }
+  return sanitizeTerminalSnapshotIntervalMs(value, DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS);
 }
 
 function sanitizeRecentProjectsLimit(value: number | undefined) {

@@ -11,8 +11,8 @@ const (
 	terminalRenderModeLive     terminalRenderMode = "live"
 	terminalRenderModeSnapshot terminalRenderMode = "snapshot"
 
-	defaultTerminalSnapshotInterval = time.Second
-	minTerminalSnapshotInterval     = 50 * time.Millisecond
+	defaultTerminalSnapshotInterval = 50 * time.Millisecond
+	minTerminalSnapshotInterval     = 33 * time.Millisecond
 	maxTerminalSnapshotInterval     = 10 * time.Second
 )
 

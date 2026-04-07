@@ -51,10 +51,15 @@ import {
 } from '@/utils/terminalImageUpload';
 import { useLocale } from '@/composables/useLocale';
 
+type TerminalClientPayload = {
+  type: string;
+  [key: string]: unknown;
+};
+
 const props = defineProps<{
   tab: TerminalTabState;
   emitter: EventEmitter;
-  send: (sessionId: string, payload: any) => void;
+  send: (sessionId: string, payload: TerminalClientPayload) => void;
   shouldAutoFocus?: boolean;
   isMobile?: boolean;
 }>();
@@ -116,12 +121,14 @@ let initialViewportRepairTimer: number | null = null;
 let initialViewportReady = false;
 let lastReportedCols = 0;
 let lastReportedRows = 0;
+let pendingServerResizeTimer: number | null = null;
 const pendingTerminalMessages: ServerMessage[] = [];
 let pendingServerSnapshot: TerminalRemoteSnapshot | null = null;
 let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
 let debugRefreshHandler: (() => boolean) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const INITIAL_OUTPUT_BUFFER_MAX = 5000;
+const TERMINAL_SERVER_RESIZE_SETTLE_MS = 100;
 const transferCardMessage = ref('');
 const transferCardTone = ref<'progress' | 'error'>('progress');
 const transferProgress = ref<number | null>(null);
@@ -132,6 +139,20 @@ type TerminalDebugWindow = Window & {
   [TERMINAL_DEBUG_FN]?: () => boolean;
   [TERMINAL_DEBUG_REGISTRY]?: Map<string, () => boolean>;
 };
+
+type PendingServerResize = {
+  cols: number;
+  rows: number;
+  force: boolean;
+};
+
+type TerminalSizeSyncOptions = {
+  forceServerResize?: boolean;
+  serverSync?: 'deferred' | 'immediate' | 'skip';
+  finalizeReason?: string;
+};
+
+let pendingServerResize: PendingServerResize | null = null;
 
 /**
  * 替换 True Color #000000 为可见颜色
@@ -424,18 +445,18 @@ function flushPendingTerminalMessages(reason: string) {
   scheduleInitialViewportRepair(`${reason}-flush`);
 }
 
-function sendResizeToServer(
+function dispatchResizeToServer(
   cols: number,
   rows: number,
   options: { force?: boolean; reason?: string } = {}
-) {
+): boolean {
   if (cols <= 0 || rows <= 0) {
-    return;
+    return false;
   }
 
   const force = options.force === true;
   if (!force && lastReportedCols === cols && lastReportedRows === rows) {
-    return;
+    return false;
   }
 
   lastReportedCols = cols;
@@ -445,6 +466,100 @@ function sendResizeToServer(
     cols,
     rows,
   });
+  return true;
+}
+
+function clearPendingServerResize() {
+  if (pendingServerResizeTimer != null) {
+    window.clearTimeout(pendingServerResizeTimer);
+    pendingServerResizeTimer = null;
+  }
+  pendingServerResize = null;
+}
+
+function flushPendingServerResize() {
+  if (pendingServerResizeTimer != null) {
+    window.clearTimeout(pendingServerResizeTimer);
+    pendingServerResizeTimer = null;
+  }
+
+  if (!pendingServerResize) {
+    return false;
+  }
+
+  const { cols, rows, force } = pendingServerResize;
+  pendingServerResize = null;
+  return dispatchResizeToServer(cols, rows, {
+    force,
+    reason: force ? 'settled-force-fit' : 'settled-fit',
+  });
+}
+
+function scheduleServerResize(
+  cols: number,
+  rows: number,
+  options: { force?: boolean; immediate?: boolean } = {}
+) {
+  if (cols <= 0 || rows <= 0) {
+    return;
+  }
+
+  const force = options.force === true;
+  if (options.immediate) {
+    clearPendingServerResize();
+    dispatchResizeToServer(cols, rows, {
+      force,
+      reason: force ? 'immediate-force-fit' : 'immediate-fit',
+    });
+    return;
+  }
+
+  if (
+    !force &&
+    pendingServerResize == null &&
+    lastReportedCols === cols &&
+    lastReportedRows === rows
+  ) {
+    return;
+  }
+
+  pendingServerResize = {
+    cols,
+    rows,
+    force: force || pendingServerResize?.force === true,
+  };
+
+  if (pendingServerResizeTimer != null) {
+    window.clearTimeout(pendingServerResizeTimer);
+  }
+  pendingServerResizeTimer = window.setTimeout(() => {
+    flushPendingServerResize();
+  }, TERMINAL_SERVER_RESIZE_SETTLE_MS);
+}
+
+function commitTerminalSize(options: TerminalSizeSyncOptions = {}) {
+  if (!terminal) {
+    return;
+  }
+
+  const serverSync = options.serverSync ?? 'deferred';
+  // `tab` points at the shared terminal store entry for this viewport.
+  // Keeping cols/rows in sync here avoids stale size reads elsewhere.
+  // eslint-disable-next-line vue/no-mutating-props
+  props.tab.cols = terminal.cols;
+  // eslint-disable-next-line vue/no-mutating-props
+  props.tab.rows = terminal.rows;
+
+  if (serverSync !== 'skip') {
+    scheduleServerResize(terminal.cols, terminal.rows, {
+      force: options.forceServerResize === true,
+      immediate: serverSync === 'immediate',
+    });
+  }
+
+  if (!initialViewportReady) {
+    finalizeInitialViewport(options.finalizeReason ?? 'resize');
+  }
 }
 
 function finalizeInitialViewport(reason: string) {
@@ -538,6 +653,12 @@ function sendTerminalInput(data: string) {
 function requestSnapshot(reason: string) {
   if (props.tab.renderMode !== 'snapshot') {
     return;
+  }
+  if (pendingServerResize) {
+    const resizeSent = flushPendingServerResize();
+    if (resizeSent) {
+      return;
+    }
   }
   props.send(props.tab.id, { type: 'snapshot-request', reason });
 }
@@ -669,7 +790,10 @@ function refreshTerminalViewport(
       return;
     }
 
-    handleResize(forceServerResize);
+    handleResize({
+      forceServerResize,
+      serverSync: 'deferred',
+    });
     forceServerResize = false;
 
     if (options.clearTextureAtlas !== false) {
@@ -702,7 +826,7 @@ function refreshTerminalViewport(
   }
 }
 
-function syncTerminalSize(forceServerResize = false) {
+function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
   if (!terminal || !fitAddon) {
     return;
   }
@@ -718,29 +842,23 @@ function syncTerminalSize(forceServerResize = false) {
 
   try {
     fitAddon.fit();
-
-    props.tab.cols = terminal.cols;
-    props.tab.rows = terminal.rows;
-    sendResizeToServer(terminal.cols, terminal.rows, {
-      force: forceServerResize,
-      reason: forceServerResize ? 'forced-fit' : 'fit',
-    });
-    if (!initialViewportReady) {
-      finalizeInitialViewport('resize');
-    }
+    commitTerminalSize(options);
   } catch (error) {
     // 忽略 fit 可能出现的错误
     console.warn('Terminal resize failed:', error);
   }
 }
 
-function handleResize(forceServerResize = false) {
-  syncTerminalSize(forceServerResize);
+function handleResize(options: TerminalSizeSyncOptions = {}) {
+  syncTerminalSize(options);
 }
 
 // 防抖版本的 resize 处理，避免窗口调整时发送大量 resize 消息阻塞输入
 const debouncedResize = useDebounceFn(() => {
-  handleResize(props.tab.renderMode === 'snapshot');
+  handleResize({
+    forceServerResize: props.tab.renderMode === 'snapshot',
+    serverSync: 'deferred',
+  });
 }, 100);
 
 function handleTerminalResizeAll() {
@@ -765,7 +883,11 @@ function installDebugForceRefreshHook() {
     if (!terminal || !containerRef.value || !isContainerVisible()) {
       return false;
     }
-    syncTerminalSize(true);
+    syncTerminalSize({
+      forceServerResize: true,
+      serverSync: 'immediate',
+      finalizeReason: 'debug-force-refresh',
+    });
     refreshTerminalViewport('debug-force-refresh');
     terminal.scrollToTop();
     window.setTimeout(() => {
@@ -921,12 +1043,10 @@ onMounted(() => {
       // 标记为已访问（初始化时就可见的终端）
       visitedTerminals.add(props.tab.id);
 
-      // 更新状态并通知服务器
-      props.tab.cols = cols;
-      props.tab.rows = rows;
-      sendResizeToServer(cols, rows, {
-        force: true,
-        reason: 'initial-fit',
+      commitTerminalSize({
+        forceServerResize: true,
+        serverSync: 'immediate',
+        finalizeReason: 'initial-fit',
       });
       if (shouldAutoFocus.value) {
         terminal.focus();
@@ -1028,7 +1148,7 @@ function handleTerminalActivated() {
     // 先 fit 确保终端尺寸正确，然后滚动到底部
     try {
       fitAddon.fit();
-    } catch (e) {
+    } catch {
       // ignore
     }
     // 延迟执行滚动，确保 fit 完成
@@ -1069,6 +1189,7 @@ onBeforeUnmount(() => {
     window.clearTimeout(initialViewportRepairTimer);
     initialViewportRepairTimer = null;
   }
+  clearPendingServerResize();
   initialViewportReady = false;
   lastReportedCols = 0;
   lastReportedRows = 0;
