@@ -21,15 +21,38 @@ import { taskActions } from '@/composables/useTaskActions';
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
 export type TerminalRemoteSnapshot = {
+  kind: 'full';
   content: string;
   rows: number;
   cols: number;
   sequence: number;
+  baseSequence: number;
   altScreen: boolean;
   cursorVisible: boolean;
   modeFlags: number;
   capturedAt?: string;
+  lines?: string[];
+  cursor?: string;
 };
+
+type TerminalRemoteSnapshotDelta = {
+  kind: 'delta';
+  rows: number;
+  cols: number;
+  sequence: number;
+  baseSequence: number;
+  altScreen: boolean;
+  cursorVisible: boolean;
+  modeFlags: number;
+  capturedAt?: string;
+  changedLines: Array<{
+    index: number;
+    content: string;
+  }>;
+  cursor: string;
+};
+
+type TerminalRemoteSnapshotFrame = TerminalRemoteSnapshot | TerminalRemoteSnapshotDelta;
 
 export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
@@ -63,6 +86,7 @@ export type ServerMessage = {
   mode?: TerminalRenderMode;
   snapshotIntervalMs?: number;
   snapshotCompressionEnabled?: boolean;
+  snapshotIncrementalEnabled?: boolean;
   snapshot?: TerminalRemoteSnapshot;
   metadata?: {
     title?: string;
@@ -85,6 +109,8 @@ export type ServerMessage = {
     };
   };
 };
+
+const TERMINAL_SNAPSHOT_PREFIX = '\x1b[0m\x1b[2J\x1b[3J\x1b[H';
 
 export type TerminalCreateOptions = {
   worktreeId?: string;
@@ -384,21 +410,157 @@ async function inflateSnapshotPayload(payload: Uint8Array) {
   return new Uint8Array(buffer);
 }
 
-async function parseBinarySnapshotFrame(payload: ArrayBuffer): Promise<TerminalRemoteSnapshot | null> {
+function decodeSnapshotText(decoder: TextDecoder, bytes: Uint8Array) {
+  if (bytes.byteLength === 0) {
+    return '';
+  }
+  return decoder.decode(bytes);
+}
+
+function readSnapshotString(
+  view: DataView,
+  bytes: Uint8Array,
+  offset: number,
+  decoder: TextDecoder
+) {
+  if (offset + 4 > bytes.byteLength) {
+    return null;
+  }
+
+  const length = view.getUint32(offset, false);
+  offset += 4;
+  if (offset + length > bytes.byteLength) {
+    return null;
+  }
+
+  const value = decodeSnapshotText(decoder, bytes.subarray(offset, offset + length));
+  return {
+    value,
+    nextOffset: offset + length,
+  };
+}
+
+function buildSnapshotContent(lines?: string[], cursor = '', fallbackContent = '') {
+  if (!Array.isArray(lines)) {
+    return fallbackContent;
+  }
+  return `${TERMINAL_SNAPSHOT_PREFIX}${lines.join('\r\n')}${cursor}`;
+}
+
+function parseVersion6SnapshotFrame(
+  rows: number,
+  cols: number,
+  frameKind: number,
+  sequence: number,
+  baseSequence: number,
+  altScreen: boolean,
+  cursorVisible: boolean,
+  modeFlags: number,
+  capturedAt: string | undefined,
+  encodedContent: Uint8Array
+): TerminalRemoteSnapshotFrame | null {
+  const view = new DataView(
+    encodedContent.buffer,
+    encodedContent.byteOffset,
+    encodedContent.byteLength
+  );
+  const decoder = new TextDecoder('utf-8');
+  let offset = 0;
+
+  if (frameKind === 1) {
+    if (offset + 2 > encodedContent.byteLength) {
+      return null;
+    }
+
+    const changeCount = view.getUint16(offset, false);
+    offset += 2;
+    const changedLines: TerminalRemoteSnapshotDelta['changedLines'] = [];
+    for (let index = 0; index < changeCount; index += 1) {
+      if (offset + 2 > encodedContent.byteLength) {
+        return null;
+      }
+      const rowIndex = view.getUint16(offset, false);
+      offset += 2;
+      const rowValue = readSnapshotString(view, encodedContent, offset, decoder);
+      if (!rowValue) {
+        return null;
+      }
+      offset = rowValue.nextOffset;
+      changedLines.push({
+        index: rowIndex,
+        content: rowValue.value,
+      });
+    }
+
+    const cursorValue = readSnapshotString(view, encodedContent, offset, decoder);
+    if (!cursorValue) {
+      return null;
+    }
+
+    return {
+      kind: 'delta',
+      rows,
+      cols,
+      sequence,
+      baseSequence,
+      altScreen,
+      cursorVisible,
+      modeFlags,
+      capturedAt,
+      changedLines,
+      cursor: cursorValue.value,
+    };
+  }
+
+  const lines: string[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    const rowValue = readSnapshotString(view, encodedContent, offset, decoder);
+    if (!rowValue) {
+      return null;
+    }
+    offset = rowValue.nextOffset;
+    lines.push(rowValue.value);
+  }
+
+  const cursorValue = readSnapshotString(view, encodedContent, offset, decoder);
+  if (!cursorValue) {
+    return null;
+  }
+
+  return {
+    kind: 'full',
+    rows,
+    cols,
+    sequence,
+    baseSequence,
+    altScreen,
+    cursorVisible,
+    modeFlags,
+    capturedAt,
+    lines,
+    cursor: cursorValue.value,
+    content: buildSnapshotContent(lines, cursorValue.value),
+  };
+}
+
+async function parseBinarySnapshotFrame(
+  payload: ArrayBuffer
+): Promise<TerminalRemoteSnapshotFrame | null> {
   if (!(payload instanceof ArrayBuffer) || payload.byteLength < 13) {
     return null;
   }
 
   const view = new DataView(payload);
   const version = view.getUint8(0);
-  if (version !== 1 && version !== 2 && version !== 3 && version !== 4 && version !== 5) {
+  if (version < 1 || version > 6) {
     return null;
   }
 
   const rows = view.getUint16(1, false);
   const cols = view.getUint16(3, false);
   const capturedAtMs = Number(view.getBigUint64(5, false));
-  const headerSize = version >= 5 ? 22 : version >= 3 ? 18 : version === 2 ? 14 : 13;
+  const headerSize =
+    version >= 6 ? 27 : version >= 5 ? 22 : version >= 3 ? 18 : version === 2 ? 14 : 13;
   if (payload.byteLength < headerSize) {
     return null;
   }
@@ -408,25 +570,96 @@ async function parseBinarySnapshotFrame(payload: ArrayBuffer): Promise<TerminalR
   const modeFlags = version >= 3 ? view.getUint32(14, false) : 0;
   const compressed = version >= 4 ? (flags & (1 << 2)) !== 0 : false;
   const sequence = version >= 5 ? view.getUint32(18, false) : 0;
-  const decoder = new TextDecoder('utf-8');
+  const baseSequence = version >= 6 ? view.getUint32(22, false) : 0;
+  const frameKind = version >= 6 ? view.getUint8(26) : 0;
   const encodedContent = new Uint8Array(payload, headerSize);
-  const contentBytes = compressed
-    ? await inflateSnapshotPayload(encodedContent)
-    : encodedContent;
+  const contentBytes = compressed ? await inflateSnapshotPayload(encodedContent) : encodedContent;
+  const capturedAt =
+    capturedAtMs > 0 && Number.isFinite(capturedAtMs)
+      ? new Date(capturedAtMs).toISOString()
+      : undefined;
+
+  if (version >= 6) {
+    return parseVersion6SnapshotFrame(
+      rows,
+      cols,
+      frameKind,
+      sequence,
+      baseSequence,
+      altScreen,
+      cursorVisible,
+      modeFlags,
+      capturedAt,
+      contentBytes
+    );
+  }
+
+  const decoder = new TextDecoder('utf-8');
   const content = decoder.decode(contentBytes);
 
   return {
+    kind: 'full',
     rows,
     cols,
     sequence,
+    baseSequence,
     content,
     altScreen,
     cursorVisible,
     modeFlags,
-    capturedAt:
-      capturedAtMs > 0 && Number.isFinite(capturedAtMs)
-        ? new Date(capturedAtMs).toISOString()
-        : undefined,
+    capturedAt,
+  };
+}
+
+function assembleServerSnapshotFrame(
+  previous: TerminalRemoteSnapshot | undefined,
+  frame: TerminalRemoteSnapshotFrame
+): TerminalRemoteSnapshot | null {
+  if (frame.kind === 'full') {
+    return {
+      ...frame,
+      kind: 'full',
+      content: buildSnapshotContent(frame.lines, frame.cursor, frame.content),
+    };
+  }
+
+  if (!previous || !Array.isArray(previous.lines)) {
+    return null;
+  }
+  if (previous.sequence !== frame.baseSequence) {
+    return null;
+  }
+  if (
+    previous.rows !== frame.rows ||
+    previous.cols !== frame.cols ||
+    previous.altScreen !== frame.altScreen ||
+    previous.modeFlags !== frame.modeFlags
+  ) {
+    return null;
+  }
+
+  const lines = [...previous.lines];
+  for (const patch of frame.changedLines) {
+    if (patch.index < 0 || patch.index >= lines.length) {
+      return null;
+    }
+    lines[patch.index] = patch.content;
+  }
+
+  const cursor = frame.cursor ?? previous.cursor ?? '';
+  return {
+    kind: 'full',
+    rows: frame.rows,
+    cols: frame.cols,
+    sequence: frame.sequence,
+    baseSequence: frame.baseSequence,
+    altScreen: frame.altScreen,
+    cursorVisible: frame.cursorVisible,
+    modeFlags: frame.modeFlags,
+    capturedAt: frame.capturedAt,
+    lines,
+    cursor,
+    content: buildSnapshotContent(lines, cursor),
   };
 }
 
@@ -534,7 +767,14 @@ export const useTerminalStore = defineStore('terminal', () => {
 
   function buildRenderModeMessage(
     sessionId: string
-  ): Pick<ServerMessage, 'type' | 'mode' | 'snapshotIntervalMs' | 'snapshotCompressionEnabled'> | null {
+  ): Pick<
+    ServerMessage,
+    | 'type'
+    | 'mode'
+    | 'snapshotIntervalMs'
+    | 'snapshotCompressionEnabled'
+    | 'snapshotIncrementalEnabled'
+  > | null {
     const record = sessionIndex.get(sessionId);
     if (!record) {
       return null;
@@ -544,6 +784,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       mode: getEffectiveRenderMode(record.projectId, sessionId),
       snapshotIntervalMs: getEffectiveSnapshotIntervalMs(record.projectId, sessionId),
       snapshotCompressionEnabled: getGlobalSnapshotCompressionEnabled(),
+      snapshotIncrementalEnabled: true,
     };
   }
 
@@ -559,7 +800,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     sessionId: string,
     mode: TerminalRenderMode | undefined,
     snapshotIntervalMs: number | undefined,
-    _snapshotCompressionEnabled: boolean | undefined
+    _snapshotCompressionEnabled: boolean | undefined,
+    _snapshotIncrementalEnabled: boolean | undefined
   ) {
     const record = sessionIndex.get(sessionId);
     if (!record) {
@@ -1060,6 +1302,24 @@ export const useTerminalStore = defineStore('terminal', () => {
     return latestServerSnapshots.get(sessionId);
   }
 
+  function applyServerSnapshotFrame(sessionId: string, frame: TerminalRemoteSnapshotFrame) {
+    if (!sessionId) {
+      return null;
+    }
+
+    const assembled = assembleServerSnapshotFrame(latestServerSnapshots.get(sessionId), frame);
+    if (!assembled) {
+      send(sessionId, {
+        type: 'snapshot-request',
+        reason: 'delta-baseline-miss',
+      });
+      return null;
+    }
+
+    latestServerSnapshots.set(sessionId, assembled);
+    return assembled;
+  }
+
   function ensureBucket(projectId: string) {
     if (!projectId) {
       return [];
@@ -1284,7 +1544,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     const existingSocket = sockets.get(tab.id);
     if (
       existingSocket &&
-      (existingSocket.readyState === WebSocket.OPEN || existingSocket.readyState === WebSocket.CONNECTING)
+      (existingSocket.readyState === WebSocket.OPEN ||
+        existingSocket.readyState === WebSocket.CONNECTING)
     ) {
       return;
     }
@@ -1326,163 +1587,117 @@ export const useTerminalStore = defineStore('terminal', () => {
           if (typeof event.data === 'string') {
             payload = JSON.parse(event.data) as ServerMessage;
           } else {
-            const snapshot = await parseBinarySnapshotFrame(event.data as ArrayBuffer);
-            if (!snapshot || sockets.get(tab.id) !== socket) {
+            const frame = await parseBinarySnapshotFrame(event.data as ArrayBuffer);
+            if (!frame || sockets.get(tab.id) !== socket) {
               return;
             }
             const previousSequence = latestServerSnapshotSequence.get(tab.id) ?? -1;
-            if (snapshot.sequence <= previousSequence) {
+            if (frame.sequence <= previousSequence) {
               return;
             }
-            latestServerSnapshotSequence.set(tab.id, snapshot.sequence);
+            latestServerSnapshotSequence.set(tab.id, frame.sequence);
+            const snapshot = applyServerSnapshotFrame(tab.id, frame);
+            if (!snapshot || sockets.get(tab.id) !== socket) {
+              return;
+            }
             payload = {
               type: 'snapshot',
               snapshot,
             };
-          }
-          if (payload.type === 'snapshot' && payload.snapshot) {
-            latestServerSnapshots.set(tab.id, payload.snapshot);
           }
           if (payload.type === 'render-mode') {
             updateRenderModeAck(
               tab.id,
               payload.mode,
               payload.snapshotIntervalMs,
-              payload.snapshotCompressionEnabled
+              payload.snapshotCompressionEnabled,
+              payload.snapshotIncrementalEnabled
             );
           }
-        if (payload.type === 'ready') {
-          updateTabStatus(tab.id, 'ready');
-        } else if (payload.type === 'exit') {
-          updateTabStatus(tab.id, 'closed');
-        } else if (payload.type === 'error') {
-          updateTabStatus(tab.id, 'error');
-        } else if (payload.type === 'metadata' && payload.metadata) {
-          // Update tab metadata in realtime
-          updateTabMetadata(tab.id, payload.metadata);
+          if (payload.type === 'ready') {
+            updateTabStatus(tab.id, 'ready');
+          } else if (payload.type === 'exit') {
+            updateTabStatus(tab.id, 'closed');
+          } else if (payload.type === 'error') {
+            updateTabStatus(tab.id, 'error');
+          } else if (payload.type === 'metadata' && payload.metadata) {
+            // Update tab metadata in realtime
+            updateTabMetadata(tab.id, payload.metadata);
 
-          const trimmedAssistantInput =
-            typeof payload.metadata.aiAssistantRecentInput === 'string'
-              ? payload.metadata.aiAssistantRecentInput.trim()
-              : '';
+            const trimmedAssistantInput =
+              typeof payload.metadata.aiAssistantRecentInput === 'string'
+                ? payload.metadata.aiAssistantRecentInput.trim()
+                : '';
 
-          if (trimmedAssistantInput) {
-            console.log(
-              `[Terminal] AI Input Captured: ${payload.metadata.aiAssistantRecentInput}`,
-              {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                assistant: payload.metadata.aiAssistant,
-              }
-            );
-
-            taskActions.invalidateTaskCache();
-          }
-
-          // 🎯 Detect AI assistant completion
-          // Only trigger notification when transitioning from working state to waiting_input
-          const assistant = payload.metadata.aiAssistant;
-          const currentState = assistant?.state;
-          const previousState = aiPreviousStates.get(tab.id);
-
-          // 🔍 Detect AI assistant detection/closure
-          const isAgentDetected = assistant?.detected === true;
-
-          // Detect AI agent first appearance - emit ai:detected only once per session
-          if (isAgentDetected && !aiDetectedSessions.has(tab.id)) {
-            aiDetectedSessions.add(tab.id);
-            console.log(
-              `[Terminal] AI Agent Detected: ${assistant?.displayName || 'AI'} detected in session ${tab.id}`,
-              {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                assistant,
-              }
-            );
-            emitter.emit('ai:detected', {
-              sessionId: tab.id,
-              sessionTitle: tab.title,
-              projectId: tab.projectId,
-              projectName: getProjectName(tab.projectId),
-              worktreeId: tab.worktreeId,
-              detectedAt: new Date(),
-              assistantName: assistant?.displayName || assistant?.name,
-              assistantType: assistant?.type,
-            });
-          }
-
-          // When agent is closed, clear any existing notifications
-          if (!isAgentDetected) {
-            // If assistant info is missing or marked as not detected, treat it as closed/detached.
-            // This prevents stale state from triggering false completion notifications when the agent restarts.
-            if (aiDetectedSessions.has(tab.id)) {
-              aiDetectedSessions.delete(tab.id);
+            if (trimmedAssistantInput) {
               console.log(
-                `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
+                `[Terminal] AI Input Captured: ${payload.metadata.aiAssistantRecentInput}`,
                 {
                   sessionId: tab.id,
                   sessionTitle: tab.title,
-                  assistant,
+                  assistant: payload.metadata.aiAssistant,
                 }
               );
-              emitter.emit('ai:closed', {
-                sessionId: tab.id,
-              });
+
+              taskActions.invalidateTaskCache();
             }
-            aiPreviousStates.delete(tab.id);
-          } else {
-            // Detect approval requests
-            if (currentState === 'waiting_approval') {
+
+            // 🎯 Detect AI assistant completion
+            // Only trigger notification when transitioning from working state to waiting_input
+            const assistant = payload.metadata.aiAssistant;
+            const currentState = assistant?.state;
+            const previousState = aiPreviousStates.get(tab.id);
+
+            // 🔍 Detect AI assistant detection/closure
+            const isAgentDetected = assistant?.detected === true;
+
+            // Detect AI agent first appearance - emit ai:detected only once per session
+            if (isAgentDetected && !aiDetectedSessions.has(tab.id)) {
+              aiDetectedSessions.add(tab.id);
               console.log(
-                `[Terminal] AI Approval Needed: ${assistant?.displayName || 'AI'} is waiting for approval`,
+                `[Terminal] AI Agent Detected: ${assistant?.displayName || 'AI'} detected in session ${tab.id}`,
                 {
                   sessionId: tab.id,
                   sessionTitle: tab.title,
-                  previousState,
-                  currentState,
                   assistant,
                 }
               );
-              emitter.emit('ai:approval-needed', {
+              emitter.emit('ai:detected', {
                 sessionId: tab.id,
                 sessionTitle: tab.title,
                 projectId: tab.projectId,
                 projectName: getProjectName(tab.projectId),
-                assistant,
+                worktreeId: tab.worktreeId,
+                detectedAt: new Date(),
+                assistantName: assistant?.displayName || assistant?.name,
+                assistantType: assistant?.type,
               });
             }
 
-            // Detect AI starting to work again (after being idle/completed)
-            if (currentState === 'working' && previousState && previousState !== 'working') {
-              console.log(
-                `[Terminal] AI Started Working: ${assistant?.displayName || 'AI'} resumed work`,
-                {
-                  sessionId: tab.id,
-                  sessionTitle: tab.title,
-                  previousState,
-                  currentState,
-                  assistant,
-                }
-              );
-              emitter.emit('ai:working', {
-                sessionId: tab.id,
-                sessionTitle: tab.title,
-                projectId: tab.projectId,
-                projectName: getProjectName(tab.projectId),
-                assistant,
-                latestCommand: trimmedAssistantInput,
-              });
-            }
-
-            if (currentState === 'waiting_input' && previousState) {
-              // Check if transitioning from working state
-              const isFromWorkingState = previousState === 'working';
-              const wasInterrupted = assistant?.interrupted === true;
-
-              if (isFromWorkingState && !wasInterrupted) {
-                // Valid completion: working state → waiting input (NOT interrupted)
+            // When agent is closed, clear any existing notifications
+            if (!isAgentDetected) {
+              // If assistant info is missing or marked as not detected, treat it as closed/detached.
+              // This prevents stale state from triggering false completion notifications when the agent restarts.
+              if (aiDetectedSessions.has(tab.id)) {
+                aiDetectedSessions.delete(tab.id);
                 console.log(
-                  `[Terminal] AI Completion Detected: ${assistant?.displayName || 'AI'} completed execution`,
+                  `[Terminal] AI Agent Closed: Clearing notifications for session ${tab.id}`,
+                  {
+                    sessionId: tab.id,
+                    sessionTitle: tab.title,
+                    assistant,
+                  }
+                );
+                emitter.emit('ai:closed', {
+                  sessionId: tab.id,
+                });
+              }
+              aiPreviousStates.delete(tab.id);
+            } else {
+              // Detect approval requests
+              if (currentState === 'waiting_approval') {
+                console.log(
+                  `[Terminal] AI Approval Needed: ${assistant?.displayName || 'AI'} is waiting for approval`,
                   {
                     sessionId: tab.id,
                     sessionTitle: tab.title,
@@ -1491,17 +1706,19 @@ export const useTerminalStore = defineStore('terminal', () => {
                     assistant,
                   }
                 );
-                emitter.emit('ai:completed', {
+                emitter.emit('ai:approval-needed', {
                   sessionId: tab.id,
                   sessionTitle: tab.title,
                   projectId: tab.projectId,
                   projectName: getProjectName(tab.projectId),
                   assistant,
                 });
-              } else if (isFromWorkingState && wasInterrupted) {
-                // User interrupted the execution
+              }
+
+              // Detect AI starting to work again (after being idle/completed)
+              if (currentState === 'working' && previousState && previousState !== 'working') {
                 console.log(
-                  `[Terminal] AI Interrupted: ${assistant?.displayName || 'AI'} was interrupted by user`,
+                  `[Terminal] AI Started Working: ${assistant?.displayName || 'AI'} resumed work`,
                   {
                     sessionId: tab.id,
                     sessionTitle: tab.title,
@@ -1510,37 +1727,83 @@ export const useTerminalStore = defineStore('terminal', () => {
                     assistant,
                   }
                 );
-                // Don't emit ai:completed for interrupted executions
+                emitter.emit('ai:working', {
+                  sessionId: tab.id,
+                  sessionTitle: tab.title,
+                  projectId: tab.projectId,
+                  projectName: getProjectName(tab.projectId),
+                  assistant,
+                  latestCommand: trimmedAssistantInput,
+                });
+              }
+
+              if (currentState === 'waiting_input' && previousState) {
+                // Check if transitioning from working state
+                const isFromWorkingState = previousState === 'working';
+                const wasInterrupted = assistant?.interrupted === true;
+
+                if (isFromWorkingState && !wasInterrupted) {
+                  // Valid completion: working state → waiting input (NOT interrupted)
+                  console.log(
+                    `[Terminal] AI Completion Detected: ${assistant?.displayName || 'AI'} completed execution`,
+                    {
+                      sessionId: tab.id,
+                      sessionTitle: tab.title,
+                      previousState,
+                      currentState,
+                      assistant,
+                    }
+                  );
+                  emitter.emit('ai:completed', {
+                    sessionId: tab.id,
+                    sessionTitle: tab.title,
+                    projectId: tab.projectId,
+                    projectName: getProjectName(tab.projectId),
+                    assistant,
+                  });
+                } else if (isFromWorkingState && wasInterrupted) {
+                  // User interrupted the execution
+                  console.log(
+                    `[Terminal] AI Interrupted: ${assistant?.displayName || 'AI'} was interrupted by user`,
+                    {
+                      sessionId: tab.id,
+                      sessionTitle: tab.title,
+                      previousState,
+                      currentState,
+                      assistant,
+                    }
+                  );
+                  // Don't emit ai:completed for interrupted executions
+                }
+              }
+
+              // Update previous state for next comparison
+              if (currentState) {
+                aiPreviousStates.set(tab.id, currentState);
               }
             }
-
-            // Update previous state for next comparison
-            if (currentState) {
-              aiPreviousStates.set(tab.id, currentState);
+          }
+          // Check if there are any listeners for this session
+          // If not, buffer the message for later replay when component remounts
+          if (emitter.listenerCount(tab.id) > 0) {
+            emitter.emit(tab.id, payload);
+          } else if (
+            payload.type === 'data' ||
+            payload.type === 'exit' ||
+            payload.type === 'error'
+          ) {
+            // Buffer terminal content events while the viewport is unmounted.
+            let buffer = messageBuffers.get(tab.id);
+            if (!buffer) {
+              buffer = [];
+              messageBuffers.set(tab.id, buffer);
+            }
+            buffer.push(payload);
+            // Limit buffer size to prevent memory issues
+            if (buffer.length > MESSAGE_BUFFER_MAX_SIZE) {
+              buffer.shift();
             }
           }
-        }
-        // Check if there are any listeners for this session
-        // If not, buffer the message for later replay when component remounts
-        if (emitter.listenerCount(tab.id) > 0) {
-          emitter.emit(tab.id, payload);
-        } else if (
-          payload.type === 'data' ||
-          payload.type === 'exit' ||
-          payload.type === 'error'
-        ) {
-          // Buffer terminal content events while the viewport is unmounted.
-          let buffer = messageBuffers.get(tab.id);
-          if (!buffer) {
-            buffer = [];
-            messageBuffers.set(tab.id, buffer);
-          }
-          buffer.push(payload);
-          // Limit buffer size to prevent memory issues
-          if (buffer.length > MESSAGE_BUFFER_MAX_SIZE) {
-            buffer.shift();
-          }
-        }
         } catch (error) {
           console.error('[Terminal] Failed to process websocket message', error);
           // ignore malformed payloads

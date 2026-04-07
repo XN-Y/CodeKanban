@@ -20,6 +20,19 @@ const (
 	terminalAttrWideDummy int16 = 1 << 9
 )
 
+const terminalSnapshotPrefix = "\x1b[0m\x1b[2J\x1b[3J\x1b[H"
+
+type TerminalMirrorSnapshot struct {
+	Rows          int
+	Cols          int
+	Lines         [][]byte
+	Cursor        []byte
+	AltScreen     bool
+	CursorVisible bool
+	ModeFlags     uint32
+	CapturedAt    time.Time
+}
+
 type terminalStateReplyWriter struct {
 	session *Session
 }
@@ -218,16 +231,45 @@ func (s *Session) TerminalSerializedSnapshot() *TerminalSerializedSnapshot {
 		return nil
 	}
 
+	mirror := s.terminalMirrorSnapshotLocked()
+	if mirror == nil {
+		return nil
+	}
+	return mirror.Serialized()
+}
+
+func (s *Session) TerminalMirrorSnapshot() *TerminalMirrorSnapshot {
+	if !s.terminalStateEnabledForPlatform() {
+		return nil
+	}
+
+	s.terminalStateMu.Lock()
+	defer s.terminalStateMu.Unlock()
+
+	if s.terminalState == nil {
+		s.rebuildTerminalStateFromScrollbackLocked()
+	}
+	if s.terminalState == nil {
+		return nil
+	}
+
+	return s.terminalMirrorSnapshotLocked()
+}
+
+func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
+	if s.terminalState == nil {
+		return nil
+	}
+
 	cols, rows := s.terminalState.Size()
 	if cols <= 0 || rows <= 0 {
 		return nil
 	}
 
-	var buffer bytes.Buffer
-	buffer.WriteString("\x1b[0m\x1b[2J\x1b[3J\x1b[H")
-	previousStyle := ""
-
+	lines := make([][]byte, rows)
 	for row := 0; row < rows; row++ {
+		var line bytes.Buffer
+		previousStyle := ""
 		for col := 0; col < cols; col++ {
 			cell := snapshotCellFromGlyph(s.terminalState.Cell(col, row))
 			if terminalCellModeHas(cell.Mode, terminalAttrWideDummy) {
@@ -235,18 +277,16 @@ func (s *Session) TerminalSerializedSnapshot() *TerminalSerializedSnapshot {
 			}
 			nextStyle := buildTerminalSnapshotSGR(cell)
 			if nextStyle != previousStyle {
-				buffer.WriteString(nextStyle)
+				line.WriteString(nextStyle)
 				previousStyle = nextStyle
 			}
 			if cell.Char != "" {
-				buffer.WriteString(cell.Char)
+				line.WriteString(cell.Char)
 			} else {
-				buffer.WriteByte(' ')
+				line.WriteByte(' ')
 			}
 		}
-		if row < rows-1 {
-			buffer.WriteString("\r\n")
-		}
+		lines[row] = line.Bytes()
 	}
 
 	cursor := s.terminalState.Cursor()
@@ -258,26 +298,54 @@ func (s *Session) TerminalSerializedSnapshot() *TerminalSerializedSnapshot {
 		BGDefault: cursor.Attr.BG == vt10x.DefaultBG,
 	}
 
-	buffer.WriteString(buildTerminalSnapshotSGR(cursorCell))
-	buffer.WriteString(fmt.Sprintf(
+	var cursorBuffer bytes.Buffer
+	cursorBuffer.WriteString(buildTerminalSnapshotSGR(cursorCell))
+	cursorBuffer.WriteString(fmt.Sprintf(
 		"\x1b[%d;%dH",
 		clampTerminalCoordinate(cursor.Y+1, 1, rows),
 		clampTerminalCoordinate(cursor.X+1, 1, cols),
 	))
 	if s.terminalState.CursorVisible() {
-		buffer.WriteString("\x1b[?25h")
+		cursorBuffer.WriteString("\x1b[?25h")
 	} else {
-		buffer.WriteString("\x1b[?25l")
+		cursorBuffer.WriteString("\x1b[?25l")
 	}
 
-	return &TerminalSerializedSnapshot{
+	return &TerminalMirrorSnapshot{
 		Rows:          rows,
 		Cols:          cols,
-		Data:          buffer.Bytes(),
+		Lines:         lines,
+		Cursor:        cursorBuffer.Bytes(),
 		AltScreen:     s.terminalState.Mode()&vt10x.ModeAltScreen != 0,
 		CursorVisible: s.terminalState.CursorVisible(),
 		ModeFlags:     uint32(s.terminalState.Mode()),
 		CapturedAt:    s.terminalStateCapturedAt,
+	}
+}
+
+func (snapshot *TerminalMirrorSnapshot) Serialized() *TerminalSerializedSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+
+	var buffer bytes.Buffer
+	buffer.WriteString(terminalSnapshotPrefix)
+	for row, line := range snapshot.Lines {
+		buffer.Write(line)
+		if row < len(snapshot.Lines)-1 {
+			buffer.WriteString("\r\n")
+		}
+	}
+	buffer.Write(snapshot.Cursor)
+
+	return &TerminalSerializedSnapshot{
+		Rows:          snapshot.Rows,
+		Cols:          snapshot.Cols,
+		Data:          buffer.Bytes(),
+		AltScreen:     snapshot.AltScreen,
+		CursorVisible: snapshot.CursorVisible,
+		ModeFlags:     snapshot.ModeFlags,
+		CapturedAt:    snapshot.CapturedAt,
 	}
 }
 

@@ -267,7 +267,9 @@ function restoreServerSnapshotIfAvailable() {
     if (snapshot.cols > 0 && snapshot.rows > 0) {
       terminal.resize(snapshot.cols, snapshot.rows);
     }
-    terminal.write(`${snapshot.altScreen ? '\x1b[?1049h' : '\x1b[?1049l'}${remapInvisibleColors(snapshot.content)}`);
+    terminal.write(
+      `${snapshot.altScreen ? '\x1b[?1049h' : '\x1b[?1049l'}${remapInvisibleColors(snapshot.content)}`
+    );
     return true;
   } catch (error) {
     console.warn('[Terminal Snapshot] Failed to restore server snapshot', error);
@@ -456,9 +458,7 @@ function finalizeInitialViewport(reason: string) {
   flushPendingTerminalMessages(reason);
 
   if (restoredSource || pendingTerminalMessages.length === 0) {
-    scheduleInitialViewportRepair(
-      restoredSource ? `${restoredSource}-snapshot-restored` : reason
-    );
+    scheduleInitialViewportRepair(restoredSource ? `${restoredSource}-snapshot-restored` : reason);
   }
 }
 
@@ -654,6 +654,7 @@ function refreshTerminalViewport(
   reason: string,
   options: {
     clearTextureAtlas?: boolean;
+    forceServerResize?: boolean;
     retry?: boolean;
   } = {}
 ) {
@@ -661,12 +662,15 @@ function refreshTerminalViewport(
     return;
   }
 
+  let forceServerResize = options.forceServerResize === true;
+
   const runRefresh = () => {
     if (!terminal || !isContainerVisible()) {
       return;
     }
 
-    handleResize();
+    handleResize(forceServerResize);
+    forceServerResize = false;
 
     if (options.clearTextureAtlas !== false) {
       try {
@@ -730,17 +734,21 @@ function syncTerminalSize(forceServerResize = false) {
   }
 }
 
-function handleResize() {
-  syncTerminalSize(false);
+function handleResize(forceServerResize = false) {
+  syncTerminalSize(forceServerResize);
 }
 
 // 防抖版本的 resize 处理，避免窗口调整时发送大量 resize 消息阻塞输入
-const debouncedResize = useDebounceFn(handleResize, 100);
+const debouncedResize = useDebounceFn(() => {
+  handleResize(props.tab.renderMode === 'snapshot');
+}, 100);
 
 function handleTerminalResizeAll() {
   // 延迟一下确保 DOM 更新完成，使用防抖版本避免阻塞输入
   setTimeout(() => {
-    refreshTerminalViewport('terminal-resize-event');
+    refreshTerminalViewport('terminal-resize-event', {
+      forceServerResize: props.tab.renderMode === 'snapshot',
+    });
   }, 10);
 }
 

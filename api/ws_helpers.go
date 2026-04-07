@@ -10,5 +10,6 @@ type wsMessage struct {
 	Mode                       string                    `json:"mode,omitempty"`
 	SnapshotIntervalMs         int                       `json:"snapshotIntervalMs,omitempty"`
 	SnapshotCompressionEnabled bool                      `json:"snapshotCompressionEnabled"`
+	SnapshotIncrementalEnabled bool                      `json:"snapshotIncrementalEnabled"`
 	Metadata                   *terminal.SessionMetadata `json:"metadata,omitempty"`
 }

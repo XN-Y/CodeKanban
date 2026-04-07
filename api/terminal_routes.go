@@ -5,11 +5,9 @@ import (
 	"compress/zlib"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -577,30 +575,27 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	defer cancel()
 
 	renderState := newTerminalConnectionRenderState()
+	mirrorState := newTerminalMirrorSenderState()
 	writeMu := &sync.Mutex{}
-	var snapshotSequence uint32
-	var hasLastSnapshotFingerprint bool
-	var lastSnapshotFingerprint uint64
 	send := func(msg wsMessage) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
 		return conn.WriteJSON(msg)
 	}
-	sendSnapshot := func(snapshot *terminal.TerminalSerializedSnapshot, force bool) error {
+	sendSnapshot := func(snapshot *terminal.TerminalMirrorSnapshot, force bool) error {
 		if snapshot == nil {
 			return nil
 		}
 		_, _, compressionEnabled := renderState.SnapshotConfig()
-		fingerprint := fingerprintTerminalSnapshot(snapshot)
-		writeMu.Lock()
-		defer writeMu.Unlock()
-		if !force && hasLastSnapshotFingerprint && lastSnapshotFingerprint == fingerprint {
+		payload, shouldSend, err := mirrorState.EncodeFrame(snapshot, force, compressionEnabled)
+		if err != nil {
+			return err
+		}
+		if !shouldSend || len(payload) == 0 {
 			return nil
 		}
-		hasLastSnapshotFingerprint = true
-		lastSnapshotFingerprint = fingerprint
-		snapshotSequence += 1
-		payload := encodeTerminalSnapshotFrame(snapshot, compressionEnabled, snapshotSequence)
+		writeMu.Lock()
+		defer writeMu.Unlock()
 		return conn.WriteMessage(websocket.BinaryMessage, payload)
 	}
 	if compression := r.URL.Query().Get("snapshotCompression"); compression != "" {
@@ -620,12 +615,12 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		return
 	}
-	if err := c.sendRenderModeAck(renderState, send); err != nil {
+	if err := c.sendRenderModeAck(renderState, mirrorState, send); err != nil {
 		return
 	}
 
 	scrollback := session.Scrollback()
-	if snapshot := session.TerminalSerializedSnapshot(); snapshot != nil {
+	if snapshot := session.TerminalMirrorSnapshot(); snapshot != nil {
 		if err := sendSnapshot(snapshot, true); err != nil {
 			return
 		}
@@ -662,7 +657,7 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 
 	go c.forwardPTY(ctx, cancel, session, stream, renderState, send)
 	go c.forwardSnapshots(ctx, cancel, session, renderState, sendSnapshot)
-	c.consumeClient(ctx, cancel, session, renderState, conn, send, sendSnapshot)
+	c.consumeClient(ctx, cancel, session, renderState, mirrorState, conn, send, sendSnapshot)
 }
 
 func (c *terminalController) forwardPTY(
@@ -734,7 +729,7 @@ func (c *terminalController) forwardSnapshots(
 	cancel context.CancelFunc,
 	session *terminal.Session,
 	renderState *terminalConnectionRenderState,
-	send func(*terminal.TerminalSerializedSnapshot, bool) error,
+	send func(*terminal.TerminalMirrorSnapshot, bool) error,
 ) {
 	if renderState == nil {
 		return
@@ -787,9 +782,10 @@ func (c *terminalController) consumeClient(
 	cancel context.CancelFunc,
 	session *terminal.Session,
 	renderState *terminalConnectionRenderState,
+	mirrorState *terminalMirrorSenderState,
 	conn *websocket.Conn,
 	send func(wsMessage) error,
-	sendSnapshot func(*terminal.TerminalSerializedSnapshot, bool) error,
+	sendSnapshot func(*terminal.TerminalMirrorSnapshot, bool) error,
 ) {
 	for {
 		select {
@@ -822,9 +818,29 @@ func (c *terminalController) consumeClient(
 					return
 				}
 			case "resize":
-				_ = session.Resize(msg.Cols, msg.Rows)
+				if err := session.Resize(msg.Cols, msg.Rows); err != nil {
+					_ = send(wsMessage{Type: "error", Data: err.Error()})
+					continue
+				}
+				if renderState != nil && renderState.Mode() == terminalRenderModeSnapshot {
+					if err := session.ForceRedraw(); err != nil {
+						_ = send(wsMessage{Type: "error", Data: err.Error()})
+						continue
+					}
+					if err := c.sendTerminalSnapshot(session, sendSnapshot, true); err != nil {
+						_ = send(wsMessage{Type: "error", Data: err.Error()})
+						continue
+					}
+					c.sendTerminalSnapshotAfterDelay(
+						ctx,
+						session,
+						renderState,
+						sendSnapshot,
+						60*time.Millisecond,
+					)
+				}
 			case "render-mode":
-				if err := c.handleRenderModeMessage(session, renderState, msg, send, sendSnapshot); err != nil {
+				if err := c.handleRenderModeMessage(session, renderState, mirrorState, msg, send, sendSnapshot); err != nil {
 					_ = send(wsMessage{Type: "error", Data: err.Error()})
 					continue
 				}
@@ -848,6 +864,7 @@ func (c *terminalController) consumeClient(
 
 func (c *terminalController) sendRenderModeAck(
 	renderState *terminalConnectionRenderState,
+	mirrorState *terminalMirrorSenderState,
 	send func(wsMessage) error,
 ) error {
 	if renderState == nil {
@@ -859,43 +876,77 @@ func (c *terminalController) sendRenderModeAck(
 		Mode:                       string(mode),
 		SnapshotIntervalMs:         snapshotIntervalMilliseconds(interval),
 		SnapshotCompressionEnabled: compressionEnabled,
+		SnapshotIncrementalEnabled: mirrorState == nil || mirrorState.IncrementalEnabled(),
 	})
 }
 
 func (c *terminalController) sendTerminalSnapshot(
 	session *terminal.Session,
-	send func(*terminal.TerminalSerializedSnapshot, bool) error,
+	send func(*terminal.TerminalMirrorSnapshot, bool) error,
 	force bool,
 ) error {
 	if session == nil {
 		return nil
 	}
-	snapshot := session.TerminalSerializedSnapshot()
+	snapshot := session.TerminalMirrorSnapshot()
 	if snapshot == nil {
 		return nil
 	}
 	return send(snapshot, force)
 }
 
+func (c *terminalController) sendTerminalSnapshotAfterDelay(
+	ctx context.Context,
+	session *terminal.Session,
+	renderState *terminalConnectionRenderState,
+	send func(*terminal.TerminalMirrorSnapshot, bool) error,
+	delay time.Duration,
+) {
+	if session == nil || send == nil || delay <= 0 {
+		return
+	}
+
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		if renderState != nil && renderState.Mode() != terminalRenderModeSnapshot {
+			return
+		}
+		_ = c.sendTerminalSnapshot(session, send, true)
+	}()
+}
+
 func (c *terminalController) handleRenderModeMessage(
 	session *terminal.Session,
 	renderState *terminalConnectionRenderState,
+	mirrorState *terminalMirrorSenderState,
 	msg wsMessage,
 	send func(wsMessage) error,
-	sendSnapshot func(*terminal.TerminalSerializedSnapshot, bool) error,
+	sendSnapshot func(*terminal.TerminalMirrorSnapshot, bool) error,
 ) error {
 	requestedMode := normalizeTerminalRenderMode(msg.Mode)
-	if requestedMode == terminalRenderModeSnapshot && session.TerminalSerializedSnapshot() == nil {
+	if requestedMode == terminalRenderModeSnapshot && session.TerminalMirrorSnapshot() == nil {
 		if _, currentMode, interval, compressionEnabled, _ := renderState.Update(
 			string(terminalRenderModeLive),
 			msg.SnapshotIntervalMs,
 			msg.SnapshotCompressionEnabled,
 		); currentMode != "" {
+			if mirrorState != nil {
+				mirrorState.SetIncrementalEnabled(msg.SnapshotIncrementalEnabled)
+			}
 			if err := send(wsMessage{
 				Type:                       "render-mode",
 				Mode:                       string(currentMode),
 				SnapshotIntervalMs:         snapshotIntervalMilliseconds(interval),
 				SnapshotCompressionEnabled: compressionEnabled,
+				SnapshotIncrementalEnabled: mirrorState == nil || mirrorState.IncrementalEnabled(),
 			}); err != nil {
 				return err
 			}
@@ -908,11 +959,15 @@ func (c *terminalController) handleRenderModeMessage(
 		msg.SnapshotIntervalMs,
 		msg.SnapshotCompressionEnabled,
 	)
+	if mirrorState != nil {
+		mirrorState.SetIncrementalEnabled(msg.SnapshotIncrementalEnabled)
+	}
 	if err := send(wsMessage{
 		Type:                       "render-mode",
 		Mode:                       string(currentMode),
 		SnapshotIntervalMs:         snapshotIntervalMilliseconds(interval),
 		SnapshotCompressionEnabled: compressionEnabled,
+		SnapshotIncrementalEnabled: mirrorState == nil || mirrorState.IncrementalEnabled(),
 	}); err != nil {
 		return err
 	}
@@ -924,50 +979,6 @@ func (c *terminalController) handleRenderModeMessage(
 	}
 
 	return nil
-}
-
-func encodeTerminalSnapshotFrame(
-	snapshot *terminal.TerminalSerializedSnapshot,
-	compressionEnabled bool,
-	sequence uint32,
-) []byte {
-	if snapshot == nil {
-		return nil
-	}
-
-	data := snapshot.Data
-	compressed := false
-	if compressionEnabled {
-		if compressedData, ok := compressSnapshotPayload(snapshot.Data); ok {
-			data = compressedData
-			compressed = true
-		}
-	}
-
-	payload := make([]byte, 22+len(data))
-	payload[0] = 5
-	binary.BigEndian.PutUint16(payload[1:3], uint16(snapshot.Rows))
-	binary.BigEndian.PutUint16(payload[3:5], uint16(snapshot.Cols))
-	capturedAtMillis := uint64(0)
-	if !snapshot.CapturedAt.IsZero() {
-		capturedAtMillis = uint64(snapshot.CapturedAt.UnixMilli())
-	}
-	binary.BigEndian.PutUint64(payload[5:13], capturedAtMillis)
-	flags := uint8(0)
-	if snapshot.AltScreen {
-		flags |= 1 << 0
-	}
-	if snapshot.CursorVisible {
-		flags |= 1 << 1
-	}
-	if compressed {
-		flags |= 1 << 2
-	}
-	payload[13] = flags
-	binary.BigEndian.PutUint32(payload[14:18], snapshot.ModeFlags)
-	binary.BigEndian.PutUint32(payload[18:22], sequence)
-	copy(payload[22:], data)
-	return payload
 }
 
 func compressSnapshotPayload(input []byte) ([]byte, bool) {
@@ -991,30 +1002,6 @@ func compressSnapshotPayload(input []byte) ([]byte, bool) {
 		return input, false
 	}
 	return buffer.Bytes(), true
-}
-
-func fingerprintTerminalSnapshot(snapshot *terminal.TerminalSerializedSnapshot) uint64 {
-	if snapshot == nil {
-		return 0
-	}
-
-	hasher := fnv.New64a()
-	var header [17]byte
-	binary.BigEndian.PutUint16(header[0:2], uint16(snapshot.Rows))
-	binary.BigEndian.PutUint16(header[2:4], uint16(snapshot.Cols))
-	if !snapshot.CapturedAt.IsZero() {
-		binary.BigEndian.PutUint64(header[4:12], uint64(snapshot.CapturedAt.UnixMilli()))
-	}
-	if snapshot.AltScreen {
-		header[12] |= 1 << 0
-	}
-	if snapshot.CursorVisible {
-		header[12] |= 1 << 1
-	}
-	binary.BigEndian.PutUint32(header[13:17], snapshot.ModeFlags)
-	_, _ = hasher.Write(header[:])
-	_, _ = hasher.Write(snapshot.Data)
-	return hasher.Sum64()
 }
 
 func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot) terminalSessionView {

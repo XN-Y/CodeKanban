@@ -782,6 +782,27 @@ func (s *Session) Resize(cols, rows int) error {
 	return nil
 }
 
+// ForceRedraw nudges the PTY to repaint the current visible screen without changing the final size.
+func (s *Session) ForceRedraw() error {
+	s.mu.RLock()
+	pty := s.pty
+	cols := s.cols
+	rows := s.rows
+	s.mu.RUnlock()
+
+	if pty == nil || cols <= 0 || rows <= 0 {
+		return nil
+	}
+
+	if err := resizePTYForTarget(pty, runtime.GOOS, cols, rows, cols, rows); err != nil {
+		return err
+	}
+
+	s.Touch()
+	s.resetMetadataInterval()
+	return nil
+}
+
 // Subscribe registers a stream subscriber that receives PTY output events.
 func (s *Session) Subscribe(ctx context.Context) (*SessionStream, error) {
 	if ctx == nil {
@@ -1660,12 +1681,7 @@ func (s *Session) enrichAssistantInfoWithSize(info *types.AssistantInfo, rows, c
 
 		// 立即触发一次 PTY resize，让终端重新绘制完整内容
 		// 这样虚拟终端就能同步到真实终端的当前状态
-		s.mu.RLock()
-		pty := s.pty
-		s.mu.RUnlock()
-		if pty != nil {
-			_ = resizePTYForTarget(pty, runtime.GOOS, cols, rows, cols, rows)
-		}
+		_ = s.ForceRedraw()
 
 		// Get current state
 		if state, ts := tracker.State(); state != types.StateUnknown {
@@ -1777,13 +1793,9 @@ func (s *Session) CaptureNextChunk(ctx context.Context, timeout time.Duration) (
 	}
 	defer stream.Close()
 
-	// Trigger a resize to force terminal redraw
-	s.mu.RLock()
-	rows, cols := s.rows, s.cols
-	s.mu.RUnlock()
-
-	if err := s.Resize(cols, rows); err != nil {
-		return nil, fmt.Errorf("failed to trigger resize: %w", err)
+	// Trigger a redraw to force the terminal to repaint the visible screen
+	if err := s.ForceRedraw(); err != nil {
+		return nil, fmt.Errorf("failed to trigger redraw: %w", err)
 	}
 
 	// Wait for the next data chunk
