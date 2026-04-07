@@ -578,9 +578,17 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	mirrorState := newTerminalMirrorSenderState()
 	writeMu := &sync.Mutex{}
 	send := func(msg wsMessage) error {
+		payload, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		return conn.WriteJSON(msg)
+		if err := conn.WriteMessage(websocket.TextMessage, payload); err != nil {
+			return err
+		}
+		session.RecordTraffic(0, len(payload))
+		return nil
 	}
 	sendSnapshot := func(snapshot *terminal.TerminalMirrorSnapshot, force bool) error {
 		if snapshot == nil {
@@ -596,7 +604,11 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 		}
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		return conn.WriteMessage(websocket.BinaryMessage, payload)
+		if err := conn.WriteMessage(websocket.BinaryMessage, payload); err != nil {
+			return err
+		}
+		session.RecordTraffic(0, len(payload))
+		return nil
 	}
 	if compression := r.URL.Query().Get("snapshotCompression"); compression != "" {
 		mode, interval, _ := renderState.SnapshotConfig()
@@ -808,6 +820,7 @@ func (c *terminalController) consumeClient(
 				}
 				return
 			}
+			session.RecordTraffic(len(payload), 0)
 
 			var msg wsMessage
 			if err := json.Unmarshal(payload, &msg); err != nil {
@@ -1036,6 +1049,7 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		RunningCommand:     snapshot.RunningCommand,
 		AIAssistant:        snapshot.AIAssistant,
 		TaskID:             snapshot.TaskID,
+		Traffic:            snapshot.Traffic,
 	}
 }
 
@@ -1140,6 +1154,7 @@ type terminalSessionView struct {
 	RunningCommand     string                         `json:"runningCommand,omitempty"`
 	AIAssistant        *ai_assistant2.AIAssistantInfo `json:"aiAssistant,omitempty"`
 	TaskID             string                         `json:"taskId,omitempty"`
+	Traffic            *terminal.SessionTrafficStats  `json:"traffic,omitempty"`
 }
 
 type terminalCountsResponse struct {

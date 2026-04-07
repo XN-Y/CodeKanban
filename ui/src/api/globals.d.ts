@@ -710,6 +710,20 @@ export interface TerminalSessionView {
   rows: number;
   runningCommand?: string;
   status: string;
+  traffic?: {
+    downstreamAvgBytesPerSec: number;
+    downstreamBytes: number;
+    downstreamRecentBytes: number;
+    downstreamRecentAvgBytesPerSec: number;
+    totalAvgBytesPerSec: number;
+    totalBytes: number;
+    totalRecentBytes: number;
+    totalRecentAvgBytesPerSec: number;
+    upstreamAvgBytesPerSec: number;
+    upstreamBytes: number;
+    upstreamRecentBytes: number;
+    upstreamRecentAvgBytesPerSec: number;
+  };
   taskId?: string;
   title: string;
   workingDir: string;

@@ -63,6 +63,7 @@ type SessionSnapshot struct {
 	// AI Assistant information
 	AIAssistant *ai_assistant2.AIAssistantInfo `json:"aiAssistant"`
 	TaskID      string                         `json:"taskId,omitempty"`
+	Traffic     *SessionTrafficStats           `json:"traffic,omitempty"`
 }
 
 type StreamEventType string
@@ -227,6 +228,11 @@ type Session struct {
 	scrollbackTimestamps []time.Time
 	scrollbackSize       int
 	scrollbackLimit      int
+
+	trafficMu            sync.Mutex
+	trafficBuckets       []sessionTrafficBucket
+	totalUpstreamBytes   uint64
+	totalDownstreamBytes uint64
 
 	terminalModesMu      sync.RWMutex
 	terminalModes        terminalModesState
@@ -1098,6 +1104,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 	}
 
 	snapshot.TaskID = s.TaskID()
+	snapshot.Traffic = s.TrafficStatsSnapshot()
 
 	return snapshot
 }
@@ -1717,6 +1724,7 @@ type DebugInfo struct {
 	AssistantOutputQueueLen   int                            `json:"assistantOutputQueueLen,omitempty"`
 	AssistantOutputQueueCap   int                            `json:"assistantOutputQueueCap,omitempty"`
 	AssistantOutputQueueMax   int                            `json:"assistantOutputQueueMax,omitempty"`
+	Traffic                   *SessionTrafficStats           `json:"traffic,omitempty"`
 }
 
 // GetDebugInfo returns comprehensive debugging information about the session.
@@ -1772,6 +1780,8 @@ func (s *Session) GetDebugInfo() *DebugInfo {
 	if s.assistantTracker != nil {
 		info.AIChunkCount = s.assistantTracker.ChunkCount()
 	}
+
+	info.Traffic = s.TrafficStatsSnapshot()
 
 	return info
 }

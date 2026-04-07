@@ -3162,6 +3162,34 @@ function getTabTooltip(tab: TerminalTabState): string {
     }
   }
 
+  if (tab.traffic) {
+    lines.push('');
+    lines.push(`${t('terminal.trafficTotal')}: ${formatTrafficBytes(tab.traffic.totalBytes)}`);
+    lines.push(
+      `${t('terminal.trafficUpstream')}: ${formatTrafficBytes(tab.traffic.upstreamBytes)}`
+    );
+    lines.push(
+      `${t('terminal.trafficDownstream')}: ${formatTrafficBytes(tab.traffic.downstreamBytes)}`
+    );
+    lines.push(
+      `${t('terminal.trafficAverage')}: ${formatTrafficRate(
+        tab.traffic.upstreamAvgBytesPerSec
+      )} ↑ / ${formatTrafficRate(tab.traffic.downstreamAvgBytesPerSec)} ↓`
+    );
+    lines.push(
+      `${t('terminal.trafficTotal5m')}: ${formatTrafficBytes(
+        tab.traffic.totalRecentBytes
+      )} (${formatTrafficBytes(tab.traffic.upstreamRecentBytes)} ↑ / ${formatTrafficBytes(
+        tab.traffic.downstreamRecentBytes
+      )} ↓)`
+    );
+    lines.push(
+      `${t('terminal.trafficAverage5m')}: ${formatTrafficRate(
+        tab.traffic.upstreamRecentAvgBytesPerSec
+      )} ↑ / ${formatTrafficRate(tab.traffic.downstreamRecentAvgBytesPerSec)} ↓`
+    );
+  }
+
   return lines.join('\n');
 }
 
@@ -3284,7 +3312,58 @@ function formatProcessInfo(tab: TerminalTabState): string {
     lines.push(t('terminal.processInfoUnavailable'));
   }
 
+  if (tab.traffic) {
+    lines.push('');
+    lines.push(`=== ${t('terminal.trafficStats')} ===`);
+    lines.push(
+      `${t('terminal.trafficUpstream')}: ${formatTrafficBytes(tab.traffic.upstreamBytes)}`
+    );
+    lines.push(
+      `${t('terminal.trafficDownstream')}: ${formatTrafficBytes(tab.traffic.downstreamBytes)}`
+    );
+    lines.push(`${t('terminal.trafficTotal')}: ${formatTrafficBytes(tab.traffic.totalBytes)}`);
+    lines.push(
+      `${t('terminal.trafficAverage')}: ${formatTrafficRate(
+        tab.traffic.upstreamAvgBytesPerSec
+      )} ↑ / ${formatTrafficRate(tab.traffic.downstreamAvgBytesPerSec)} ↓`
+    );
+    lines.push(
+      `${t('terminal.trafficTotal5m')}: ${formatTrafficBytes(
+        tab.traffic.totalRecentBytes
+      )} (${formatTrafficBytes(tab.traffic.upstreamRecentBytes)} ↑ / ${formatTrafficBytes(
+        tab.traffic.downstreamRecentBytes
+      )} ↓)`
+    );
+    lines.push(
+      `${t('terminal.trafficAverage5m')}: ${formatTrafficRate(
+        tab.traffic.upstreamRecentAvgBytesPerSec
+      )} ↑ / ${formatTrafficRate(tab.traffic.downstreamRecentAvgBytesPerSec)} ↓`
+    );
+  }
+
   return lines.join('\n');
+}
+
+function formatTrafficBytes(value: number | undefined) {
+  const bytes = Number(value ?? 0);
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let normalized = bytes;
+  let unitIndex = 0;
+  while (normalized >= 1024 && unitIndex < units.length - 1) {
+    normalized /= 1024;
+    unitIndex += 1;
+  }
+
+  const digits = normalized >= 100 ? 0 : normalized >= 10 ? 1 : 2;
+  return `${normalized.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatTrafficRate(value: number | undefined) {
+  return `${formatTrafficBytes(value)}/s`;
 }
 
 function showProcessInfoDialog(tab: TerminalTabState) {

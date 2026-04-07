@@ -83,6 +83,20 @@ export interface TerminalSession {
   processStatus?: 'idle' | 'busy' | 'unknown';
   processHasChildren?: boolean;
   runningCommand?: string;
+  traffic?: {
+    upstreamBytes: number;
+    downstreamBytes: number;
+    totalBytes: number;
+    upstreamRecentBytes: number;
+    downstreamRecentBytes: number;
+    totalRecentBytes: number;
+    upstreamAvgBytesPerSec: number;
+    downstreamAvgBytesPerSec: number;
+    totalAvgBytesPerSec: number;
+    upstreamRecentAvgBytesPerSec: number;
+    downstreamRecentAvgBytesPerSec: number;
+    totalRecentAvgBytesPerSec: number;
+  };
   // AI Assistant information
   aiAssistant?: {
     type: string;
