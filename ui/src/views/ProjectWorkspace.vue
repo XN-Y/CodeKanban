@@ -219,6 +219,7 @@ const PROJECT_SIDEBAR_MIN_WIDTH = 200;
 const PROJECT_SIDEBAR_MAX_WIDTH = 400;
 const WORKTREE_SIDER_WIDTH = 320;
 const MIN_MAIN_WORKSPACE_WIDTH = 320;
+const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
 
 const route = useRoute();
 const message = useMessage();
@@ -328,7 +329,6 @@ const isDockMode = computed(
 
 // 移动端视图切换
 type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
-const mobileActiveView = ref<MobileView>('kanban');
 
 // 提供终端面板引用给子组件
 provide('terminalPanelRef', terminalPanelRef);
@@ -336,6 +336,43 @@ provide('terminalPanelRef', terminalPanelRef);
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
+
+function normalizeMobileView(value: unknown): MobileView {
+  if (
+    value === 'kanban' ||
+    value === 'terminal' ||
+    value === 'webSession' ||
+    value === 'projects' ||
+    value === 'notifications'
+  ) {
+    return value;
+  }
+  return 'kanban';
+}
+
+const storedMobileViews = useStorage<Record<string, MobileView>>(
+  MOBILE_ACTIVE_VIEW_STORAGE_KEY,
+  {}
+);
+const mobileActiveView = computed<MobileView>({
+  get() {
+    const projectId = currentProjectId.value;
+    if (!projectId) {
+      return 'kanban';
+    }
+    return normalizeMobileView(storedMobileViews.value[projectId]);
+  },
+  set(value) {
+    const projectId = currentProjectId.value;
+    if (!projectId) {
+      return;
+    }
+    storedMobileViews.value = {
+      ...storedMobileViews.value,
+      [projectId]: normalizeMobileView(value),
+    };
+  },
+});
 
 const pageTitle = computed(() => {
   const projectName = projectStore.currentProject?.name;

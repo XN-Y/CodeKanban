@@ -481,15 +481,20 @@ export const useTerminalStore = defineStore('terminal', () => {
     if (!response?.item) {
       throw new Error('�����ն�ʧ��');
     }
-    attachOrUpdateSession(response.item as unknown as TerminalSession, {
+    const session = response.item as unknown as TerminalSession;
+    attachOrUpdateSession(session, {
       activate: true,
       projectIdOverride: resolved,
       insertAfterSessionId: options.insertAfterSessionId,
     });
+    emitter.emit('terminal:created', {
+      projectId: resolved,
+      sessionId: session.id,
+    });
     // 更新终端计数缓存
     const currentCount = cachedCounts.get(resolved) ?? 0;
     cachedCounts.set(resolved, currentCount + 1);
-    return (response.item as unknown as TerminalSession).id;
+    return session.id;
   }
 
   async function renameSession(projectId: string | undefined, sessionId: string, title: string) {

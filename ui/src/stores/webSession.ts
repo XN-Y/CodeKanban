@@ -1292,6 +1292,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const session = await webSessionApi.create(projectId, payload);
     upsertSession(session);
     rememberActiveSession(projectId, session.id);
+    emitter.emit('web-session:created', {
+      projectId,
+      sessionId: session.id,
+    });
     try {
       await ensureSessionConnected(projectId, session.id);
     } catch (error) {

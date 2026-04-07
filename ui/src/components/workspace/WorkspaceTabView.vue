@@ -147,7 +147,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue';
+import { computed, onBeforeUnmount } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
 import { ChatbubblesOutline, GridOutline, TerminalOutline } from '@vicons/ionicons5';
@@ -165,14 +165,52 @@ const props = defineProps<{
   projectId: string;
 }>();
 
+type WorkspaceTab = 'kanban' | 'terminal' | 'web';
+
+const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab-by-project';
+const LEGACY_WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
+
 const { t } = useLocale();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
 
-// 当前活跃的Tab，持久化存储
-const activeTab = useStorage<'kanban' | 'terminal' | 'web'>('workspace-active-tab', 'terminal');
+function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
+  if (value === 'kanban' || value === 'terminal' || value === 'web') {
+    return value;
+  }
+  return 'terminal';
+}
+
+const legacyActiveTab = useStorage<WorkspaceTab>(
+  LEGACY_WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
+  'terminal'
+);
+const storedActiveTabs = useStorage<Record<string, WorkspaceTab>>(
+  WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
+  {}
+);
+const activeTab = computed<WorkspaceTab>({
+  get() {
+    const projectId = props.projectId;
+    if (projectId && storedActiveTabs.value[projectId]) {
+      return normalizeWorkspaceTab(storedActiveTabs.value[projectId]);
+    }
+    return normalizeWorkspaceTab(legacyActiveTab.value);
+  },
+  set(value) {
+    const normalized = normalizeWorkspaceTab(value);
+    legacyActiveTab.value = normalized;
+    if (!props.projectId) {
+      return;
+    }
+    storedActiveTabs.value = {
+      ...storedActiveTabs.value,
+      [props.projectId]: normalized,
+    };
+  },
+});
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
 
 // 终端数量
@@ -184,17 +222,6 @@ const webSessionCount = computed(() => webSessionStore.getSessions(props.project
 
 const rightSidebarToggleLabel = computed(() =>
   t(isRightSidebarVisible.value ? 'webSession.hideSidebar' : 'webSession.showSidebar')
-);
-
-// 监听终端事件，如果有新终端创建或需要关注的事件，自动切换到终端Tab
-watch(
-  () => terminalStore.getTabs(props.projectId),
-  (newTabs, oldTabs) => {
-    // 如果新建了终端，自动切换到终端Tab
-    if (newTabs.length > (oldTabs?.length || 0)) {
-      activeTab.value = 'terminal';
-    }
-  }
 );
 
 function isToggleShortcut(event: KeyboardEvent) {
@@ -243,15 +270,6 @@ function handleDockedTerminalToggleShortcut(event: KeyboardEvent) {
   activeTab.value = activeTab.value === 'terminal' ? 'kanban' : 'terminal';
 }
 
-watch(
-  () => webSessionStore.getSessions(props.projectId).length,
-  (newCount, oldCount) => {
-    if (typeof oldCount === 'number' && newCount > oldCount) {
-      activeTab.value = 'web';
-    }
-  }
-);
-
 function toggleRightSidebar() {
   isRightSidebarVisible.value = !isRightSidebarVisible.value;
 }
@@ -263,9 +281,27 @@ const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {
   activeTab.value = 'terminal';
 };
 
+const handleTerminalCreatedEvent = (payload?: { projectId?: string }) => {
+  if (payload?.projectId && payload.projectId !== props.projectId) {
+    return;
+  }
+  activeTab.value = 'terminal';
+};
+
+const handleWebSessionCreatedEvent = (payload?: { projectId?: string }) => {
+  if (payload?.projectId && payload.projectId !== props.projectId) {
+    return;
+  }
+  activeTab.value = 'web';
+};
+
 terminalStore.emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
+terminalStore.emitter.on('terminal:created', handleTerminalCreatedEvent);
+webSessionStore.emitter.on('web-session:created', handleWebSessionCreatedEvent);
 onBeforeUnmount(() => {
   terminalStore.emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
+  terminalStore.emitter.off('terminal:created', handleTerminalCreatedEvent);
+  webSessionStore.emitter.off('web-session:created', handleWebSessionCreatedEvent);
 });
 
 if (typeof window !== 'undefined') {
