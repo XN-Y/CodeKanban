@@ -16,6 +16,7 @@ type WebSessionTable struct {
 	OrderIndex float64 `gorm:"type:real;not null;default:0;index" json:"orderIndex"`
 
 	Agent                string `gorm:"type:text;not null;index" json:"agent"`
+	Backend              string `gorm:"type:text;not null;default:legacy_exec" json:"-"`
 	Title                string `gorm:"type:text;not null" json:"title"`
 	TitleAuto            bool   `gorm:"type:boolean;not null;default:false" json:"-"`
 	Model                string `gorm:"type:text" json:"model"`

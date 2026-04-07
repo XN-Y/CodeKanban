@@ -68,6 +68,7 @@ type wsConn interface {
 type activeRun struct {
 	sessionID          string
 	agent              Agent
+	backend            SessionBackend
 	runID              string
 	assistantMessageID string
 	currentToolMessage string
@@ -79,6 +80,9 @@ type activeRun struct {
 	stdin              io.WriteCloser
 	recentRuntimeLines []string
 	pendingApproval    string
+	pendingServerReq   *pendingServerRequest
+	app                *codexAppServerClient
+	assistantDeltaSeen map[string]bool
 }
 
 type attachmentMeta struct {
@@ -186,6 +190,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		WorktreeID:             nilIfEmpty(worktreeID),
 		OrderIndex:             orderIndex,
 		Agent:                  string(normalizeAgent(params.Agent)),
+		Backend:                string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
 		Title:                  title,
 		TitleAuto:              strings.TrimSpace(params.Title) == "",
 		Model:                  defaultModel(normalizeAgent(params.Agent), params.Model),
@@ -336,10 +341,12 @@ func (m *Manager) UpdatePermissionLevel(
 func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent) (SessionSummary, error) {
 	normalized := normalizeAgent(agent)
 	return m.updateFields(ctx, sessionID, map[string]any{
-		"agent":            string(normalized),
-		"model":            defaultModel(normalized, ""),
-		"reasoning_effort": string(defaultReasoningEffort(normalized, "")),
-		"updated_at":       time.Now(),
+		"agent":             string(normalized),
+		"backend":           string(defaultSessionBackend(normalized)),
+		"model":             defaultModel(normalized, ""),
+		"reasoning_effort":  string(defaultReasoningEffort(normalized, "")),
+		"native_session_id": nil,
+		"updated_at":        time.Now(),
 	})
 }
 
@@ -470,6 +477,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleApprovalCommand(client, frame, "approve")
 	case "reject":
 		return m.handleApprovalCommand(client, frame, "reject")
+	case "user_input":
+		return m.handleUserInputCommand(client, frame)
 	case "del":
 		return m.handleDeleteCommand(ctx, client, frame)
 	case "list":
@@ -669,6 +678,20 @@ func (m *Manager) handleAbortCommand(_ context.Context, client *client, frame wi
 
 func (m *Manager) handleApprovalCommand(client *client, frame wireCommandFrame, action string) error {
 	if err := m.respondToApproval(frame.SessionID, action); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+}
+
+func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame) error {
+	var payload struct {
+		ItemID  string              `json:"iid"`
+		Answers map[string][]string `json:"ans"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid user input payload", false))
+	}
+	if err := m.respondToUserInput(frame.SessionID, payload.ItemID, payload.Answers); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
 	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
@@ -957,6 +980,7 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 	run := &activeRun{
 		sessionID: sessionID,
 		agent:     Agent(record.Agent),
+		backend:   effectiveSessionBackend(record),
 		runID:     runID,
 		cancel:    cancel,
 		done:      make(chan struct{}),
@@ -974,11 +998,17 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	defer func() {
 		run.closeInput()
 		run.clearPendingApproval()
+		run.clearPendingServerRequest()
 		close(run.done)
 		m.mu.Lock()
 		delete(m.runs, session.ID)
 		m.mu.Unlock()
 	}()
+
+	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
+		m.runCodexAppServerSession(ctx, run, session, text, attachments)
+		return
+	}
 
 	cmd, stdinBytes, closeStdinAfterWrite, err := m.buildExecCommand(ctx, session, text, attachments)
 	if err != nil {
@@ -1733,6 +1763,34 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 	if !ok {
 		return fmt.Errorf("session is not running")
 	}
+
+	if pending, ok := run.pendingApprovalRequest(); ok {
+		if run.app == nil {
+			return fmt.Errorf("session approval channel is unavailable")
+		}
+		if err := run.app.respond(pending.RawID, approvalResponsePayload(pending, action)); err != nil {
+			return err
+		}
+		run.clearPendingServerRequest()
+		record, err := m.GetSession(context.Background(), sessionID)
+		if err != nil {
+			return err
+		}
+		_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "approval_res",
+			RunID:     run.runID,
+			ParentID:  run.assistantMessageID,
+			Timestamp: time.Now(),
+			Payload: map[string]any{
+				"act":    action,
+				"prompt": pending.Prompt,
+			},
+		})
+		return nil
+	}
+
 	prompt, ok := run.pendingApprovalPrompt()
 	if !ok {
 		return fmt.Errorf("no pending approval")
@@ -1755,6 +1813,47 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 		Payload: map[string]any{
 			"act":    action,
 			"prompt": prompt,
+		},
+	})
+	return nil
+}
+
+func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[string][]string) error {
+	m.mu.RLock()
+	run, ok := m.runs[sessionID]
+	m.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session is not running")
+	}
+	pending, ok := run.pendingUserInputRequest()
+	if !ok {
+		return fmt.Errorf("no pending user input request")
+	}
+	if strings.TrimSpace(itemID) == "" || strings.TrimSpace(pending.ItemID) != strings.TrimSpace(itemID) {
+		return fmt.Errorf("user input request does not match the active prompt")
+	}
+	if run.app == nil {
+		return fmt.Errorf("session input channel is unavailable")
+	}
+	if err := run.app.respond(pending.RawID, userInputResponsePayload(answers)); err != nil {
+		return err
+	}
+	run.clearPendingServerRequest()
+
+	record, err := m.GetSession(context.Background(), sessionID)
+	if err != nil {
+		return err
+	}
+	_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
+		ID:        utils.NewID(),
+		Seq:       0,
+		Type:      "user_input_res",
+		RunID:     run.runID,
+		ParentID:  run.assistantMessageID,
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"iid": pending.ItemID,
+			"ans": answers,
 		},
 	})
 	return nil
@@ -1871,6 +1970,27 @@ func defaultReasoningEffort(agent Agent, provided ReasoningEffort) ReasoningEffo
 	return ReasoningEffortDefault
 }
 
+func defaultSessionBackend(agent Agent) SessionBackend {
+	if normalizeAgent(agent) == AgentCodex {
+		return SessionBackendCodexAppServer
+	}
+	return SessionBackendLegacyExec
+}
+
+func normalizeSessionBackend(backend SessionBackend, agent Agent) SessionBackend {
+	switch strings.ToLower(strings.TrimSpace(string(backend))) {
+	case string(SessionBackendCodexAppServer):
+		if normalizeAgent(agent) == AgentCodex {
+			return SessionBackendCodexAppServer
+		}
+		return SessionBackendLegacyExec
+	case string(SessionBackendLegacyExec):
+		return SessionBackendLegacyExec
+	default:
+		return defaultSessionBackend(agent)
+	}
+}
+
 func normalizeAgent(agent Agent) Agent {
 	switch agent {
 	case AgentCodex:
@@ -1946,6 +2066,26 @@ func effectivePermissionLevel(record tables.WebSessionTable) PermissionLevel {
 	}
 	_, permissionLevel := sessionModesFromLegacy(record.LegacyPermissionMode)
 	return permissionLevel
+}
+
+func effectiveSessionBackend(record tables.WebSessionTable) SessionBackend {
+	normalized := strings.ToLower(strings.TrimSpace(record.Backend))
+	switch normalized {
+	case string(SessionBackendLegacyExec):
+		return SessionBackendLegacyExec
+	case string(SessionBackendCodexAppServer):
+		if normalizeAgent(Agent(record.Agent)) == AgentCodex {
+			return SessionBackendCodexAppServer
+		}
+		return SessionBackendLegacyExec
+	default:
+		if normalizeAgent(Agent(record.Agent)) == AgentCodex {
+			// Existing Codex sessions predate backend persistence and must continue
+			// using the legacy exec transport unless explicitly migrated.
+			return SessionBackendLegacyExec
+		}
+		return SessionBackendLegacyExec
+	}
 }
 
 func preparePromptText(text string, workflowMode WorkflowMode) string {
@@ -2074,6 +2214,58 @@ func (r *activeRun) clearPendingApproval() {
 	r.pendingApproval = ""
 }
 
+func (r *activeRun) setPendingServerRequest(request *pendingServerRequest) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if request == nil {
+		return false
+	}
+	r.pendingServerReq = request
+	return true
+}
+
+func (r *activeRun) pendingApprovalRequest() (*pendingServerRequest, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingServerReq == nil || !r.pendingServerReq.isApproval() {
+		return nil, false
+	}
+	return r.pendingServerReq.clone(), true
+}
+
+func (r *activeRun) pendingUserInputRequest() (*pendingServerRequest, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingServerReq == nil || r.pendingServerReq.Kind != pendingServerRequestUserInput {
+		return nil, false
+	}
+	return r.pendingServerReq.clone(), true
+}
+
+func (r *activeRun) clearPendingServerRequest() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pendingServerReq = nil
+}
+
+func (r *activeRun) markAssistantDeltaSeen(messageID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.assistantDeltaSeen == nil {
+		r.assistantDeltaSeen = make(map[string]bool)
+	}
+	if strings.TrimSpace(messageID) == "" {
+		return
+	}
+	r.assistantDeltaSeen[messageID] = true
+}
+
+func (r *activeRun) assistantDeltaWasSeen(messageID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.assistantDeltaSeen != nil && r.assistantDeltaSeen[strings.TrimSpace(messageID)]
+}
+
 func detectApprovalPrompt(lines []string) (string, bool) {
 	if len(lines) == 0 {
 		return "", false
@@ -2161,7 +2353,7 @@ func claudeToolResultText(raw any) string {
 }
 
 func codexToolName(item map[string]any) string {
-	switch stringValue(item["type"]) {
+	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return "CommandExecution"
 	case "mcp_tool_call":
@@ -2176,15 +2368,18 @@ func codexToolName(item map[string]any) string {
 }
 
 func codexToolInput(item map[string]any) any {
-	if stringValue(item["type"]) == "command_execution" {
+	switch normalizeCodexItemType(stringValue(item["type"])) {
+	case "command_execution":
 		return map[string]any{"command": stringValue(item["command"])}
+	case "reasoning":
+		return nil
 	}
 	return item
 }
 
 func codexToolMeta(item map[string]any) map[string]any {
 	return map[string]any{
-		"kind":  stringValue(item["type"]),
+		"kind":  normalizeCodexItemType(stringValue(item["type"])),
 		"title": codexToolName(item),
 		"subtitle": firstNonEmpty(
 			stringValue(item["command"]),
@@ -2196,6 +2391,12 @@ func codexToolMeta(item map[string]any) map[string]any {
 }
 
 func codexToolResult(item map[string]any) string {
+	if normalizeCodexItemType(stringValue(item["type"])) == "reasoning" {
+		if text := extractReasoningText(item); text != "" {
+			return text
+		}
+		return ""
+	}
 	if output := stringValue(item["aggregated_output"]); output != "" {
 		return output
 	}
@@ -2235,4 +2436,63 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func normalizeCodexItemType(value string) string {
+	switch strings.TrimSpace(value) {
+	case "commandExecution":
+		return "command_execution"
+	case "mcpToolCall":
+		return "mcp_tool_call"
+	case "fileChange":
+		return "file_change"
+	case "agentMessage":
+		return "agent_message"
+	case "userMessage":
+		return "user_message"
+	default:
+		return strings.TrimSpace(value)
+	}
+}
+
+func extractReasoningText(item map[string]any) string {
+	sections := make([]string, 0, 2)
+	if summary := strings.TrimSpace(strings.Join(collectReasoningFragments(item["summary"]), "")); summary != "" {
+		sections = append(sections, summary)
+	}
+	if content := strings.TrimSpace(strings.Join(collectReasoningFragments(item["content"]), "")); content != "" {
+		sections = append(sections, content)
+	}
+	return strings.TrimSpace(strings.Join(sections, "\n\n"))
+}
+
+func collectReasoningFragments(raw any) []string {
+	switch typed := raw.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []string{typed}
+	case []any:
+		fragments := make([]string, 0, len(typed))
+		for _, item := range typed {
+			fragments = append(fragments, collectReasoningFragments(item)...)
+		}
+		return fragments
+	case map[string]any:
+		fragments := make([]string, 0, 2)
+		for _, key := range []string{"text", "delta"} {
+			if text := stringValue(typed[key]); strings.TrimSpace(text) != "" {
+				fragments = append(fragments, text)
+			}
+		}
+		for _, key := range []string{"summary", "content"} {
+			if nested := typed[key]; nested != nil {
+				fragments = append(fragments, collectReasoningFragments(nested)...)
+			}
+		}
+		return fragments
+	default:
+		return nil
+	}
 }

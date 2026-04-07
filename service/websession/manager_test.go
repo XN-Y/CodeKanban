@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,6 +44,33 @@ func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	}
 	if created.PermissionLevel != PermissionLevelElevated {
 		t.Fatalf("expected elevated permission level, got %q", created.PermissionLevel)
+	}
+}
+
+func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+		t.Fatalf("expected codex sessions to default to %q, got %q", SessionBackendCodexAppServer, effectiveSessionBackend(record))
 	}
 }
 
@@ -234,7 +262,7 @@ func TestSendMessageAutoRenamesTitleFromFirstUserMessage(t *testing.T) {
 	project := seedProject(t)
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexCLI(t),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -274,7 +302,7 @@ func TestSendMessageDoesNotOverrideManualTitle(t *testing.T) {
 	project := seedProject(t)
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexCLI(t),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
 	}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -304,6 +332,150 @@ func TestSendMessageDoesNotOverrideManualTitle(t *testing.T) {
 	}
 	if record.TitleAuto {
 		t.Fatalf("expected manual title to remain non-auto")
+	}
+}
+
+func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) != "thread_test" {
+		t.Fatalf("expected native session id thread_test, got %v", record.NativeSessionID)
+	}
+	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
+		t.Fatalf("expected app-server backend, got %q", effectiveSessionBackend(record))
+	}
+	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if !historyHasToolKind(history.Events, "reasoning") {
+		t.Fatalf("expected reasoning items to be persisted for optional display, got %#v", history.Events)
+	}
+}
+
+func TestRespondToUserInputCodexAppServer(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "user_input"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "plan this change", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestUserInput)
+	if request == nil {
+		t.Fatal("expected pending user input request")
+	}
+
+	if err := manager.respondToUserInput(created.ID, request.ItemID, map[string][]string{
+		"scope": {"full migration"},
+	}); err != nil {
+		t.Fatalf("respondToUserInput returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if !historyHasEvent(history.Events, "user_input_req") {
+		t.Fatalf("expected user_input_req event, got %#v", history.Events)
+	}
+	if !historyHasEvent(history.Events, "user_input_res") {
+		t.Fatalf("expected user_input_res event, got %#v", history.Events)
+	}
+}
+
+func TestRespondToApprovalCodexAppServer(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "approval"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "make the edit", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval)
+	if request == nil {
+		t.Fatal("expected pending approval request")
+	}
+
+	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
+		t.Fatalf("respondToApproval returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if !historyHasEvent(history.Events, "approval_req") {
+		t.Fatalf("expected approval_req event, got %#v", history.Events)
+	}
+	if !historyHasEvent(history.Events, "approval_res") {
+		t.Fatalf("expected approval_res event, got %#v", history.Events)
 	}
 }
 
@@ -367,6 +539,181 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 	return path
 }
 
+func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-codex-app-server.js")
+	script := fmt.Sprintf(`#!/usr/bin/env node
+const readline = require('readline');
+
+const mode = %q;
+const threadId = 'thread_test';
+const turnId = 'turn_test';
+
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + '\n');
+}
+
+function respondThread(id) {
+  send({ id, result: { thread: { id: threadId } } });
+}
+
+function emitReasoning() {
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'reasoning', id: 'rs_test', summary: [], content: [] },
+      threadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: { type: 'reasoning', id: 'rs_test', summary: [], content: [] },
+      threadId,
+      turnId,
+    },
+  });
+}
+
+function finishTurn(text) {
+  emitReasoning();
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'agentMessage', id: 'msg_test', text: '', phase: 'final_answer', memoryCitation: null },
+      threadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'item/agentMessage/delta',
+    params: { threadId, turnId, itemId: 'msg_test', delta: text },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: { type: 'agentMessage', id: 'msg_test', text, phase: 'final_answer', memoryCitation: null },
+      threadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'thread/tokenUsage/updated',
+    params: {
+      threadId,
+      turnId,
+      tokenUsage: {
+        total: { inputTokens: 5, cachedInputTokens: 0, outputTokens: 3 },
+      },
+    },
+  });
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId,
+      turn: { id: turnId, items: [], status: 'completed', error: null },
+    },
+  });
+}
+
+let awaiting = null;
+const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+rl.on('line', line => {
+  if (!line.trim()) {
+    return;
+  }
+
+  const message = JSON.parse(line);
+  if (message.method === 'initialize') {
+    send({
+      id: message.id,
+      result: {
+        userAgent: 'fake-codex-app-server',
+        codexHome: '/tmp/codex',
+        platformFamily: 'unix',
+        platformOs: 'linux',
+      },
+    });
+    return;
+  }
+
+  if (message.method === 'thread/start' || message.method === 'thread/resume') {
+    respondThread(message.id);
+    return;
+  }
+
+  if (message.method === 'turn/start') {
+    send({
+      id: message.id,
+      result: {
+        turn: { id: turnId, items: [], status: 'inProgress', error: null },
+      },
+    });
+
+    if (mode === 'basic') {
+      finishTurn('done');
+      return;
+    }
+
+    if (mode === 'user_input') {
+      awaiting = 'req_user_1';
+      send({
+        id: awaiting,
+        method: 'item/tool/requestUserInput',
+        params: {
+          threadId,
+          turnId,
+          itemId: 'ask_scope',
+          questions: [
+            {
+              id: 'scope',
+              header: 'Scope',
+              question: 'Which migration scope should be implemented?',
+              isOther: false,
+              isSecret: false,
+              options: [
+                { label: 'full migration', description: 'Move all Codex web sessions to app-server.' },
+                { label: 'plan only', description: 'Only switch plan mode to the real runtime mode.' },
+              ],
+            },
+          ],
+        },
+      });
+      return;
+    }
+
+    if (mode === 'approval') {
+      awaiting = 'req_approval_1';
+      send({
+        id: awaiting,
+        method: 'item/fileChange/requestApproval',
+        params: {
+          threadId,
+          turnId,
+          itemId: 'write_patch',
+          reason: 'Need approval to apply the patch.',
+        },
+      });
+      return;
+    }
+  }
+
+  if (awaiting && message.id === awaiting) {
+    finishTurn(mode === 'user_input' ? 'answered' : 'approved');
+    awaiting = null;
+  }
+});
+
+rl.on('close', () => process.exit(0));
+`, mode)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake codex app-server cli failed: %v", err)
+	}
+	return path
+}
+
 func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 	t.Helper()
 
@@ -386,4 +733,51 @@ func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 		t.Fatalf("GetSession returned error while waiting: %v", err)
 	}
 	t.Fatalf("session %s did not settle, status=%s", sessionID, record.Status)
+}
+
+func waitForPendingServerRequest(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	kind pendingServerRequestKind,
+) *pendingServerRequest {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.RLock()
+		run := manager.runs[sessionID]
+		manager.mu.RUnlock()
+		if run != nil {
+			if request, ok := run.pendingApprovalRequest(); ok && request.Kind == kind {
+				return request
+			}
+			if request, ok := run.pendingUserInputRequest(); ok && request.Kind == kind {
+				return request
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return nil
+}
+
+func historyHasEvent(events []Event, eventType string) bool {
+	for _, event := range events {
+		if event.Type == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+func historyHasToolKind(events []Event, kind string) bool {
+	for _, event := range events {
+		if event.Type != "tool_st" && event.Type != "tool_end" {
+			continue
+		}
+		if value, ok := event.Payload["kind"].(string); ok && value == kind {
+			return true
+		}
+	}
+	return false
 }

@@ -111,6 +111,16 @@
 
             <div class="header-actions">
               <n-button
+                v-if="canToggleReasoning"
+                secondary
+                size="small"
+                class="reasoning-toggle-button"
+                :type="showReasoning ? 'primary' : 'default'"
+                @click="showReasoning = !showReasoning"
+              >
+                {{ showReasoning ? t('webSession.hideReasoning') : t('webSession.showReasoning') }}
+              </n-button>
+              <n-button
                 secondary
                 size="small"
                 class="new-session-button"
@@ -132,7 +142,7 @@
                   {{ t('common.loading') }}
                 </div>
 
-                <div v-if="blocks.length === 0" class="timeline-intro">
+                <div v-if="visibleBlocks.length === 0" class="timeline-intro">
                   <span class="timeline-intro-badge">
                     {{ currentSession.agent === 'codex' ? 'Codex' : 'Claude' }}
                   </span>
@@ -141,7 +151,7 @@
                 </div>
 
                 <div
-                  v-for="item in blocks"
+                  v-for="item in visibleBlocks"
                   :key="item.key"
                   class="timeline-item"
                   :class="`kind-${item.kind}`"
@@ -240,64 +250,125 @@
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
 
-          <div
-            v-if="currentSession && (liveState.phase !== 'idle' || pendingApproval)"
-            class="runtime-strip"
-          >
-            <button
-              type="button"
-              class="live-card"
-              :class="[
-                `phase-${liveState.phase}`,
-                {
-                  'show-jump-hint': showJumpToBottom,
-                },
-              ]"
-              :title="t('webSession.jumpToBottom')"
-              @click="handleLiveCardClick"
-            >
-              <div class="live-card-main">
-                <span class="live-orb"></span>
-                <div class="live-copy">
-                  <div class="live-title">{{ liveStateLabel }}</div>
-                  <div v-if="liveStateDetail" class="live-detail">{{ liveStateDetail }}</div>
+                <div
+                  v-if="liveState.phase !== 'idle' || pendingApproval || pendingUserInput"
+                  class="runtime-strip"
+                >
+                  <button
+                    type="button"
+                    class="live-card"
+                    :class="[
+                      `phase-${liveState.phase}`,
+                      {
+                        'show-jump-hint': showJumpToBottom,
+                      },
+                    ]"
+                    :title="t('webSession.jumpToBottom')"
+                    @click="handleLiveCardClick"
+                  >
+                    <div class="live-card-main">
+                      <span class="live-orb"></span>
+                      <div class="live-copy">
+                        <div class="live-title">{{ liveStateLabel }}</div>
+                        <div v-if="liveStateDetail" class="live-detail">{{ liveStateDetail }}</div>
+                      </div>
+                    </div>
+                    <div class="live-meta">
+                      <span v-if="liveStateWorking" class="live-activity" aria-hidden="true">
+                        <span class="live-activity-bar"></span>
+                        <span class="live-activity-bar"></span>
+                        <span class="live-activity-bar"></span>
+                      </span>
+                      <span v-if="showJumpToBottom" class="live-jump-hint">
+                        {{ t('webSession.jumpToBottom') }}
+                      </span>
+                      <span class="live-time">{{ formatTime(liveState.updatedAt) }}</span>
+                    </div>
+                  </button>
+
+                  <div v-if="pendingApproval" class="approval-card">
+                    <div class="approval-card-header">
+                      <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
+                      <span class="approval-time">{{ formatTime(pendingApproval.requestedAt) }}</span>
+                    </div>
+                    <div class="approval-prompt">
+                      {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
+                    </div>
+                    <div class="approval-actions">
+                      <n-button size="small" type="primary" @click="handleApproval('approve')">
+                        {{ t('webSession.approvalApprove') }}
+                      </n-button>
+                      <n-button size="small" secondary @click="handleApproval('reject')">
+                        {{ t('webSession.approvalReject') }}
+                      </n-button>
+                      <n-button size="small" tertiary @click="handleAbortCurrent">
+                        {{ t('webSession.stop') }}
+                      </n-button>
+                    </div>
+                  </div>
+
+                  <div v-else-if="pendingUserInput" class="approval-card user-input-card">
+                    <div class="approval-card-header">
+                      <span class="approval-badge">{{ t('webSession.userInputTitle') }}</span>
+                      <span class="approval-time">{{ formatTime(pendingUserInput.requestedAt) }}</span>
+                    </div>
+                    <div class="approval-prompt">
+                      {{ pendingUserInput.prompt || t('webSession.userInputPromptFallback') }}
+                    </div>
+                    <div
+                      v-for="question in pendingUserInput.questions"
+                      :key="question.id"
+                      class="user-input-question"
+                    >
+                      <div class="user-input-question-header">
+                        {{ question.header || question.question }}
+                      </div>
+                      <div
+                        v-if="
+                          question.header && question.question && question.header !== question.question
+                        "
+                        class="user-input-question-copy"
+                      >
+                        {{ question.question }}
+                      </div>
+                      <n-checkbox-group
+                        v-if="question.options.length > 0"
+                        v-model:value="userInputSelections[question.id]"
+                        class="user-input-options"
+                      >
+                        <div
+                          v-for="option in question.options"
+                          :key="`${question.id}:${option.label}`"
+                          class="user-input-option"
+                        >
+                          <n-checkbox :value="option.label">
+                            <span class="user-input-option-label">{{ option.label }}</span>
+                          </n-checkbox>
+                          <div v-if="option.description" class="user-input-option-description">
+                            {{ option.description }}
+                          </div>
+                        </div>
+                      </n-checkbox-group>
+                      <n-input
+                        v-if="question.isOther || question.options.length === 0"
+                        v-model:value="userInputDrafts[question.id]"
+                        :type="question.isSecret ? 'password' : 'text'"
+                        size="small"
+                        :show-password-on="question.isSecret ? 'mousedown' : undefined"
+                        :placeholder="userInputPlaceholder(question)"
+                      />
+                    </div>
+                    <div class="approval-actions">
+                      <n-button size="small" type="primary" @click="handleUserInputSubmit">
+                        {{ t('webSession.userInputSubmit') }}
+                      </n-button>
+                      <n-button size="small" tertiary @click="handleAbortCurrent">
+                        {{ t('webSession.stop') }}
+                      </n-button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div class="live-meta">
-                <span v-if="liveStateWorking" class="live-activity" aria-hidden="true">
-                  <span class="live-activity-bar"></span>
-                  <span class="live-activity-bar"></span>
-                  <span class="live-activity-bar"></span>
-                </span>
-                <span v-if="showJumpToBottom" class="live-jump-hint">
-                  {{ t('webSession.jumpToBottom') }}
-                </span>
-                <span class="live-time">{{ formatTime(liveState.updatedAt) }}</span>
-              </div>
-            </button>
-
-            <div v-if="pendingApproval" class="approval-card">
-              <div class="approval-card-header">
-                <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
-                <span class="approval-time">{{ formatTime(pendingApproval.requestedAt) }}</span>
-              </div>
-              <div class="approval-prompt">
-                {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
-              </div>
-              <div class="approval-actions">
-                <n-button size="small" type="primary" @click="handleApproval('approve')">
-                  {{ t('webSession.approvalApprove') }}
-                </n-button>
-                <n-button size="small" secondary @click="handleApproval('reject')">
-                  {{ t('webSession.approvalReject') }}
-                </n-button>
-                <n-button size="small" tertiary @click="handleAbortCurrent">
-                  {{ t('webSession.stop') }}
-                </n-button>
               </div>
             </div>
           </div>
@@ -645,6 +716,7 @@ import {
   type WebSessionBlock,
   type WebSessionLiveState,
   type WebSessionPendingInput,
+  type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
 import type { WebSessionSummary } from '@/types/models';
 import {
@@ -733,6 +805,9 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
+const showReasoning = useStorage('kanban-web-show-reasoning', false);
+const userInputSelections = ref<Record<string, string[]>>({});
+const userInputDrafts = ref<Record<string, string>>({});
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const pendingHistoryAnchor = ref<{
   sessionId: string;
@@ -781,6 +856,15 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
 const blocks = computed(() =>
   currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
 );
+function isReasoningBlock(block: WebSessionBlock) {
+  return block.tool?.kind === 'reasoning';
+}
+const canToggleReasoning = computed(
+  () => currentSession.value?.agent === 'codex' || blocks.value.some(isReasoningBlock)
+);
+const visibleBlocks = computed(() =>
+  showReasoning.value ? blocks.value : blocks.value.filter(block => !isReasoningBlock(block))
+);
 const liveState = computed(() =>
   currentRealSession.value
     ? webSessionStore.getLiveState(currentRealSession.value.id)
@@ -788,6 +872,9 @@ const liveState = computed(() =>
 );
 const pendingApproval = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
+);
+const pendingUserInput = computed(() =>
+  currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
 const historyMeta = computed(() =>
   currentRealSession.value
@@ -814,6 +901,9 @@ const composerHint = computed(() => {
   if (pendingApproval.value) {
     return t('webSession.composerHintApproval');
   }
+  if (pendingUserInput.value) {
+    return t('webSession.composerHintUserInput');
+  }
   if (liveState.value.running) {
     return t('webSession.composerHintRunning');
   }
@@ -829,6 +919,8 @@ const liveStateLabel = computed(() => {
       return t('webSession.liveTool', { tool: liveState.value.tool?.name || 'Tool' });
     case 'waiting_approval':
       return t('webSession.liveWaitingApproval');
+    case 'waiting_input':
+      return t('webSession.liveWaitingInput');
     case 'done':
       return t('webSession.liveDone');
     case 'error':
@@ -840,6 +932,9 @@ const liveStateLabel = computed(() => {
 const liveStateDetail = computed(() => {
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
+  }
+  if (pendingUserInput.value?.prompt) {
+    return pendingUserInput.value.prompt;
   }
   if (liveState.value.phase === 'tool' && liveState.value.tool?.kind) {
     return liveState.value.tool.kind;
@@ -864,6 +959,27 @@ const hasPrevSession = computed(() => currentSessionIndex.value > 0);
 const hasNextSession = computed(
   () => currentSessionIndex.value >= 0 && currentSessionIndex.value < sessions.value.length - 1
 );
+
+watch(
+  pendingUserInput,
+  value => {
+    if (!value) {
+      userInputSelections.value = {};
+      userInputDrafts.value = {};
+      return;
+    }
+    const nextSelections: Record<string, string[]> = {};
+    const nextDrafts: Record<string, string> = {};
+    value.questions.forEach(question => {
+      nextSelections[question.id] = [...(userInputSelections.value[question.id] ?? [])];
+      nextDrafts[question.id] = userInputDrafts.value[question.id] ?? '';
+    });
+    userInputSelections.value = nextSelections;
+    userInputDrafts.value = nextDrafts;
+  },
+  { immediate: true }
+);
+
 const mobileTabOptions = computed<DropdownOption[]>(() =>
   sessions.value.map(session => ({
     label: session.title,
@@ -929,7 +1045,7 @@ const tabTitleStyle = computed(() => ({
   maxWidth: `${tabTitleMaxWidth.value}px`,
 }));
 const timelineContentVersion = computed(() =>
-  blocks.value
+  visibleBlocks.value
     .map(block => {
       const toolVersion = block.tool
         ? `${block.tool.id}:${block.tool.status}:${String(block.tool.output ?? '').length}`
@@ -2130,6 +2246,69 @@ function handleRemovePendingInput(pendingId: string) {
   webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
 }
 
+function userInputPlaceholder(question: WebSessionUserInputQuestion) {
+  if (question.options.length === 0) {
+    return t('webSession.userInputAnswerPlaceholder');
+  }
+  if (question.isOther) {
+    return t('webSession.userInputOtherPlaceholder');
+  }
+  return t('webSession.userInputAnswerPlaceholder');
+}
+
+function buildUserInputAnswers() {
+  const request = pendingUserInput.value;
+  if (!request) {
+    return null;
+  }
+  const answers: Record<string, string[]> = {};
+  for (const question of request.questions) {
+    const values = [...(userInputSelections.value[question.id] ?? [])];
+    const freeform = (userInputDrafts.value[question.id] ?? '').trim();
+    if (question.options.length === 0) {
+      if (freeform) {
+        answers[question.id] = [freeform];
+      }
+      continue;
+    }
+    if (question.isOther && freeform) {
+      values.push(freeform);
+    }
+    if (values.length > 0) {
+      answers[question.id] = values;
+    }
+  }
+  return answers;
+}
+
+async function handleUserInputSubmit() {
+  if (!currentRealSession.value || !pendingUserInput.value) {
+    return;
+  }
+  const answers = buildUserInputAnswers();
+  if (!answers) {
+    return;
+  }
+  const hasMissingAnswer = pendingUserInput.value.questions.some(
+    question => !Array.isArray(answers[question.id]) || answers[question.id].length === 0
+  );
+  if (hasMissingAnswer) {
+    message.warning(t('webSession.userInputAnswerRequired'));
+    return;
+  }
+  try {
+    await webSessionStore.answerUserInput(
+      currentRealSession.value.id,
+      pendingUserInput.value.itemId,
+      answers
+    );
+    userInputSelections.value = {};
+    userInputDrafts.value = {};
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
 async function handleApproval(action: 'approve' | 'reject') {
   if (!currentRealSession.value) {
     return;
@@ -2331,6 +2510,8 @@ function getSessionAssistantStateClass(session: (typeof sessions.value)[number])
       return 'working';
     case 'waiting_approval':
       return 'waiting_approval';
+    case 'waiting_input':
+      return 'waiting_input';
     case 'done':
     case 'idle':
       return 'waiting_input';
@@ -3753,7 +3934,7 @@ onBeforeUnmount(() => {
 }
 
 .runtime-strip {
-  padding: 0 12px 10px;
+  margin-top: 18px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3887,6 +4068,24 @@ onBeforeUnmount(() => {
 .live-card.phase-waiting_approval::before {
   opacity: 0.48;
   animation: liveSweep 3.2s ease-in-out infinite;
+}
+
+.live-card.phase-waiting_input {
+  border-color: rgba(14, 116, 144, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(14, 116, 144, 0.12) 0%,
+      rgba(14, 116, 144, 0.04) 50%,
+      transparent 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 8px 20px rgba(14, 116, 144, 0.08);
+}
+
+.live-card.phase-waiting_input::before {
+  opacity: 0.42;
+  animation: liveSweep 3.8s ease-in-out infinite;
 }
 
 .live-card.phase-done {
@@ -4026,6 +4225,15 @@ onBeforeUnmount(() => {
   background: rgba(247, 144, 9, 0.2);
 }
 
+.live-card.phase-waiting_input .live-orb,
+.user-input-card .approval-badge {
+  background: #0f766e;
+}
+
+.live-card.phase-waiting_input .live-orb::after {
+  background: rgba(15, 118, 110, 0.18);
+}
+
 .live-card.phase-done .live-orb {
   background: #10b981;
   box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
@@ -4110,6 +4318,59 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.user-input-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.user-input-question {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.user-input-question + .user-input-question {
+  border-top: 1px dashed color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  padding-top: 10px;
+}
+
+.user-input-question-header {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.user-input-question-copy {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-2);
+}
+
+.user-input-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.user-input-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-input-option-label {
+  font-weight: 600;
+}
+
+.user-input-option-description {
+  padding-left: 24px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--n-text-color-3);
 }
 
 .empty-state {
@@ -4395,7 +4656,7 @@ onBeforeUnmount(() => {
   }
 
   .runtime-strip {
-    padding: 0 10px 10px;
+    margin-top: 14px;
   }
 
   .item-bubble {
@@ -4475,7 +4736,7 @@ onBeforeUnmount(() => {
   }
 
   .runtime-strip {
-    padding: 0 10px 10px;
+    margin-top: 14px;
   }
 
   .live-card,

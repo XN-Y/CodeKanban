@@ -98,8 +98,38 @@ export interface WebSessionApprovalState {
   requestedAt: number;
 }
 
+export interface WebSessionUserInputOption {
+  label: string;
+  description: string;
+}
+
+export interface WebSessionUserInputQuestion {
+  id: string;
+  header: string;
+  question: string;
+  isOther: boolean;
+  isSecret: boolean;
+  options: WebSessionUserInputOption[];
+}
+
+export interface WebSessionUserInputState {
+  id: string;
+  itemId: string;
+  prompt: string;
+  questions: WebSessionUserInputQuestion[];
+  requestedAt: number;
+}
+
 export interface WebSessionLiveState {
-  phase: 'idle' | 'starting' | 'thinking' | 'tool' | 'waiting_approval' | 'done' | 'error';
+  phase:
+    | 'idle'
+    | 'starting'
+    | 'thinking'
+    | 'tool'
+    | 'waiting_approval'
+    | 'waiting_input'
+    | 'done'
+    | 'error';
   running: boolean;
   updatedAt: number;
   tool?: {
@@ -108,6 +138,7 @@ export interface WebSessionLiveState {
     kind?: string;
   };
   approval?: WebSessionApprovalState | null;
+  userInput?: WebSessionUserInputState | null;
   errorMessage?: string;
 }
 
@@ -193,6 +224,68 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
+}
+
+function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(item => {
+      const record = asRecord(item);
+      if (!record) {
+        return null;
+      }
+      return {
+        id: String(record.id ?? ''),
+        header: String(record.header ?? ''),
+        question: String(record.question ?? ''),
+        isOther: record.isOther === true,
+        isSecret: record.isSecret === true,
+        options: Array.isArray(record.options)
+          ? record.options
+              .map(option => {
+                const optionRecord = asRecord(option);
+                if (!optionRecord) {
+                  return null;
+                }
+                return {
+                  label: String(optionRecord.label ?? ''),
+                  description: String(optionRecord.description ?? ''),
+                };
+              })
+              .filter((option): option is WebSessionUserInputOption => Boolean(option))
+          : [],
+      };
+    })
+    .filter((question): question is WebSessionUserInputQuestion => Boolean(question));
+}
+
+function summarizeUserInputPrompt(payload: Record<string, unknown>) {
+  const explicit = String(payload.txt ?? '').trim();
+  if (explicit) {
+    return explicit;
+  }
+  const questions = parseUserInputQuestions(payload.qs);
+  const lines = questions
+    .map(question => question.question.trim() || question.header.trim())
+    .filter(Boolean);
+  return lines.length > 0 ? lines.join('\n') : 'Additional input is required.';
+}
+
+function summarizeUserInputAnswer(payload: Record<string, unknown>) {
+  const answers = asRecord(payload.ans);
+  if (!answers) {
+    return 'Submitted requested input';
+  }
+  const parts = Object.values(answers)
+    .flatMap(value => (Array.isArray(value) ? value : []))
+    .map(value => String(value).trim())
+    .filter(Boolean);
+  if (parts.length === 0) {
+    return 'Submitted requested input';
+  }
+  return parts.join(', ');
 }
 
 export const useWebSessionStore = defineStore('web-session', () => {
@@ -843,6 +936,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('reject', sessionId, {});
   }
 
+  async function answerUserInput(
+    sessionId: string,
+    itemId: string,
+    answers: Record<string, string[]>
+  ) {
+    await sendCommand('user_input', sessionId, { iid: itemId, ans: answers });
+  }
+
   async function loadMoreHistory(sessionId: string, limit = 80) {
     const meta = getHistoryMeta(sessionId);
     if (meta.loading || !meta.hasMore || !meta.beforeCursor) {
@@ -1137,6 +1238,30 @@ export const useWebSessionStore = defineStore('web-session', () => {
           });
           break;
         }
+        case 'user_input_req': {
+          blocks.push({
+            key: `user-input:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: summarizeUserInputPrompt(payload),
+            timestamp: event.ts,
+            attachments: [],
+            level: 'warn',
+          });
+          break;
+        }
+        case 'user_input_res': {
+          blocks.push({
+            key: `user-input-res:${event.id}`,
+            id: event.id,
+            kind: 'system',
+            text: summarizeUserInputAnswer(payload),
+            timestamp: event.ts,
+            attachments: [],
+            level: 'info',
+          });
+          break;
+        }
         case 'note': {
           blocks.push({
             key: `note:${event.id}`,
@@ -1204,9 +1329,35 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return pending;
   }
 
+  function getPendingUserInput(sessionId: string): WebSessionUserInputState | null {
+    let pending: WebSessionUserInputState | null = null;
+    for (const event of eventsBySession.value[sessionId] ?? []) {
+      const payload = event.p ?? {};
+      switch (event.tp) {
+        case 'user_input_req':
+          pending = {
+            id: event.id,
+            itemId: String(payload.iid ?? ''),
+            prompt: summarizeUserInputPrompt(payload),
+            questions: parseUserInputQuestions(payload.qs),
+            requestedAt: event.ts,
+          };
+          break;
+        case 'user_input_res':
+        case 'run_done':
+        case 'run_fail':
+        case 'run_abort':
+          pending = null;
+          break;
+      }
+    }
+    return pending;
+  }
+
   function getLiveState(sessionId: string): WebSessionLiveState {
     const session = findSessionById(sessionId);
     const approval = getPendingApproval(sessionId);
+    const userInput = getPendingUserInput(sessionId);
     let activeTool:
       | {
           id: string;
@@ -1232,6 +1383,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           assistantDone = true;
           break;
         case 'tool_st':
+          if (payload.kind === 'reasoning') {
+            break;
+          }
           activeTool = {
             id: String(payload.tid ?? event.id),
             name: String(payload.name ?? 'Tool'),
@@ -1239,6 +1393,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           };
           break;
         case 'tool_end': {
+          if (payload.kind === 'reasoning') {
+            break;
+          }
           const toolId = String(payload.tid ?? event.id);
           if (activeTool?.id === toolId) {
             activeTool = undefined;
@@ -1258,6 +1415,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
         updatedAt: approval.requestedAt,
         approval,
         tool: activeTool,
+      };
+    }
+
+    if (userInput && session?.status === 'running') {
+      return {
+        phase: 'waiting_input',
+        running: true,
+        updatedAt: userInput.requestedAt,
+        tool: activeTool,
+        userInput,
       };
     }
 
@@ -1357,6 +1524,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     abortSession,
     approveSession,
     rejectSession,
+    answerUserInput,
     loadMoreHistory,
     updateModel,
     updateReasoningEffort,
@@ -1365,6 +1533,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateAgent,
     moveSession,
     getPendingApproval,
+    getPendingUserInput,
     getLiveState,
     uploadAttachment,
     removeDraftAttachment,

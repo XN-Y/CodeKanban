@@ -9,6 +9,13 @@ const (
 	AgentCodex  Agent = "codex"
 )
 
+type SessionBackend string
+
+const (
+	SessionBackendLegacyExec     SessionBackend = "legacy_exec"
+	SessionBackendCodexAppServer SessionBackend = "codex_app_server"
+)
+
 type WorkflowMode string
 
 const (
@@ -108,6 +115,7 @@ type CreateParams struct {
 	ProjectID       string
 	WorktreeID      string
 	Agent           Agent
+	Backend         SessionBackend
 	Model           string
 	ReasoningEffort ReasoningEffort
 	WorkflowMode    WorkflowMode
