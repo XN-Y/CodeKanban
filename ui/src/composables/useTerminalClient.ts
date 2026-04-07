@@ -1,6 +1,8 @@
 import { computed, onBeforeUnmount, watch, type Ref } from 'vue';
 import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal';
 export type {
+  BufferedTerminalMessage,
+  ReplayBufferedMessagesResult,
   TerminalCreateOptions,
   ClientStatus,
   TerminalModesSnapshot,

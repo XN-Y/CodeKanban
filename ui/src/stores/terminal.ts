@@ -115,6 +115,18 @@ export type ServerMessage = {
 };
 
 const TERMINAL_SNAPSHOT_PREFIX = '\x1b[0m\x1b[2J\x1b[3J\x1b[H';
+export type BufferedTerminalMessage = {
+  payload: ServerMessage;
+  receivedAt: number;
+  localOrder: number;
+};
+
+export type ReplayBufferedMessagesResult = {
+  count: number;
+  firstReceivedAt?: number;
+  lastReceivedAt?: number;
+  lastLocalOrder?: number;
+};
 
 export type TerminalCreateOptions = {
   worktreeId?: string;
@@ -688,11 +700,12 @@ export const useTerminalStore = defineStore('terminal', () => {
   const pendingTaskFetch = new Set<string>();
   // Buffer for WebSocket messages when no listener is attached
   // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
-  const messageBuffers = new Map<string, ServerMessage[]>();
+  const messageBuffers = new Map<string, BufferedTerminalMessage[]>();
   const MESSAGE_BUFFER_MAX_SIZE = 5000; // Limit buffer size to prevent memory issues
   const latestServerSnapshots = new Map<string, TerminalRemoteSnapshot>();
   const latestServerSnapshotSequence = new Map<string, number>();
   const serializedSnapshots = new Map<string, TerminalSerializedSnapshot>();
+  let nextBufferedMessageOrder = 0;
 
   function getGlobalRenderMode() {
     return sanitizeTerminalRenderMode(
@@ -1263,18 +1276,27 @@ export const useTerminalStore = defineStore('terminal', () => {
    * Replay buffered messages for a session and clear the buffer.
    * Called when TerminalViewport remounts after being unmounted (e.g., project switch).
    */
-  function replayBufferedMessages(sessionId: string) {
+  function replayBufferedMessages(sessionId: string): ReplayBufferedMessagesResult {
     const buffer = messageBuffers.get(sessionId);
     if (!buffer || buffer.length === 0) {
-      return;
+      return { count: 0 };
     }
+    const firstReceivedAt = buffer[0]?.receivedAt;
+    const lastReceivedAt = buffer[buffer.length - 1]?.receivedAt;
+    const lastLocalOrder = buffer[buffer.length - 1]?.localOrder;
     // Emit all buffered messages
-    for (const message of buffer) {
-      emitter.emit(sessionId, message);
+    for (const entry of buffer) {
+      emitter.emit(sessionId, entry.payload);
     }
     // Clear the buffer after replay
     messageBuffers.delete(sessionId);
     console.log(`[Terminal] Replayed ${buffer.length} buffered messages for session:`, sessionId);
+    return {
+      count: buffer.length,
+      firstReceivedAt,
+      lastReceivedAt,
+      lastLocalOrder,
+    };
   }
 
   function saveSerializedSnapshot(sessionId: string, snapshot?: TerminalSerializedSnapshot | null) {
@@ -1819,7 +1841,12 @@ export const useTerminalStore = defineStore('terminal', () => {
               buffer = [];
               messageBuffers.set(tab.id, buffer);
             }
-            buffer.push(payload);
+            nextBufferedMessageOrder += 1;
+            buffer.push({
+              payload,
+              receivedAt: Date.now(),
+              localOrder: nextBufferedMessageOrder,
+            });
             // Limit buffer size to prevent memory issues
             if (buffer.length > MESSAGE_BUFFER_MAX_SIZE) {
               buffer.shift();

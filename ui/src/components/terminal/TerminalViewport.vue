@@ -35,6 +35,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type {
+  ReplayBufferedMessagesResult,
   TerminalModesSnapshot,
   TerminalRemoteSnapshot,
   TerminalSerializedSnapshot,
@@ -130,6 +131,19 @@ let pendingTerminalModes: TerminalModesSnapshot | null = cloneTerminalModesSnaps
   props.tab.terminalModes
 );
 let debugRefreshHandler: (() => boolean) | null = null;
+let terminalTaskQueue: Promise<void> = Promise.resolve();
+let initialRestorePromise: Promise<void> | null = null;
+let deferredViewportRefresh:
+  | {
+      reason: string;
+      options: {
+        clearTextureAtlas?: boolean;
+        retry?: boolean;
+      };
+    }
+  | null = null;
+let replayBufferedMessagesResult: ReplayBufferedMessagesResult | null = null;
+let isDisposed = false;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const INITIAL_OUTPUT_BUFFER_MAX = 5000;
 const TERMINAL_SERVER_RESIZE_SETTLE_MS = 100;
@@ -138,10 +152,49 @@ const transferCardTone = ref<'progress' | 'error'>('progress');
 const transferProgress = ref<number | null>(null);
 const TERMINAL_DEBUG_FN = '__codeKanbanForceRefreshVisibleTerminal';
 const TERMINAL_DEBUG_REGISTRY = '__codeKanbanTerminalDebugHandlers';
+const TERMINAL_RESTORE_DEBUG_REGISTRY = '__codeKanbanTerminalRestoreDebug';
 
 type TerminalDebugWindow = Window & {
   [TERMINAL_DEBUG_FN]?: () => boolean;
   [TERMINAL_DEBUG_REGISTRY]?: Map<string, () => boolean>;
+  [TERMINAL_RESTORE_DEBUG_REGISTRY]?: Map<string, TerminalRestoreDebugState>;
+};
+
+type TerminalRestorePhase = 'idle' | 'restoring' | 'replaying' | 'settled';
+type TerminalRestoreSource = 'frontend' | 'server' | 'none';
+
+type TerminalRestoreDebugState = {
+  sessionId: string;
+  phase: TerminalRestorePhase;
+  source: TerminalRestoreSource;
+  mountStartedAt: number;
+  settledAt: number;
+  lastReason: string;
+  replayCompleteAt: number;
+  frontendSnapshotUpdatedAt: number;
+  serverSnapshotCapturedAt: number;
+  bufferedReplayCount: number;
+  bufferedReplayFirstReceivedAt: number;
+  bufferedReplayLastReceivedAt: number;
+  bufferedReplayLastLocalOrder: number;
+  liveBufferedCount: number;
+};
+
+const restoreDebugState: TerminalRestoreDebugState = {
+  sessionId: props.tab.id,
+  phase: 'idle',
+  source: 'none',
+  mountStartedAt: 0,
+  settledAt: 0,
+  lastReason: '',
+  replayCompleteAt: 0,
+  frontendSnapshotUpdatedAt: 0,
+  serverSnapshotCapturedAt: 0,
+  bufferedReplayCount: 0,
+  bufferedReplayFirstReceivedAt: 0,
+  bufferedReplayLastReceivedAt: 0,
+  bufferedReplayLastLocalOrder: 0,
+  liveBufferedCount: 0,
 };
 
 type PendingServerResize = {
@@ -192,6 +245,128 @@ function cloneTerminalModesSnapshot(
     bracketedPaste: modes.bracketedPaste,
     alternateScreen: modes.alternateScreen,
   };
+}
+
+function publishRestoreDebugState() {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  const debugWindow = window as TerminalDebugWindow;
+  const registry =
+    debugWindow[TERMINAL_RESTORE_DEBUG_REGISTRY] ?? new Map<string, TerminalRestoreDebugState>();
+  debugWindow[TERMINAL_RESTORE_DEBUG_REGISTRY] = registry;
+  registry.set(props.tab.id, { ...restoreDebugState });
+}
+
+function setRestorePhase(phase: TerminalRestorePhase, reason?: string) {
+  restoreDebugState.phase = phase;
+  if (reason) {
+    restoreDebugState.lastReason = reason;
+  }
+  if (phase === 'settled') {
+    restoreDebugState.settledAt = Date.now();
+  }
+  publishRestoreDebugState();
+}
+
+function setRestoreSource(source: TerminalRestoreSource) {
+  restoreDebugState.source = source;
+  publishRestoreDebugState();
+}
+
+function updateSnapshotDebugState() {
+  restoreDebugState.frontendSnapshotUpdatedAt = pendingFrontendSnapshot?.updatedAt ?? 0;
+  restoreDebugState.serverSnapshotCapturedAt = parseSnapshotCapturedAt(pendingServerSnapshot);
+  publishRestoreDebugState();
+}
+
+function updateReplayDebugState(result: ReplayBufferedMessagesResult | null) {
+  restoreDebugState.bufferedReplayCount = result?.count ?? 0;
+  restoreDebugState.bufferedReplayFirstReceivedAt = result?.firstReceivedAt ?? 0;
+  restoreDebugState.bufferedReplayLastReceivedAt = result?.lastReceivedAt ?? 0;
+  restoreDebugState.bufferedReplayLastLocalOrder = result?.lastLocalOrder ?? 0;
+  publishRestoreDebugState();
+}
+
+function updateLiveBufferedCount() {
+  restoreDebugState.liveBufferedCount = pendingTerminalMessages.length;
+  publishRestoreDebugState();
+}
+
+function logRestoreTrace(reason: string, extra: Record<string, unknown> = {}) {
+  console.debug('[Terminal Restore]', {
+    sessionId: props.tab.id,
+    phase: restoreDebugState.phase,
+    source: restoreDebugState.source,
+    reason,
+    mountStartedAt: restoreDebugState.mountStartedAt,
+    replayCompleteAt: restoreDebugState.replayCompleteAt,
+    frontendSnapshotUpdatedAt: restoreDebugState.frontendSnapshotUpdatedAt,
+    serverSnapshotCapturedAt: restoreDebugState.serverSnapshotCapturedAt,
+    bufferedReplayCount: restoreDebugState.bufferedReplayCount,
+    bufferedReplayFirstReceivedAt: restoreDebugState.bufferedReplayFirstReceivedAt,
+    bufferedReplayLastReceivedAt: restoreDebugState.bufferedReplayLastReceivedAt,
+    bufferedReplayLastLocalOrder: restoreDebugState.bufferedReplayLastLocalOrder,
+    liveBufferedCount: restoreDebugState.liveBufferedCount,
+    ...extra,
+  });
+}
+
+function isRestoreBlockingRefresh() {
+  return initialRestorePromise != null;
+}
+
+function enqueueTerminalTask(label: string, task: () => Promise<void> | void) {
+  const run = terminalTaskQueue.then(async () => {
+    if (isDisposed || !terminal) {
+      return;
+    }
+
+    try {
+      await task();
+    } catch (error) {
+      console.warn('[Terminal Queue] Task failed', {
+        sessionId: props.tab.id,
+        label,
+        error,
+      });
+      throw error;
+    }
+  });
+
+  terminalTaskQueue = run.catch(() => {});
+  return run;
+}
+
+function writeTerminalRaw(data: string) {
+  if (!terminal || !data) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>(resolve => {
+    terminal?.write(data, () => resolve());
+  });
+}
+
+function writelnTerminalRaw(data: string) {
+  if (!terminal || !data) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>(resolve => {
+    terminal?.writeln(data, () => resolve());
+  });
+}
+
+function flushDeferredViewportRefresh() {
+  if (!deferredViewportRefresh) {
+    return;
+  }
+
+  const pending = deferredViewportRefresh;
+  deferredViewportRefresh = null;
+  refreshTerminalViewport(pending.reason, pending.options);
 }
 
 // 内存中记录已经访问过的终端（刷新后清空）
@@ -370,7 +545,7 @@ function buildTerminalModesSequence(
   return parts.join('');
 }
 
-function restoreTerminalModesIfAvailable() {
+async function restoreTerminalModesIfAvailable() {
   if (!terminal || !pendingTerminalModes) {
     return false;
   }
@@ -381,34 +556,10 @@ function restoreTerminalModesIfAvailable() {
     return false;
   }
 
-  terminal.write(sequence);
+  await enqueueTerminalTask('restore-terminal-modes', async () => {
+    await writeTerminalRaw(sequence);
+  });
   return true;
-}
-
-function restoreServerSnapshotIfAvailable() {
-  if (!terminal || !pendingServerSnapshot) {
-    return false;
-  }
-
-  const snapshot = pendingServerSnapshot;
-  pendingServerSnapshot = null;
-
-  try {
-    if (snapshot.cols > 0 && snapshot.rows > 0) {
-      terminal.resize(snapshot.cols, snapshot.rows);
-    }
-    const modeSequence = buildTerminalModesSequence(pendingTerminalModes, {
-      fallbackAltScreen: snapshot.altScreen,
-    });
-    pendingTerminalModes = null;
-    terminal.write(
-      `${modeSequence}${remapInvisibleColors(snapshot.content)}`
-    );
-    return true;
-  } catch (error) {
-    console.warn('[Terminal Snapshot] Failed to restore server snapshot', error);
-    return false;
-  }
 }
 
 function parseSnapshotCapturedAt(snapshot: TerminalRemoteSnapshot | null) {
@@ -435,22 +586,58 @@ function shouldPreferFrontendSnapshot(
   return frontendSnapshot.updatedAt + 1000 >= serverCapturedAt;
 }
 
-function restoreFrontendSnapshotIfAvailable() {
+async function restoreServerSnapshotIfAvailable() {
+  if (!terminal || !pendingServerSnapshot) {
+    return false;
+  }
+
+  const snapshot = pendingServerSnapshot;
+  pendingServerSnapshot = null;
+  updateSnapshotDebugState();
+
+  try {
+    await enqueueTerminalTask('restore-server-snapshot', async () => {
+      if (!terminal) {
+        return;
+      }
+      if (snapshot.cols > 0 && snapshot.rows > 0) {
+        terminal.resize(snapshot.cols, snapshot.rows);
+      }
+      const modeSequence = buildTerminalModesSequence(pendingTerminalModes, {
+        fallbackAltScreen: snapshot.altScreen,
+      });
+      pendingTerminalModes = null;
+      await writeTerminalRaw(`${modeSequence}${remapInvisibleColors(snapshot.content)}`);
+    });
+    return true;
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to restore server snapshot', error);
+    return false;
+  }
+}
+
+async function restoreFrontendSnapshotIfAvailable() {
   if (!terminal || !pendingFrontendSnapshot) {
     return false;
   }
 
   const snapshot = pendingFrontendSnapshot;
   pendingFrontendSnapshot = null;
+  updateSnapshotDebugState();
 
   try {
-    terminal.reset();
-    if (snapshot.cols > 0 && snapshot.rows > 0) {
-      terminal.resize(snapshot.cols, snapshot.rows);
-    }
-    const modeSequence = buildTerminalModesSequence(pendingTerminalModes);
-    pendingTerminalModes = null;
-    terminal.write(`${modeSequence}${remapInvisibleColors(snapshot.content)}`);
+    await enqueueTerminalTask('restore-frontend-snapshot', async () => {
+      if (!terminal) {
+        return;
+      }
+      terminal.reset();
+      if (snapshot.cols > 0 && snapshot.rows > 0) {
+        terminal.resize(snapshot.cols, snapshot.rows);
+      }
+      const modeSequence = buildTerminalModesSequence(pendingTerminalModes);
+      pendingTerminalModes = null;
+      await writeTerminalRaw(modeSequence + remapInvisibleColors(snapshot.content));
+    });
     return true;
   } catch (error) {
     console.warn('[Terminal Snapshot] Failed to restore frontend snapshot', error);
@@ -458,27 +645,27 @@ function restoreFrontendSnapshotIfAvailable() {
   }
 }
 
-function restorePreferredSnapshotIfAvailable() {
+async function restorePreferredSnapshotIfAvailable(): Promise<TerminalRestoreSource> {
   const useFrontendSnapshot = shouldPreferFrontendSnapshot(
     pendingFrontendSnapshot,
     pendingServerSnapshot
   );
 
-  if (useFrontendSnapshot && restoreFrontendSnapshotIfAvailable()) {
+  if (useFrontendSnapshot && (await restoreFrontendSnapshotIfAvailable())) {
     pendingServerSnapshot = null;
     return 'frontend';
   }
 
-  if (restoreServerSnapshotIfAvailable()) {
+  if (await restoreServerSnapshotIfAvailable()) {
     pendingFrontendSnapshot = null;
     return 'server';
   }
 
-  if (restoreFrontendSnapshotIfAvailable()) {
+  if (await restoreFrontendSnapshotIfAvailable()) {
     return 'frontend';
   }
 
-  return '';
+  return 'none';
 }
 
 function persistFrontendSnapshot() {
@@ -498,7 +685,7 @@ function persistFrontendSnapshot() {
   }
 }
 
-function applyTerminalMessage(payload: ServerMessage) {
+async function applyTerminalMessage(payload: ServerMessage, reason = 'live') {
   if (!terminal) {
     return;
   }
@@ -509,17 +696,26 @@ function applyTerminalMessage(payload: ServerMessage) {
         break;
       }
       if (payload.data) {
-        terminal.write(remapInvisibleColors(decodeChunk(payload.data)));
+        const data = payload.data;
+        await enqueueTerminalTask(`${reason}:data`, async () => {
+          await writeTerminalRaw(remapInvisibleColors(decodeChunk(data)));
+        });
       }
       break;
     case 'exit':
       if (payload.data) {
-        terminal.writeln(`\r\n${payload.data}`);
+        const data = payload.data;
+        await enqueueTerminalTask(`${reason}:exit`, async () => {
+          await writelnTerminalRaw(`\r\n${data}`);
+        });
       }
       break;
     case 'error':
       if (payload.data) {
-        terminal.writeln(`\r\n错误: ${payload.data}`);
+        const data = payload.data;
+        await enqueueTerminalTask(`${reason}:error`, async () => {
+          await writelnTerminalRaw(`\r\n错误: ${data}`);
+        });
       }
       break;
     case 'metadata':
@@ -546,18 +742,22 @@ function scheduleInitialViewportRepair(reason: string, delay = 48) {
   }, delay);
 }
 
-function flushPendingTerminalMessages(reason: string) {
-  if (!terminal || !initialViewportReady || pendingTerminalMessages.length === 0) {
-    return;
+async function flushPendingTerminalMessages(reason: string) {
+  if (!terminal || pendingTerminalMessages.length === 0) {
+    return 0;
   }
 
+  setRestorePhase('replaying', reason);
   const buffered = pendingTerminalMessages.splice(0, pendingTerminalMessages.length);
+  updateLiveBufferedCount();
 
   for (const message of buffered) {
-    applyTerminalMessage(message);
+    await applyTerminalMessage(message, `${reason}-replay`);
   }
 
+  updateLiveBufferedCount();
   scheduleInitialViewportRepair(`${reason}-flush`);
+  return buffered.length;
 }
 
 function dispatchResizeToServer(
@@ -677,22 +877,58 @@ function commitTerminalSize(options: TerminalSizeSyncOptions = {}) {
   }
 }
 
-function finalizeInitialViewport(reason: string) {
+async function runInitialViewportRestore(reason: string) {
   if (!terminal || initialViewportReady || !isContainerVisible()) {
     return;
   }
 
-  const restoredSource = restorePreferredSnapshotIfAvailable();
-  if (!restoredSource) {
-    restoreTerminalModesIfAvailable();
+  setRestorePhase('restoring', reason);
+  updateSnapshotDebugState();
+  logRestoreTrace('initial-restore-start', { reason });
+
+  const restoredSource = await restorePreferredSnapshotIfAvailable();
+  setRestoreSource(restoredSource);
+  if (restoredSource === 'none') {
+    await restoreTerminalModesIfAvailable();
   }
+
+  while (pendingTerminalMessages.length > 0) {
+    await flushPendingTerminalMessages(reason);
+  }
+
   initialViewportReady = true;
+  setRestorePhase('settled', reason);
+  updateLiveBufferedCount();
+  logRestoreTrace('initial-restore-settled', { reason, restoredSource });
 
-  flushPendingTerminalMessages(reason);
+  scheduleInitialViewportRepair(
+    restoredSource !== 'none' ? `${restoredSource}-snapshot-restored` : reason
+  );
+}
 
-  if (restoredSource || pendingTerminalMessages.length === 0) {
-    scheduleInitialViewportRepair(restoredSource ? `${restoredSource}-snapshot-restored` : reason);
+function finalizeInitialViewport(reason: string) {
+  if (!terminal || initialViewportReady || !isContainerVisible()) {
+    return;
   }
+  if (initialRestorePromise) {
+    logRestoreTrace('initial-restore-already-running', { reason });
+    return;
+  }
+
+  initialRestorePromise = runInitialViewportRestore(reason)
+    .catch(error => {
+      console.warn('[Terminal Restore] Initial restore failed', {
+        sessionId: props.tab.id,
+        reason,
+        error,
+      });
+      setRestorePhase('idle', `${reason}-failed`);
+      logRestoreTrace('initial-restore-failed', { reason, error });
+    })
+    .finally(() => {
+      initialRestorePromise = null;
+      flushDeferredViewportRefresh();
+    });
 }
 
 function handleMessage(payload: ServerMessage) {
@@ -702,25 +938,38 @@ function handleMessage(payload: ServerMessage) {
 
   if (payload.type === 'modes') {
     pendingTerminalModes = cloneTerminalModesSnapshot(payload.modes);
+    updateSnapshotDebugState();
     return;
   }
 
   if (payload.type === 'snapshot' && payload.snapshot) {
     pendingServerSnapshot = payload.snapshot;
+    updateSnapshotDebugState();
     if (initialViewportReady) {
-      if (restoreServerSnapshotIfAvailable()) {
+      void restoreServerSnapshotIfAvailable().then(restored => {
+        if (!restored) {
+          return;
+        }
+        setRestoreSource('server');
+        logRestoreTrace('live-server-snapshot-restored', {
+          reason: 'server-snapshot-live',
+        });
         scheduleInitialViewportRepair('server-snapshot-live');
-      }
+      });
     }
     return;
   }
 
   if (payload.type === 'replay-complete') {
+    restoreDebugState.replayCompleteAt = Date.now();
+    publishRestoreDebugState();
+    logRestoreTrace('replay-complete');
     if (!initialViewportReady) {
       finalizeInitialViewport('replay-complete');
     } else {
-      flushPendingTerminalMessages('replay-complete');
-      scheduleInitialViewportRepair('replay-complete');
+      void flushPendingTerminalMessages('replay-complete').then(() => {
+        scheduleInitialViewportRepair('replay-complete');
+      });
     }
     return;
   }
@@ -730,10 +979,11 @@ function handleMessage(payload: ServerMessage) {
       pendingTerminalMessages.shift();
     }
     pendingTerminalMessages.push(payload);
+    updateLiveBufferedCount();
     return;
   }
 
-  applyTerminalMessage(payload);
+  void applyTerminalMessage(payload, 'live');
 }
 
 function decodeChunk(chunk: string) {
@@ -907,6 +1157,14 @@ function refreshTerminalViewport(
   }
 
   let forceServerResize = options.forceServerResize === true;
+  if (isRestoreBlockingRefresh()) {
+    deferredViewportRefresh = {
+      reason,
+      options: { ...options },
+    };
+    logRestoreTrace('refresh-deferred', { reason });
+    return;
+  }
 
   const runRefresh = () => {
     if (!terminal || !isContainerVisible()) {
@@ -1006,6 +1264,9 @@ function installDebugForceRefreshHook() {
     if (!terminal || !containerRef.value || !isContainerVisible()) {
       return false;
     }
+    logRestoreTrace('debug-force-refresh', {
+      note: 'force refresh redraws the viewport and re-syncs the server terminal size',
+    });
     syncTerminalSize({
       forceServerResize: true,
       serverSync: 'immediate',
@@ -1031,6 +1292,14 @@ function installDebugForceRefreshHook() {
 }
 
 onMounted(() => {
+  isDisposed = false;
+  restoreDebugState.mountStartedAt = Date.now();
+  restoreDebugState.replayCompleteAt = 0;
+  restoreDebugState.settledAt = 0;
+  replayBufferedMessagesResult = null;
+  setRestorePhase('idle', 'mount');
+  setRestoreSource('none');
+
   // 获取当前选择的终端主题
   const selectedTheme = activeTerminalTheme.value;
   // 获取当前的字体设置
@@ -1239,6 +1508,7 @@ onMounted(() => {
 
   pendingFrontendSnapshot = terminalStore.getSerializedSnapshot(props.tab.id) ?? null;
   pendingServerSnapshot = terminalStore.getLatestServerSnapshot(props.tab.id) ?? null;
+  updateSnapshotDebugState();
 
   props.emitter.on(props.tab.id, handleMessage);
   props.emitter.on('terminal-resize-all', handleTerminalResizeAll);
@@ -1250,7 +1520,9 @@ onMounted(() => {
 
   // Replay any buffered messages that were received while this component was unmounted
   // This ensures no data is lost when switching between projects
-  terminalStore.replayBufferedMessages(props.tab.id);
+  replayBufferedMessagesResult = terminalStore.replayBufferedMessages(props.tab.id);
+  updateReplayDebugState(replayBufferedMessagesResult);
+  logRestoreTrace('mount-replayed-buffered-messages', replayBufferedMessagesResult ?? {});
   requestSnapshot('mount');
 });
 
@@ -1261,6 +1533,12 @@ function handleTerminalBlurEvent() {
 // 处理终端激活事件，首次访问时滚动到底部
 function handleTerminalActivated() {
   if (!terminal || !fitAddon) return;
+
+  if (isRestoreBlockingRefresh()) {
+    logRestoreTrace('terminal-activated-deferred');
+    scheduleInitialViewportRepair('terminal-activated');
+    return;
+  }
 
   refreshTerminalViewport('terminal-activated');
   requestSnapshot('activate');
@@ -1287,6 +1565,7 @@ function handleTerminalActivated() {
 }
 
 onBeforeUnmount(() => {
+  isDisposed = true;
   persistFrontendSnapshot();
   props.emitter.off(props.tab.id, handleMessage);
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
@@ -1314,15 +1593,20 @@ onBeforeUnmount(() => {
   }
   clearPendingServerResize();
   initialViewportReady = false;
+  initialRestorePromise = null;
+  terminalTaskQueue = Promise.resolve();
+  deferredViewportRefresh = null;
   lastReportedCols = 0;
   lastReportedRows = 0;
   pendingTerminalMessages.length = 0;
+  updateLiveBufferedCount();
   pendingServerSnapshot = null;
   pendingFrontendSnapshot = null;
   pendingTerminalModes = null;
   if (typeof window !== 'undefined') {
     const debugWindow = window as TerminalDebugWindow;
     debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);
+    debugWindow[TERMINAL_RESTORE_DEBUG_REGISTRY]?.delete(props.tab.id);
   }
   serializeAddon?.dispose();
   serializeAddon = null;
