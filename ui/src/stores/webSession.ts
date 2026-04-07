@@ -39,7 +39,7 @@ type WireEvent = {
   rid2?: string;
   pid2?: string;
   ts: number;
-  p?: Record<string, any>;
+  p?: Record<string, unknown>;
 };
 
 type WireFrame = {
@@ -49,7 +49,7 @@ type WireFrame = {
   sid?: string;
   ts: number;
   op?: string;
-  p?: any;
+  p?: unknown;
   ok?: number;
   s?: WireSession;
   h?: {
@@ -77,7 +77,7 @@ export interface WebSessionToolBlock {
 export interface WebSessionBlock {
   key: string;
   id: string;
-  kind: 'user' | 'assistant' | 'system';
+  kind: 'user' | 'assistant' | 'system' | 'tool';
   text: string;
   timestamp: number;
   attachments: Array<{
@@ -86,7 +86,7 @@ export interface WebSessionBlock {
     mime?: string;
     size?: number;
   }>;
-  tools: WebSessionToolBlock[];
+  tool?: WebSessionToolBlock;
   level?: 'info' | 'warn' | 'error';
   done?: boolean;
 }
@@ -184,6 +184,13 @@ function isWorkingPhase(phase: WebSessionLiveState['phase']) {
   return phase === 'starting' || phase === 'thinking' || phase === 'tool';
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
 export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
   const eventsBySession = ref<Record<string, WireEvent[]>>({});
@@ -203,8 +210,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pending = new Map<
     string,
     {
-      resolve: (value: any) => void;
-      reject: (reason?: any) => void;
+      resolve: (value: WireFrame) => void;
+      reject: (reason?: unknown) => void;
     }
   >();
   const seenSeqBySession = new Map<string, Set<number>>();
@@ -715,7 +722,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     });
   }
 
-  async function sendCommand(op: string, sessionId: string, payload: Record<string, any> = {}) {
+  async function sendCommand(op: string, sessionId: string, payload: Record<string, unknown> = {}) {
     await openSocket();
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       throw new Error('websocket is not connected');
@@ -934,101 +941,144 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function buildBlocks(sessionId: string): WebSessionBlock[] {
     const blocks: WebSessionBlock[] = [];
-    const messageIndex = new Map<string, number>();
-    const getAssistantBlock = (messageId: string, timestamp: number) => {
-      const existingIndex = messageIndex.get(messageId);
-      if (existingIndex != null) {
-        return blocks[existingIndex];
-      }
-      const block: WebSessionBlock = {
-        key: `assistant:${messageId}`,
+    const toolIndex = new Map<string, number>();
+    const lastAssistantBlockIndexByMessageId = new Map<string, number>();
+    let openAssistantMessageId = '';
+    let openAssistantBlockIndex = -1;
+
+    const closeAssistantTextSegment = () => {
+      openAssistantMessageId = '';
+      openAssistantBlockIndex = -1;
+    };
+
+    const appendBlock = (block: WebSessionBlock) => {
+      blocks.push(block);
+      return block;
+    };
+
+    const createAssistantTextBlock = (messageId: string, timestamp: number) => {
+      const block = appendBlock({
+        key: `assistant:${messageId}:${blocks.length}`,
         id: messageId,
         kind: 'assistant',
         text: '',
         timestamp,
         attachments: [],
-        tools: [],
         done: false,
-      };
-      messageIndex.set(messageId, blocks.length);
-      blocks.push(block);
+      });
+      openAssistantMessageId = messageId;
+      openAssistantBlockIndex = blocks.length - 1;
+      lastAssistantBlockIndexByMessageId.set(messageId, openAssistantBlockIndex);
+      return block;
+    };
+
+    const ensureToolBlock = (
+      toolId: string,
+      timestamp: number,
+      payload: Record<string, unknown>,
+      initialStatus: WebSessionToolBlock['status']
+    ) => {
+      const existingIndex = toolIndex.get(toolId);
+      if (existingIndex != null) {
+        return blocks[existingIndex];
+      }
+
+      const block = appendBlock({
+        key: `tool:${toolId}`,
+        id: toolId,
+        kind: 'tool',
+        text: '',
+        timestamp,
+        attachments: [],
+        tool: {
+          id: toolId,
+          name: String(payload.name ?? 'Tool'),
+          kind: typeof payload.kind === 'string' ? payload.kind : undefined,
+          input: payload.in,
+          output: typeof payload.out === 'string' ? payload.out : undefined,
+          meta: asRecord(payload.meta),
+          status: initialStatus,
+        },
+      });
+      toolIndex.set(toolId, blocks.length - 1);
       return block;
     };
 
     (eventsBySession.value[sessionId] ?? []).forEach(event => {
       const payload = event.p ?? {};
+      if (event.tp !== 'txt_d') {
+        closeAssistantTextSegment();
+      }
+
       switch (event.tp) {
         case 'msg_u': {
           const mid = String(payload.mid ?? event.id);
-          const block: WebSessionBlock = {
+          appendBlock({
             key: `user:${mid}`,
             id: mid,
             kind: 'user',
             text: String(payload.txt ?? ''),
             timestamp: event.ts,
             attachments: Array.isArray(payload.atts)
-              ? payload.atts.map((item: any) => ({
+              ? payload.atts.map((item: Record<string, unknown>) => ({
                   id: String(item.id ?? ''),
                   name: String(item.name ?? ''),
                   mime: typeof item.mime === 'string' ? item.mime : undefined,
                   size: typeof item.sz === 'number' ? item.sz : undefined,
                 }))
               : [],
-            tools: [],
-          };
-          messageIndex.set(mid, blocks.length);
-          blocks.push(block);
+          });
           break;
         }
         case 'msg_a_st': {
-          const mid = String(payload.mid ?? event.pid2 ?? event.id);
-          getAssistantBlock(mid, event.ts);
           break;
         }
         case 'txt_d': {
           const mid = String(payload.mid ?? event.pid2 ?? event.id);
-          const block = getAssistantBlock(mid, event.ts);
+          const block =
+            openAssistantMessageId === mid && openAssistantBlockIndex >= 0
+              ? blocks[openAssistantBlockIndex]
+              : createAssistantTextBlock(mid, event.ts);
           block.text += String(payload.txt ?? '');
           break;
         }
         case 'txt_end': {
           const mid = String(payload.mid ?? event.pid2 ?? event.id);
-          const block = getAssistantBlock(mid, event.ts);
-          block.done = true;
+          const blockIndex = lastAssistantBlockIndexByMessageId.get(mid);
+          if (blockIndex != null) {
+            blocks[blockIndex].done = true;
+          }
           break;
         }
         case 'tool_st': {
-          const mid = String(event.pid2 ?? '');
-          const block = getAssistantBlock(mid || `tool-parent-${event.id}`, event.ts);
-          block.tools.push({
-            id: String(payload.tid ?? event.id),
-            name: String(payload.name ?? 'Tool'),
-            kind: typeof payload.kind === 'string' ? payload.kind : undefined,
-            input: payload.in,
-            meta: typeof payload.meta === 'object' && payload.meta ? payload.meta : undefined,
-            status: 'running',
-          });
+          const toolId = String(payload.tid ?? event.id);
+          ensureToolBlock(toolId, event.ts, payload, 'running');
           break;
         }
         case 'tool_end': {
-          const mid = String(event.pid2 ?? '');
-          const block = getAssistantBlock(mid || `tool-parent-${event.id}`, event.ts);
           const toolId = String(payload.tid ?? event.id);
-          const tool =
-            block.tools.find(item => item.id === toolId) ??
-            (() => {
-              const created: WebSessionToolBlock = {
-                id: toolId,
-                name: String(payload.name ?? 'Tool'),
-                status: 'running',
-              };
-              block.tools.push(created);
-              return created;
-            })();
+          const block = ensureToolBlock(
+            toolId,
+            event.ts,
+            payload,
+            payload.ok === false ? 'error' : 'done'
+          );
+          const tool = block.tool;
+          if (!tool) {
+            break;
+          }
+          tool.name = String(payload.name ?? tool.name ?? 'Tool');
+          if (typeof payload.kind === 'string') {
+            tool.kind = payload.kind;
+          }
+          if (Object.prototype.hasOwnProperty.call(payload, 'in')) {
+            tool.input = payload.in;
+          }
           tool.output = String(payload.out ?? '');
           tool.status = payload.ok === false ? 'error' : 'done';
-          if (typeof payload.meta === 'object' && payload.meta) {
-            tool.meta = payload.meta;
+          const meta = asRecord(payload.meta);
+          if (meta) {
+            tool.meta = meta;
           }
           break;
         }
@@ -1040,7 +1090,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
             text: String(payload.prompt ?? 'Approval required'),
             timestamp: event.ts,
             attachments: [],
-            tools: [],
             level: 'warn',
           });
           break;
@@ -1054,7 +1103,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
             text: action === 'reject' ? 'Approval rejected' : 'Approval granted',
             timestamp: event.ts,
             attachments: [],
-            tools: [],
             level: action === 'reject' ? 'warn' : 'info',
           });
           break;
@@ -1067,7 +1115,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
             text: String(payload.txt ?? ''),
             timestamp: event.ts,
             attachments: [],
-            tools: [],
             level: payload.lvl === 'warn' ? 'warn' : payload.lvl === 'error' ? 'error' : 'info',
           });
           break;
@@ -1080,7 +1127,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
             text: String(payload.msg ?? 'Run failed'),
             timestamp: event.ts,
             attachments: [],
-            tools: [],
             level: 'error',
           });
           break;
@@ -1093,7 +1139,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
             text: 'Run aborted',
             timestamp: event.ts,
             attachments: [],
-            tools: [],
             level: 'info',
           });
           break;

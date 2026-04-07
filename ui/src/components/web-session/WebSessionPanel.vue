@@ -147,19 +147,49 @@
                   :class="`kind-${item.kind}`"
                 >
                   <div class="item-meta">
-                    <span class="item-role">
-                      {{
-                        item.kind === 'user'
-                          ? t('terminal.user')
-                          : item.kind === 'assistant'
-                            ? t('terminal.assistant')
-                            : t('common.info')
-                      }}
-                    </span>
+                    <span class="item-role">{{ timelineRoleLabel(item) }}</span>
                     <span class="item-time">{{ formatTime(item.timestamp) }}</span>
                   </div>
 
-                  <div class="item-bubble" :class="item.level ? `level-${item.level}` : undefined">
+                  <div v-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
+                    <div class="tool-card timeline-tool-card">
+                      <button
+                        type="button"
+                        class="tool-header"
+                        @click="toggleToolExpanded(item.tool.id)"
+                      >
+                        <span class="tool-header-main">
+                          <span class="tool-header-leading">
+                            <span class="tool-kind">{{ toolKindLabel(item.tool) }}</span>
+                            <span class="tool-name">{{ item.tool.name }}</span>
+                          </span>
+                          <span class="tool-state-badge" :class="`state-${item.tool.status}`">
+                            <span class="tool-state-dot"></span>
+                            {{ toolStateLabel(item.tool) }}
+                          </span>
+                        </span>
+                        <span v-if="toolPreview(item.tool)" class="tool-preview">{{
+                          toolPreview(item.tool)
+                        }}</span>
+                      </button>
+                      <div v-if="isToolExpanded(item.tool.id)" class="tool-body">
+                        <div v-if="item.tool.input" class="tool-section">
+                          <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
+                          <pre class="tool-code">{{ stringifyValue(item.tool.input) }}</pre>
+                        </div>
+                        <div v-if="item.tool.output" class="tool-section">
+                          <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
+                          <pre class="tool-code">{{ item.tool.output }}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    v-else
+                    class="item-bubble"
+                    :class="item.level ? `level-${item.level}` : undefined"
+                  >
                     <div
                       v-if="item.text"
                       class="item-text chat-markdown"
@@ -207,40 +237,6 @@
                           <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
                         </button>
                       </span>
-                    </div>
-
-                    <div v-if="item.tools.length > 0" class="tool-list">
-                      <div v-for="tool in item.tools" :key="tool.id" class="tool-card">
-                        <button
-                          type="button"
-                          class="tool-header"
-                          @click="toggleToolExpanded(tool.id)"
-                        >
-                          <span class="tool-header-main">
-                            <span class="tool-header-leading">
-                              <span class="tool-kind">{{ toolKindLabel(tool) }}</span>
-                              <span class="tool-name">{{ tool.name }}</span>
-                            </span>
-                            <span class="tool-state-badge" :class="`state-${tool.status}`">
-                              <span class="tool-state-dot"></span>
-                              {{ toolStateLabel(tool) }}
-                            </span>
-                          </span>
-                          <span v-if="toolPreview(tool)" class="tool-preview">{{
-                            toolPreview(tool)
-                          }}</span>
-                        </button>
-                        <div v-if="isToolExpanded(tool.id)" class="tool-body">
-                          <div v-if="tool.input" class="tool-section">
-                            <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
-                            <pre class="tool-code">{{ stringifyValue(tool.input) }}</pre>
-                          </div>
-                          <div v-if="tool.output" class="tool-section">
-                            <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
-                            <pre class="tool-code">{{ tool.output }}</pre>
-                          </div>
-                        </div>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -652,6 +648,7 @@ import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import {
   useWebSessionStore,
+  type WebSessionBlock,
   type WebSessionLiveState,
   type WebSessionPendingInput,
 } from '@/stores/webSession';
@@ -912,10 +909,10 @@ const tabTitleStyle = computed(() => ({
 const timelineContentVersion = computed(() =>
   blocks.value
     .map(block => {
-      const toolVersion = block.tools
-        .map(tool => `${tool.id}:${tool.status}:${String(tool.output ?? '').length}`)
-        .join(',');
-      return `${block.key}:${block.text.length}:${block.attachments.length}:${toolVersion}:${block.done ? 1 : 0}`;
+      const toolVersion = block.tool
+        ? `${block.tool.id}:${block.tool.status}:${String(block.tool.output ?? '').length}`
+        : '';
+      return `${block.key}:${block.kind}:${block.text.length}:${block.attachments.length}:${toolVersion}:${block.done ? 1 : 0}`;
     })
     .join('|')
 );
@@ -1454,6 +1451,19 @@ function toolStateLabel(tool: { status: 'running' | 'done' | 'error' }) {
     return t('webSession.toolError');
   }
   return t('webSession.toolRunning');
+}
+
+function timelineRoleLabel(item: WebSessionBlock) {
+  if (item.kind === 'user') {
+    return t('terminal.user');
+  }
+  if (item.kind === 'assistant') {
+    return t('terminal.assistant');
+  }
+  if (item.kind === 'tool') {
+    return item.tool?.name || t('webSession.toolKindDefault');
+  }
+  return t('common.info');
 }
 
 async function initializeProjectSessions(projectId: string) {
@@ -3220,6 +3230,10 @@ onBeforeUnmount(() => {
   align-items: flex-start;
 }
 
+.timeline-item.kind-tool {
+  align-items: flex-start;
+}
+
 .item-meta {
   display: flex;
   gap: 8px;
@@ -3350,6 +3364,11 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
+.timeline-tool-shell {
+  width: min(860px, 84%);
+  max-width: 100%;
+}
+
 .tool-list {
   display: flex;
   flex-direction: column;
@@ -3362,6 +3381,10 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
   overflow: hidden;
+}
+
+.timeline-tool-card {
+  width: 100%;
 }
 
 .tool-header {
