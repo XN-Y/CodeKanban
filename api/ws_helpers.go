@@ -10,5 +10,6 @@ type wsMessage struct {
 	Cols     int                             `json:"cols,omitempty"`
 	Rows     int                             `json:"rows,omitempty"`
 	Snapshot *terminal.TerminalStateSnapshot `json:"snapshot,omitempty"`
+	Modes    *terminal.TerminalModesSnapshot `json:"modes,omitempty"`
 	Metadata *terminal.SessionMetadata       `json:"metadata,omitempty"`
 }

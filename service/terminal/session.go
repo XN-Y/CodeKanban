@@ -71,6 +71,7 @@ const (
 	StreamEventData     StreamEventType = "data"
 	StreamEventExit     StreamEventType = "exit"
 	StreamEventMetadata StreamEventType = "metadata"
+	StreamEventModes    StreamEventType = "modes"
 )
 
 type StreamEvent struct {
@@ -78,6 +79,7 @@ type StreamEvent struct {
 	Data     []byte
 	Err      error
 	Metadata *SessionMetadata
+	Modes    *TerminalModesSnapshot
 }
 
 type SessionMetadata struct {
@@ -114,6 +116,14 @@ type TerminalStateSnapshot struct {
 	CursorFGDefault bool                  `json:"cursorFgDefault,omitempty"`
 	CursorBGDefault bool                  `json:"cursorBgDefault,omitempty"`
 	CapturedAt      time.Time             `json:"capturedAt,omitempty"`
+}
+
+type TerminalModesSnapshot struct {
+	MouseTracking   string `json:"mouseTracking,omitempty"`
+	MouseSGR        bool   `json:"mouseSgr,omitempty"`
+	FocusReporting  bool   `json:"focusReporting,omitempty"`
+	BracketedPaste  bool   `json:"bracketedPaste,omitempty"`
+	AlternateScreen string `json:"alternateScreen,omitempty"`
 }
 
 type SessionStream struct {
@@ -216,6 +226,10 @@ type Session struct {
 	scrollbackTimestamps []time.Time
 	scrollbackSize       int
 	scrollbackLimit      int
+
+	terminalModesMu      sync.RWMutex
+	terminalModes        terminalModesState
+	terminalModesPartial string
 
 	terminalStateMu         sync.Mutex
 	terminalState           vt10x.Terminal
@@ -429,9 +443,13 @@ func (s *Session) consumePTY(ctx context.Context) {
 			s.Touch()
 			normalized := s.NormalizeOutput(buffer[:n])
 			if len(normalized) > 0 {
+				modeSnapshot, modeChanged := s.updateTerminalModes(normalized)
 				s.appendScrollback(normalized)
 				s.appendTerminalState(normalized)
 				s.broadcast(StreamEvent{Type: StreamEventData, Data: normalized})
+				if modeChanged {
+					s.broadcast(StreamEvent{Type: StreamEventModes, Modes: modeSnapshot})
+				}
 				s.enqueueAssistantOutput(normalized)
 			}
 		}

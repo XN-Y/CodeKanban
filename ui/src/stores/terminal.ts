@@ -4,11 +4,13 @@ import EventEmitter from 'eventemitter3';
 import Apis, { alovaInstance, urlBase } from '@/api';
 import { extractItem } from '@/api/response';
 import type { TerminalCreateInputBody } from '@/api/globals';
-import type { Task, TerminalSession } from '@/types/models';
+import type { Task, TerminalModesSnapshot, TerminalSession } from '@/types/models';
 import { resolveWsUrl } from '@/utils/ws';
 import { useProjectStore } from '@/stores/project';
 import { useTaskStore } from '@/stores/task';
 import { taskActions } from '@/composables/useTaskActions';
+
+export type { TerminalModesSnapshot } from '@/types/models';
 
 export type ClientStatus = 'connecting' | 'ready' | 'closed' | 'error';
 
@@ -49,11 +51,12 @@ export type TerminalSerializedSnapshot = {
 };
 
 export type ServerMessage = {
-  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata' | 'snapshot' | 'replay-complete';
+  type: 'ready' | 'data' | 'exit' | 'error' | 'metadata' | 'modes' | 'snapshot' | 'replay-complete';
   data?: string;
   cols?: number;
   rows?: number;
   snapshot?: TerminalStateSnapshot;
+  modes?: TerminalModesSnapshot;
   metadata?: {
     title?: string;
     processPid?: number;
@@ -97,6 +100,21 @@ const LAST_ACTIVE_TAB_STORAGE_KEY = 'kanban-terminal-last-active';
 
 const storedTabOrders = loadStoredTabOrders();
 const storedActiveTabs = loadStoredActiveTabs();
+
+function cloneTerminalModesSnapshot(
+  modes?: TerminalModesSnapshot | null
+): TerminalModesSnapshot | undefined {
+  if (!modes) {
+    return undefined;
+  }
+  return {
+    mouseTracking: modes.mouseTracking,
+    mouseSgr: modes.mouseSgr,
+    focusReporting: modes.focusReporting,
+    bracketedPaste: modes.bracketedPaste,
+    alternateScreen: modes.alternateScreen,
+  };
+}
 
 function loadStoredTabOrders() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -786,6 +804,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         ...session,
         projectId: immutableProjectId,
         taskId: updatedTaskId ?? undefined,
+        terminalModes: session.terminalModes ?? existing.tab.terminalModes,
       };
       // 用 splice 替换以触发 Vue 响应式更新
       const bucket = tabStore.get(immutableProjectId);
@@ -817,6 +836,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       ...session,
       projectId: resolvedProjectId,
       clientStatus: 'connecting',
+      terminalModes: cloneTerminalModesSnapshot(session.terminalModes),
     };
     // 如果指定了 insertAfterSessionId，在其后插入；否则添加到末尾
     if (options?.insertAfterSessionId) {
@@ -895,6 +915,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     updateSessionTaskMapping(sessionId, nextTaskId ?? undefined);
   }
 
+  function updateTabTerminalModes(sessionId: string, modes?: TerminalModesSnapshot) {
+    const record = sessionIndex.get(sessionId);
+    if (!record) return;
+
+    const bucket = tabStore.get(record.projectId);
+    if (!bucket) return;
+
+    const index = bucket.findIndex(t => t.id === sessionId);
+    if (index === -1) return;
+
+    bucket[index] = {
+      ...bucket[index],
+      terminalModes: cloneTerminalModesSnapshot(modes),
+    };
+    record.tab = bucket[index];
+  }
+
   function connect(tab: TerminalTabState) {
     if (!isProjectConnectionActive(tab.projectId)) {
       return;
@@ -934,6 +971,8 @@ export const useTerminalStore = defineStore('terminal', () => {
           updateTabStatus(tab.id, 'closed');
         } else if (payload.type === 'error') {
           updateTabStatus(tab.id, 'error');
+        } else if (payload.type === 'modes') {
+          updateTabTerminalModes(tab.id, payload.modes);
         } else if (payload.type === 'metadata' && payload.metadata) {
           // Update tab metadata in realtime
           updateTabMetadata(tab.id, payload.metadata);
