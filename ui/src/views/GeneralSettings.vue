@@ -90,6 +90,12 @@
               </span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.showWebSessionReasoning')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="showWebSessionReasoningValue" />
+              <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -785,6 +791,7 @@ const {
   terminalQuickActions,
   editorSettings,
   confirmBeforeTerminalClose,
+  showWebSessionReasoning,
   terminalThemeId,
   terminalFont,
   terminalWebGLRenderer,
@@ -1390,6 +1397,11 @@ const defaultTerminalSnapshotIntervalValue = computed({
 const defaultTerminalSnapshotZlibCompressionValue = computed({
   get: () => defaultTerminalSnapshotZlibCompression.value,
   set: (value: boolean) => settingsStore.updateDefaultTerminalSnapshotZlibCompression(value),
+});
+
+const showWebSessionReasoningValue = computed({
+  get: () => showWebSessionReasoning.value,
+  set: value => settingsStore.updateShowWebSessionReasoning(value),
 });
 
 // 切换终端时发送 resize 指令（与 TerminalPanel.vue 共享同一个 localStorage key）

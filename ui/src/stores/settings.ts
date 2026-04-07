@@ -195,6 +195,7 @@ interface GeneralSettings {
   terminalQuickActions: TerminalQuickAction[];
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
+  showWebSessionReasoning: boolean;
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
@@ -205,6 +206,7 @@ interface GeneralSettings {
 }
 
 const STORAGE_KEY = 'general_settings';
+const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 
@@ -260,6 +262,7 @@ const defaultSettings: GeneralSettings = {
   terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
+  showWebSessionReasoning: false,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
@@ -284,6 +287,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalQuickActions = computed(() => settings.value.terminalQuickActions);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
+  const showWebSessionReasoning = computed(() => settings.value.showWebSessionReasoning);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
@@ -417,6 +421,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.confirmBeforeTerminalClose = value;
   }
 
+  function updateShowWebSessionReasoning(value: boolean) {
+    settings.value.showWebSessionReasoning = value;
+  }
+
   function updateTerminalTheme(themeId: string) {
     settings.value.terminalThemeId = themeId;
   }
@@ -522,6 +530,7 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalQuickActions,
     editorSettings,
     confirmBeforeTerminalClose,
+    showWebSessionReasoning,
     terminalThemeId,
     terminalFont,
     terminalWebGLRenderer,
@@ -542,6 +551,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTerminalQuickActions,
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
+    updateShowWebSessionReasoning,
     updateTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
@@ -592,6 +602,10 @@ function loadSettings(): GeneralSettings {
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose:
           parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
+        showWebSessionReasoning: sanitizeShowWebSessionReasoning(
+          parsed.showWebSessionReasoning,
+          loadLegacyShowWebSessionReasoning()
+        ),
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
@@ -634,6 +648,7 @@ function cloneDefaultSettings(): GeneralSettings {
     terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
+    showWebSessionReasoning: defaultSettings.showWebSessionReasoning,
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
     terminalDisplayMode: defaultSettings.terminalDisplayMode,
@@ -666,6 +681,26 @@ function sanitizeTerminalLimit(value: number | undefined) {
     return DEFAULT_TERMINALS_PER_PROJECT_LIMIT;
   }
   return Math.min(Math.max(Math.round(parsed), 1), 24);
+}
+
+function sanitizeShowWebSessionReasoning(value: unknown, fallback = false) {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  return fallback;
+}
+
+function loadLegacyShowWebSessionReasoning() {
+  try {
+    const stored = localStorage.getItem(LEGACY_WEB_SESSION_REASONING_STORAGE_KEY);
+    if (stored === null) {
+      return defaultSettings.showWebSessionReasoning;
+    }
+    return JSON.parse(stored) === true;
+  } catch (error) {
+    console.warn('Failed to load legacy web session reasoning setting.', error);
+    return defaultSettings.showWebSessionReasoning;
+  }
 }
 
 function sanitizeEditorSettings(value?: Partial<EditorSettings>): EditorSettings {
