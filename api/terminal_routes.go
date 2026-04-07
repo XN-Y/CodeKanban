@@ -615,9 +615,6 @@ func (c *terminalController) serveWebsocket(w http.ResponseWriter, r *http.Reque
 	}); err != nil {
 		return
 	}
-	if err := c.sendRenderModeAck(renderState, mirrorState, send); err != nil {
-		return
-	}
 
 	if modes := session.TerminalModesSnapshot(); modes != nil {
 		if err := send(wsMessage{Type: "modes", Modes: modes}); err != nil {
