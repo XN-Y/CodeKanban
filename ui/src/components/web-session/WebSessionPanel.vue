@@ -111,16 +111,6 @@
 
             <div class="header-actions">
               <n-button
-                v-if="canToggleReasoning"
-                secondary
-                size="small"
-                class="reasoning-toggle-button"
-                :type="showReasoning ? 'primary' : 'default'"
-                @click="showReasoning = !showReasoning"
-              >
-                {{ showReasoning ? t('webSession.hideReasoning') : t('webSession.showReasoning') }}
-              </n-button>
-              <n-button
                 secondary
                 size="small"
                 class="new-session-button"
@@ -190,6 +180,99 @@
                         <div v-if="item.tool.output" class="tool-section">
                           <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
                           <pre class="tool-code">{{ item.tool.output }}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    v-else-if="item.kind === 'system' && item.detail"
+                    class="timeline-history-card-shell"
+                  >
+                    <div
+                      class="approval-card history-interaction-card"
+                      :class="historyInteractionCardClass(item)"
+                    >
+                      <div class="approval-card-header">
+                        <span class="approval-badge" :class="historyInteractionBadgeClass(item)">
+                          {{ historyInteractionTitle(item) }}
+                        </span>
+                        <span class="approval-time">{{ formatTime(item.timestamp) }}</span>
+                      </div>
+
+                      <div
+                        v-if="historyInteractionPrompt(item)"
+                        class="approval-prompt history-interaction-prompt"
+                      >
+                        {{ historyInteractionPrompt(item) }}
+                      </div>
+
+                      <div
+                        v-if="item.detail.questions?.length"
+                        class="history-question-list user-input-card"
+                      >
+                        <div
+                          v-for="question in item.detail.questions"
+                          :key="`${item.id}:${question.id}`"
+                          class="user-input-question history-question-card"
+                        >
+                          <div class="user-input-question-header">
+                            {{ historyQuestionTitle(question) }}
+                          </div>
+                          <div
+                            v-if="
+                              question.header &&
+                              question.question &&
+                              question.header !== question.question
+                            "
+                            class="user-input-question-copy"
+                          >
+                            {{ question.question }}
+                          </div>
+                          <div v-if="question.options.length > 0" class="history-option-list">
+                            <div
+                              v-for="option in question.options"
+                              :key="`${question.id}:${option.label}`"
+                              class="history-option-row"
+                            >
+                              <div class="history-option-label">{{ option.label }}</div>
+                              <div v-if="option.description" class="history-option-description">
+                                {{ option.description }}
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            v-if="question.isOther || question.options.length === 0"
+                            class="history-question-note"
+                          >
+                            {{
+                              question.isSecret
+                                ? t('webSession.historySecretInput')
+                                : t('webSession.historyFreeformInput')
+                            }}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div
+                        v-if="item.detail.answers?.length"
+                        class="history-answer-list user-input-card"
+                      >
+                        <div
+                          v-for="answer in item.detail.answers"
+                          :key="`${item.id}:${answer.id}`"
+                          class="user-input-question history-answer-card"
+                        >
+                          <div class="user-input-question-header">{{ answer.label }}</div>
+                          <div class="history-answer-values">
+                            <span
+                              v-for="value in formatHistoryAnswerValues(answer)"
+                              :key="`${answer.id}:${value}`"
+                              class="history-answer-chip"
+                            >
+                              {{ value }}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -287,34 +370,67 @@
                     </div>
                   </button>
 
-                  <div v-if="pendingApproval" class="approval-card">
+                  <div
+                    v-if="pendingApproval"
+                    class="approval-card"
+                    :class="{ 'is-stale': pendingApproval.stale }"
+                  >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
-                      <span class="approval-time">{{ formatTime(pendingApproval.requestedAt) }}</span>
+                      <span class="approval-time">{{
+                        formatTime(pendingApproval.requestedAt)
+                      }}</span>
                     </div>
                     <div class="approval-prompt">
                       {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
                     </div>
+                    <div v-if="pendingApproval.stale" class="approval-note">
+                      {{ pendingApproval.recoveryMessage || t('webSession.recoveredRuntimeHint') }}
+                    </div>
                     <div class="approval-actions">
-                      <n-button size="small" type="primary" @click="handleApproval('approve')">
+                      <n-button
+                        size="small"
+                        type="primary"
+                        :disabled="pendingApproval.stale"
+                        @click="handleApproval('approve')"
+                      >
                         {{ t('webSession.approvalApprove') }}
                       </n-button>
-                      <n-button size="small" secondary @click="handleApproval('reject')">
+                      <n-button
+                        size="small"
+                        secondary
+                        :disabled="pendingApproval.stale"
+                        @click="handleApproval('reject')"
+                      >
                         {{ t('webSession.approvalReject') }}
                       </n-button>
-                      <n-button size="small" tertiary @click="handleAbortCurrent">
+                      <n-button
+                        size="small"
+                        tertiary
+                        :disabled="pendingApproval.stale"
+                        @click="handleAbortCurrent"
+                      >
                         {{ t('webSession.stop') }}
                       </n-button>
                     </div>
                   </div>
 
-                  <div v-else-if="pendingUserInput" class="approval-card user-input-card">
+                  <div
+                    v-else-if="pendingUserInput"
+                    class="approval-card user-input-card"
+                    :class="{ 'is-stale': pendingUserInput.stale }"
+                  >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.userInputTitle') }}</span>
-                      <span class="approval-time">{{ formatTime(pendingUserInput.requestedAt) }}</span>
+                      <span class="approval-time">{{
+                        formatTime(pendingUserInput.requestedAt)
+                      }}</span>
                     </div>
                     <div class="approval-prompt">
                       {{ pendingUserInput.prompt || t('webSession.userInputPromptFallback') }}
+                    </div>
+                    <div v-if="pendingUserInput.stale" class="approval-note">
+                      {{ pendingUserInput.recoveryMessage || t('webSession.recoveredRuntimeHint') }}
                     </div>
                     <div
                       v-for="question in pendingUserInput.questions"
@@ -326,7 +442,9 @@
                       </div>
                       <div
                         v-if="
-                          question.header && question.question && question.header !== question.question
+                          question.header &&
+                          question.question &&
+                          question.header !== question.question
                         "
                         class="user-input-question-copy"
                       >
@@ -335,6 +453,7 @@
                       <n-checkbox-group
                         v-if="question.options.length > 0"
                         v-model:value="userInputSelections[question.id]"
+                        :disabled="pendingUserInput.stale"
                         class="user-input-options"
                       >
                         <div
@@ -355,15 +474,26 @@
                         v-model:value="userInputDrafts[question.id]"
                         :type="question.isSecret ? 'password' : 'text'"
                         size="small"
+                        :disabled="pendingUserInput.stale"
                         :show-password-on="question.isSecret ? 'mousedown' : undefined"
                         :placeholder="userInputPlaceholder(question)"
                       />
                     </div>
                     <div class="approval-actions">
-                      <n-button size="small" type="primary" @click="handleUserInputSubmit">
+                      <n-button
+                        size="small"
+                        type="primary"
+                        :disabled="pendingUserInput.stale"
+                        @click="handleUserInputSubmit"
+                      >
                         {{ t('webSession.userInputSubmit') }}
                       </n-button>
-                      <n-button size="small" tertiary @click="handleAbortCurrent">
+                      <n-button
+                        size="small"
+                        tertiary
+                        :disabled="pendingUserInput.stale"
+                        @click="handleAbortCurrent"
+                      >
                         {{ t('webSession.stop') }}
                       </n-button>
                     </div>
@@ -714,6 +844,7 @@ import { useSettingsStore } from '@/stores/settings';
 import {
   useWebSessionStore,
   type WebSessionBlock,
+  type WebSessionHistoryAnswerEntry,
   type WebSessionLiveState,
   type WebSessionPendingInput,
   type WebSessionUserInputQuestion,
@@ -780,7 +911,8 @@ const dialog = useDialog();
 const message = useMessage();
 const { t } = useLocale();
 const { isMobile } = useResponsive();
-const { activeTheme, currentPresetId, confirmBeforeTerminalClose } = storeToRefs(settingsStore);
+const { activeTheme, currentPresetId, confirmBeforeTerminalClose, showWebSessionReasoning } =
+  storeToRefs(settingsStore);
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -805,7 +937,6 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
-const showReasoning = useStorage('kanban-web-show-reasoning', false);
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const viewedEventSeqBySession = ref<Record<string, number>>({});
@@ -859,11 +990,10 @@ const blocks = computed(() =>
 function isReasoningBlock(block: WebSessionBlock) {
   return block.tool?.kind === 'reasoning';
 }
-const canToggleReasoning = computed(
-  () => currentSession.value?.agent === 'codex' || blocks.value.some(isReasoningBlock)
-);
 const visibleBlocks = computed(() =>
-  showReasoning.value ? blocks.value : blocks.value.filter(block => !isReasoningBlock(block))
+  showWebSessionReasoning.value
+    ? blocks.value
+    : blocks.value.filter(block => !isReasoningBlock(block))
 );
 const liveState = computed(() =>
   currentRealSession.value
@@ -875,6 +1005,15 @@ const pendingApproval = computed(() =>
 );
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
+);
+const hasRecoveredRuntimeRequest = computed(() =>
+  Boolean(pendingApproval.value?.stale || pendingUserInput.value?.stale)
+);
+const recoveredRuntimeHint = computed(
+  () =>
+    pendingApproval.value?.recoveryMessage ||
+    pendingUserInput.value?.recoveryMessage ||
+    t('webSession.recoveredRuntimeHint')
 );
 const historyMeta = computed(() =>
   currentRealSession.value
@@ -898,6 +1037,9 @@ const canSend = computed(() => !isRunActive.value && hasDraftContent.value);
 const canStageDuringRun = computed(() => isRunActive.value && hasDraftContent.value);
 const composerPlaceholder = computed(() => t('webSession.inputPlaceholder'));
 const composerHint = computed(() => {
+  if (hasRecoveredRuntimeRequest.value) {
+    return t('webSession.composerHintRecovered');
+  }
   if (pendingApproval.value) {
     return t('webSession.composerHintApproval');
   }
@@ -910,6 +1052,9 @@ const composerHint = computed(() => {
   return t('webSession.composerHintIdle');
 });
 const liveStateLabel = computed(() => {
+  if (hasRecoveredRuntimeRequest.value) {
+    return t('webSession.liveRecovered');
+  }
   switch (liveState.value.phase) {
     case 'starting':
       return t('webSession.liveStarting');
@@ -930,6 +1075,9 @@ const liveStateLabel = computed(() => {
   }
 });
 const liveStateDetail = computed(() => {
+  if (hasRecoveredRuntimeRequest.value) {
+    return recoveredRuntimeHint.value;
+  }
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
   }
@@ -1095,8 +1243,8 @@ function buildDraftTitle(agent: 'claude' | 'codex') {
   const baseAgent = agent === 'claude' ? 'Claude' : 'Codex';
   const projectName = projectStore.currentProject?.name?.trim();
   const baseTitle = projectName ? `${baseAgent} · ${projectName}` : baseAgent;
-  const samePrefixCount = draftSessions.value.filter(session =>
-    session.title === baseTitle || session.title.startsWith(`${baseTitle} `)
+  const samePrefixCount = draftSessions.value.filter(
+    session => session.title === baseTitle || session.title.startsWith(`${baseTitle} `)
   ).length;
   return samePrefixCount > 0 ? `${baseTitle} ${samePrefixCount + 1}` : baseTitle;
 }
@@ -1117,7 +1265,9 @@ function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSess
 function createDraftSession(forceAgent?: 'claude' | 'codex') {
   const source = currentSession.value;
   const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
-  const context = resolveDraftContext(source?.worktreeId ?? projectStore.selectedWorktreeId ?? null);
+  const context = resolveDraftContext(
+    source?.worktreeId ?? projectStore.selectedWorktreeId ?? null
+  );
   const nowIso = new Date().toISOString();
   const draft: DraftSessionTab = {
     id: `draft_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -1747,6 +1897,76 @@ function timelineRoleLabel(item: WebSessionBlock) {
   return t('common.info');
 }
 
+function historyInteractionTitle(item: WebSessionBlock) {
+  switch (item.detail?.type) {
+    case 'approval_request':
+      return t('webSession.approvalTitle');
+    case 'approval_response':
+      return item.detail.action === 'reject'
+        ? t('webSession.historyApprovalRejected')
+        : t('webSession.historyApprovalApproved');
+    case 'user_input_request':
+      return t('webSession.userInputTitle');
+    case 'user_input_response':
+      return t('webSession.historyUserInputSubmitted');
+    default:
+      return t('common.info');
+  }
+}
+
+function historyInteractionPrompt(item: WebSessionBlock) {
+  if (item.detail?.type === 'user_input_request' && item.detail.questions?.length) {
+    return '';
+  }
+  if (item.detail?.type === 'user_input_response' && item.detail.answers?.length) {
+    return '';
+  }
+  return item.detail?.prompt?.trim() || item.text?.trim() || '';
+}
+
+function historyInteractionBadgeClass(item: WebSessionBlock) {
+  switch (item.detail?.type) {
+    case 'approval_request':
+      return 'state-approval-request';
+    case 'approval_response':
+      return item.detail.action === 'reject' ? 'state-approval-reject' : 'state-approval-approve';
+    case 'user_input_request':
+      return 'state-user-input-request';
+    case 'user_input_response':
+      return 'state-user-input-response';
+    default:
+      return '';
+  }
+}
+
+function historyInteractionCardClass(item: WebSessionBlock) {
+  switch (item.detail?.type) {
+    case 'approval_request':
+      return 'type-approval-request';
+    case 'approval_response':
+      return item.detail.action === 'reject' ? 'type-approval-reject' : 'type-approval-approve';
+    case 'user_input_request':
+      return 'type-user-input-request';
+    case 'user_input_response':
+      return 'type-user-input-response';
+    default:
+      return '';
+  }
+}
+
+function historyQuestionTitle(question: WebSessionUserInputQuestion) {
+  return (
+    question.header?.trim() || question.question?.trim() || t('webSession.historyQuestionLabel')
+  );
+}
+
+function formatHistoryAnswerValues(answer: WebSessionHistoryAnswerEntry) {
+  if (answer.masked) {
+    return answer.values.map(() => t('webSession.historyMaskedAnswer'));
+  }
+  return answer.values;
+}
+
 async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
@@ -1866,8 +2086,8 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
     const source = currentSession.value;
     const agent = forceAgent ?? source?.agent ?? selectedAgent.value;
     const worktreeId = isDraftSession(source)
-      ? source.worktreeId ?? undefined
-      : projectStore.selectedWorktreeId ?? source?.worktreeId ?? undefined;
+      ? (source.worktreeId ?? undefined)
+      : (projectStore.selectedWorktreeId ?? source?.worktreeId ?? undefined);
     const session = await webSessionStore.createSession(props.projectId, {
       worktreeId,
       agent,
@@ -1900,8 +2120,7 @@ function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
-  draftReasoningEffort.value =
-    draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
+  draftReasoningEffort.value = draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
   draftWorkflowMode.value = draft.workflowMode;
   draftPermissionLevel.value = draft.permissionLevel;
   showMobileTabSelector.value = false;
@@ -2281,8 +2500,20 @@ function buildUserInputAnswers() {
   return answers;
 }
 
+function formatSessionInteractionError(error: unknown) {
+  const rawMessage = error instanceof Error ? error.message.trim() : '';
+  if (rawMessage.includes('session is not running')) {
+    return t('webSession.recoveredActionExpired');
+  }
+  return rawMessage || t('common.error');
+}
+
 async function handleUserInputSubmit() {
   if (!currentRealSession.value || !pendingUserInput.value) {
+    return;
+  }
+  if (pendingUserInput.value.stale) {
+    message.info(pendingUserInput.value.recoveryMessage || t('webSession.recoveredActionExpired'));
     return;
   }
   const answers = buildUserInputAnswers();
@@ -2305,12 +2536,16 @@ async function handleUserInputSubmit() {
     userInputSelections.value = {};
     userInputDrafts.value = {};
   } catch (error) {
-    message.error(error instanceof Error ? error.message : t('common.error'));
+    message.error(formatSessionInteractionError(error));
   }
 }
 
 async function handleApproval(action: 'approve' | 'reject') {
-  if (!currentRealSession.value) {
+  if (!currentRealSession.value || !pendingApproval.value) {
+    return;
+  }
+  if (pendingApproval.value.stale) {
+    message.info(pendingApproval.value.recoveryMessage || t('webSession.recoveredActionExpired'));
     return;
   }
   try {
@@ -2320,7 +2555,7 @@ async function handleApproval(action: 'approve' | 'reject') {
     }
     await webSessionStore.rejectSession(currentRealSession.value.id);
   } catch (error) {
-    message.error(error instanceof Error ? error.message : t('common.error'));
+    message.error(formatSessionInteractionError(error));
   }
 }
 
@@ -2704,7 +2939,10 @@ function setupTabSorting() {
   }
   if (tabDragSortable.value) {
     if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option('disabled', sessions.value.length <= 1 || draftSessions.value.length > 0);
+      tabDragSortable.value.option(
+        'disabled',
+        sessions.value.length <= 1 || draftSessions.value.length > 0
+      );
       return;
     }
     destroyTabSorting();
@@ -2721,7 +2959,10 @@ function setupTabSorting() {
     dragClass: 'web-session-tab-dragging',
     onEnd: handleTabDragEnd,
   });
-  tabDragSortable.value.option('disabled', sessions.value.length <= 1 || draftSessions.value.length > 0);
+  tabDragSortable.value.option(
+    'disabled',
+    sessions.value.length <= 1 || draftSessions.value.length > 0
+  );
 }
 
 function destroyTabSorting() {
@@ -3685,6 +3926,10 @@ onBeforeUnmount(() => {
   border-style: dashed;
 }
 
+.timeline-history-card-shell {
+  width: min(860px, 100%);
+}
+
 .item-bubble.level-error {
   border-color: color-mix(in srgb, var(--n-error-color) 35%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-error-color) 7%, rgba(255, 255, 255, 0.9));
@@ -4288,6 +4533,32 @@ onBeforeUnmount(() => {
   padding: 11px 12px;
 }
 
+.history-interaction-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.history-interaction-card.type-approval-approve {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: color-mix(in srgb, rgba(16, 185, 129, 0.08) 70%, var(--app-surface-color, #fff));
+}
+
+.history-interaction-card.type-approval-reject {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: color-mix(in srgb, rgba(239, 68, 68, 0.08) 70%, var(--app-surface-color, #fff));
+}
+
+.history-interaction-card.type-user-input-request,
+.history-interaction-card.type-user-input-response {
+  border-color: rgba(15, 118, 110, 0.24);
+}
+
+.approval-card.is-stale {
+  border: 1px dashed color-mix(in srgb, #f79009 40%, var(--n-border-color));
+  background: color-mix(in srgb, #f79009 8%, transparent);
+}
+
 .approval-card-header {
   display: flex;
   align-items: center;
@@ -4305,11 +4576,36 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
+.approval-badge.state-approval-approve {
+  background: #10b981;
+}
+
+.approval-badge.state-approval-reject {
+  background: #ef4444;
+}
+
+.approval-badge.state-user-input-request,
+.approval-badge.state-user-input-response {
+  background: #0f766e;
+}
+
 .approval-prompt {
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.55;
   color: var(--app-text-color, var(--n-text-color-1, #111827));
+  white-space: pre-wrap;
+}
+
+.history-interaction-prompt {
+  margin-top: 0;
+}
+
+.approval-note {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: color-mix(in srgb, var(--n-warning-color, #f79009) 82%, #111827);
   white-space: pre-wrap;
 }
 
@@ -4326,6 +4622,11 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.history-question-list,
+.history-answer-list {
+  gap: 8px;
+}
+
 .user-input-question {
   display: flex;
   flex-direction: column;
@@ -4336,6 +4637,14 @@ onBeforeUnmount(() => {
 .user-input-question + .user-input-question {
   border-top: 1px dashed color-mix(in srgb, var(--n-border-color) 70%, transparent);
   padding-top: 10px;
+}
+
+.history-question-card,
+.history-answer-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%);
 }
 
 .user-input-question-header {
@@ -4371,6 +4680,52 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.45;
   color: var(--n-text-color-3);
+}
+
+.history-option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.history-option-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--n-primary-color) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, transparent);
+}
+
+.history-option-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.history-option-description,
+.history-question-note {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-3);
+}
+
+.history-answer-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-answer-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 14%, transparent);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
 }
 
 .empty-state {

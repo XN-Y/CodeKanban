@@ -75,6 +75,21 @@ export interface WebSessionToolBlock {
   meta?: Record<string, unknown>;
 }
 
+export interface WebSessionHistoryAnswerEntry {
+  id: string;
+  label: string;
+  values: string[];
+  masked?: boolean;
+}
+
+export interface WebSessionHistoryDetail {
+  type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
+  prompt?: string;
+  questions?: WebSessionUserInputQuestion[];
+  answers?: WebSessionHistoryAnswerEntry[];
+  action?: 'approve' | 'reject' | string;
+}
+
 export interface WebSessionBlock {
   key: string;
   id: string;
@@ -90,12 +105,16 @@ export interface WebSessionBlock {
   tool?: WebSessionToolBlock;
   level?: 'info' | 'warn' | 'error';
   done?: boolean;
+  detail?: WebSessionHistoryDetail;
 }
 
 export interface WebSessionApprovalState {
   id: string;
   prompt: string;
   requestedAt: number;
+  stale: boolean;
+  recoveryReason?: string;
+  recoveryMessage?: string;
 }
 
 export interface WebSessionUserInputOption {
@@ -118,6 +137,9 @@ export interface WebSessionUserInputState {
   prompt: string;
   questions: WebSessionUserInputQuestion[];
   requestedAt: number;
+  stale: boolean;
+  recoveryReason?: string;
+  recoveryMessage?: string;
 }
 
 export interface WebSessionLiveState {
@@ -176,6 +198,9 @@ type HistoryMeta = {
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const WS_PATH = '/api/v1/web-sessions/ws';
+const PROCESS_RESTART_REASON = 'process_restart';
+const DEFAULT_RECOVERY_MESSAGE =
+  'The previous run was interrupted because the app restarted. Send a new message to continue.';
 
 function loadStoredActiveSessions() {
   try {
@@ -217,6 +242,15 @@ function sortSessions(sessions: WebSessionSummary[]) {
 
 function isWorkingPhase(phase: WebSessionLiveState['phase']) {
   return phase === 'starting' || phase === 'thinking' || phase === 'tool';
+}
+
+function isProcessRestartPayload(payload?: Record<string, unknown>) {
+  return String(payload?.reason ?? '') === PROCESS_RESTART_REASON;
+}
+
+function getRecoveryMessage(payload?: Record<string, unknown>) {
+  const message = typeof payload?.msg === 'string' ? payload.msg.trim() : '';
+  return message || DEFAULT_RECOVERY_MESSAGE;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -286,6 +320,36 @@ function summarizeUserInputAnswer(payload: Record<string, unknown>) {
     return 'Submitted requested input';
   }
   return parts.join(', ');
+}
+
+function buildUserInputAnswerEntries(
+  payload: Record<string, unknown>,
+  questions: WebSessionUserInputQuestion[]
+): WebSessionHistoryAnswerEntry[] {
+  const answers = asRecord(payload.ans);
+  if (!answers) {
+    return [];
+  }
+
+  const questionMap = new Map(questions.map(question => [question.id, question]));
+  const result: WebSessionHistoryAnswerEntry[] = [];
+  Object.entries(answers).forEach(([questionId, value]) => {
+    const question = questionMap.get(questionId);
+    const values = (Array.isArray(value) ? value : [])
+      .map(item => String(item).trim())
+      .filter(Boolean);
+    if (values.length === 0) {
+      return;
+    }
+    result.push({
+      id: questionId,
+      label:
+        question?.header?.trim() || question?.question?.trim() || questionId || 'Submitted answer',
+      values,
+      masked: question?.isSecret === true,
+    });
+  });
+  return result;
 }
 
 export const useWebSessionStore = defineStore('web-session', () => {
@@ -1074,6 +1138,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const blocks: WebSessionBlock[] = [];
     const toolIndex = new Map<string, number>();
     const lastAssistantBlockIndexByMessageId = new Map<string, number>();
+    const userInputQuestionsByItemId = new Map<string, WebSessionUserInputQuestion[]>();
     let openAssistantMessageId = '';
     let openAssistantBlockIndex = -1;
 
@@ -1214,19 +1279,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
           break;
         }
         case 'approval_req': {
+          const prompt = String(payload.prompt ?? 'Approval required');
           blocks.push({
             key: `approval:${event.id}`,
             id: event.id,
             kind: 'system',
-            text: String(payload.prompt ?? 'Approval required'),
+            text: prompt,
             timestamp: event.ts,
             attachments: [],
             level: 'warn',
+            detail: {
+              type: 'approval_request',
+              prompt,
+            },
           });
           break;
         }
         case 'approval_res': {
           const action = String(payload.act ?? 'approve');
+          const prompt = String(payload.prompt ?? '');
           blocks.push({
             key: `approval-res:${event.id}`,
             id: event.id,
@@ -1235,10 +1306,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
             timestamp: event.ts,
             attachments: [],
             level: action === 'reject' ? 'warn' : 'info',
+            detail: {
+              type: 'approval_response',
+              prompt,
+              action,
+            },
           });
           break;
         }
         case 'user_input_req': {
+          const itemId = String(payload.iid ?? '');
+          const questions = parseUserInputQuestions(payload.qs);
+          if (itemId) {
+            userInputQuestionsByItemId.set(itemId, questions);
+          }
           blocks.push({
             key: `user-input:${event.id}`,
             id: event.id,
@@ -1247,10 +1328,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
             timestamp: event.ts,
             attachments: [],
             level: 'warn',
+            detail: {
+              type: 'user_input_request',
+              prompt: summarizeUserInputPrompt(payload),
+              questions,
+            },
           });
           break;
         }
         case 'user_input_res': {
+          const itemId = String(payload.iid ?? '');
+          const questions = itemId ? (userInputQuestionsByItemId.get(itemId) ?? []) : [];
           blocks.push({
             key: `user-input-res:${event.id}`,
             id: event.id,
@@ -1259,6 +1347,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
             timestamp: event.ts,
             attachments: [],
             level: 'info',
+            detail: {
+              type: 'user_input_response',
+              answers: buildUserInputAnswerEntries(payload, questions),
+            },
           });
           break;
         }
@@ -1287,14 +1379,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
           break;
         }
         case 'run_abort': {
+          const abortedByRestart = isProcessRestartPayload(payload);
           blocks.push({
             key: `abort:${event.id}`,
             id: event.id,
             kind: 'system',
-            text: 'Run aborted',
+            text: abortedByRestart ? getRecoveryMessage(payload) : 'Run aborted',
             timestamp: event.ts,
             attachments: [],
-            level: 'info',
+            level: abortedByRestart ? 'warn' : 'info',
           });
           break;
         }
@@ -1316,12 +1409,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
             id: event.id,
             prompt: String(payload.prompt ?? ''),
             requestedAt: event.ts,
+            stale: false,
           };
           break;
+        case 'msg_u':
+        case 'run_st':
         case 'approval_res':
         case 'run_done':
         case 'run_fail':
+          pending = null;
+          break;
         case 'run_abort':
+          if (pending && isProcessRestartPayload(payload)) {
+            const activeRequest: WebSessionApprovalState = pending;
+            pending = {
+              ...activeRequest,
+              stale: true,
+              recoveryReason: String(payload.reason ?? ''),
+              recoveryMessage: getRecoveryMessage(payload),
+            };
+            break;
+          }
           pending = null;
           break;
       }
@@ -1341,12 +1449,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
             prompt: summarizeUserInputPrompt(payload),
             questions: parseUserInputQuestions(payload.qs),
             requestedAt: event.ts,
+            stale: false,
           };
           break;
+        case 'msg_u':
+        case 'run_st':
         case 'user_input_res':
         case 'run_done':
         case 'run_fail':
+          pending = null;
+          break;
         case 'run_abort':
+          if (pending && isProcessRestartPayload(payload)) {
+            const activeRequest: WebSessionUserInputState = pending;
+            pending = {
+              ...activeRequest,
+              stale: true,
+              recoveryReason: String(payload.reason ?? ''),
+              recoveryMessage: getRecoveryMessage(payload),
+            };
+            break;
+          }
           pending = null;
           break;
       }
@@ -1408,7 +1531,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
     }
 
-    if (approval && session?.status === 'running') {
+    if (approval && !approval.stale && session?.status === 'running') {
       return {
         phase: 'waiting_approval',
         running: true,
@@ -1418,7 +1541,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
     }
 
-    if (userInput && session?.status === 'running') {
+    if (userInput && !userInput.stale && session?.status === 'running') {
       return {
         phase: 'waiting_input',
         running: true,

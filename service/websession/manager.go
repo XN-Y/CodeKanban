@@ -28,10 +28,12 @@ import (
 )
 
 const (
-	DefaultHistoryWindow = 80
-	MaxHistoryWindow     = 120
-	sessionOrderStep     = 1000.0
-	planPromptPreamble   = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
+	DefaultHistoryWindow          = 80
+	MaxHistoryWindow              = 120
+	sessionOrderStep              = 1000.0
+	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
+	recoveryReasonProcessRestart  = "process_restart"
+	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
 )
 
 type Config struct {
@@ -126,6 +128,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		clients:     make(map[*client]struct{}),
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := manager.recoverInterruptedSessions(context.Background()); err != nil {
 		return nil, err
 	}
 	return manager, nil
@@ -2136,6 +2141,53 @@ func (m *Manager) migrateLegacySessionModes(ctx context.Context) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Where("status IN ?", []string{string(StatusRunning), string(StatusAborting)}).
+		Order("updated_at ASC").
+		Find(&records).Error; err != nil {
+		return err
+	}
+	if len(records) == 0 {
+		return nil
+	}
+
+	if m.logger != nil {
+		m.logger.Info("recovering interrupted web sessions", zap.Int("count", len(records)))
+	}
+
+	for _, record := range records {
+		now := time.Now()
+		if _, err := m.appendAndBroadcast(ctx, record.ID, record, Event{
+			Type:      "run_abort",
+			Timestamp: now,
+			Payload: map[string]any{
+				"reason":     recoveryReasonProcessRestart,
+				"msg":        recoveryMessageProcessRestart,
+				"prevStatus": record.Status,
+			},
+		}); err != nil {
+			return err
+		}
+		if err := m.updateRuntimeState(ctx, record.ID, map[string]any{
+			"status":     string(StatusIdle),
+			"last_error": nil,
+			"has_unread": false,
+			"updated_at": now,
+		}); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

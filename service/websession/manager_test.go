@@ -255,6 +255,93 @@ func TestNewManagerMigratesLegacyPermissionMode(t *testing.T) {
 	}
 }
 
+func TestNewManagerRecoversInterruptedSessionsOnStartup(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	dataDir := t.TempDir()
+	eventStore, err := newStore(dataDir)
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+
+	nativeSessionID := "thread_existing"
+	session := &tables.WebSessionTable{
+		ProjectID:            project.ID,
+		OrderIndex:           1000,
+		Agent:                string(AgentCodex),
+		Backend:              string(SessionBackendCodexAppServer),
+		Title:                "Recover Me",
+		Model:                "gpt-5.4",
+		WorkflowMode:         string(WorkflowModeDefault),
+		PermissionLevel:      string(PermissionLevelElevated),
+		Cwd:                  t.TempDir(),
+		NativeSessionID:      &nativeSessionID,
+		Status:               string(StatusRunning),
+		LastEventSeq:         1,
+		HasUnread:            true,
+		LastMessageAt:        nil,
+		LegacyPermissionMode: "default",
+	}
+	session.Init()
+	if err := model.GetDB().Create(session).Error; err != nil {
+		t.Fatalf("seed web session failed: %v", err)
+	}
+
+	if err := eventStore.appendEvent(session.ID, Event{
+		ID:        "evt_approval",
+		Seq:       1,
+		Type:      "approval_req",
+		Timestamp: time.Now().Add(-time.Minute),
+		Payload: map[string]any{
+			"prompt": "Need approval to continue",
+		},
+	}); err != nil {
+		t.Fatalf("appendEvent returned error: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusIdle) {
+		t.Fatalf("expected recovered status %q, got %q", StatusIdle, record.Status)
+	}
+	if record.HasUnread {
+		t.Fatalf("expected recovered session unread flag to be cleared")
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) != nativeSessionID {
+		t.Fatalf("expected native session id %q to be preserved, got %v", nativeSessionID, record.NativeSessionID)
+	}
+	if record.LastEventSeq != 2 {
+		t.Fatalf("expected recovered lastEventSeq 2, got %d", record.LastEventSeq)
+	}
+
+	history, err := manager.History(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 2 {
+		t.Fatalf("expected 2 events after recovery, got %d", len(history.Events))
+	}
+	lastEvent := history.Events[len(history.Events)-1]
+	if lastEvent.Type != "run_abort" {
+		t.Fatalf("expected recovery event run_abort, got %q", lastEvent.Type)
+	}
+	if got := fmt.Sprint(lastEvent.Payload["reason"]); got != recoveryReasonProcessRestart {
+		t.Fatalf("expected recovery reason %q, got %q", recoveryReasonProcessRestart, got)
+	}
+	if got := fmt.Sprint(lastEvent.Payload["msg"]); !strings.Contains(got, "app restarted") {
+		t.Fatalf("expected recovery message to mention app restart, got %q", got)
+	}
+}
+
 func TestSendMessageAutoRenamesTitleFromFirstUserMessage(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -479,6 +566,65 @@ func TestRespondToApprovalCodexAppServer(t *testing.T) {
 	}
 }
 
+func TestSendMessageResumesRecoveredCodexSession(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	nativeSessionID := "thread_resume_only"
+	session := &tables.WebSessionTable{
+		ProjectID:            project.ID,
+		OrderIndex:           1000,
+		Agent:                string(AgentCodex),
+		Backend:              string(SessionBackendCodexAppServer),
+		Title:                "Resume Existing",
+		Model:                "gpt-5.4",
+		WorkflowMode:         string(WorkflowModeDefault),
+		PermissionLevel:      string(PermissionLevelElevated),
+		LegacyPermissionMode: "default",
+		Cwd:                  t.TempDir(),
+		NativeSessionID:      &nativeSessionID,
+		Status:               string(StatusRunning),
+	}
+	session.Init()
+	if err := model.GetDB().Create(session).Error; err != nil {
+		t.Fatalf("seed web session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "resume_only"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), session.ID, "continue the existing thread", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, session.ID)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected resumed session status %q, got %q", StatusDone, record.Status)
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) != nativeSessionID {
+		t.Fatalf("expected resumed native session id %q, got %v", nativeSessionID, record.NativeSessionID)
+	}
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if historyHasEvent(history.Events, "run_fail") {
+		t.Fatalf("expected resume_only session to avoid run_fail, got %#v", history.Events)
+	}
+}
+
 func initTestDB(t *testing.T) func() {
 	t.Helper()
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
@@ -554,8 +700,8 @@ function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
 }
 
-function respondThread(id) {
-  send({ id, result: { thread: { id: threadId } } });
+function respondThread(id, explicitThreadId) {
+  send({ id, result: { thread: { id: explicitThreadId || threadId } } });
 }
 
 function emitReasoning() {
@@ -640,7 +786,17 @@ rl.on('line', line => {
   }
 
   if (message.method === 'thread/start' || message.method === 'thread/resume') {
-    respondThread(message.id);
+    if (mode === 'resume_only' && message.method !== 'thread/resume') {
+      send({
+        id: message.id,
+        error: { message: 'expected thread/resume for existing session' },
+      });
+      return;
+    }
+    const resumedThreadId = message.params && typeof message.params.threadId === 'string'
+      ? message.params.threadId
+      : threadId;
+    respondThread(message.id, resumedThreadId);
     return;
   }
 
@@ -652,7 +808,7 @@ rl.on('line', line => {
       },
     });
 
-    if (mode === 'basic') {
+    if (mode === 'basic' || mode === 'resume_only') {
       finishTurn('done');
       return;
     }

@@ -615,6 +615,7 @@ export default {
     readyDescription:
       'Once you send a prompt, this area will stream tool activity, progress, and approvals.',
     liveIdle: 'Ready',
+    liveRecovered: 'The previous run was interrupted by an app restart',
     liveStarting: 'Preparing the next turn',
     liveThinking: 'Drafting the response',
     liveTool: 'Running {tool}',
@@ -626,12 +627,23 @@ export default {
     approvalPromptFallback: 'The agent is waiting for confirmation before continuing.',
     approvalApprove: 'Approve',
     approvalReject: 'Reject',
+    historyApprovalApproved: 'Approved',
+    historyApprovalRejected: 'Rejected',
     userInputTitle: 'More Input Required',
     userInputPromptFallback: 'The agent needs more information before it can continue.',
     userInputSubmit: 'Submit Answers',
     userInputAnswerPlaceholder: 'Enter an answer',
     userInputOtherPlaceholder: 'Add extra detail',
     userInputAnswerRequired: 'Answer every question before continuing',
+    historyUserInputSubmitted: 'Submitted Answers',
+    historyQuestionLabel: 'Question',
+    historyMaskedAnswer: 'Hidden',
+    historyFreeformInput: 'Freeform text input was allowed',
+    historySecretInput: 'This question required secret input',
+    recoveredRuntimeHint:
+      'The previous approval or input request expired when the app restarted. Send a new message to continue this session.',
+    recoveredActionExpired:
+      'This step expired after the app restarted. Send a new message to continue the session.',
     showReasoning: 'Show Reasoning',
     hideReasoning: 'Hide Reasoning',
     workflowDefault: 'Direct',
@@ -651,6 +663,8 @@ export default {
       'Approval is pending, but you can still pre-type and choose redirect or queue.',
     composerHintUserInput:
       'The agent is waiting for more information. Answer the current prompt first.',
+    composerHintRecovered:
+      'The previous run was interrupted by an app restart. Send a new message to continue this session.',
     preinputRedirect: 'Send',
     preinputQueue: 'Add Queue',
     pendingRedirect: 'Next',
@@ -740,6 +754,9 @@ export default {
     terminalSnapshotZlibCompression: 'Snapshot zlib Compression',
     terminalSnapshotZlibCompressionTip:
       'Enabled by default. Applies fast zlib compression to the ANSI snapshot payload after the frame header to reduce bandwidth.',
+    showWebSessionReasoning: 'Show AI reasoning',
+    showWebSessionReasoningTip:
+      'Only affects reasoning entries in the session view. Most of the time this is low-value noise, so only enable it when debugging agent behavior.',
     terminalQuickActions: 'Terminal Quick Actions',
     terminalQuickActionsList: 'Actions',
     terminalQuickActionStackLabel: 'Stack into unified button',
