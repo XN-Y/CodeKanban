@@ -119,9 +119,20 @@ export default defineConfig(async () => {
       }),
     ],
     resolve: {
-      alias: {
-        '@': fileURLToPath(new URL('./src', import.meta.url)),
-      },
+      alias: [
+        {
+          find: '@',
+          replacement: fileURLToPath(new URL('./src', import.meta.url)),
+        },
+        {
+          find: 'highlight.js/lib/core',
+          replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/core.js', import.meta.url)),
+        },
+        {
+          find: 'highlight.js/lib/languages',
+          replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/languages', import.meta.url)),
+        },
+      ],
     },
   };
 });
