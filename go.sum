@@ -52,6 +52,8 @@ github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c h1:dJjWz7d7t+RAnYsdh7f
 github.com/fy0/huma/v2 v2.0.0-20250928113553-954c3a7f416c/go.mod h1:ynwJgLk8iGVgoaipi5tgwIQ5yoFNmiu+QdhU7CEEmhk=
 github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34 h1:4b5DhleTO6rHej/ih2ucHdGpy40zA29fAigNRPIiNwQ=
 github.com/fy0/vt10x v0.0.0-20260114040053-051b8e089f34/go.mod h1:kLTxd2st9meXCZgrEJsGzb+5iwO73IJeppBYMGHLoWE=
+github.com/fy0/vt10x v0.0.0-20260407161044-7144fb849786 h1:RPfUE7PyWBgALf6tDm6xzIxlWT8T3QKgZzvcn8i+tHo=
+github.com/fy0/vt10x v0.0.0-20260407161044-7144fb849786/go.mod h1:kLTxd2st9meXCZgrEJsGzb+5iwO73IJeppBYMGHLoWE=
 github.com/glebarez/go-sqlite v1.21.2 h1:3a6LFC4sKahUunAmynQKLZceZCOzUthkRkEAl9gAXWo=
 github.com/glebarez/go-sqlite v1.21.2/go.mod h1:sfxdZyhQjTM2Wry3gVYWaW072Ri1WMdWJi0k6+3382k=
 github.com/glebarez/sqlite v1.11.0 h1:wSG0irqzP6VurnMEpFGer5Li19RpIRi2qvQz++w0GMw=
