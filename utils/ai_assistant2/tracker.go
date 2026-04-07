@@ -1,6 +1,7 @@
 package ai_assistant2
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"time"
@@ -130,7 +131,7 @@ func (t *StatusTracker) SetTrackingMode(mode TrackingMode) {
 	}
 
 	if mode == TrackingModeVirtualTerminal {
-		t.emulator = vt10x.New(vt10x.WithSize(t.cols, t.rows))
+		t.emulator = vt10x.New(vt10x.WithXtermStyle(), vt10x.WithSize(t.cols, t.rows))
 		t.raw = ensureGlyphGrid(t.raw, t.rows, t.cols)
 		t.rawCols = t.cols
 		t.rawRows = t.rows
@@ -266,7 +267,10 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 		return types.StateUnknown, time.Time{}, false
 	}
 
-	_, _ = t.emulator.Write(chunk)
+	writeChunk, forceDetect := t.preprocessSyncOutputLocked(chunk, now)
+	if len(writeChunk) > 0 {
+		_, _ = t.emulator.Write(writeChunk)
+	}
 
 	// 50 次检测以前的 lines 全部打印
 	// 抓帧测试用
@@ -293,7 +297,11 @@ func (t *StatusTracker) ProcessChunk(chunk []byte) (types.State, time.Time, bool
 	}
 
 	// 节流，但必须确保写入chunk
-	if !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+	if !forceDetect && !t.lastProcessTime.IsZero() && now.Sub(t.lastProcessTime) < minProcessInterval {
+		return types.StateUnknown, time.Time{}, false
+	}
+
+	if len(writeChunk) == 0 && !forceDetect {
 		return types.StateUnknown, time.Time{}, false
 	}
 
@@ -341,6 +349,115 @@ func (t *StatusTracker) detectStateFromLinesLocked(lines []string, raw [][]vt10x
 	}
 
 	return types.StateUnknown, time.Time{}, false
+}
+
+func (t *StatusTracker) preprocessSyncOutputLocked(chunk []byte, now time.Time) ([]byte, bool) {
+	if len(chunk) == 0 {
+		return nil, false
+	}
+
+	data := chunk
+	if len(t.syncOutputPending) > 0 {
+		data = append(append(make([]byte, 0, len(t.syncOutputPending)+len(chunk)), t.syncOutputPending...), chunk...)
+		t.syncOutputPending = nil
+	}
+
+	output := make([]byte, 0, len(data))
+	forceDetect := false
+
+	flushData := func(p []byte) {
+		if len(p) == 0 {
+			return
+		}
+		if t.syncOutputDepth > 0 {
+			t.syncOutputBuffer = append(t.syncOutputBuffer, p...)
+			if len(t.syncOutputBuffer) >= syncOutputMaxBufferedBytes ||
+				(!t.syncOutputStartedAt.IsZero() && now.Sub(t.syncOutputStartedAt) >= syncOutputMaxBufferedDuration) {
+				output = append(output, t.syncOutputBuffer...)
+				t.syncOutputBuffer = t.syncOutputBuffer[:0]
+				t.syncOutputDepth = 0
+				t.syncOutputStartedAt = time.Time{}
+				forceDetect = true
+			}
+			return
+		}
+		output = append(output, p...)
+	}
+
+	for len(data) > 0 {
+		switch {
+		case bytes.HasPrefix(data, syncOutputSeqL):
+			t.syncOutputDepth++
+			if t.syncOutputDepth == 1 {
+				t.syncOutputStartedAt = now
+			}
+			data = data[len(syncOutputSeqL):]
+		case bytes.HasPrefix(data, syncOutputSeqH):
+			if t.syncOutputDepth > 0 {
+				t.syncOutputDepth--
+				if t.syncOutputDepth == 0 {
+					output = append(output, t.syncOutputBuffer...)
+					t.syncOutputBuffer = t.syncOutputBuffer[:0]
+					t.syncOutputStartedAt = time.Time{}
+					forceDetect = true
+				}
+			}
+			data = data[len(syncOutputSeqH):]
+		default:
+			nextIdx := nextSyncOutputSeqIndex(data)
+			if nextIdx < 0 {
+				pendingLen := trailingSyncOutputPrefixLen(data)
+				if pendingLen > 0 {
+					flushData(data[:len(data)-pendingLen])
+					t.syncOutputPending = append(t.syncOutputPending[:0], data[len(data)-pendingLen:]...)
+				} else {
+					flushData(data)
+				}
+				data = nil
+				continue
+			}
+
+			flushData(data[:nextIdx])
+			data = data[nextIdx:]
+		}
+	}
+
+	return output, forceDetect
+}
+
+func nextSyncOutputSeqIndex(data []byte) int {
+	idxL := bytes.Index(data, syncOutputSeqL)
+	idxH := bytes.Index(data, syncOutputSeqH)
+
+	switch {
+	case idxL < 0:
+		return idxH
+	case idxH < 0:
+		return idxL
+	case idxL < idxH:
+		return idxL
+	default:
+		return idxH
+	}
+}
+
+func trailingSyncOutputPrefixLen(data []byte) int {
+	maxLen := 0
+	for _, seq := range [][]byte{syncOutputSeqL, syncOutputSeqH} {
+		limit := len(seq) - 1
+		if limit > len(data) {
+			limit = len(data)
+		}
+		for n := limit; n > 0; n-- {
+			if bytes.Equal(data[len(data)-n:], seq[:n]) {
+				if n > maxLen {
+					maxLen = n
+				}
+				break
+			}
+		}
+	}
+	return maxLen
 }
 
 // State returns the current state and timestamp
@@ -458,7 +575,7 @@ func (t *StatusTracker) ensureEmulatorSizeLocked(cols, rows int) {
 	}
 
 	if t.emulator == nil {
-		t.emulator = vt10x.New(vt10x.WithSize(cols, rows))
+		t.emulator = vt10x.New(vt10x.WithXtermStyle(), vt10x.WithSize(cols, rows))
 	} else {
 		curCols, curRows := t.emulator.Size()
 		if curCols != cols || curRows != rows {
@@ -481,6 +598,10 @@ func (t *StatusTracker) resetLocked() {
 	t.lastChangedAt = time.Time{}
 	t.recentUpdatedAt = time.Time{}
 	t.lastProcessTime = time.Time{}
+	t.syncOutputDepth = 0
+	t.syncOutputStartedAt = time.Time{}
+	t.syncOutputPending = nil
+	t.syncOutputBuffer = nil
 	t.detector = nil
 	t.captureBusy = false
 }

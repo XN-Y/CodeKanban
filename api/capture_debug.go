@@ -32,7 +32,7 @@ const (
 
 var captureDebugTerminalPool = sync.Pool{
 	New: func() any {
-		return vt10x.New()
+		return vt10x.New(vt10x.WithXtermStyle())
 	},
 }
 

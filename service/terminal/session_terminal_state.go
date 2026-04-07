@@ -65,6 +65,7 @@ func (s *Session) initTerminalStateLocked(cols, rows int) {
 		rows = 24
 	}
 	s.terminalState = vt10x.New(
+		vt10x.WithXtermStyle(),
 		vt10x.WithSize(cols, rows),
 		vt10x.WithWriter(terminalStateReplyWriter{session: s}),
 	)
