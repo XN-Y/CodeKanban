@@ -1,4 +1,4 @@
-import { computed, watch, type Ref } from 'vue';
+import { computed, onBeforeUnmount, watch, type Ref } from 'vue';
 import { useTerminalStore, type TerminalCreateOptions } from '@/stores/terminal';
 export type {
   TerminalCreateOptions,
@@ -25,15 +25,27 @@ export function useTerminalClient(projectIdRef: Ref<string>) {
 
   watch(
     () => projectIdRef.value,
-    id => {
+    (id, previousId) => {
+      if (previousId && previousId !== id) {
+        store.releaseProjectConnections(previousId);
+      }
       if (!id) {
         return;
       }
+      store.retainProjectConnections(id);
       store.prepareProject(id);
       void store.loadSessions(id);
     },
     { immediate: true }
   );
+
+  onBeforeUnmount(() => {
+    const id = projectIdRef.value;
+    if (!id) {
+      return;
+    }
+    store.releaseProjectConnections(id);
+  });
 
   function reloadSessions() {
     const id = projectIdRef.value;

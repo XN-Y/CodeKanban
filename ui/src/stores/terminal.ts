@@ -297,10 +297,12 @@ export const useTerminalStore = defineStore('terminal', () => {
   const activeTabByProject = reactive(new Map<string, string>());
   const sockets = new Map<string, WebSocket>();
   const manualCloseIds = new Set<string>();
+  const pausedSocketIds = new Set<string>();
   let globalLoadToken = 0;
   const projectLoadTokens = new Map<string, number>();
   const emitter = new EventEmitter();
   const cachedCounts = reactive(new Map<string, number>());
+  const projectConnectionRefCounts = reactive(new Map<string, number>());
   // Track AI assistant state for each session to detect state changes
   const aiPreviousStates = new Map<string, string>();
   // Track whether AI agent has been detected for each session (to emit ai:detected only once)
@@ -583,6 +585,23 @@ export const useTerminalStore = defineStore('terminal', () => {
     return false;
   }
 
+  function isProjectConnectionActive(projectId: string | undefined) {
+    if (!projectId) {
+      return false;
+    }
+    return (projectConnectionRefCounts.get(projectId) ?? 0) > 0;
+  }
+
+  function pauseSocket(sessionId: string) {
+    const socket = sockets.get(sessionId);
+    if (!socket) {
+      return;
+    }
+    pausedSocketIds.add(sessionId);
+    socket.close();
+    sockets.delete(sessionId);
+  }
+
   function disconnectTab(sessionId: string, remove = true) {
     const socket = sockets.get(sessionId);
     if (socket) {
@@ -590,6 +609,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       socket.close();
       sockets.delete(sessionId);
     }
+    pausedSocketIds.delete(sessionId);
     if (remove) {
       const record = sessionIndex.get(sessionId);
       if (!record) {
@@ -780,6 +800,9 @@ export const useTerminalStore = defineStore('terminal', () => {
       if (options?.activate) {
         setActiveTab(immutableProjectId, session.id);
       }
+      if (!sockets.has(session.id) && isProjectConnectionActive(immutableProjectId)) {
+        connect(updatedTab);
+      }
       return updatedTab;
     }
 
@@ -819,7 +842,9 @@ export const useTerminalStore = defineStore('terminal', () => {
         setActiveTab(resolvedProjectId, tab.id);
       }
     }
-    connect(tab);
+    if (isProjectConnectionActive(resolvedProjectId)) {
+      connect(tab);
+    }
     return tab;
   }
 
@@ -871,6 +896,17 @@ export const useTerminalStore = defineStore('terminal', () => {
   }
 
   function connect(tab: TerminalTabState) {
+    if (!isProjectConnectionActive(tab.projectId)) {
+      return;
+    }
+    const existingSocket = sockets.get(tab.id);
+    if (
+      existingSocket &&
+      (existingSocket.readyState === WebSocket.OPEN || existingSocket.readyState === WebSocket.CONNECTING)
+    ) {
+      return;
+    }
+    pausedSocketIds.delete(tab.id);
     const wsURL = resolveWsUrl(tab.wsUrl || tab.wsPath, urlBase);
     const socket = new WebSocket(wsURL);
     sockets.set(tab.id, socket);
@@ -1089,19 +1125,27 @@ export const useTerminalStore = defineStore('terminal', () => {
 
     socket.addEventListener('close', () => {
       sockets.delete(tab.id);
+      if (pausedSocketIds.has(tab.id)) {
+        pausedSocketIds.delete(tab.id);
+        return;
+      }
       if (manualCloseIds.has(tab.id)) {
         manualCloseIds.delete(tab.id);
         updateTabStatus(tab.id, 'closed');
         return;
       }
-      if (sessionIndex.has(tab.id)) {
+      if (sessionIndex.has(tab.id) && isProjectConnectionActive(tab.projectId)) {
         updateTabStatus(tab.id, 'connecting');
         setTimeout(() => {
-          if (sessionIndex.has(tab.id)) {
+          if (sessionIndex.has(tab.id) && isProjectConnectionActive(tab.projectId)) {
             connect(tab);
           }
         }, 1000);
       } else {
+        const record = sessionIndex.get(tab.id);
+        if (record && !isProjectConnectionActive(record.projectId)) {
+          return;
+        }
         updateTabStatus(tab.id, 'closed');
       }
     });
@@ -1215,6 +1259,43 @@ export const useTerminalStore = defineStore('terminal', () => {
     return true;
   }
 
+  function retainProjectConnections(projectId: string | undefined) {
+    if (!projectId) {
+      return;
+    }
+    const nextCount = (projectConnectionRefCounts.get(projectId) ?? 0) + 1;
+    projectConnectionRefCounts.set(projectId, nextCount);
+    if (nextCount !== 1) {
+      return;
+    }
+    const bucket = tabStore.get(projectId);
+    if (!bucket) {
+      return;
+    }
+    bucket.forEach(tab => {
+      connect(tab);
+    });
+  }
+
+  function releaseProjectConnections(projectId: string | undefined) {
+    if (!projectId) {
+      return;
+    }
+    const currentCount = projectConnectionRefCounts.get(projectId) ?? 0;
+    if (currentCount <= 1) {
+      projectConnectionRefCounts.delete(projectId);
+      const bucket = tabStore.get(projectId);
+      if (!bucket) {
+        return;
+      }
+      bucket.forEach(tab => {
+        pauseSocket(tab.id);
+      });
+      return;
+    }
+    projectConnectionRefCounts.set(projectId, currentCount - 1);
+  }
+
   function getSessionByTask(taskId: string | undefined, projectId?: string) {
     if (!taskId) {
       return undefined;
@@ -1254,6 +1335,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     linkSessionTask,
     unlinkSessionTask,
     focusSession,
+    retainProjectConnections,
+    releaseProjectConnections,
     getSessionByTask,
     getLinkedTaskId,
     replayBufferedMessages,

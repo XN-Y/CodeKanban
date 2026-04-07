@@ -420,19 +420,6 @@ watch(
   }
 );
 
-watch(
-  currentProjectId,
-  newId => {
-    if (!newId) {
-      return;
-    }
-    nextTick(() => {
-      void terminalPanelRef.value?.reloadSessions();
-    });
-  },
-  { immediate: true }
-);
-
 function handleOpenTerminal(worktree: Worktree) {
   // Floating mode: delegate to TerminalPanel for expand/focus behavior.
   if (terminalPanelRef.value) {
