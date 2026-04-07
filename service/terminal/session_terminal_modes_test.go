@@ -98,3 +98,25 @@ func TestTerminalModesSnapshotHandlesSplitSequences(t *testing.T) {
 		t.Fatal("expected SGR mouse mode to be enabled")
 	}
 }
+
+func TestSessionSnapshotIncludesTerminalModes(t *testing.T) {
+	session := &Session{}
+
+	if _, changed := session.updateTerminalModes([]byte("\x1b[?1002;1006;1004h")); !changed {
+		t.Fatal("expected mode change")
+	}
+
+	snapshot := session.Snapshot()
+	if snapshot.TerminalModes == nil {
+		t.Fatal("expected terminal modes in session snapshot")
+	}
+	if snapshot.TerminalModes.MouseTracking != "button-event" {
+		t.Fatalf("expected button-event mouse tracking, got %q", snapshot.TerminalModes.MouseTracking)
+	}
+	if !snapshot.TerminalModes.MouseSGR {
+		t.Fatal("expected SGR mouse mode to be enabled")
+	}
+	if !snapshot.TerminalModes.FocusReporting {
+		t.Fatal("expected focus reporting to be enabled")
+	}
+}

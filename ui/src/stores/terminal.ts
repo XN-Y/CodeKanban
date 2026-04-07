@@ -42,6 +42,7 @@ export type TerminalRemoteSnapshot = {
   capturedAt?: string;
   lines?: string[];
   cursor?: string;
+  terminalModes: TerminalModesSnapshot;
 };
 
 type TerminalRemoteSnapshotDelta = {
@@ -59,6 +60,7 @@ type TerminalRemoteSnapshotDelta = {
     content: string;
   }>;
   cursor: string;
+  terminalModes: TerminalModesSnapshot;
 };
 
 type TerminalRemoteSnapshotFrame = TerminalRemoteSnapshot | TerminalRemoteSnapshotDelta;
@@ -123,6 +125,10 @@ export type ServerMessage = {
 };
 
 const TERMINAL_SNAPSHOT_PREFIX = '\x1b[0m\x1b[2J\x1b[3J\x1b[H';
+const TERMINAL_SNAPSHOT_FRAME_VERSION = 7;
+const TERMINAL_SNAPSHOT_MODES_FLAG_MOUSE_SGR = 1 << 0;
+const TERMINAL_SNAPSHOT_MODES_FLAG_FOCUS_REPORTING = 1 << 1;
+const TERMINAL_SNAPSHOT_MODES_FLAG_BRACKETED_PASTE = 1 << 2;
 export type BufferedTerminalMessage = {
   payload: ServerMessage;
   receivedAt: number;
@@ -486,7 +492,61 @@ function buildSnapshotContent(lines?: string[], cursor = '', fallbackContent = '
   return `${TERMINAL_SNAPSHOT_PREFIX}${lines.join('\r\n')}${cursor}`;
 }
 
-function parseVersion6SnapshotFrame(
+function readSnapshotTerminalModes(bytes: Uint8Array, offset: number) {
+  if (offset + 3 > bytes.byteLength) {
+    return null;
+  }
+
+  const flags = bytes[offset];
+  const mouseTracking = bytes[offset + 1];
+  const alternateScreen = bytes[offset + 2];
+  const terminalModes: TerminalModesSnapshot = {};
+
+  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_MOUSE_SGR) !== 0) {
+    terminalModes.mouseSgr = true;
+  }
+  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_FOCUS_REPORTING) !== 0) {
+    terminalModes.focusReporting = true;
+  }
+  if ((flags & TERMINAL_SNAPSHOT_MODES_FLAG_BRACKETED_PASTE) !== 0) {
+    terminalModes.bracketedPaste = true;
+  }
+
+  switch (mouseTracking) {
+    case 1:
+      terminalModes.mouseTracking = 'x10';
+      break;
+    case 2:
+      terminalModes.mouseTracking = 'button-event';
+      break;
+    case 3:
+      terminalModes.mouseTracking = 'any-event';
+      break;
+    default:
+      break;
+  }
+
+  switch (alternateScreen) {
+    case 1:
+      terminalModes.alternateScreen = '47';
+      break;
+    case 2:
+      terminalModes.alternateScreen = '1047';
+      break;
+    case 3:
+      terminalModes.alternateScreen = '1049';
+      break;
+    default:
+      break;
+  }
+
+  return {
+    value: terminalModes,
+    nextOffset: offset + 3,
+  };
+}
+
+function parseSnapshotFramePayload(
   rows: number,
   cols: number,
   frameKind: number,
@@ -535,6 +595,11 @@ function parseVersion6SnapshotFrame(
     if (!cursorValue) {
       return null;
     }
+    offset = cursorValue.nextOffset;
+    const terminalModesValue = readSnapshotTerminalModes(encodedContent, offset);
+    if (!terminalModesValue) {
+      return null;
+    }
 
     return {
       kind: 'delta',
@@ -548,6 +613,7 @@ function parseVersion6SnapshotFrame(
       capturedAt,
       changedLines,
       cursor: cursorValue.value,
+      terminalModes: terminalModesValue.value,
     };
   }
 
@@ -565,6 +631,11 @@ function parseVersion6SnapshotFrame(
   if (!cursorValue) {
     return null;
   }
+  offset = cursorValue.nextOffset;
+  const terminalModesValue = readSnapshotTerminalModes(encodedContent, offset);
+  if (!terminalModesValue) {
+    return null;
+  }
 
   return {
     kind: 'full',
@@ -578,6 +649,7 @@ function parseVersion6SnapshotFrame(
     capturedAt,
     lines,
     cursor: cursorValue.value,
+    terminalModes: terminalModesValue.value,
     content: buildSnapshotContent(lines, cursorValue.value),
   };
 }
@@ -591,7 +663,7 @@ async function parseBinarySnapshotFrame(
 
   const view = new DataView(payload);
   const version = view.getUint8(0);
-  if (version !== 6) {
+  if (version !== TERMINAL_SNAPSHOT_FRAME_VERSION) {
     return null;
   }
 
@@ -617,7 +689,7 @@ async function parseBinarySnapshotFrame(
       ? new Date(capturedAtMs).toISOString()
       : undefined;
 
-  return parseVersion6SnapshotFrame(
+  return parseSnapshotFramePayload(
     rows,
     cols,
     frameKind,
@@ -639,6 +711,7 @@ function assembleServerSnapshotFrame(
     return {
       ...frame,
       kind: 'full',
+      terminalModes: cloneTerminalModesSnapshot(frame.terminalModes) ?? {},
       content: buildSnapshotContent(frame.lines, frame.cursor, frame.content),
     };
   }
@@ -679,6 +752,7 @@ function assembleServerSnapshotFrame(
     capturedAt: frame.capturedAt,
     lines,
     cursor,
+    terminalModes: cloneTerminalModesSnapshot(frame.terminalModes) ?? {},
     content: buildSnapshotContent(lines, cursor),
   };
 }
@@ -1752,6 +1826,7 @@ export const useTerminalStore = defineStore('terminal', () => {
             if (!snapshot || sockets.get(tab.id) !== socket) {
               return;
             }
+            updateTabTerminalModes(tab.id, snapshot.terminalModes);
             payload = {
               type: 'snapshot',
               snapshot,

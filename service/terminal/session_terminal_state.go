@@ -25,6 +25,7 @@ type TerminalMirrorSnapshot struct {
 	Cols          int
 	Lines         [][]byte
 	Cursor        []byte
+	TerminalModes *TerminalModesSnapshot
 	AltScreen     bool
 	CursorVisible bool
 	ModeFlags     uint32
@@ -285,6 +286,7 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 		Cols:          cols,
 		Lines:         lines,
 		Cursor:        cursorBuffer.Bytes(),
+		TerminalModes: s.TerminalModesSnapshot(),
 		AltScreen:     s.terminalState.Mode()&vt10x.ModeAltScreen != 0,
 		CursorVisible: s.terminalState.CursorVisible(),
 		ModeFlags:     uint32(s.terminalState.Mode()),

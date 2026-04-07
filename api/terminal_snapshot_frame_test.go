@@ -80,6 +80,54 @@ func TestTerminalMirrorSenderStateFallsBackToFullWhenDeltaIsLarger(t *testing.T)
 	assertSnapshotFrameHeader(t, frame, terminalSnapshotFrameKindFull, 2, 0)
 }
 
+func TestTerminalMirrorSenderStateSendsDeltaWhenOnlyTerminalModesChange(t *testing.T) {
+	state := newTerminalMirrorSenderState()
+	initial := testTerminalMirrorSnapshot(10, "hello", "world")
+	initial.TerminalModes = &terminal.TerminalModesSnapshot{}
+	if _, sent, err := state.EncodeFrame(initial, false, false); err != nil || !sent {
+		t.Fatalf("failed to prime baseline: sent=%v err=%v", sent, err)
+	}
+
+	updated := testTerminalMirrorSnapshot(10, "hello", "world")
+	updated.TerminalModes = &terminal.TerminalModesSnapshot{
+		MouseTracking:  "button-event",
+		MouseSGR:       true,
+		FocusReporting: true,
+	}
+
+	frame, sent, err := state.EncodeFrame(updated, false, false)
+	if err != nil {
+		t.Fatalf("EncodeFrame returned error: %v", err)
+	}
+	if !sent {
+		t.Fatal("expected mode-only delta frame to be sent")
+	}
+	assertSnapshotFrameHeader(t, frame, terminalSnapshotFrameKindDelta, 2, 1)
+}
+
+func TestEncodeTerminalModesSnapshot(t *testing.T) {
+	encoded := encodeTerminalModesSnapshot(&terminal.TerminalModesSnapshot{
+		MouseTracking:   "any-event",
+		MouseSGR:        true,
+		FocusReporting:  true,
+		BracketedPaste:  true,
+		AlternateScreen: "1049",
+	})
+
+	if len(encoded) != 3 {
+		t.Fatalf("encoded length = %d, want 3", len(encoded))
+	}
+	if got := encoded[0]; got != terminalSnapshotModesFlagMouseSGR|terminalSnapshotModesFlagFocusReporting|terminalSnapshotModesFlagBracketedPaste {
+		t.Fatalf("flags = %08b, want %08b", got, terminalSnapshotModesFlagMouseSGR|terminalSnapshotModesFlagFocusReporting|terminalSnapshotModesFlagBracketedPaste)
+	}
+	if got := encoded[1]; got != terminalSnapshotMouseTrackingAnyEvent {
+		t.Fatalf("mouse tracking = %d, want %d", got, terminalSnapshotMouseTrackingAnyEvent)
+	}
+	if got := encoded[2]; got != terminalSnapshotAlternateScreen1049 {
+		t.Fatalf("alternate screen = %d, want %d", got, terminalSnapshotAlternateScreen1049)
+	}
+}
+
 func testTerminalMirrorSnapshot(cols int, lines ...string) *terminal.TerminalMirrorSnapshot {
 	rowBytes := make([][]byte, len(lines))
 	for index, line := range lines {
@@ -90,6 +138,7 @@ func testTerminalMirrorSnapshot(cols int, lines ...string) *terminal.TerminalMir
 		Cols:          cols,
 		Lines:         rowBytes,
 		Cursor:        []byte("\x1b[1;1H\x1b[?25h"),
+		TerminalModes: &terminal.TerminalModesSnapshot{},
 		CursorVisible: true,
 		CapturedAt:    time.UnixMilli(1_700_000_000_000),
 	}

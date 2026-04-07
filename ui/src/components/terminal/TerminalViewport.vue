@@ -482,24 +482,59 @@ function buildAlternateScreenSequence(
   modes: TerminalModesSnapshot | null,
   fallbackAltScreen?: boolean
 ) {
-  switch (modes?.alternateScreen) {
+  const parts: string[] = [];
+  let alternateScreen = modes?.alternateScreen;
+
+  if (!alternateScreen) {
+    if (fallbackAltScreen === true) {
+      alternateScreen = '1049';
+    } else if (fallbackAltScreen === false || modes) {
+      parts.push('\x1b[?1049l', '\x1b[?1047l', '\x1b[?47l');
+      return parts.join('');
+    } else {
+      return '';
+    }
+  }
+
+  parts.push('\x1b[?1049l', '\x1b[?1047l', '\x1b[?47l');
+  switch (alternateScreen) {
     case '47':
-      return '\x1b[?47h';
+      parts.push('\x1b[?47h');
+      break;
     case '1047':
-      return '\x1b[?1047h';
+      parts.push('\x1b[?1047h');
+      break;
     case '1049':
-      return '\x1b[?1049h';
+      parts.push('\x1b[?1049h');
+      break;
+    default:
+      break;
+  }
+  return parts.join('');
+}
+
+function buildPrivateModeSequence(mode: string, enabled: boolean) {
+  return `\x1b[?${mode}${enabled ? 'h' : 'l'}`;
+}
+
+function buildMouseTrackingSequence(modes: TerminalModesSnapshot | null) {
+  const parts = ['\x1b[?1003l', '\x1b[?1002l', '\x1b[?1000l'];
+
+  switch (modes?.mouseTracking) {
+    case 'x10':
+      parts.push('\x1b[?1000h');
+      break;
+    case 'button-event':
+      parts.push('\x1b[?1002h');
+      break;
+    case 'any-event':
+      parts.push('\x1b[?1003h');
+      break;
     default:
       break;
   }
 
-  if (fallbackAltScreen === true) {
-    return '\x1b[?1049h';
-  }
-  if (fallbackAltScreen === false) {
-    return '\x1b[?1049l';
-  }
-  return '';
+  return parts.join('');
 }
 
 function buildTerminalModesSequence(
@@ -518,28 +553,11 @@ function buildTerminalModesSequence(
     }
   }
 
-  if (modes?.focusReporting) {
-    parts.push('\x1b[?1004h');
-  }
-  if (modes?.bracketedPaste) {
-    parts.push('\x1b[?2004h');
-  }
-  if (modes?.mouseSgr) {
-    parts.push('\x1b[?1006h');
-  }
-
-  switch (modes?.mouseTracking) {
-    case 'x10':
-      parts.push('\x1b[?1000h');
-      break;
-    case 'button-event':
-      parts.push('\x1b[?1002h');
-      break;
-    case 'any-event':
-      parts.push('\x1b[?1003h');
-      break;
-    default:
-      break;
+  if (modes) {
+    parts.push(buildPrivateModeSequence('1004', modes.focusReporting === true));
+    parts.push(buildPrivateModeSequence('2004', modes.bracketedPaste === true));
+    parts.push(buildPrivateModeSequence('1006', modes.mouseSgr === true));
+    parts.push(buildMouseTrackingSequence(modes));
   }
 
   return parts.join('');
@@ -603,9 +621,12 @@ async function restoreServerSnapshotIfAvailable() {
       if (snapshot.cols > 0 && snapshot.rows > 0) {
         terminal.resize(snapshot.cols, snapshot.rows);
       }
-      const modeSequence = buildTerminalModesSequence(pendingTerminalModes, {
-        fallbackAltScreen: snapshot.altScreen,
-      });
+      const modeSequence = buildTerminalModesSequence(
+        cloneTerminalModesSnapshot(snapshot.terminalModes) ?? pendingTerminalModes,
+        {
+          fallbackAltScreen: snapshot.altScreen,
+        }
+      );
       pendingTerminalModes = null;
       await writeTerminalRaw(`${modeSequence}${remapInvisibleColors(snapshot.content)}`);
     });
@@ -939,11 +960,15 @@ function handleMessage(payload: ServerMessage) {
   if (payload.type === 'modes') {
     pendingTerminalModes = cloneTerminalModesSnapshot(payload.modes);
     updateSnapshotDebugState();
+    if (initialViewportReady && props.tab.renderMode === 'snapshot') {
+      void restoreTerminalModesIfAvailable();
+    }
     return;
   }
 
   if (payload.type === 'snapshot' && payload.snapshot) {
     pendingServerSnapshot = payload.snapshot;
+    pendingTerminalModes = cloneTerminalModesSnapshot(payload.snapshot.terminalModes);
     updateSnapshotDebugState();
     if (initialViewportReady) {
       void restoreServerSnapshotIfAvailable().then(restored => {

@@ -1029,19 +1029,20 @@ func compressSnapshotPayload(input []byte) ([]byte, bool) {
 func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot) terminalSessionView {
 	wsPath := fmt.Sprintf("%s?sessionId=%s", terminalWSPath, snapshot.ID)
 	return terminalSessionView{
-		ID:         snapshot.ID,
-		ProjectID:  snapshot.ProjectID,
-		WorktreeID: snapshot.WorktreeID,
-		WorkingDir: snapshot.WorkingDir,
-		Title:      snapshot.Title,
-		CreatedAt:  snapshot.CreatedAt,
-		LastActive: snapshot.LastActive,
-		Status:     string(snapshot.Status),
-		WsPath:     wsPath,
-		WsURL:      wsPath,
-		Rows:       snapshot.Rows,
-		Cols:       snapshot.Cols,
-		Encoding:   snapshot.Encoding,
+		ID:            snapshot.ID,
+		ProjectID:     snapshot.ProjectID,
+		WorktreeID:    snapshot.WorktreeID,
+		WorkingDir:    snapshot.WorkingDir,
+		Title:         snapshot.Title,
+		CreatedAt:     snapshot.CreatedAt,
+		LastActive:    snapshot.LastActive,
+		Status:        string(snapshot.Status),
+		WsPath:        wsPath,
+		WsURL:         wsPath,
+		Rows:          snapshot.Rows,
+		Cols:          snapshot.Cols,
+		Encoding:      snapshot.Encoding,
+		TerminalModes: snapshot.TerminalModes,
 		// Process information
 		ProcessPID:         snapshot.ProcessPID,
 		ProcessStatus:      snapshot.ProcessStatus,
@@ -1134,19 +1135,20 @@ type terminalTaskUnlinkInput struct {
 }
 
 type terminalSessionView struct {
-	ID         string    `json:"id"`
-	ProjectID  string    `json:"projectId"`
-	WorktreeID string    `json:"worktreeId"`
-	WorkingDir string    `json:"workingDir"`
-	Title      string    `json:"title"`
-	CreatedAt  time.Time `json:"createdAt"`
-	LastActive time.Time `json:"lastActive"`
-	Status     string    `json:"status"`
-	WsPath     string    `json:"wsPath"`
-	WsURL      string    `json:"wsUrl"`
-	Rows       int       `json:"rows"`
-	Cols       int       `json:"cols"`
-	Encoding   string    `json:"encoding"`
+	ID            string                          `json:"id"`
+	ProjectID     string                          `json:"projectId"`
+	WorktreeID    string                          `json:"worktreeId"`
+	WorkingDir    string                          `json:"workingDir"`
+	Title         string                          `json:"title"`
+	CreatedAt     time.Time                       `json:"createdAt"`
+	LastActive    time.Time                       `json:"lastActive"`
+	Status        string                          `json:"status"`
+	WsPath        string                          `json:"wsPath"`
+	WsURL         string                          `json:"wsUrl"`
+	Rows          int                             `json:"rows"`
+	Cols          int                             `json:"cols"`
+	Encoding      string                          `json:"encoding"`
+	TerminalModes *terminal.TerminalModesSnapshot `json:"terminalModes,omitempty"`
 	// Process information
 	ProcessPID         int32                          `json:"processPid,omitempty"`
 	ProcessStatus      string                         `json:"processStatus,omitempty"`

@@ -44,17 +44,18 @@ var ErrInvalidEncoding = errors.New("terminal: invalid encoding")
 
 // SessionSnapshot captures immutable fields for API responses.
 type SessionSnapshot struct {
-	ID         string
-	ProjectID  string
-	WorktreeID string
-	WorkingDir string
-	Title      string
-	CreatedAt  time.Time
-	LastActive time.Time
-	Status     SessionStatus
-	Rows       int
-	Cols       int
-	Encoding   string
+	ID            string
+	ProjectID     string
+	WorktreeID    string
+	WorkingDir    string
+	Title         string
+	CreatedAt     time.Time
+	LastActive    time.Time
+	Status        SessionStatus
+	Rows          int
+	Cols          int
+	Encoding      string
+	TerminalModes *TerminalModesSnapshot `json:"terminalModes,omitempty"`
 	// Process information
 	ProcessPID         int32  `json:"processPid,omitempty"`
 	ProcessStatus      string `json:"processStatus,omitempty"`
@@ -1071,17 +1072,18 @@ func (s *Session) Touch() {
 func (s *Session) Snapshot() SessionSnapshot {
 	s.mu.RLock()
 	snapshot := SessionSnapshot{
-		ID:         s.id,
-		ProjectID:  s.projectID,
-		WorktreeID: s.worktreeID,
-		WorkingDir: s.workingDir,
-		Title:      s.title,
-		CreatedAt:  s.createdAt,
-		LastActive: s.LastActive(),
-		Status:     s.Status(),
-		Rows:       s.rows,
-		Cols:       s.cols,
-		Encoding:   s.encName,
+		ID:            s.id,
+		ProjectID:     s.projectID,
+		WorktreeID:    s.worktreeID,
+		WorkingDir:    s.workingDir,
+		Title:         s.title,
+		CreatedAt:     s.createdAt,
+		LastActive:    s.LastActive(),
+		Status:        s.Status(),
+		Rows:          s.rows,
+		Cols:          s.cols,
+		Encoding:      s.encName,
+		TerminalModes: s.TerminalModesSnapshot(),
 	}
 	pid := s.getPID()
 	rows := s.rows

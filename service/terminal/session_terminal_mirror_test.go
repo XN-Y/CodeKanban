@@ -30,3 +30,39 @@ func TestTerminalMirrorSnapshotPreservesDefaultColorsForReverseCells(t *testing.
 		t.Fatalf("expected no literal black truecolor fallback in mirror snapshot, got %q", snapshot.Lines[0])
 	}
 }
+
+func TestTerminalMirrorSnapshotIncludesTerminalModes(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("server-side terminal state snapshots are disabled on windows")
+	}
+
+	session := &Session{
+		rows: 4,
+		cols: 80,
+	}
+	session.SetTerminalStateSnapshotEnabled(true)
+	if _, changed := session.updateTerminalModes([]byte("\x1b[?1002;1006;2004;1049h")); !changed {
+		t.Fatal("expected mode change")
+	}
+	session.appendTerminalState([]byte("ready"))
+
+	snapshot := session.TerminalMirrorSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected mirror snapshot")
+	}
+	if snapshot.TerminalModes == nil {
+		t.Fatal("expected terminal modes in mirror snapshot")
+	}
+	if snapshot.TerminalModes.MouseTracking != "button-event" {
+		t.Fatalf("expected button-event mouse tracking, got %q", snapshot.TerminalModes.MouseTracking)
+	}
+	if !snapshot.TerminalModes.MouseSGR {
+		t.Fatal("expected SGR mouse mode to be enabled")
+	}
+	if !snapshot.TerminalModes.BracketedPaste {
+		t.Fatal("expected bracketed paste to be enabled")
+	}
+	if snapshot.TerminalModes.AlternateScreen != "1049" {
+		t.Fatalf("expected alternate screen 1049, got %q", snapshot.TerminalModes.AlternateScreen)
+	}
+}
