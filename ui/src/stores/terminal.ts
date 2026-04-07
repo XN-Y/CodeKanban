@@ -24,6 +24,7 @@ export type TerminalStateSnapshot = {
   cursorBg?: number;
   cursorFgDefault?: boolean;
   cursorBgDefault?: boolean;
+  capturedAt?: string;
 };
 
 export type TerminalStateCell = {
@@ -39,6 +40,13 @@ export interface TerminalTabState extends TerminalSession {
   clientStatus: ClientStatus;
   lastAgentCommand?: string;
 }
+
+export type TerminalSerializedSnapshot = {
+  content: string;
+  updatedAt: number;
+  rows: number;
+  cols: number;
+};
 
 export type ServerMessage = {
   type: 'ready' | 'data' | 'exit' | 'error' | 'metadata' | 'snapshot' | 'replay-complete';
@@ -307,6 +315,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   // This prevents data loss when TerminalViewport is unmounted but WebSocket is still active
   const messageBuffers = new Map<string, ServerMessage[]>();
   const MESSAGE_BUFFER_MAX_SIZE = 5000; // Limit buffer size to prevent memory issues
+  const latestServerSnapshots = new Map<string, TerminalStateSnapshot>();
+  const serializedSnapshots = new Map<string, TerminalSerializedSnapshot>();
 
   // Helper function to get project name by ID
   function getProjectName(projectId: string): string | undefined {
@@ -608,6 +618,8 @@ export const useTerminalStore = defineStore('terminal', () => {
         setActiveTab(record.projectId, nextId);
       }
       messageBuffers.delete(sessionId); // Clean up message buffer
+      latestServerSnapshots.delete(sessionId);
+      serializedSnapshots.delete(sessionId);
     }
   }
 
@@ -627,6 +639,31 @@ export const useTerminalStore = defineStore('terminal', () => {
     // Clear the buffer after replay
     messageBuffers.delete(sessionId);
     console.log(`[Terminal] Replayed ${buffer.length} buffered messages for session:`, sessionId);
+  }
+
+  function saveSerializedSnapshot(sessionId: string, snapshot?: TerminalSerializedSnapshot | null) {
+    if (!sessionId) {
+      return;
+    }
+    if (!snapshot) {
+      serializedSnapshots.delete(sessionId);
+      return;
+    }
+    serializedSnapshots.set(sessionId, snapshot);
+  }
+
+  function getSerializedSnapshot(sessionId: string) {
+    if (!sessionId) {
+      return undefined;
+    }
+    return serializedSnapshots.get(sessionId);
+  }
+
+  function getLatestServerSnapshot(sessionId: string) {
+    if (!sessionId) {
+      return undefined;
+    }
+    return latestServerSnapshots.get(sessionId);
   }
 
   function ensureBucket(projectId: string) {
@@ -852,6 +889,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     socket.addEventListener('message', event => {
       try {
         const payload = JSON.parse(event.data as string) as ServerMessage;
+        if (payload.type === 'snapshot' && payload.snapshot) {
+          latestServerSnapshots.set(tab.id, payload.snapshot);
+        }
         if (payload.type === 'ready') {
           updateTabStatus(tab.id, 'ready');
         } else if (payload.type === 'exit') {
@@ -1025,9 +1065,12 @@ export const useTerminalStore = defineStore('terminal', () => {
         // If not, buffer the message for later replay when component remounts
         if (emitter.listenerCount(tab.id) > 0) {
           emitter.emit(tab.id, payload);
-        } else if (payload.type === 'data') {
-          // Only buffer 'data' type messages (terminal output)
-          // Other types (metadata, etc.) are not needed for terminal content recovery
+        } else if (
+          payload.type === 'data' ||
+          payload.type === 'exit' ||
+          payload.type === 'error'
+        ) {
+          // Buffer terminal content events while the viewport is unmounted.
           let buffer = messageBuffers.get(tab.id);
           if (!buffer) {
             buffer = [];
@@ -1214,5 +1257,8 @@ export const useTerminalStore = defineStore('terminal', () => {
     getSessionByTask,
     getLinkedTaskId,
     replayBufferedMessages,
+    saveSerializedSnapshot,
+    getSerializedSnapshot,
+    getLatestServerSnapshot,
   };
 });

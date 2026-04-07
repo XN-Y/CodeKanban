@@ -28,6 +28,7 @@ import { storeToRefs } from 'pinia';
 import type EventEmitter from 'eventemitter3';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon } from '@xterm/addon-search';
@@ -35,6 +36,7 @@ import { useMessage } from 'naive-ui';
 import '@/styles/terminal.css';
 import type {
   TerminalStateCell,
+  TerminalSerializedSnapshot,
   TerminalTabState,
   ServerMessage,
   TerminalStateSnapshot,
@@ -104,6 +106,7 @@ const transferCardStyle = computed(() => {
 const containerRef = ref<HTMLDivElement>();
 let terminal: Terminal | null = null;
 let fitAddon: FitAddon | null = null;
+let serializeAddon: SerializeAddon | null = null;
 let webglAddon: WebglAddon | null = null;
 let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 let keydownCaptureHandler: ((event: KeyboardEvent) => void) | null = null;
@@ -116,6 +119,7 @@ let lastReportedCols = 0;
 let lastReportedRows = 0;
 const pendingTerminalMessages: ServerMessage[] = [];
 let pendingServerSnapshot: TerminalStateSnapshot | null = null;
+let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
 let debugRefreshHandler: (() => boolean) | null = null;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const INITIAL_OUTPUT_BUFFER_MAX = 5000;
@@ -376,6 +380,91 @@ function restoreServerSnapshotIfAvailable() {
   }
 }
 
+function parseSnapshotCapturedAt(snapshot: TerminalStateSnapshot | null) {
+  const raw = snapshot?.capturedAt;
+  if (!raw) {
+    return 0;
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function shouldPreferFrontendSnapshot(
+  frontendSnapshot: TerminalSerializedSnapshot | null,
+  serverSnapshot: TerminalStateSnapshot | null
+) {
+  if (!frontendSnapshot) {
+    return false;
+  }
+  const serverCapturedAt = parseSnapshotCapturedAt(serverSnapshot);
+  if (!serverCapturedAt) {
+    return true;
+  }
+  // Keep a small tolerance for client/server clock skew.
+  return frontendSnapshot.updatedAt + 1000 >= serverCapturedAt;
+}
+
+function restoreFrontendSnapshotIfAvailable() {
+  if (!terminal || !pendingFrontendSnapshot) {
+    return false;
+  }
+
+  const snapshot = pendingFrontendSnapshot;
+  pendingFrontendSnapshot = null;
+
+  try {
+    terminal.reset();
+    if (snapshot.cols > 0 && snapshot.rows > 0) {
+      terminal.resize(snapshot.cols, snapshot.rows);
+    }
+    terminal.write(remapInvisibleColors(snapshot.content));
+    return true;
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to restore frontend snapshot', error);
+    return false;
+  }
+}
+
+function restorePreferredSnapshotIfAvailable() {
+  const useFrontendSnapshot = shouldPreferFrontendSnapshot(
+    pendingFrontendSnapshot,
+    pendingServerSnapshot
+  );
+
+  if (useFrontendSnapshot && restoreFrontendSnapshotIfAvailable()) {
+    pendingServerSnapshot = null;
+    return 'frontend';
+  }
+
+  if (restoreServerSnapshotIfAvailable()) {
+    pendingFrontendSnapshot = null;
+    return 'server';
+  }
+
+  if (restoreFrontendSnapshotIfAvailable()) {
+    return 'frontend';
+  }
+
+  return '';
+}
+
+function persistFrontendSnapshot() {
+  if (!terminal || !serializeAddon) {
+    return;
+  }
+
+  try {
+    terminalStore.saveSerializedSnapshot(props.tab.id, {
+      content: serializeAddon.serialize(),
+      updatedAt: Date.now(),
+      rows: terminal.rows,
+      cols: terminal.cols,
+    });
+  } catch (error) {
+    console.warn('[Terminal Snapshot] Failed to persist frontend snapshot', error);
+  }
+}
+
 function applyTerminalMessage(payload: ServerMessage) {
   if (!terminal) {
     return;
@@ -463,13 +552,15 @@ function finalizeInitialViewport(reason: string) {
     return;
   }
 
-  const restoredFromServer = restoreServerSnapshotIfAvailable();
+  const restoredSource = restorePreferredSnapshotIfAvailable();
   initialViewportReady = true;
 
   flushPendingTerminalMessages(reason);
 
-  if (restoredFromServer || pendingTerminalMessages.length === 0) {
-    scheduleInitialViewportRepair(restoredFromServer ? 'server-snapshot-restored' : reason);
+  if (restoredSource || pendingTerminalMessages.length === 0) {
+    scheduleInitialViewportRepair(
+      restoredSource ? `${restoredSource}-snapshot-restored` : reason
+    );
   }
 }
 
@@ -812,10 +903,12 @@ onMounted(() => {
   }
 
   fitAddon = new FitAddon();
+  serializeAddon = new SerializeAddon();
   const webLinksAddon = new WebLinksAddon();
   const searchAddon = new SearchAddon();
 
   terminal.loadAddon(fitAddon);
+  terminal.loadAddon(serializeAddon);
   terminal.loadAddon(webLinksAddon);
   terminal.loadAddon(searchAddon);
 
@@ -986,6 +1079,9 @@ onMounted(() => {
   container?.addEventListener('dragover', dragOverHandler);
   container?.addEventListener('drop', dropHandler);
 
+  pendingFrontendSnapshot = terminalStore.getSerializedSnapshot(props.tab.id) ?? null;
+  pendingServerSnapshot = terminalStore.getLatestServerSnapshot(props.tab.id) ?? null;
+
   props.emitter.on(props.tab.id, handleMessage);
   props.emitter.on('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.on(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
@@ -1031,6 +1127,7 @@ function handleTerminalActivated() {
 }
 
 onBeforeUnmount(() => {
+  persistFrontendSnapshot();
   props.emitter.off(props.tab.id, handleMessage);
   props.emitter.off('terminal-resize-all', handleTerminalResizeAll);
   props.emitter.off(`terminal-resize-${props.tab.id}`, handleTerminalResizeAll);
@@ -1060,10 +1157,13 @@ onBeforeUnmount(() => {
   lastReportedRows = 0;
   pendingTerminalMessages.length = 0;
   pendingServerSnapshot = null;
+  pendingFrontendSnapshot = null;
   if (typeof window !== 'undefined') {
     const debugWindow = window as TerminalDebugWindow;
     debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);
   }
+  serializeAddon?.dispose();
+  serializeAddon = null;
   webglAddon?.dispose();
   webglAddon = null;
   terminal?.dispose();
