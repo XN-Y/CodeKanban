@@ -167,8 +167,7 @@ const props = defineProps<{
 
 type WorkspaceTab = 'kanban' | 'terminal' | 'web';
 
-const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab-by-project';
-const LEGACY_WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
+const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 
 const { t } = useLocale();
 const settingsStore = useSettingsStore();
@@ -183,32 +182,13 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
   return 'terminal';
 }
 
-const legacyActiveTab = useStorage<WorkspaceTab>(
-  LEGACY_WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
-  'terminal'
-);
-const storedActiveTabs = useStorage<Record<string, WorkspaceTab>>(
-  WORKSPACE_ACTIVE_TAB_STORAGE_KEY,
-  {}
-);
+const storedActiveTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
 const activeTab = computed<WorkspaceTab>({
   get() {
-    const projectId = props.projectId;
-    if (projectId && storedActiveTabs.value[projectId]) {
-      return normalizeWorkspaceTab(storedActiveTabs.value[projectId]);
-    }
-    return normalizeWorkspaceTab(legacyActiveTab.value);
+    return normalizeWorkspaceTab(storedActiveTab.value);
   },
   set(value) {
-    const normalized = normalizeWorkspaceTab(value);
-    legacyActiveTab.value = normalized;
-    if (!props.projectId) {
-      return;
-    }
-    storedActiveTabs.value = {
-      ...storedActiveTabs.value,
-      [props.projectId]: normalized,
-    };
+    storedActiveTab.value = normalizeWorkspaceTab(value);
   },
 });
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
