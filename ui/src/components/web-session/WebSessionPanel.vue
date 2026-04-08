@@ -619,7 +619,6 @@
             <div
               class="composer-shell"
               :class="{
-                'is-running': liveState.running,
                 'is-drag-over': isComposerDragOver,
               }"
               @paste.capture="handleComposerPaste"
@@ -6357,48 +6356,19 @@ onBeforeUnmount(() => {
 }
 
 .live-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    120deg,
-    transparent 0%,
-    rgba(255, 255, 255, 0.02) 32%,
-    rgba(255, 255, 255, 0.34) 50%,
-    rgba(255, 255, 255, 0.02) 68%,
-    transparent 100%
-  );
-  transform: translateX(-130%);
-  opacity: 0;
-  pointer-events: none;
+  content: none;
 }
 
 .live-card::after {
-  content: '';
-  position: absolute;
-  left: -36%;
-  bottom: 0;
-  width: 36%;
-  height: 3px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(167, 139, 250, 0.18) 8%,
-    rgba(139, 92, 246, 0.95) 48%,
-    rgba(167, 139, 250, 0.4) 82%,
-    transparent 100%
-  );
-  opacity: 0;
-  pointer-events: none;
+  content: none;
 }
 
 .live-card:hover {
-  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+  box-shadow: none;
 }
 
 .live-card:active {
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
+  box-shadow: none;
 }
 
 .live-card:focus-visible {
@@ -6409,86 +6379,51 @@ onBeforeUnmount(() => {
 .live-card.phase-starting,
 .live-card.phase-thinking,
 .live-card.phase-tool {
-  border-color: rgba(139, 92, 246, 0.24);
-  background:
-    linear-gradient(
-      135deg,
-      rgba(139, 92, 246, 0.11) 0%,
-      rgba(139, 92, 246, 0.03) 52%,
-      transparent 100%
-    ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(139, 92, 246, 0.08);
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
+  box-shadow: none;
 }
 
 .live-card.phase-starting::before,
 .live-card.phase-thinking::before,
 .live-card.phase-tool::before {
-  opacity: 0.82;
-  animation: liveSweep 1.9s linear infinite;
+  animation: none;
 }
 
 .live-card.phase-starting::after,
 .live-card.phase-thinking::after,
 .live-card.phase-tool::after {
-  opacity: 1;
-  animation: liveTrack 1.45s linear infinite;
+  animation: none;
 }
 
 .live-card.phase-waiting_approval,
+.live-card.phase-waiting_plan_approval,
 .live-card.phase-waiting_input {
-  border-color: color-mix(in srgb, var(--web-session-approval-border) 82%, var(--n-border-color));
-  background:
-    radial-gradient(
-      circle at top right,
-      color-mix(in srgb, var(--web-session-approval-accent) 12%, transparent) 0%,
-      transparent 42%
-    ),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--web-session-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-approval-bg) 11%, var(--app-surface-color, #fff)) 54%,
-      var(--app-surface-color, #fff) 100%
-    ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-approval-glow) 70%, transparent);
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
+  box-shadow: none;
 }
 
 .live-card.phase-waiting_approval::before,
+.live-card.phase-waiting_plan_approval::before,
 .live-card.phase-waiting_input::before {
-  opacity: 0.26;
-  animation: liveSweep 3.2s ease-in-out infinite;
+  animation: none;
 }
 
 .live-card.phase-done {
-  border-color: rgba(16, 185, 129, 0.24);
-  background:
-    linear-gradient(
-      135deg,
-      rgba(16, 185, 129, 0.12) 0%,
-      rgba(16, 185, 129, 0.035) 48%,
-      transparent 100%
-    ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.08);
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
+  box-shadow: none;
 }
 
 .live-card.phase-done::before {
-  opacity: 0.38;
-  animation: liveSweep 4.2s ease-in-out infinite;
+  animation: none;
 }
 
 .live-card.phase-error {
-  border-color: rgba(239, 68, 68, 0.24);
-  background:
-    linear-gradient(
-      135deg,
-      rgba(239, 68, 68, 0.11) 0%,
-      rgba(239, 68, 68, 0.03) 48%,
-      transparent 100%
-    ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.08);
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
+  box-shadow: none;
 }
 
 .live-card-main {
@@ -6572,63 +6507,53 @@ onBeforeUnmount(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #8b5cf6;
-  box-shadow: 0 0 0 5px rgba(139, 92, 246, 0.16);
-  animation: livePulse 1.05s ease-in-out infinite;
+  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
+  box-shadow: none;
+  animation: none;
   flex-shrink: 0;
 }
 
 .live-orb::after {
-  content: '';
-  position: absolute;
-  inset: -9px;
-  border-radius: 50%;
-  background: rgba(139, 92, 246, 0.22);
-  opacity: 0;
-  animation: liveRipple 1.35s ease-out infinite;
+  content: none;
 }
 
 .live-card.phase-waiting_input .live-orb,
+.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
-  background: linear-gradient(
-    135deg,
-    var(--web-session-approval-accent) 0%,
-    var(--web-session-approval-accent-strong) 100%
-  );
+  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
 }
 
 .live-card.phase-waiting_input .live-orb,
+.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb {
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-approval-glow) 82%, transparent);
+  box-shadow: none;
 }
 
+.live-card.phase-waiting_plan_approval .live-orb::after,
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
-  background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
+  content: none;
 }
 
 .live-card.phase-done .live-orb {
-  background: #10b981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
-  animation: livePulse 2.8s ease-in-out infinite;
+  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
+  box-shadow: none;
+  animation: none;
 }
 
 .live-card.phase-done .live-orb::after {
-  background: rgba(16, 185, 129, 0.18);
-  animation-duration: 2.6s;
+  content: none;
 }
 
 .live-card.phase-error .live-orb {
-  background: #ef4444;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
+  box-shadow: none;
   animation: none;
 }
 
 .live-card.phase-error .live-orb::after {
-  background: rgba(239, 68, 68, 0.18);
-  opacity: 0.35;
-  animation: none;
+  content: none;
 }
 
 .live-copy {
@@ -6666,33 +6591,14 @@ onBeforeUnmount(() => {
 .approval-card {
   position: relative;
   overflow: hidden;
-  border-color: color-mix(in srgb, var(--web-session-approval-border) 88%, transparent);
-  background:
-    radial-gradient(
-      circle at top right,
-      color-mix(in srgb, var(--web-session-approval-accent) 10%, transparent) 0%,
-      transparent 45%
-    ),
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--web-session-approval-border) 14%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-approval-border) 4%, var(--app-surface-color, #fff)) 58%,
-      var(--app-surface-color, #fff) 100%
-    );
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
   padding: 11px 12px;
-  box-shadow: 0 10px 24px color-mix(in srgb, var(--web-session-approval-glow) 42%, transparent);
+  box-shadow: none;
 }
 
 .approval-card:not(.history-interaction-card)::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 4px;
-  background: linear-gradient(
-    180deg,
-    var(--web-session-approval-accent) 0%,
-    var(--web-session-approval-accent-strong) 100%
-  );
+  content: none;
 }
 
 .approval-card > * {
@@ -6707,19 +6613,18 @@ onBeforeUnmount(() => {
 }
 
 .history-interaction-card.type-approval-approve {
-  border-color: rgba(16, 185, 129, 0.28);
-  background: color-mix(in srgb, rgba(16, 185, 129, 0.08) 70%, var(--app-surface-color, #fff));
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
 }
 
 .history-interaction-card.type-approval-reject {
-  border-color: rgba(239, 68, 68, 0.28);
-  background: color-mix(in srgb, rgba(239, 68, 68, 0.08) 70%, var(--app-surface-color, #fff));
+  border-color: var(--n-border-color);
+  background: var(--app-surface-color, #fff);
 }
 
 .approval-card.is-stale {
-  border: 1px dashed
-    color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
-  background: color-mix(in srgb, var(--web-session-approval-bg) 58%, transparent);
+  border: 1px dashed var(--n-border-color);
+  background: var(--app-surface-color, #fff);
   box-shadow: none;
 }
 
@@ -6735,26 +6640,22 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  color: #fff;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
   font-size: 11px;
   font-weight: 600;
 }
 
 .approval-badge.state-approval-approve {
-  background: #10b981;
+  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
 }
 
 .approval-badge.state-approval-reject {
-  background: #ef4444;
+  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
 }
 
 .approval-badge.state-user-input-request,
 .approval-badge.state-user-input-response {
-  background: linear-gradient(
-    135deg,
-    var(--web-session-approval-accent) 0%,
-    var(--web-session-approval-accent-strong) 100%
-  );
+  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
 }
 
 .approval-prompt {
@@ -6773,7 +6674,7 @@ onBeforeUnmount(() => {
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.55;
-  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 82%, #111827);
+  color: var(--n-text-color-3);
   white-space: pre-wrap;
 }
 
@@ -6803,7 +6704,7 @@ onBeforeUnmount(() => {
 }
 
 .user-input-question + .user-input-question {
-  border-top: 1px dashed color-mix(in srgb, var(--web-session-approval-border) 42%, transparent);
+  border-top: 1px dashed var(--n-border-color);
   padding-top: 10px;
 }
 
@@ -6811,12 +6712,8 @@ onBeforeUnmount(() => {
 .history-answer-card {
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--web-session-approval-border) 38%, transparent);
-  background: color-mix(
-    in srgb,
-    var(--app-surface-color, #fff) 84%,
-    var(--web-session-approval-bg) 16%
-  );
+  border: 1px solid var(--n-border-color);
+  background: var(--app-surface-color, #fff);
 }
 
 .user-input-question-header {
@@ -6863,12 +6760,8 @@ onBeforeUnmount(() => {
 .history-option-row {
   padding: 8px 10px;
   border-radius: 8px;
-  background: color-mix(
-    in srgb,
-    var(--app-surface-color, #fff) 86%,
-    var(--web-session-approval-bg) 14%
-  );
-  border: 1px solid color-mix(in srgb, var(--web-session-approval-border) 34%, transparent);
+  background: var(--app-surface-color, #fff);
+  border: 1px solid var(--n-border-color);
 }
 
 .history-option-label {
@@ -6897,8 +6790,8 @@ onBeforeUnmount(() => {
   min-height: 28px;
   padding: 5px 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 14%, transparent);
+  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
+  border: 1px solid var(--n-border-color);
   font-size: 12px;
   line-height: 1.4;
   color: var(--app-text-color, var(--n-text-color-1, #111827));
@@ -6927,10 +6820,6 @@ onBeforeUnmount(() => {
     background-color 0.2s ease,
     box-shadow 0.2s ease,
     transform 0.2s ease;
-}
-
-.composer-shell.is-running {
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
 }
 
 .composer-shell.is-drag-over {
