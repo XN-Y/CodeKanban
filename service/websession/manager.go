@@ -175,6 +175,7 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	if err != nil {
 		return nil, err
 	}
+	records = m.refreshSessionSourceStates(ctx, records)
 
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
@@ -287,6 +288,15 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		HasUnread:              false,
 		ArchivedAt:             nil,
 		ActivityAt:             time.Now(),
+		SourceKind:             string(defaultSessionBackend(normalizeAgent(params.Agent))),
+		SyncState:              string(SyncStateMissing),
+		SourceCreatedAt:        nil,
+		SourceUpdatedAt:        nil,
+		LastSyncedAt:           nil,
+		ThreadPath:             nil,
+		ThreadPreview:          nil,
+		TurnCount:              0,
+		ItemCount:              0,
 		LastEventSeq:           0,
 		TotalInputTokens:       0,
 		TotalCachedInputTokens: 0,
@@ -329,7 +339,12 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	history, err := m.projectedHistoryWindow(sessionID, limit, nil)
+	if err := m.syncSessionIfCacheMissing(ctx, record); err == nil {
+		if refreshed, refreshErr := m.GetSession(ctx, sessionID); refreshErr == nil {
+			record = refreshed
+		}
+	}
+	history, err := m.loadHistoryWindow(ctx, sessionID, limit, nil)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
@@ -355,13 +370,20 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	if _, err := m.GetSession(ctx, sessionID); err != nil {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	return m.projectedHistoryWindow(sessionID, limit, beforeSeq)
+	if err := m.syncSessionIfCacheMissing(ctx, record); err != nil {
+		m.logger.Debug("failed to auto-sync session cache before history load",
+			zap.String("sessionId", sessionID),
+			zap.Error(err),
+		)
+	}
+	return m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
 }
 
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
@@ -433,6 +455,16 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 		"model":             defaultModel(normalized, ""),
 		"reasoning_effort":  string(defaultReasoningEffort(normalized, "")),
 		"native_session_id": nil,
+		"source_kind":       string(defaultSessionBackend(normalized)),
+		"sync_state":        SyncStateMissing,
+		"source_created_at": nil,
+		"source_updated_at": nil,
+		"last_synced_at":    nil,
+		"thread_path":       nil,
+		"thread_preview":    nil,
+		"turn_count":        0,
+		"item_count":        0,
+		"sync_error":        nil,
 		"updated_at":        time.Now(),
 	})
 }
@@ -573,6 +605,16 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	_ = m.AbortSession(sessionID)
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
+		return err
+	}
+	if err := db.WithContext(ctx).Where("web_session_id = ?", sessionID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+		return err
+	}
 	if err := model.GetDB().WithContext(ctx).Delete(&tables.WebSessionTable{}, "id = ?", sessionID).Error; err != nil {
 		return err
 	}
@@ -828,24 +870,10 @@ func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, fram
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", err.Error(), false))
 	}
-	events := make([]wireEvent, 0, len(window.Events))
-	for _, event := range window.Events {
-		events = append(events, mapWireEvent(event))
-	}
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return client.send(newEventFrame(frame.SessionID, Event{
-		ID:        utils.NewID(),
-		Seq:       0,
-		Type:      "hist_ch",
-		Timestamp: time.Now(),
-		Payload: map[string]any{
-			"evs": events,
-			"hm":  window.HasMore,
-			"bc":  window.BeforeCursor,
-		},
-	}))
+	return client.send(newHistoryPageFrame(frame.SessionID, window))
 }
 
 func (m *Manager) handleAbortCommand(_ context.Context, client *client, frame wireCommandFrame) error {
@@ -1295,6 +1323,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		"status":     string(finalStatus),
 		"updated_at": time.Now(),
 	})
+	m.maybeSyncSessionAfterRun(session)
 }
 
 func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTable, run *activeRun, err error) {
@@ -1675,7 +1704,15 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 		return Event{}, err
 	}
 
-	m.broadcast(newEventFrame(sessionID, event))
+	cachedItem, cacheErr := m.applyEventToHistoryCache(ctx, sessionID, event)
+	if cacheErr != nil {
+		return Event{}, cacheErr
+	}
+	if cachedItem != nil {
+		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
+	} else if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
+		m.broadcast(newSessionFrame(sessionID, *summary))
+	}
 	return event, nil
 }
 
@@ -2252,6 +2289,16 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		ArchivedAt:      record.ArchivedAt,
 		ActivityAt:      activityAt,
 		LastMessageAt:   record.LastMessageAt,
+		SourceKind:      record.SourceKind,
+		SyncState:       normalizeSyncState(record.SyncState),
+		SourceCreatedAt: record.SourceCreatedAt,
+		SourceUpdatedAt: record.SourceUpdatedAt,
+		LastSyncedAt:    record.LastSyncedAt,
+		ThreadPath:      record.ThreadPath,
+		ThreadPreview:   record.ThreadPreview,
+		TurnCount:       record.TurnCount,
+		ItemCount:       record.ItemCount,
+		SyncError:       record.SyncError,
 		CreatedAt:       record.CreatedAt,
 		UpdatedAt:       record.UpdatedAt,
 		Usage: Usage{
@@ -2773,6 +2820,8 @@ func codexToolName(item map[string]any) string {
 		return "FileChange"
 	case "reasoning":
 		return "Reasoning"
+	case "web_search":
+		return "WebSearch"
 	default:
 		return stringValue(item["type"])
 	}
@@ -2782,6 +2831,11 @@ func codexToolInput(item map[string]any) any {
 	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return map[string]any{"command": stringValue(item["command"])}
+	case "web_search":
+		return map[string]any{
+			"query":  item["query"],
+			"action": item["action"],
+		}
 	case "reasoning":
 		return nil
 	}
@@ -2796,6 +2850,7 @@ func codexToolMeta(item map[string]any) map[string]any {
 			stringValue(item["command"]),
 			stringValue(item["tool_name"]),
 			stringValue(item["path"]),
+			stringValue(item["query"]),
 			stringValue(item["text"]),
 		),
 	}
@@ -2860,6 +2915,8 @@ func normalizeCodexItemType(value string) string {
 		return "mcp_tool_call"
 	case "fileChange":
 		return "file_change"
+	case "webSearch":
+		return "web_search"
 	case "agentMessage":
 		return "agent_message"
 	case "userMessage":

@@ -1,0 +1,512 @@
+package websession
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"time"
+
+	"code-kanban/model/tables"
+
+	"go.uber.org/zap"
+)
+
+func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachment {
+	rawItems, ok := payload["atts"].([]any)
+	if !ok {
+		return nil
+	}
+	items := make([]HistoryAttachment, 0, len(rawItems))
+	for _, raw := range rawItems {
+		record := decodeRawObject(raw)
+		items = append(items, HistoryAttachment{
+			ID:   stringValue(record["id"]),
+			Name: stringValue(record["name"]),
+			Mime: stringValue(record["mime"]),
+			Size: int64(numberValue(record["sz"])),
+			Path: stringValue(record["path"]),
+		})
+	}
+	return items
+}
+
+func historyGroupDetailItemFromPayload(
+	payload map[string]any,
+	timestamp time.Time,
+	status string,
+) CommandExecutionGroupItem {
+	tool := historyToolFromEventPayload(payload, status)
+	detail := CommandExecutionGroupItem{
+		ToolID:  firstNonEmpty(stringValue(payload["tid"]), tool.ID),
+		Kind:    firstNonEmpty(tool.Kind, "tool"),
+		Title:   firstNonEmpty(tool.Name, compactToolTitle(tool.Kind)),
+		Status:  status,
+		Input:   tool.Input,
+		Output:  tool.Output,
+		Summary: compactToolSummary(tool.Kind, tool.Input, tool.Meta, tool.Output),
+		Command: compactToolSummary(tool.Kind, tool.Input, tool.Meta, tool.Output),
+	}
+	if commandInput := decodeRawObject(tool.Input); strings.TrimSpace(stringValue(commandInput["command"])) != "" {
+		detail.Command = stringValue(commandInput["command"])
+	}
+	if !timestamp.IsZero() {
+		detail.Timestamp = timestamp
+	}
+	if status == "running" {
+		detail.StartedAt = timestamp
+	} else {
+		detail.CompletedAt = timestamp
+	}
+	return detail
+}
+
+func mergeHistoryGroupItems(
+	existing []CommandExecutionGroupItem,
+	next CommandExecutionGroupItem,
+) []CommandExecutionGroupItem {
+	merged := make([]CommandExecutionGroupItem, 0, max(len(existing), 1))
+	replaced := false
+	for _, item := range existing {
+		if item.ToolID != next.ToolID {
+			merged = append(merged, item)
+			continue
+		}
+		replaced = true
+		combined := item
+		combined.Kind = firstNonEmpty(next.Kind, item.Kind)
+		combined.Title = firstNonEmpty(next.Title, item.Title)
+		combined.Summary = firstNonEmpty(next.Summary, item.Summary)
+		combined.Command = firstNonEmpty(next.Command, item.Command)
+		if next.Input != nil {
+			combined.Input = next.Input
+		}
+		if strings.TrimSpace(next.Output) != "" {
+			combined.Output = next.Output
+		}
+		combined.Status = next.Status
+		if !next.Timestamp.IsZero() {
+			combined.Timestamp = next.Timestamp
+		}
+		if !next.StartedAt.IsZero() {
+			combined.StartedAt = next.StartedAt
+		}
+		if !next.CompletedAt.IsZero() {
+			combined.CompletedAt = next.CompletedAt
+		}
+		merged = append(merged, combined)
+	}
+	if !replaced {
+		merged = append(merged, next)
+	}
+	return merged
+}
+
+func decodeHistoryGroupItems(raw map[string]any) []CommandExecutionGroupItem {
+	groupItems, ok := raw["groupItems"]
+	if !ok {
+		return nil
+	}
+	encoded, err := json.Marshal(groupItems)
+	if err != nil {
+		return nil
+	}
+	var items []CommandExecutionGroupItem
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		return nil
+	}
+	return items
+}
+
+func historyToolFromEventPayload(payload map[string]any, status string) *HistoryTool {
+	if len(payload) == 0 {
+		return nil
+	}
+	meta := cloneMap(decodeRawObject(payload["meta"]))
+	group := parseHistoryToolCommandGroup(meta["commandGroup"])
+	return &HistoryTool{
+		ID:           stringValue(payload["tid"]),
+		Name:         firstNonEmpty(stringValue(payload["name"]), stringValue(meta["title"]), "Tool"),
+		Kind:         firstNonEmpty(stringValue(payload["kind"]), stringValue(meta["kind"])),
+		Input:        payload["in"],
+		Output:       stringValue(payload["out"]),
+		Status:       status,
+		Meta:         meta,
+		CommandGroup: group,
+	}
+}
+
+func parseHistoryToolCommandGroup(raw any) *HistoryToolCommandGroup {
+	record := decodeRawObject(raw)
+	if len(record) == 0 {
+		return nil
+	}
+	id := strings.TrimSpace(stringValue(record["id"]))
+	if id == "" {
+		return nil
+	}
+	return &HistoryToolCommandGroup{
+		ID:           id,
+		Count:        max(1, int(numberValue(record["count"]))),
+		FirstSeq:     int64(numberValue(record["firstSeq"])),
+		LastSeq:      int64(numberValue(record["lastSeq"])),
+		LatestToolID: stringValue(record["latestToolId"]),
+		Compacted:    boolValue(record["compacted"]),
+	}
+}
+
+func boolValue(raw any) bool {
+	value, _ := raw.(bool)
+	return value
+}
+
+func summarizeHistoryQuestions(questions []toolRequestQuestion) string {
+	lines := make([]string, 0, len(questions))
+	for _, question := range questions {
+		text := strings.TrimSpace(firstNonEmpty(question.Question, question.Header))
+		if text != "" {
+			lines = append(lines, text)
+		}
+	}
+	if len(lines) == 0 {
+		return "Additional input is required."
+	}
+	return strings.Join(lines, "\n")
+}
+
+func historyAnswerEntries(raw map[string]any, questions []toolRequestQuestion) []HistoryAnswerEntry {
+	result := make([]HistoryAnswerEntry, 0)
+	questionMap := make(map[string]toolRequestQuestion, len(questions))
+	for _, question := range questions {
+		questionMap[strings.TrimSpace(question.ID)] = question
+	}
+	for questionID, value := range raw {
+		valuesRaw, ok := value.([]string)
+		if !ok {
+			continue
+		}
+		values := make([]string, 0, len(valuesRaw))
+		for _, item := range valuesRaw {
+			if trimmed := strings.TrimSpace(item); trimmed != "" {
+				values = append(values, trimmed)
+			}
+		}
+		if len(values) == 0 {
+			continue
+		}
+		question := questionMap[strings.TrimSpace(questionID)]
+		result = append(result, HistoryAnswerEntry{
+			ID:     questionID,
+			Label:  firstNonEmpty(question.Header, question.Question, questionID, "Submitted answer"),
+			Values: values,
+			Masked: question.IsSecret,
+		})
+	}
+	return result
+}
+
+func resolveToolHistoryKey(payload map[string]any, fallback string) string {
+	if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
+		return group.ID
+	}
+	return strings.TrimSpace(firstNonEmpty(stringValue(payload["tid"]), fallback))
+}
+
+func (m *Manager) applyEventToHistoryCache(
+	ctx context.Context,
+	sessionID string,
+	event Event,
+) (*HistoryItem, error) {
+	payload := cloneMap(event.Payload)
+	switch event.Type {
+	case "msg_u":
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:        "user",
+			ItemType:    "user_message",
+			Text:        stringValue(payload["txt"]),
+			Timestamp:   ptr(event.Timestamp),
+			ObservedAt:  ptr(event.Timestamp),
+			Attachments: historyAttachmentsFromEventPayload(payload),
+			Payload:     payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "msg_a_st":
+		return nil, nil
+	case "txt_d":
+		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "assistant:"+messageID, func(next *HistoryItem) {
+			next.Kind = "assistant"
+			next.ItemType = "agent_message"
+			next.Text = next.Text + stringValue(payload["txt"])
+			next.ObservedAt = ptr(event.Timestamp)
+			if next.Timestamp == nil {
+				next.Timestamp = ptr(event.Timestamp)
+			}
+			next.Done = false
+			next.Payload = payload
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "txt_end":
+		messageID := strings.TrimSpace(firstNonEmpty(stringValue(payload["mid"]), event.ParentID, event.ID))
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "assistant:"+messageID, func(next *HistoryItem) {
+			next.Kind = "assistant"
+			next.ItemType = "agent_message"
+			next.ObservedAt = ptr(event.Timestamp)
+			if next.Timestamp == nil {
+				next.Timestamp = ptr(event.Timestamp)
+			}
+			next.Done = true
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "tool_st":
+		toolKey := resolveToolHistoryKey(payload, event.ID)
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
+			existingPayload := cloneMap(next.Payload)
+			next.Kind = "tool"
+			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), "tool")
+			next.Tool = historyToolFromEventPayload(payload, "running")
+			next.ObservedAt = ptr(event.Timestamp)
+			if next.Timestamp == nil {
+				next.Timestamp = ptr(event.Timestamp)
+			}
+			next.Payload = payload
+			if next.Tool != nil && isCompactToolKind(next.Tool.Kind) {
+				groupItems := mergeHistoryGroupItems(
+					decodeHistoryGroupItems(existingPayload),
+					historyGroupDetailItemFromPayload(payload, event.Timestamp, "running"),
+				)
+				next.Payload["groupItems"] = groupItems
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "tool_end":
+		toolKey := resolveToolHistoryKey(payload, event.ID)
+		status := "done"
+		if payload["ok"] == false {
+			status = "error"
+		}
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
+			existingPayload := cloneMap(next.Payload)
+			next.Kind = "tool"
+			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), next.ItemType, "tool")
+			next.Tool = historyToolFromEventPayload(payload, status)
+			next.ObservedAt = ptr(event.Timestamp)
+			if next.Timestamp == nil {
+				next.Timestamp = ptr(event.Timestamp)
+			}
+			next.Done = true
+			next.Payload = payload
+			if next.Tool != nil && isCompactToolKind(next.Tool.Kind) {
+				groupItems := mergeHistoryGroupItems(
+					decodeHistoryGroupItems(existingPayload),
+					historyGroupDetailItemFromPayload(payload, event.Timestamp, status),
+				)
+				next.Payload["groupItems"] = groupItems
+			}
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "approval_req":
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "approval_request",
+			Text:       firstNonEmpty(stringValue(payload["prompt"]), "Approval required"),
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      "warn",
+			Detail: &HistoryDetail{
+				Type:   "approval_request",
+				Prompt: stringValue(payload["prompt"]),
+			},
+			Payload: payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "approval_res":
+		action := firstNonEmpty(stringValue(payload["act"]), "approve")
+		text := "Approval granted"
+		level := "info"
+		if action == "reject" {
+			text = "Approval rejected"
+			level = "warn"
+		}
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "approval_response",
+			Text:       text,
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      level,
+			Detail: &HistoryDetail{
+				Type:   "approval_response",
+				Prompt: stringValue(payload["prompt"]),
+				Action: action,
+			},
+			Payload: payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "user_input_req":
+		questions := decodeToolQuestions(payload["qs"])
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "user_input_request",
+			Text:       firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      "warn",
+			Detail: &HistoryDetail{
+				Type:      "user_input_request",
+				Prompt:    firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
+				Questions: questions,
+			},
+			Payload: payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "user_input_res":
+		answers := make(map[string][]string)
+		for key, value := range decodeRawObject(payload["ans"]) {
+			switch typed := value.(type) {
+			case []string:
+				answers[key] = typed
+			case []any:
+				next := make([]string, 0, len(typed))
+				for _, entry := range typed {
+					if text := strings.TrimSpace(stringValue(entry)); text != "" {
+						next = append(next, text)
+					}
+				}
+				answers[key] = next
+			}
+		}
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "user_input_response",
+			Text:       "Submitted requested input",
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      "info",
+			Detail: &HistoryDetail{
+				Type:    "user_input_response",
+				Answers: historyAnswerEntries(answersToRawMap(answers), nil),
+			},
+			Payload: payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "note":
+		level := firstNonEmpty(stringValue(payload["lvl"]), "info")
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "note",
+			Text:       stringValue(payload["txt"]),
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      level,
+			Payload:    payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "run_fail":
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "run_fail",
+			Text:       firstNonEmpty(stringValue(payload["msg"]), "Run failed"),
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      "error",
+			Payload:    payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	case "run_abort":
+		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
+			Kind:       "system",
+			ItemType:   "run_abort",
+			Text:       firstNonEmpty(stringValue(payload["msg"]), "Run aborted"),
+			Timestamp:  ptr(event.Timestamp),
+			ObservedAt: ptr(event.Timestamp),
+			Level:      "info",
+			Payload:    payload,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &item, nil
+	default:
+		return nil, nil
+	}
+}
+
+func answersToRawMap(answers map[string][]string) map[string]any {
+	result := make(map[string]any, len(answers))
+	for key, value := range answers {
+		result[key] = value
+	}
+	return result
+}
+
+func max(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *SessionSummary {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	summary := mapSessionRecord(record)
+	return &summary
+}
+
+func (m *Manager) maybeSyncSessionAfterRun(session tables.WebSessionTable) {
+	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
+		return
+	}
+	if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
+		return
+	}
+	go func() {
+		timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := m.syncSessionFromSource(timeoutCtx, session.ID, true); err != nil {
+			if m.logger != nil {
+				m.logger.Debug("failed to refresh session cache after run",
+					zap.String("sessionId", session.ID),
+					zap.Error(err),
+				)
+			}
+			return
+		}
+		_ = m.broadcastSnapshot(context.Background(), session.ID)
+	}()
+}

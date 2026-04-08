@@ -28,6 +28,16 @@ type WireSession = {
   ca?: number | null;
   lu: number;
   lma?: number | null;
+  sk: string;
+  ss: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
+  sca?: number | null;
+  sua?: number | null;
+  lsa?: number | null;
+  tp?: string | null;
+  tpv?: string | null;
+  tc?: number;
+  ic?: number;
+  se?: string | null;
   usa?: {
     in?: number;
     cin?: number;
@@ -36,14 +46,50 @@ type WireSession = {
   cost?: number;
 };
 
-type WireEvent = {
+type WireHistoryItem = {
   id: string;
-  sq: number;
+  stid?: string | null;
+  siid?: string | null;
+  oi: number;
+  kd: 'user' | 'assistant' | 'system' | 'tool';
   tp: string;
-  rid2?: string;
-  pid2?: string;
-  ts: number;
-  p?: Record<string, unknown>;
+  txt?: string;
+  ts2?: number | null;
+  obs?: number | null;
+  atts?: Array<{
+    id: string;
+    name: string;
+    mime?: string;
+    sz?: number;
+    path?: string;
+  }>;
+  tl?: {
+    id: string;
+    name: string;
+    kind?: string;
+    in?: unknown;
+    out?: string;
+    st: 'running' | 'done' | 'error' | string;
+    meta?: Record<string, unknown>;
+    cg?: {
+      id: string;
+      count: number;
+      firstSeq?: number;
+      lastSeq?: number;
+      latestToolId?: string;
+      compacted?: boolean;
+    };
+  } | null;
+  lvl?: 'info' | 'warn' | 'error' | string;
+  dn?: boolean;
+  dt?: {
+    type: 'approval_request' | 'approval_response' | 'user_input_request' | 'user_input_response';
+    prompt?: string;
+    questions?: WebSessionUserInputQuestion[];
+    answers?: WebSessionHistoryAnswerEntry[];
+    action?: 'approve' | 'reject' | string;
+  } | null;
+  pl?: Record<string, unknown>;
 };
 
 type WireFrame = {
@@ -57,12 +103,12 @@ type WireFrame = {
   ok?: number;
   s?: WireSession;
   h?: {
-    evs: WireEvent[];
+    its: WireHistoryItem[];
     hm: boolean;
     bc?: string;
     tot: number;
   };
-  e?: WireEvent;
+  i?: WireHistoryItem;
   code?: string;
   msg?: string;
   retry?: boolean;
@@ -104,19 +150,26 @@ export interface WebSessionHistoryDetail {
 export interface WebSessionBlock {
   key: string;
   id: string;
+  sourceTurnId?: string | null;
+  sourceItemId?: string | null;
+  orderIndex: number;
   kind: 'user' | 'assistant' | 'system' | 'tool';
+  itemType: string;
   text: string;
   timestamp: number;
+  observedAt?: number | null;
   attachments: Array<{
     id: string;
     name: string;
     mime?: string;
     size?: number;
+    path?: string;
   }>;
   tool?: WebSessionToolBlock;
   level?: 'info' | 'warn' | 'error';
   done?: boolean;
   detail?: WebSessionHistoryDetail;
+  payload?: Record<string, unknown>;
 }
 
 export interface WebSessionApprovalState {
@@ -422,6 +475,9 @@ function normalizeToolKindValue(value: unknown) {
   if (normalized === 'fileChange') {
     return 'file_change';
   }
+  if (normalized === 'webSearch') {
+    return 'web_search';
+  }
   return normalized;
 }
 
@@ -466,6 +522,20 @@ function extractToolSummary(payload: Record<string, unknown>) {
       return `${toolName} · ${target}`;
     }
     return toolName || target;
+  }
+
+  if (kind === 'web_search') {
+    const query = String(input?.query ?? '').trim();
+    if (query) {
+      return query;
+    }
+    const action = asRecord(input?.action);
+    const queries = Array.isArray(action?.queries)
+      ? action?.queries
+          .map(value => String(value ?? '').trim())
+          .filter((value): value is string => Boolean(value))
+      : [];
+    return queries[0] ?? subtitle;
   }
 
   return subtitle;
@@ -588,7 +658,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
   const archivedSessionIds = ref<string[]>([]);
   const archivedListMeta = ref<ArchivedListMeta>(defaultArchivedListMeta());
-  const eventsBySession = ref<Record<string, WireEvent[]>>({});
+  const eventsBySession = ref<Record<string, WebSessionBlock[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
@@ -611,7 +681,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   >();
   const snapshotWaitersBySession = new Map<string, SessionSnapshotWaiter[]>();
-  const seenSeqBySession = new Map<string, Set<number>>();
   const redirectAbortSessions = new Set<string>();
   const pendingFlushTimers = new Map<string, number>();
   const flushingSessions = new Set<string>();
@@ -676,7 +745,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function getLatestEventSeq(sessionId: string) {
     const events = eventsBySession.value[sessionId] ?? [];
-    return events.length > 0 ? (events[events.length - 1]?.sq ?? 0) : 0;
+    return events.length > 0 ? (events[events.length - 1]?.orderIndex ?? 0) : 0;
   }
 
   function getDraft(projectId: string, sessionId: string): WebSessionDraftState {
@@ -715,6 +784,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
         loading: false,
       }
     );
+  }
+
+  function setHistoryLoading(sessionId: string, loading: boolean) {
+    historyBySession.value = {
+      ...historyBySession.value,
+      [sessionId]: {
+        ...getHistoryMeta(sessionId),
+        loading,
+      },
+    };
   }
 
   function rememberActiveSession(projectId: string, sessionId: string) {
@@ -837,15 +916,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     commitProjectDrafts(normalizedProjectId, nextProjectDrafts);
   }
 
-  function ensureSeenSet(sessionId: string) {
-    let seen = seenSeqBySession.get(sessionId);
-    if (!seen) {
-      seen = new Set<number>();
-      seenSeqBySession.set(sessionId, seen);
-    }
-    return seen;
-  }
-
   function removeSnapshotWaiter(sessionId: string, waiterId: string) {
     const current = snapshotWaitersBySession.get(sessionId);
     if (!current?.length) {
@@ -949,6 +1019,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       archivedAt,
       activityAt,
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
+      sourceKind: session.sk ?? 'codex_app_server',
+      syncState: session.ss ?? 'missing',
+      sourceCreatedAt: session.sca ? new Date(session.sca).toISOString() : null,
+      sourceUpdatedAt: session.sua ? new Date(session.sua).toISOString() : null,
+      lastSyncedAt: session.lsa ? new Date(session.lsa).toISOString() : null,
+      threadPath: session.tp ?? null,
+      threadPreview: session.tpv ?? null,
+      turnCount: Number(session.tc ?? 0),
+      itemCount: Number(session.ic ?? 0),
+      syncError: session.se ?? null,
       createdAt,
       updatedAt: new Date(session.lu).toISOString(),
       usage: {
@@ -957,6 +1037,82 @@ export const useWebSessionStore = defineStore('web-session', () => {
         outputTokens: session.usa?.out ?? 0,
         cost: session.cost ?? 0,
       },
+    };
+  }
+
+  function normalizeHistoryItem(item: WireHistoryItem): WebSessionBlock {
+    return {
+      key: `${item.id}:${item.oi}`,
+      id: item.id,
+      sourceTurnId: item.stid ?? null,
+      sourceItemId: item.siid ?? null,
+      orderIndex: Number(item.oi ?? 0),
+      kind: item.kd,
+      itemType: item.tp,
+      text: typeof item.txt === 'string' ? item.txt : '',
+      timestamp:
+        typeof item.ts2 === 'number' && Number.isFinite(item.ts2)
+          ? item.ts2
+          : typeof item.obs === 'number' && Number.isFinite(item.obs)
+            ? item.obs
+            : 0,
+      observedAt:
+        typeof item.obs === 'number' && Number.isFinite(item.obs) ? item.obs : item.ts2 ?? null,
+      attachments: Array.isArray(item.atts)
+        ? item.atts.map(attachment => ({
+            id: String(attachment.id ?? ''),
+            name: String(attachment.name ?? ''),
+            mime: typeof attachment.mime === 'string' ? attachment.mime : undefined,
+            size: typeof attachment.sz === 'number' ? attachment.sz : undefined,
+            path: typeof attachment.path === 'string' ? attachment.path : undefined,
+          }))
+        : [],
+      tool: item.tl
+        ? {
+            id: item.tl.id,
+            name: item.tl.name,
+            kind: item.tl.kind,
+            input: item.tl.in,
+            output: item.tl.out,
+            status:
+              item.tl.st === 'error' || item.tl.st === 'running' || item.tl.st === 'done'
+                ? item.tl.st
+                : item.tl.st === 'completed'
+                  ? 'done'
+                  : 'running',
+            meta: item.tl.meta,
+            commandGroup: item.tl.cg
+              ? {
+                  id: item.tl.cg.id,
+                  count: Math.max(1, Number(item.tl.cg.count ?? 1) || 1),
+                  firstSeq:
+                    typeof item.tl.cg.firstSeq === 'number' ? item.tl.cg.firstSeq : undefined,
+                  lastSeq:
+                    typeof item.tl.cg.lastSeq === 'number' ? item.tl.cg.lastSeq : undefined,
+                  latestToolId:
+                    typeof item.tl.cg.latestToolId === 'string'
+                      ? item.tl.cg.latestToolId
+                      : undefined,
+                  compacted: item.tl.cg.compacted === true,
+                }
+              : undefined,
+          }
+        : undefined,
+      level:
+        item.lvl === 'warn' || item.lvl === 'error' || item.lvl === 'info'
+          ? item.lvl
+          : undefined,
+      done: item.dn === true,
+      detail: item.dt
+        ? {
+            type: item.dt.type,
+            prompt: item.dt.prompt,
+            questions: Array.isArray(item.dt.questions) ? item.dt.questions : undefined,
+            answers: Array.isArray(item.dt.answers) ? item.dt.answers : undefined,
+            action: item.dt.action,
+          }
+        : undefined,
+      payload: item.pl,
     };
   }
 
@@ -1061,7 +1217,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
-    seenSeqBySession.delete(sessionId);
     redirectAbortSessions.delete(sessionId);
     flushingSessions.delete(sessionId);
     const timer = pendingFlushTimers.get(sessionId);
@@ -1213,34 +1368,244 @@ export const useWebSessionStore = defineStore('web-session', () => {
     });
   }
 
-  function mergeEvents(sessionId: string, incoming: WireEvent[]) {
-    const seen = ensureSeenSet(sessionId);
+  function mergeEvents(sessionId: string, incoming: WebSessionBlock[]) {
     const merged = [...(eventsBySession.value[sessionId] ?? [])];
-    incoming.forEach(event => {
-      if (!event || typeof event.sq !== 'number') {
+    const indexById = new Map(merged.map((item, index) => [item.id, index]));
+    incoming.forEach(item => {
+      if (!item || !item.id) {
         return;
       }
-      if (seen.has(event.sq)) {
+      const existingIndex = indexById.get(item.id);
+      if (existingIndex == null) {
+        merged.push(item);
+        indexById.set(item.id, merged.length - 1);
         return;
       }
-      seen.add(event.sq);
-      merged.push(event);
+      merged.splice(existingIndex, 1, {
+        ...merged[existingIndex],
+        ...item,
+      });
     });
-    merged.sort((left, right) => left.sq - right.sq);
+    merged.sort((left, right) => left.orderIndex - right.orderIndex);
     eventsBySession.value = {
       ...eventsBySession.value,
       [sessionId]: merged,
     };
   }
 
-  function resetSessionEvents(sessionId: string, events: WireEvent[]) {
-    seenSeqBySession.set(
-      sessionId,
-      new Set(events.filter(event => typeof event.sq === 'number').map(event => event.sq))
-    );
+  function resetSessionEvents(sessionId: string, events: WebSessionBlock[]) {
     eventsBySession.value = {
       ...eventsBySession.value,
-      [sessionId]: [...events].sort((left, right) => left.sq - right.sq),
+      [sessionId]: [...events].sort((left, right) => left.orderIndex - right.orderIndex),
+    };
+  }
+
+  function buildBlocks(sessionId: string): WebSessionBlock[] {
+    return eventsBySession.value[sessionId] ?? [];
+  }
+
+  const getBlocks = (sessionId: string) => buildBlocks(sessionId);
+
+  function getPendingApproval(sessionId: string): WebSessionApprovalState | null {
+    const blocks = buildBlocks(sessionId);
+    let pending: WebSessionApprovalState | null = null;
+    for (const block of blocks) {
+      if (block.detail?.type === 'approval_request') {
+        pending = {
+          id: block.id,
+          prompt: block.detail.prompt ?? block.text,
+          requestedAt: block.timestamp,
+          stale: false,
+        };
+        continue;
+      }
+      if (block.detail?.type === 'approval_response' || block.kind === 'user') {
+        pending = null;
+        continue;
+      }
+      if (
+        block.itemType === 'run_abort' &&
+        pending &&
+        isProcessRestartPayload(block.payload ?? undefined)
+      ) {
+        pending = {
+          ...pending,
+          stale: true,
+          recoveryReason: String(block.payload?.reason ?? ''),
+          recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
+        };
+        continue;
+      }
+      if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
+        pending = null;
+      }
+    }
+    return pending;
+  }
+
+  function getPendingUserInput(sessionId: string): WebSessionUserInputState | null {
+    const blocks = buildBlocks(sessionId);
+    let pending: WebSessionUserInputState | null = null;
+    for (const block of blocks) {
+      if (block.detail?.type === 'user_input_request') {
+        pending = {
+          id: block.id,
+          itemId: block.sourceItemId || block.id,
+          prompt: block.detail.prompt ?? block.text,
+          questions: block.detail.questions ?? [],
+          requestedAt: block.timestamp,
+          stale: false,
+        };
+        continue;
+      }
+      if (block.detail?.type === 'user_input_response' || block.kind === 'user') {
+        pending = null;
+        continue;
+      }
+      if (
+        block.itemType === 'run_abort' &&
+        pending &&
+        isProcessRestartPayload(block.payload ?? undefined)
+      ) {
+        pending = {
+          ...pending,
+          stale: true,
+          recoveryReason: String(block.payload?.reason ?? ''),
+          recoveryMessage: getRecoveryMessage(block.payload ?? undefined),
+        };
+        continue;
+      }
+      if (block.itemType === 'run_abort' || block.itemType === 'run_fail') {
+        pending = null;
+      }
+    }
+    return pending;
+  }
+
+  function getLiveState(sessionId: string): WebSessionLiveState {
+    const session = findSessionById(sessionId);
+    const approval = getPendingApproval(sessionId);
+    const userInput = getPendingUserInput(sessionId);
+    let activeTool:
+      | {
+          id: string;
+          name: string;
+          kind?: string;
+          summary?: string;
+          count?: number;
+          groupId?: string;
+        }
+      | undefined;
+    let sawAssistantOutput = false;
+    let assistantDone = false;
+    let errorMessage = '';
+    let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
+
+    for (const block of buildBlocks(sessionId)) {
+      updatedAt = block.observedAt || block.timestamp || updatedAt;
+      if (block.kind === 'assistant') {
+        sawAssistantOutput = true;
+        assistantDone = block.done === true;
+      }
+      if (block.kind === 'tool' && block.tool) {
+        if (block.tool.kind === 'reasoning') {
+          continue;
+        }
+        if (block.tool.status === 'running') {
+          activeTool = {
+            id: block.tool.id,
+            name: block.tool.name,
+            kind: block.tool.kind,
+            summary: extractToolSummary({
+              kind: block.tool.kind,
+              in: asRecord(block.tool.input) ?? block.tool.input,
+              meta: block.tool.meta,
+              out: block.tool.output,
+            } as Record<string, unknown>),
+            count: block.tool.commandGroup?.count,
+            groupId: block.tool.commandGroup?.id,
+          };
+        } else if (activeTool?.id === block.tool.id) {
+          activeTool = undefined;
+        }
+      }
+      if (block.itemType === 'run_fail') {
+        errorMessage = block.text || 'Run failed';
+      }
+    }
+
+    if (approval && !approval.stale && session?.status === 'running') {
+      return {
+        phase: 'waiting_approval',
+        running: true,
+        updatedAt: approval.requestedAt,
+        approval,
+        tool: activeTool,
+      };
+    }
+
+    if (session?.status === 'waiting_approval') {
+      return {
+        phase: 'waiting_approval',
+        running: false,
+        updatedAt,
+      };
+    }
+
+    if (userInput && !userInput.stale && session?.status === 'running') {
+      return {
+        phase: 'waiting_input',
+        running: true,
+        updatedAt: userInput.requestedAt,
+        tool: activeTool,
+        userInput,
+      };
+    }
+
+    if (session?.status === 'running') {
+      if (activeTool) {
+        return {
+          phase: 'tool',
+          running: true,
+          updatedAt,
+          tool: activeTool,
+        };
+      }
+      if (sawAssistantOutput && !assistantDone) {
+        return {
+          phase: 'thinking',
+          running: true,
+          updatedAt,
+        };
+      }
+      return {
+        phase: 'starting',
+        running: true,
+        updatedAt,
+      };
+    }
+
+    if (session?.status === 'done') {
+      return {
+        phase: 'done',
+        running: false,
+        updatedAt,
+      };
+    }
+
+    if (session?.status === 'err') {
+      return {
+        phase: 'error',
+        running: false,
+        updatedAt,
+        errorMessage,
+      };
+    }
+
+    return {
+      phase: 'idle',
+      running: false,
+      updatedAt,
     };
   }
 
@@ -1369,13 +1734,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (frame.k === 'snap' && frame.sid && frame.s) {
       const summary = normalizeSession(frame.s);
       upsertSession(summary);
-      resetSessionEvents(frame.sid, frame.h?.evs ?? []);
+      resetSessionEvents(
+        frame.sid,
+        Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : []
+      );
       historyBySession.value = {
         ...historyBySession.value,
         [frame.sid]: {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
-          total: frame.h?.tot ?? frame.h?.evs?.length ?? 0,
+          total: frame.h?.tot ?? frame.h?.its?.length ?? 0,
           loading: false,
         },
       };
@@ -1383,62 +1751,46 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return;
     }
 
-    if (frame.k === 'evt' && frame.sid && frame.e) {
+    if (frame.k === 'evt' && frame.sid) {
       const previousState = getLiveState(frame.sid);
       const previousApproval = getPendingApproval(frame.sid);
+      if (frame.s) {
+        upsertSession(normalizeSession(frame.s));
+      }
 
-      if (frame.e.tp === 'hist_ch') {
-        const historicalEvents = Array.isArray(frame.e.p?.evs)
-          ? (frame.e.p?.evs as WireEvent[])
+      if (frame.op === 'hist_page' && frame.h) {
+        const historicalItems = Array.isArray(frame.h.its)
+          ? frame.h.its.map(item => normalizeHistoryItem(item))
           : [];
-        mergeEvents(frame.sid, historicalEvents);
+        mergeEvents(frame.sid, historicalItems);
         historyBySession.value = {
           ...historyBySession.value,
           [frame.sid]: {
             ...getHistoryMeta(frame.sid),
-            hasMore: Boolean(frame.e.p?.hm),
-            beforeCursor: String(frame.e.p?.bc ?? ''),
+            hasMore: Boolean(frame.h.hm),
+            beforeCursor: String(frame.h.bc ?? ''),
             loading: false,
           },
         };
         return;
       }
 
-      mergeEvents(frame.sid, [frame.e]);
-      updateSessionStatus(frame.sid, current => {
-        const next = { ...current };
-        next.updatedAt = new Date(frame.e?.ts ?? Date.now()).toISOString();
-        if (frame.e?.tp === 'run_st') {
-          next.status = 'running';
-        } else if (frame.e?.tp === 'run_done') {
-          next.status =
-            frame.e?.p && typeof frame.e.p.st === 'string'
-              ? (frame.e.p.st as WebSessionSummary['status'])
-              : 'done';
-        } else if (frame.e?.tp === 'run_fail') {
-          next.status = 'err';
-        } else if (frame.e?.tp === 'run_abort') {
-          next.status = 'idle';
-        } else if (frame.e?.tp === 'msg_u') {
-          next.lastMessageAt = new Date(frame.e?.ts ?? Date.now()).toISOString();
-        } else if (frame.e?.tp === 'usage') {
-          next.usage = {
-            inputTokens: Number(frame.e?.p?.in ?? next.usage.inputTokens),
-            cachedInputTokens: Number(frame.e?.p?.cin ?? next.usage.cachedInputTokens),
-            outputTokens: Number(frame.e?.p?.out ?? next.usage.outputTokens),
-            cost: Number(frame.e?.p?.cost ?? next.usage.cost),
-          };
+      if (frame.op === 'hist_item' && frame.i) {
+        const item = normalizeHistoryItem(frame.i);
+        mergeEvents(frame.sid, [item]);
+        if (item.kind === 'tool' && item.tool?.status !== 'running') {
+          maybeAbortForRedirect(frame.sid);
         }
-        return next;
-      });
-
-      if (frame.e.tp === 'tool_end') {
-        maybeAbortForRedirect(frame.sid);
       }
 
-      if (frame.e.tp === 'run_done' || frame.e.tp === 'run_fail' || frame.e.tp === 'run_abort') {
+      const session = findSessionById(frame.sid);
+      if (session?.status === 'done' || session?.status === 'err' || session?.status === 'idle') {
         redirectAbortSessions.delete(frame.sid);
         schedulePendingFlush(frame.sid);
+      }
+
+      if (frame.op === 'hist_item' && frame.i && normalizeHistoryItem(frame.i).tool?.status !== 'running') {
+        maybeAbortForRedirect(frame.sid);
       }
 
       emitStateTransition(frame.sid, previousState, previousApproval);
@@ -1627,11 +1979,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!sessionId) {
       return null;
     }
+    const current = findSessionById(sessionId);
+    if ((eventsBySession.value[sessionId] ?? []).length === 0 || current?.syncState === 'syncing') {
+      setHistoryLoading(sessionId, true);
+    }
     const waiter = waitForNextSessionSnapshot(sessionId, timeoutMs);
     try {
       await sendCommand('connect', sessionId, {});
       return await waiter.promise;
     } catch (error) {
+      setHistoryLoading(sessionId, false);
       try {
         waiter.cancel(error);
       } catch {
@@ -1659,6 +2016,48 @@ export const useWebSessionStore = defineStore('web-session', () => {
     removeArchivedSessionRecord(sessionId);
     upsertCurrentSession(summary);
     return summary;
+  }
+
+  async function syncSession(projectId: string, sessionId: string) {
+    updateSessionStatus(sessionId, current => ({
+      ...current,
+      syncState: 'syncing',
+      syncError: null,
+      updatedAt: new Date().toISOString(),
+    }));
+    setHistoryLoading(sessionId, true);
+    try {
+      const snapshot = await webSessionApi.sync(projectId, sessionId);
+      if (snapshot?.session) {
+        upsertSession(snapshot.session);
+      }
+      resetSessionEvents(
+        sessionId,
+        Array.isArray(snapshot?.history?.items)
+          ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+          : []
+      );
+      historyBySession.value = {
+        ...historyBySession.value,
+        [sessionId]: {
+          hasMore: Boolean(snapshot?.history?.hasMore),
+          beforeCursor: String(snapshot?.history?.beforeCursor ?? ''),
+          total: Number(snapshot?.history?.total ?? 0),
+          loading: false,
+        },
+      };
+      rememberActiveSession(projectId, sessionId);
+      return snapshot;
+    } catch (error) {
+      setHistoryLoading(sessionId, false);
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        syncState: 'error',
+        syncError: error instanceof Error ? error.message : String(error),
+        updatedAt: new Date().toISOString(),
+      }));
+      throw error;
+    }
   }
 
   async function deleteSession(projectId: string, sessionId: string) {
@@ -1844,524 +2243,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }));
   }
 
-  function buildBlocks(sessionId: string): WebSessionBlock[] {
-    const blocks: WebSessionBlock[] = [];
-    const toolIndex = new Map<string, number>();
-    const lastAssistantBlockIndexByMessageId = new Map<string, number>();
-    const userInputQuestionsByItemId = new Map<string, WebSessionUserInputQuestion[]>();
-    let openAssistantMessageId = '';
-    let openAssistantBlockIndex = -1;
-
-    const closeAssistantTextSegment = () => {
-      openAssistantMessageId = '';
-      openAssistantBlockIndex = -1;
-    };
-
-    const appendBlock = (block: WebSessionBlock) => {
-      blocks.push(block);
-      return block;
-    };
-
-    const createAssistantTextBlock = (messageId: string, timestamp: number) => {
-      const block = appendBlock({
-        key: `assistant:${messageId}:${blocks.length}`,
-        id: messageId,
-        kind: 'assistant',
-        text: '',
-        timestamp,
-        attachments: [],
-        done: false,
-      });
-      openAssistantMessageId = messageId;
-      openAssistantBlockIndex = blocks.length - 1;
-      lastAssistantBlockIndexByMessageId.set(messageId, openAssistantBlockIndex);
-      return block;
-    };
-
-    const resolveToolBlockId = (payload: Record<string, unknown>, fallback: string) =>
-      parseToolCommandGroup(asRecord(payload.meta)?.commandGroup)?.id ?? fallback;
-
-    const applyToolPayload = (
-      tool: WebSessionToolBlock,
-      payload: Record<string, unknown>,
-      status: WebSessionToolBlock['status']
-    ) => {
-      tool.name = String(payload.name ?? tool.name ?? 'Tool');
-      if (typeof payload.kind === 'string') {
-        tool.kind = payload.kind;
-      }
-      if (Object.prototype.hasOwnProperty.call(payload, 'in')) {
-        tool.input = payload.in;
-      }
-      if (Object.prototype.hasOwnProperty.call(payload, 'out')) {
-        tool.output = String(payload.out ?? '');
-      }
-      tool.status = status;
-      const meta = asRecord(payload.meta);
-      if (meta) {
-        tool.meta = meta;
-      }
-      tool.commandGroup = parseToolCommandGroup(meta?.commandGroup);
-    };
-
-    const ensureToolBlock = (
-      toolId: string,
-      timestamp: number,
-      payload: Record<string, unknown>,
-      initialStatus: WebSessionToolBlock['status']
-    ) => {
-      const blockId = resolveToolBlockId(payload, toolId);
-      const existingIndex = toolIndex.get(blockId);
-      if (existingIndex != null) {
-        blocks[existingIndex].timestamp = timestamp;
-        return blocks[existingIndex];
-      }
-
-      const block = appendBlock({
-        key: `tool:${blockId}`,
-        id: blockId,
-        kind: 'tool',
-        text: '',
-        timestamp,
-        attachments: [],
-        tool: {
-          id: blockId,
-          name: String(payload.name ?? 'Tool'),
-          kind: typeof payload.kind === 'string' ? payload.kind : undefined,
-          input: payload.in,
-          output: typeof payload.out === 'string' ? payload.out : undefined,
-          meta: asRecord(payload.meta),
-          status: initialStatus,
-          commandGroup: parseToolCommandGroup(asRecord(payload.meta)?.commandGroup),
-        },
-      });
-      toolIndex.set(blockId, blocks.length - 1);
-      return block;
-    };
-
-    (eventsBySession.value[sessionId] ?? []).forEach(event => {
-      const payload = event.p ?? {};
-      if (event.tp !== 'txt_d') {
-        closeAssistantTextSegment();
-      }
-
-      switch (event.tp) {
-        case 'msg_u': {
-          const mid = String(payload.mid ?? event.id);
-          appendBlock({
-            key: `user:${mid}`,
-            id: mid,
-            kind: 'user',
-            text: String(payload.txt ?? ''),
-            timestamp: event.ts,
-            attachments: Array.isArray(payload.atts)
-              ? payload.atts.map((item: Record<string, unknown>) => ({
-                  id: String(item.id ?? ''),
-                  name: String(item.name ?? ''),
-                  mime: typeof item.mime === 'string' ? item.mime : undefined,
-                  size: typeof item.sz === 'number' ? item.sz : undefined,
-                }))
-              : [],
-          });
-          break;
-        }
-        case 'msg_a_st': {
-          break;
-        }
-        case 'txt_d': {
-          const mid = String(payload.mid ?? event.pid2 ?? event.id);
-          const block =
-            openAssistantMessageId === mid && openAssistantBlockIndex >= 0
-              ? blocks[openAssistantBlockIndex]
-              : createAssistantTextBlock(mid, event.ts);
-          block.text += String(payload.txt ?? '');
-          break;
-        }
-        case 'txt_end': {
-          const mid = String(payload.mid ?? event.pid2 ?? event.id);
-          const blockIndex = lastAssistantBlockIndexByMessageId.get(mid);
-          if (blockIndex != null) {
-            blocks[blockIndex].done = true;
-          }
-          break;
-        }
-        case 'tool_st': {
-          const toolId = String(payload.tid ?? event.id);
-          const block = ensureToolBlock(toolId, event.ts, payload, 'running');
-          if (block.tool) {
-            applyToolPayload(block.tool, payload, 'running');
-          }
-          break;
-        }
-        case 'tool_end': {
-          const toolId = String(payload.tid ?? event.id);
-          const block = ensureToolBlock(
-            toolId,
-            event.ts,
-            payload,
-            payload.ok === false ? 'error' : 'done'
-          );
-          const tool = block.tool;
-          if (!tool) {
-            break;
-          }
-          applyToolPayload(tool, payload, payload.ok === false ? 'error' : 'done');
-          break;
-        }
-        case 'approval_req': {
-          const prompt = String(payload.prompt ?? 'Approval required');
-          blocks.push({
-            key: `approval:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: prompt,
-            timestamp: event.ts,
-            attachments: [],
-            level: 'warn',
-            detail: {
-              type: 'approval_request',
-              prompt,
-            },
-          });
-          break;
-        }
-        case 'approval_res': {
-          const action = String(payload.act ?? 'approve');
-          const prompt = String(payload.prompt ?? '');
-          blocks.push({
-            key: `approval-res:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: action === 'reject' ? 'Approval rejected' : 'Approval granted',
-            timestamp: event.ts,
-            attachments: [],
-            level: action === 'reject' ? 'warn' : 'info',
-            detail: {
-              type: 'approval_response',
-              prompt,
-              action,
-            },
-          });
-          break;
-        }
-        case 'user_input_req': {
-          const itemId = String(payload.iid ?? '');
-          const questions = parseUserInputQuestions(payload.qs);
-          if (itemId) {
-            userInputQuestionsByItemId.set(itemId, questions);
-          }
-          blocks.push({
-            key: `user-input:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: summarizeUserInputPrompt(payload),
-            timestamp: event.ts,
-            attachments: [],
-            level: 'warn',
-            detail: {
-              type: 'user_input_request',
-              prompt: summarizeUserInputPrompt(payload),
-              questions,
-            },
-          });
-          break;
-        }
-        case 'user_input_res': {
-          const itemId = String(payload.iid ?? '');
-          const questions = itemId ? (userInputQuestionsByItemId.get(itemId) ?? []) : [];
-          blocks.push({
-            key: `user-input-res:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: summarizeUserInputAnswer(payload),
-            timestamp: event.ts,
-            attachments: [],
-            level: 'info',
-            detail: {
-              type: 'user_input_response',
-              answers: buildUserInputAnswerEntries(payload, questions),
-            },
-          });
-          break;
-        }
-        case 'note': {
-          blocks.push({
-            key: `note:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: String(payload.txt ?? ''),
-            timestamp: event.ts,
-            attachments: [],
-            level: payload.lvl === 'warn' ? 'warn' : payload.lvl === 'error' ? 'error' : 'info',
-          });
-          break;
-        }
-        case 'run_fail': {
-          blocks.push({
-            key: `fail:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: String(payload.msg ?? 'Run failed'),
-            timestamp: event.ts,
-            attachments: [],
-            level: 'error',
-          });
-          break;
-        }
-        case 'run_abort': {
-          const abortedByRestart = isProcessRestartPayload(payload);
-          blocks.push({
-            key: `abort:${event.id}`,
-            id: event.id,
-            kind: 'system',
-            text: abortedByRestart ? getRecoveryMessage(payload) : 'Run aborted',
-            timestamp: event.ts,
-            attachments: [],
-            level: abortedByRestart ? 'warn' : 'info',
-          });
-          break;
-        }
-      }
-    });
-
-    return blocks;
-  }
-
-  const getBlocks = (sessionId: string) => buildBlocks(sessionId);
-
-  function getPendingApproval(sessionId: string): WebSessionApprovalState | null {
-    let pending: WebSessionApprovalState | null = null;
-    for (const event of eventsBySession.value[sessionId] ?? []) {
-      const payload = event.p ?? {};
-      switch (event.tp) {
-        case 'approval_req':
-          pending = {
-            id: event.id,
-            prompt: String(payload.prompt ?? ''),
-            requestedAt: event.ts,
-            stale: false,
-          };
-          break;
-        case 'msg_u':
-        case 'run_st':
-        case 'approval_res':
-        case 'run_done':
-        case 'run_fail':
-          pending = null;
-          break;
-        case 'run_abort':
-          if (pending && isProcessRestartPayload(payload)) {
-            const activeRequest: WebSessionApprovalState = pending;
-            pending = {
-              ...activeRequest,
-              stale: true,
-              recoveryReason: String(payload.reason ?? ''),
-              recoveryMessage: getRecoveryMessage(payload),
-            };
-            break;
-          }
-          pending = null;
-          break;
-      }
-    }
-    return pending;
-  }
-
-  function getPendingUserInput(sessionId: string): WebSessionUserInputState | null {
-    let pending: WebSessionUserInputState | null = null;
-    for (const event of eventsBySession.value[sessionId] ?? []) {
-      const payload = event.p ?? {};
-      switch (event.tp) {
-        case 'user_input_req':
-          pending = {
-            id: event.id,
-            itemId: String(payload.iid ?? ''),
-            prompt: summarizeUserInputPrompt(payload),
-            questions: parseUserInputQuestions(payload.qs),
-            requestedAt: event.ts,
-            stale: false,
-          };
-          break;
-        case 'msg_u':
-        case 'run_st':
-        case 'user_input_res':
-        case 'run_done':
-        case 'run_fail':
-          pending = null;
-          break;
-        case 'run_abort':
-          if (pending && isProcessRestartPayload(payload)) {
-            const activeRequest: WebSessionUserInputState = pending;
-            pending = {
-              ...activeRequest,
-              stale: true,
-              recoveryReason: String(payload.reason ?? ''),
-              recoveryMessage: getRecoveryMessage(payload),
-            };
-            break;
-          }
-          pending = null;
-          break;
-      }
-    }
-    return pending;
-  }
-
-  function getLiveState(sessionId: string): WebSessionLiveState {
-    const session = findSessionById(sessionId);
-    const approval = getPendingApproval(sessionId);
-    const userInput = getPendingUserInput(sessionId);
-    let activeTool:
-      | {
-          id: string;
-          name: string;
-          kind?: string;
-          summary?: string;
-          count?: number;
-          groupId?: string;
-        }
-      | undefined;
-    let sawAssistantOutput = false;
-    let assistantDone = false;
-    let errorMessage = '';
-    let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
-    let runStartedAt: number | undefined;
-
-    for (const event of eventsBySession.value[sessionId] ?? []) {
-      const payload = event.p ?? {};
-      updatedAt = event.ts;
-      switch (event.tp) {
-        case 'run_st':
-          runStartedAt = event.ts;
-          sawAssistantOutput = false;
-          assistantDone = false;
-          activeTool = undefined;
-          errorMessage = '';
-          break;
-        case 'msg_a_st':
-        case 'txt_d':
-          sawAssistantOutput = true;
-          assistantDone = false;
-          break;
-        case 'txt_end':
-          assistantDone = true;
-          break;
-        case 'tool_st':
-          if (payload.kind === 'reasoning') {
-            break;
-          }
-          {
-            const commandGroup = parseToolCommandGroup(asRecord(payload.meta)?.commandGroup);
-            activeTool = {
-              id: String(payload.tid ?? event.id),
-              name: String(payload.name ?? 'Tool'),
-              kind: typeof payload.kind === 'string' ? payload.kind : undefined,
-              summary: extractToolSummary(payload),
-              count: commandGroup?.count,
-              groupId: commandGroup?.id,
-            };
-          }
-          break;
-        case 'tool_end': {
-          if (payload.kind === 'reasoning') {
-            break;
-          }
-          const toolId = String(payload.tid ?? event.id);
-          if (activeTool?.id === toolId) {
-            activeTool = undefined;
-          }
-          break;
-        }
-        case 'run_fail':
-          errorMessage = String(payload.msg ?? 'Run failed');
-          break;
-      }
-    }
-
-    if (approval && !approval.stale && session?.status === 'running') {
-      return {
-        phase: 'waiting_approval',
-        running: true,
-        updatedAt: approval.requestedAt,
-        startedAt: runStartedAt,
-        approval,
-        tool: activeTool,
-      };
-    }
-
-    if (session?.status === 'waiting_approval') {
-      return {
-        phase: 'waiting_approval',
-        running: false,
-        updatedAt,
-      };
-    }
-
-    if (userInput && !userInput.stale && session?.status === 'running') {
-      return {
-        phase: 'waiting_input',
-        running: true,
-        updatedAt: userInput.requestedAt,
-        startedAt: runStartedAt,
-        tool: activeTool,
-        userInput,
-      };
-    }
-
-    if (session?.status === 'running') {
-      if (activeTool) {
-        return {
-          phase: 'tool',
-          running: true,
-          updatedAt,
-          startedAt: runStartedAt,
-          tool: activeTool,
-        };
-      }
-      if (sawAssistantOutput && !assistantDone) {
-        return {
-          phase: 'thinking',
-          running: true,
-          updatedAt,
-          startedAt: runStartedAt,
-        };
-      }
-      return {
-        phase: 'starting',
-        running: true,
-        updatedAt,
-        startedAt:
-          runStartedAt ??
-          (session ? Date.parse(session.updatedAt || session.createdAt) || Date.now() : Date.now()),
-      };
-    }
-
-    if (session?.status === 'done') {
-      return {
-        phase: 'done',
-        running: false,
-        updatedAt,
-        startedAt: runStartedAt,
-      };
-    }
-
-    if (session?.status === 'err') {
-      return {
-        phase: 'error',
-        running: false,
-        updatedAt,
-        startedAt: runStartedAt,
-        errorMessage,
-      };
-    }
-
-    return {
-      phase: 'idle',
-      running: false,
-      updatedAt,
-    };
-  }
-
   async function createSessionViaHttp(
     projectId: string,
     payload: {
@@ -2415,6 +2296,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     renameSession,
     archiveSession,
     unarchiveSession,
+    syncSession,
     deleteSession,
     sendMessage,
     abortSession,

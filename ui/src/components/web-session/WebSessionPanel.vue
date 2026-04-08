@@ -71,7 +71,7 @@
                       <span
                         v-if="shouldShowSessionStatusDot(session)"
                         class="status-dot"
-                        :class="session.status"
+                        :class="getSessionStatusDotClass(session)"
                       ></span>
                       <span class="tab-title" :style="tabTitleStyle">{{ session.title }}</span>
                       <span
@@ -129,10 +129,22 @@
             <div ref="timelineScrollRef" class="timeline-scroll" @scroll="handleTimelineScroll">
               <div ref="timelineListRef" class="timeline-list">
                 <div v-if="historyMeta.loading" class="history-loading">
-                  {{ t('common.loading') }}
+                  {{
+                    currentRealSession?.syncState === 'syncing'
+                      ? t('webSession.syncLoading')
+                      : t('common.loading')
+                  }}
                 </div>
 
-                <div v-if="visibleBlocks.length === 0" class="timeline-intro">
+                <div v-if="showTimelineSyncLoading" class="timeline-loading-shell" aria-hidden="true">
+                  <div
+                    v-for="row in timelineLoadingRows"
+                    :key="row"
+                    class="timeline-loading-card"
+                  ></div>
+                </div>
+
+                <div v-else-if="visibleBlocks.length === 0" class="timeline-intro">
                   <span class="timeline-intro-badge">
                     {{ currentSession.agent === 'codex' ? 'Codex' : 'Claude' }}
                   </span>
@@ -201,7 +213,7 @@
                       <button
                         type="button"
                         class="command-tool-button"
-                        @click="openCommandExecutionDetail(item.tool)"
+                        @click="openCommandExecutionDetail(item)"
                       >
                         <span class="command-tool-copy">
                           <span class="command-tool-topline">
@@ -1420,6 +1432,9 @@ async function refreshWebSessionCatchUp(reason: string) {
   const token = ++webSessionCatchUpToken;
 
   try {
+    if (props.projectId) {
+      await webSessionStore.loadSessions(props.projectId, true);
+    }
     await webSessionStore.refreshSessionSnapshot(sessionId);
   } catch (error) {
     console.warn('[Web Session Catch-Up] Failed to refresh session snapshot', {
@@ -1558,11 +1573,16 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
   if (isReasoningBlock(block)) {
     return hasReasoningContent(block);
   }
-  if (liveState.value.running && isCompactTool(block.tool) && index > currentRunStartIndex.value) {
+  const activeToolGroupId = liveState.value.tool?.groupId || '';
+  const activeToolId = liveState.value.tool?.id || '';
+  const blockGroupId = block.tool.commandGroup?.id || '';
+  if (
+    liveState.value.running &&
+    block.tool.status === 'running' &&
+    ((activeToolGroupId && blockGroupId === activeToolGroupId) ||
+      (activeToolId && block.tool.id === activeToolId))
+  ) {
     return false;
-  }
-  if (block.tool.status === 'running') {
-    return !liveState.value.running;
   }
   return true;
 }
@@ -1672,6 +1692,13 @@ const historyMeta = computed(() =>
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
+const showTimelineSyncLoading = computed(
+  () =>
+    Boolean(currentRealSession.value) &&
+    visibleBlocks.value.length === 0 &&
+    (historyMeta.value.loading || currentRealSession.value?.syncState === 'syncing')
+);
+const timelineLoadingRows = [1, 2, 3, 4, 5];
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
@@ -1832,6 +1859,16 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     disabled: !contextMenuSession.value,
   },
   {
+    label: t('webSession.syncFromTerminal'),
+    key: 'sync',
+    disabled:
+      !contextMenuSession.value ||
+      isDraftSession(contextMenuSession.value) ||
+      isArchivedPreviewSession(contextMenuSession.value) ||
+      contextMenuSession.value.agent !== 'codex' ||
+      !contextMenuSession.value.nativeSessionId,
+  },
+  {
     label: t('webSession.archiveAction'),
     key: 'archive',
     disabled:
@@ -1973,6 +2010,23 @@ function normalizeDraftSession(
         ? session.activityAt
         : nowIso,
     lastMessageAt: null,
+    sourceKind: typeof session.sourceKind === 'string' ? session.sourceKind : 'codex_app_server',
+    syncState:
+      session.syncState === 'fresh' ||
+      session.syncState === 'stale' ||
+      session.syncState === 'missing' ||
+      session.syncState === 'syncing' ||
+      session.syncState === 'error'
+        ? session.syncState
+        : 'missing',
+    sourceCreatedAt: null,
+    sourceUpdatedAt: null,
+    lastSyncedAt: null,
+    threadPath: null,
+    threadPreview: null,
+    turnCount: 0,
+    itemCount: 0,
+    syncError: null,
     createdAt:
       typeof session.createdAt === 'string' && session.createdAt.trim()
         ? session.createdAt
@@ -2113,6 +2167,16 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     archivedAt: null,
     activityAt: nowIso,
     lastMessageAt: null,
+    sourceKind: 'codex_app_server',
+    syncState: 'missing',
+    sourceCreatedAt: null,
+    sourceUpdatedAt: null,
+    lastSyncedAt: null,
+    threadPath: null,
+    threadPreview: null,
+    turnCount: 0,
+    itemCount: 0,
+    syncError: null,
     createdAt: nowIso,
     updatedAt: nowIso,
     usage: {
@@ -2683,10 +2747,16 @@ function defaultModelForAgent(agent: 'claude' | 'codex') {
 }
 
 function formatTime(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
   return new Date(timestamp).toLocaleTimeString();
 }
 
 function formatDateTime(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return '';
+  }
   return new Date(timestamp).toLocaleString();
 }
 
@@ -2757,11 +2827,14 @@ function normalizeToolKindValue(value: string | undefined) {
   if (normalized === 'fileChange') {
     return 'file_change';
   }
+  if (normalized === 'webSearch') {
+    return 'web_search';
+  }
   return normalized;
 }
 
 function isCompactToolKind(value: string | undefined) {
-  return ['command_execution', 'file_change', 'mcp_tool_call'].includes(
+  return ['command_execution', 'file_change', 'mcp_tool_call', 'web_search'].includes(
     normalizeToolKindValue(value)
   );
 }
@@ -2776,6 +2849,9 @@ function compactToolLabel(tool?: { kind?: string; meta?: Record<string, unknown>
   }
   if (kind === 'mcp_tool_call') {
     return t('webSession.toolMcpToolCall');
+  }
+  if (kind === 'web_search') {
+    return t('webSession.toolWebSearch');
   }
   return t('webSession.toolKindDefault');
 }
@@ -2832,6 +2908,20 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
     return toolName || target;
   }
 
+  if (kind === 'web_search') {
+    const query = String(input?.query ?? '').trim();
+    if (query) {
+      return query;
+    }
+    const action = asRecord(input?.action);
+    const queries = Array.isArray(action?.queries)
+      ? action.queries
+          .map(value => String(value ?? '').trim())
+          .filter((value): value is string => Boolean(value))
+      : [];
+    return queries[0] ?? subtitle;
+  }
+
   return subtitle;
 }
 
@@ -2840,6 +2930,9 @@ function getCompactToolCount(tool: NonNullable<WebSessionBlock['tool']>) {
 }
 
 function shouldHideTimelineMeta(item: WebSessionBlock) {
+  if (!Number.isFinite(item.timestamp) || item.timestamp <= 0) {
+    return true;
+  }
   return item.kind === 'tool' && item.tool ? isCompactTool(item.tool) : false;
 }
 
@@ -2900,8 +2993,62 @@ const commandExecutionDetailItems = computed(() => {
   });
 });
 
-async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['tool']>) {
+function buildLocalCommandExecutionDetail(block: WebSessionBlock): CommandExecutionDetail | null {
+  if (!block.tool) {
+    return null;
+  }
+  const payload = asRecord(block.payload);
+  const rawItems = Array.isArray(payload?.groupItems) ? payload?.groupItems : null;
+  if (!rawItems || rawItems.length === 0) {
+    return null;
+  }
+  const items: CommandExecutionDetailItem[] = [];
+  rawItems.forEach(item => {
+    const record = asRecord(item);
+    if (!record) {
+      return;
+    }
+    items.push({
+      toolId: String(record.toolId ?? ''),
+      kind: String(record.kind ?? ''),
+      title: String(record.title ?? ''),
+      summary: String(record.summary ?? ''),
+      command: String(record.command ?? ''),
+      input: record.input,
+      output: typeof record.output === 'string' ? record.output : undefined,
+      status:
+        record.status === 'running' || record.status === 'error' || record.status === 'done'
+          ? record.status
+          : 'done',
+      timestamp: typeof record.timestamp === 'string' ? record.timestamp : '',
+      startedAt: typeof record.startedAt === 'string' ? record.startedAt : undefined,
+      completedAt: typeof record.completedAt === 'string' ? record.completedAt : undefined,
+    });
+  });
+  if (items.length === 0) {
+    return null;
+  }
+  const groupId = block.tool.commandGroup?.id || block.tool.id;
+  return {
+    groupId,
+    kind: block.tool.kind ?? '',
+    title: block.tool.name,
+    summary: getCompactToolSummary(block.tool),
+    count: Math.max(items.length, Number(block.tool.commandGroup?.count ?? items.length) || items.length),
+    firstSeq: Number(block.tool.commandGroup?.firstSeq ?? 0),
+    lastSeq: Number(block.tool.commandGroup?.lastSeq ?? 0),
+    status: block.tool.status,
+    latestToolId: block.tool.commandGroup?.latestToolId || block.tool.id,
+    items,
+  };
+}
+
+async function openCommandExecutionDetail(block: WebSessionBlock) {
   if (!currentRealSession.value) {
+    return;
+  }
+  const tool = block.tool;
+  if (!tool) {
     return;
   }
   const groupId = tool.commandGroup?.id || tool.id;
@@ -2913,6 +3060,13 @@ async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['too
   showCommandExecutionDetail.value = true;
   loadingCommandExecutionDetail.value = true;
   const requestGroupId = groupId;
+
+  const localDetail = buildLocalCommandExecutionDetail(block);
+  if (localDetail) {
+    activeCommandExecutionDetail.value = localDetail;
+    loadingCommandExecutionDetail.value = false;
+    return;
+  }
 
   try {
     const response =
@@ -4238,7 +4392,14 @@ function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return agentName;
   }
-  return label ? `${agentName} · ${label}` : agentName;
+  const suffix =
+    session.syncState === 'stale'
+      ? t('webSession.syncStateStale')
+      : session.syncState === 'error' && session.syncError
+        ? session.syncError
+        : '';
+  const base = label ? `${agentName} · ${label}` : agentName;
+  return suffix ? `${base} · ${suffix}` : base;
 }
 
 function getSidebarSessionSubtitle(item: CrossProjectSessionItem) {
@@ -4303,7 +4464,14 @@ function shouldShowSessionStatusDot(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return false;
   }
-  return session.status === 'err';
+  return session.status === 'err' || session.syncState === 'stale';
+}
+
+function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
+  if (session.syncState === 'stale') {
+    return 'stale';
+  }
+  return session.status;
 }
 
 function hasSessionUnviewedApproval(session: (typeof sessions.value)[number]) {
@@ -4340,6 +4508,10 @@ async function handleContextMenuSelect(key: string | number) {
     await handleRenameSession(session.id);
     return;
   }
+  if (action === 'sync') {
+    await handleSyncSession(session.id);
+    return;
+  }
   if (action === 'archive') {
     handleArchiveSession(session.id);
     return;
@@ -4352,6 +4524,19 @@ async function handleContextMenuSelect(key: string | number) {
       negativeText: t('common.cancel'),
       onPositiveClick: async () => performDeleteSession(session.id),
     });
+  }
+}
+
+async function handleSyncSession(sessionId: string) {
+  const session = sessions.value.find(item => item.id === sessionId);
+  if (!session) {
+    return;
+  }
+  try {
+    await webSessionStore.syncSession(session.projectId, sessionId);
+    message.success(t('webSession.syncSuccess'));
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('webSession.syncFailed'));
   }
 }
 
@@ -4877,6 +5062,11 @@ onBeforeUnmount(() => {
 .status-dot.aborting {
   background-color: var(--n-warning-color, #f59e0b);
   box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
+}
+
+.status-dot.stale {
+  background-color: #f79009;
+  box-shadow: 0 0 0 1px rgba(247, 144, 9, 0.25);
 }
 
 .ai-status-pill {
@@ -5453,6 +5643,38 @@ onBeforeUnmount(() => {
   padding: 4px 0 16px;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+.timeline-loading-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-width: 940px;
+}
+
+.timeline-loading-card {
+  height: 52px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 0%,
+      color-mix(in srgb, var(--app-surface-color, #fff) 76%, #e3eaf5) 48%,
+      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 100%
+    );
+  background-size: 220% 100%;
+  animation: web-session-sync-loading 1.2s ease-in-out infinite;
+  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);
+}
+
+@keyframes web-session-sync-loading {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
 }
 
 .timeline-intro {

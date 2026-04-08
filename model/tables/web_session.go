@@ -7,7 +7,7 @@ import (
 )
 
 // WebSessionTable stores metadata for browser-based Claude/Codex sessions.
-// The actual event history is persisted as JSONL files under the app data dir.
+// The actual conversation cache is normalized into SQLite tables.
 type WebSessionTable struct {
 	model_base.StringPKBaseModel
 
@@ -31,6 +31,15 @@ type WebSessionTable struct {
 	HasUnread       bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
 	ArchivedAt      *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
 	ActivityAt      time.Time  `gorm:"type:datetime;index" json:"activityAt"`
+	SourceKind      string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
+	SyncState       string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`
+	SourceCreatedAt *time.Time `gorm:"type:datetime" json:"sourceCreatedAt"`
+	SourceUpdatedAt *time.Time `gorm:"type:datetime;index" json:"sourceUpdatedAt"`
+	LastSyncedAt    *time.Time `gorm:"type:datetime" json:"lastSyncedAt"`
+	ThreadPath      *string    `gorm:"type:text" json:"threadPath"`
+	ThreadPreview   *string    `gorm:"type:text" json:"threadPreview"`
+	TurnCount       int        `gorm:"type:integer;not null;default:0" json:"turnCount"`
+	ItemCount       int        `gorm:"type:integer;not null;default:0" json:"itemCount"`
 
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
@@ -41,6 +50,7 @@ type WebSessionTable struct {
 	TotalCost              float64 `gorm:"type:real;not null;default:0" json:"totalCost"`
 
 	LastError *string `gorm:"type:text" json:"lastError"`
+	SyncError *string `gorm:"type:text" json:"syncError"`
 }
 
 func (WebSessionTable) TableName() string {

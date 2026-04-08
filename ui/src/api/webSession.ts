@@ -12,6 +12,16 @@ type ArchivedQueryResult = {
   nextOffset: number;
 };
 
+type WebSessionSnapshot = {
+  session: WebSessionSummary;
+  history: {
+    items: unknown[];
+    hasMore: boolean;
+    beforeCursor?: string;
+    total: number;
+  };
+};
+
 export const webSessionApi = {
   async list(projectId: string): Promise<WebSessionSummary[]> {
     const body =
@@ -75,6 +85,19 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to unarchive web session');
+    }
+    return body.item;
+  },
+
+  async sync(projectId: string, sessionId: string): Promise<WebSessionSnapshot> {
+    const body =
+      (await http
+        .Post<ItemResponse<WebSessionSnapshot>>(
+          `/projects/${projectId}/web-sessions/${sessionId}/sync`
+        )
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to sync web session');
     }
     return body.item;
   },

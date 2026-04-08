@@ -1,0 +1,384 @@
+package websession
+
+import (
+	"context"
+	"crypto/sha1"
+	"encoding/json"
+	"fmt"
+	"mime"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"code-kanban/model"
+	"code-kanban/model/tables"
+
+	"gorm.io/gorm"
+)
+
+func normalizeSyncState(value string) SyncState {
+	switch SyncState(strings.TrimSpace(value)) {
+	case SyncStateFresh, SyncStateStale, SyncStateMissing, SyncStateSyncing, SyncStateError:
+		return SyncState(strings.TrimSpace(value))
+	default:
+		return SyncStateMissing
+	}
+}
+
+func mustJSONText(value any) string {
+	if value == nil {
+		return ""
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
+func decodeJSONText(raw string, target any) {
+	if strings.TrimSpace(raw) == "" || target == nil {
+		return
+	}
+	_ = json.Unmarshal([]byte(raw), target)
+}
+
+func parseHistoryCursorValue(cursor string) (*int64, error) {
+	cursor = strings.TrimSpace(cursor)
+	if cursor == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(cursor, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func historyItemCursor(items []HistoryItem, hasMore bool) string {
+	if !hasMore || len(items) == 0 {
+		return ""
+	}
+	return strconv.FormatInt(items[0].OrderIndex, 10)
+}
+
+func mapHistoryItemRow(row tables.WebSessionItemTable) HistoryItem {
+	var attachments []HistoryAttachment
+	var tool *HistoryTool
+	var detail *HistoryDetail
+	var payload map[string]any
+
+	decodeJSONText(row.AttachmentsJSON, &attachments)
+	decodeJSONText(row.ToolJSON, &tool)
+	decodeJSONText(row.DetailJSON, &detail)
+	decodeJSONText(row.PayloadJSON, &payload)
+
+	return HistoryItem{
+		ID:           row.ID,
+		SourceTurnID: row.SourceTurnID,
+		SourceItemID: row.SourceItemID,
+		OrderIndex:   row.OrderIndex,
+		Kind:         row.ItemKind,
+		ItemType:     row.ItemType,
+		Text:         row.Text,
+		Timestamp:    row.Timestamp,
+		ObservedAt:   row.ObservedAt,
+		Attachments:  attachments,
+		Tool:         tool,
+		Level:        row.Level,
+		Done:         row.Done,
+		Detail:       detail,
+		Payload:      payload,
+	}
+}
+
+func mapHistoryItemRowWithSession(row tables.WebSessionItemTable, sessionID string) HistoryItem {
+	item := mapHistoryItemRow(row)
+	if item.ID == "" {
+		item.ID = sessionID + ":" + strconv.FormatInt(item.OrderIndex, 10)
+	}
+	return item
+}
+
+func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, item HistoryItem) {
+	if row == nil {
+		return
+	}
+	row.WebSessionID = sessionID
+	row.SourceTurnID = item.SourceTurnID
+	row.SourceItemID = item.SourceItemID
+	row.OrderIndex = item.OrderIndex
+	row.ItemKind = strings.TrimSpace(item.Kind)
+	row.ItemType = strings.TrimSpace(item.ItemType)
+	row.Text = item.Text
+	row.Timestamp = item.Timestamp
+	row.ObservedAt = item.ObservedAt
+	row.Level = strings.TrimSpace(item.Level)
+	row.Done = item.Done
+	row.AttachmentsJSON = mustJSONText(item.Attachments)
+	row.ToolJSON = mustJSONText(item.Tool)
+	row.DetailJSON = mustJSONText(item.Detail)
+	row.PayloadJSON = mustJSONText(item.Payload)
+}
+
+func (m *Manager) nextHistoryOrderIndex(ctx context.Context, sessionID string) (int64, error) {
+	db := model.GetDB()
+	if db == nil {
+		return 0, model.ErrDBNotInitialized
+	}
+	var maxValue int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ?", sessionID).
+		Select("COALESCE(MAX(order_index), 0)").
+		Scan(&maxValue).Error; err != nil {
+		return 0, err
+	}
+	return maxValue + 1, nil
+}
+
+func (m *Manager) appendHistoryItem(
+	ctx context.Context,
+	sessionID string,
+	item HistoryItem,
+) (HistoryItem, error) {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryItem{}, model.ErrDBNotInitialized
+	}
+	if item.OrderIndex <= 0 {
+		nextOrder, err := m.nextHistoryOrderIndex(ctx, sessionID)
+		if err != nil {
+			return HistoryItem{}, err
+		}
+		item.OrderIndex = nextOrder
+	}
+	row := tables.WebSessionItemTable{}
+	row.Init()
+	applyHistoryItemToRow(&row, sessionID, item)
+	if err := db.WithContext(ctx).Create(&row).Error; err != nil {
+		return HistoryItem{}, err
+	}
+	return mapHistoryItemRowWithSession(row, sessionID), nil
+}
+
+func (m *Manager) upsertHistoryItemBySourceID(
+	ctx context.Context,
+	sessionID string,
+	sourceItemID string,
+	mutate func(*HistoryItem),
+) (HistoryItem, error) {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryItem{}, model.ErrDBNotInitialized
+	}
+	sourceItemID = strings.TrimSpace(sourceItemID)
+	if sourceItemID == "" {
+		return HistoryItem{}, fmt.Errorf("source item id is required")
+	}
+
+	var row tables.WebSessionItemTable
+	err := db.WithContext(ctx).
+		Where("web_session_id = ? AND source_item_id = ?", sessionID, sourceItemID).
+		First(&row).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		return HistoryItem{}, err
+	}
+
+	var item HistoryItem
+	if err == nil {
+		item = mapHistoryItemRowWithSession(row, sessionID)
+	} else {
+		nextOrder, nextErr := m.nextHistoryOrderIndex(ctx, sessionID)
+		if nextErr != nil {
+			return HistoryItem{}, nextErr
+		}
+		row.Init()
+		item = HistoryItem{
+			ID:           row.ID,
+			SourceItemID: ptr(strings.TrimSpace(sourceItemID)),
+			OrderIndex:   nextOrder,
+		}
+	}
+	mutate(&item)
+	if item.SourceItemID == nil {
+		item.SourceItemID = ptr(sourceItemID)
+	}
+	applyHistoryItemToRow(&row, sessionID, item)
+	if err == gorm.ErrRecordNotFound {
+		if createErr := db.WithContext(ctx).Create(&row).Error; createErr != nil {
+			return HistoryItem{}, createErr
+		}
+		return mapHistoryItemRowWithSession(row, sessionID), nil
+	}
+	if updateErr := db.WithContext(ctx).Save(&row).Error; updateErr != nil {
+		return HistoryItem{}, updateErr
+	}
+	return mapHistoryItemRowWithSession(row, sessionID), nil
+}
+
+func (m *Manager) replaceSessionHistoryCache(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	turns []tables.WebSessionTurnTable,
+	items []tables.WebSessionItemTable,
+	updates map[string]any,
+) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionTurnTable{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("web_session_id = ?", session.ID).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+			return err
+		}
+		if len(turns) > 0 {
+			if err := tx.Create(&turns).Error; err != nil {
+				return err
+			}
+		}
+		if len(items) > 0 {
+			if err := tx.Create(&items).Error; err != nil {
+				return err
+			}
+		}
+		if len(updates) > 0 {
+			if err := tx.Model(&tables.WebSessionTable{}).
+				Where("id = ?", session.ID).
+				Updates(updates).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (m *Manager) loadHistoryWindow(
+	ctx context.Context,
+	sessionID string,
+	limit int,
+	beforeOrder *int64,
+) (HistoryWindow, error) {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryWindow{}, model.ErrDBNotInitialized
+	}
+	if limit <= 0 {
+		limit = DefaultHistoryWindow
+	}
+
+	query := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ?", sessionID)
+	if beforeOrder != nil {
+		query = query.Where("order_index < ?", *beforeOrder)
+	}
+
+	var total int64
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionItemTable{}).
+		Where("web_session_id = ?", sessionID).
+		Count(&total).Error; err != nil {
+		return HistoryWindow{}, err
+	}
+
+	var rows []tables.WebSessionItemTable
+	if err := query.
+		Order("order_index DESC").
+		Limit(limit + 1).
+		Find(&rows).Error; err != nil {
+		return HistoryWindow{}, err
+	}
+
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+
+	items := make([]HistoryItem, 0, len(rows))
+	for index := len(rows) - 1; index >= 0; index-- {
+		items = append(items, mapHistoryItemRowWithSession(rows[index], sessionID))
+	}
+
+	return HistoryWindow{
+		Items:        items,
+		HasMore:      hasMore,
+		BeforeCursor: historyItemCursor(items, hasMore),
+		Total:        int(total),
+	}, nil
+}
+
+func (m *Manager) findHistoryItemByID(
+	ctx context.Context,
+	sessionID string,
+	itemID string,
+) (HistoryItem, error) {
+	db := model.GetDB()
+	if db == nil {
+		return HistoryItem{}, model.ErrDBNotInitialized
+	}
+	var row tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where("web_session_id = ? AND id = ?", sessionID, itemID).
+		First(&row).Error; err != nil {
+		return HistoryItem{}, err
+	}
+	return mapHistoryItemRowWithSession(row, sessionID), nil
+}
+
+func (m *Manager) findHistoryItemByToolKey(
+	ctx context.Context,
+	sessionID string,
+	toolID string,
+) (HistoryItem, error) {
+	window, err := m.loadHistoryWindow(ctx, sessionID, 1000, nil)
+	if err != nil {
+		return HistoryItem{}, err
+	}
+	for _, item := range window.Items {
+		if item.Tool == nil {
+			continue
+		}
+		if item.Tool.ID == toolID || item.Tool.CommandGroup != nil && item.Tool.CommandGroup.ID == toolID {
+			return item, nil
+		}
+	}
+	return HistoryItem{}, gorm.ErrRecordNotFound
+}
+
+func (m *Manager) registerExternalAttachment(path string) (HistoryAttachment, error) {
+	normalizedPath := strings.TrimSpace(path)
+	if normalizedPath == "" {
+		return HistoryAttachment{}, fmt.Errorf("attachment path is required")
+	}
+	info, err := os.Stat(normalizedPath)
+	if err != nil {
+		return HistoryAttachment{}, err
+	}
+	sum := sha1.Sum([]byte(normalizedPath))
+	attachmentID := fmt.Sprintf("ext_%x", sum[:8])
+	meta := attachmentMeta{
+		ID:        attachmentID,
+		Name:      filepath.Base(normalizedPath),
+		Mime:      mime.TypeByExtension(strings.ToLower(filepath.Ext(normalizedPath))),
+		Size:      info.Size(),
+		Path:      normalizedPath,
+		CreatedAt: time.Now(),
+	}
+	metaBytes, err := json.Marshal(meta)
+	if err == nil {
+		_ = os.WriteFile(m.store.attachmentPath(attachmentID, ".json"), metaBytes, 0o644)
+	}
+	return HistoryAttachment{
+		ID:   attachmentID,
+		Name: meta.Name,
+		Mime: meta.Mime,
+		Size: meta.Size,
+		Path: meta.Path,
+	}, nil
+}

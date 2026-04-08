@@ -272,6 +272,16 @@ export interface WebSessionSummary {
   archivedAt?: string | null;
   activityAt: string;
   lastMessageAt?: string | null;
+  sourceKind: string;
+  syncState: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
+  sourceCreatedAt?: string | null;
+  sourceUpdatedAt?: string | null;
+  lastSyncedAt?: string | null;
+  threadPath?: string | null;
+  threadPreview?: string | null;
+  turnCount: number;
+  itemCount: number;
+  syncError?: string | null;
   createdAt: string;
   updatedAt: string;
   usage: WebSessionUsage;

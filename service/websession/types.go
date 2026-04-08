@@ -60,6 +60,16 @@ type Usage struct {
 	Cost              float64 `json:"cost"`
 }
 
+type SyncState string
+
+const (
+	SyncStateFresh   SyncState = "fresh"
+	SyncStateStale   SyncState = "stale"
+	SyncStateMissing SyncState = "missing"
+	SyncStateSyncing SyncState = "syncing"
+	SyncStateError   SyncState = "error"
+)
+
 type SessionSummary struct {
 	ID              string          `json:"id"`
 	ProjectID       string          `json:"projectId"`
@@ -78,6 +88,16 @@ type SessionSummary struct {
 	ArchivedAt      *time.Time      `json:"archivedAt,omitempty"`
 	ActivityAt      time.Time       `json:"activityAt"`
 	LastMessageAt   *time.Time      `json:"lastMessageAt,omitempty"`
+	SourceKind      string          `json:"sourceKind"`
+	SyncState       SyncState       `json:"syncState"`
+	SourceCreatedAt *time.Time      `json:"sourceCreatedAt,omitempty"`
+	SourceUpdatedAt *time.Time      `json:"sourceUpdatedAt,omitempty"`
+	LastSyncedAt    *time.Time      `json:"lastSyncedAt,omitempty"`
+	ThreadPath      *string         `json:"threadPath,omitempty"`
+	ThreadPreview   *string         `json:"threadPreview,omitempty"`
+	TurnCount       int             `json:"turnCount"`
+	ItemCount       int             `json:"itemCount"`
+	SyncError       *string         `json:"syncError,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
 	Usage           Usage           `json:"usage"`
@@ -99,6 +119,80 @@ type Attachment struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+type HistoryToolCommandGroup struct {
+	ID           string `json:"id"`
+	Count        int    `json:"count"`
+	FirstSeq     int64  `json:"firstSeq,omitempty"`
+	LastSeq      int64  `json:"lastSeq,omitempty"`
+	LatestToolID string `json:"latestToolId,omitempty"`
+	Compacted    bool   `json:"compacted,omitempty"`
+}
+
+type HistoryTool struct {
+	ID           string                   `json:"id"`
+	Name         string                   `json:"name"`
+	Kind         string                   `json:"kind,omitempty"`
+	Input        any                      `json:"input,omitempty"`
+	Output       string                   `json:"output,omitempty"`
+	Status       string                   `json:"status"`
+	Meta         map[string]any           `json:"meta,omitempty"`
+	CommandGroup *HistoryToolCommandGroup `json:"commandGroup,omitempty"`
+}
+
+type HistoryAnswerEntry struct {
+	ID     string   `json:"id"`
+	Label  string   `json:"label"`
+	Values []string `json:"values"`
+	Masked bool     `json:"masked,omitempty"`
+}
+
+type HistoryDetail struct {
+	Type      string                `json:"type"`
+	Prompt    string                `json:"prompt,omitempty"`
+	Questions []toolRequestQuestion `json:"questions,omitempty"`
+	Answers   []HistoryAnswerEntry  `json:"answers,omitempty"`
+	Action    string                `json:"action,omitempty"`
+}
+
+type HistoryAttachment struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Mime string `json:"mime,omitempty"`
+	Size int64  `json:"size,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+type HistoryItem struct {
+	ID           string              `json:"id"`
+	SourceTurnID *string             `json:"sourceTurnId,omitempty"`
+	SourceItemID *string             `json:"sourceItemId,omitempty"`
+	OrderIndex   int64               `json:"orderIndex"`
+	Kind         string              `json:"kind"`
+	ItemType     string              `json:"itemType"`
+	Text         string              `json:"text"`
+	Timestamp    *time.Time          `json:"timestamp,omitempty"`
+	ObservedAt   *time.Time          `json:"observedAt,omitempty"`
+	Attachments  []HistoryAttachment `json:"attachments,omitempty"`
+	Tool         *HistoryTool        `json:"tool,omitempty"`
+	Level        string              `json:"level,omitempty"`
+	Done         bool                `json:"done,omitempty"`
+	Detail       *HistoryDetail      `json:"detail,omitempty"`
+	Payload      map[string]any      `json:"payload,omitempty"`
+}
+
+type HistoryWindow struct {
+	Events       []Event       `json:"events,omitempty"`
+	Items        []HistoryItem `json:"items"`
+	HasMore      bool          `json:"hasMore"`
+	BeforeCursor string        `json:"beforeCursor,omitempty"`
+	Total        int           `json:"total"`
+}
+
+type SessionSnapshot struct {
+	Session SessionSummary `json:"session"`
+	History HistoryWindow  `json:"history"`
+}
+
 type Event struct {
 	ID        string         `json:"id"`
 	Seq       int64          `json:"seq"`
@@ -107,18 +201,6 @@ type Event struct {
 	ParentID  string         `json:"parentId,omitempty"`
 	Timestamp time.Time      `json:"timestamp"`
 	Payload   map[string]any `json:"payload,omitempty"`
-}
-
-type HistoryWindow struct {
-	Events       []Event `json:"events"`
-	HasMore      bool    `json:"hasMore"`
-	BeforeCursor string  `json:"beforeCursor,omitempty"`
-	Total        int     `json:"total"`
-}
-
-type SessionSnapshot struct {
-	Session SessionSummary `json:"session"`
-	History HistoryWindow  `json:"history"`
 }
 
 type CommandExecutionGroupItem struct {

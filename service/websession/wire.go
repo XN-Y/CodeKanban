@@ -21,20 +21,20 @@ type wireCommandFrame struct {
 }
 
 type wireFrame struct {
-	Version   int        `json:"v"`
-	Kind      string     `json:"k"`
-	RequestID string     `json:"rid,omitempty"`
-	SessionID string     `json:"sid,omitempty"`
-	Timestamp int64      `json:"ts"`
-	Operation string     `json:"op,omitempty"`
-	Payload   any        `json:"p,omitempty"`
-	OK        *int       `json:"ok,omitempty"`
-	Session   *wireSess  `json:"s,omitempty"`
-	History   *wireHist  `json:"h,omitempty"`
-	Event     *wireEvent `json:"e,omitempty"`
-	Code      string     `json:"code,omitempty"`
-	Message   string     `json:"msg,omitempty"`
-	Retry     bool       `json:"retry,omitempty"`
+	Version   int           `json:"v"`
+	Kind      string        `json:"k"`
+	RequestID string        `json:"rid,omitempty"`
+	SessionID string        `json:"sid,omitempty"`
+	Timestamp int64         `json:"ts"`
+	Operation string        `json:"op,omitempty"`
+	Payload   any           `json:"p,omitempty"`
+	OK        *int          `json:"ok,omitempty"`
+	Session   *wireSess     `json:"s,omitempty"`
+	History   *wireHist     `json:"h,omitempty"`
+	Item      *wireHistItem `json:"i,omitempty"`
+	Code      string        `json:"code,omitempty"`
+	Message   string        `json:"msg,omitempty"`
+	Retry     bool          `json:"retry,omitempty"`
 }
 
 type wireSess struct {
@@ -57,6 +57,16 @@ type wireSess struct {
 	CreatedAt       int64     `json:"ca"`
 	LastUpdated     int64     `json:"lu"`
 	LastMessageAt   *int64    `json:"lma,omitempty"`
+	SourceKind      string    `json:"sk"`
+	SyncState       string    `json:"ss"`
+	SourceCreatedAt *int64    `json:"sca,omitempty"`
+	SourceUpdatedAt *int64    `json:"sua,omitempty"`
+	LastSyncedAt    *int64    `json:"lsa,omitempty"`
+	ThreadPath      *string   `json:"tp,omitempty"`
+	ThreadPreview   *string   `json:"tpv,omitempty"`
+	TurnCount       int       `json:"tc"`
+	ItemCount       int       `json:"ic"`
+	SyncError       *string   `json:"se,omitempty"`
 	Usage           wireUsage `json:"usa"`
 	Cost            float64   `json:"cost"`
 }
@@ -68,20 +78,64 @@ type wireUsage struct {
 }
 
 type wireHist struct {
-	Events       []wireEvent `json:"evs"`
-	HasMore      bool        `json:"hm"`
-	BeforeCursor string      `json:"bc,omitempty"`
-	Total        int         `json:"tot"`
+	Items        []wireHistItem `json:"its"`
+	HasMore      bool           `json:"hm"`
+	BeforeCursor string         `json:"bc,omitempty"`
+	Total        int            `json:"tot"`
 }
 
-type wireEvent struct {
-	ID        string         `json:"id"`
-	Seq       int64          `json:"sq"`
-	Type      string         `json:"tp"`
-	RunID     string         `json:"rid2,omitempty"`
-	ParentID  string         `json:"pid2,omitempty"`
-	Timestamp int64          `json:"ts"`
-	Payload   map[string]any `json:"p,omitempty"`
+type wireHistItem struct {
+	ID           string              `json:"id"`
+	SourceTurnID *string             `json:"stid,omitempty"`
+	SourceItemID *string             `json:"siid,omitempty"`
+	OrderIndex   int64               `json:"oi"`
+	Kind         string              `json:"kd"`
+	ItemType     string              `json:"tp"`
+	Text         string              `json:"txt,omitempty"`
+	Timestamp    *int64              `json:"ts2,omitempty"`
+	ObservedAt   *int64              `json:"obs,omitempty"`
+	Attachments  []wireHistoryAttach `json:"atts,omitempty"`
+	Tool         *wireHistoryTool    `json:"tl,omitempty"`
+	Level        string              `json:"lvl,omitempty"`
+	Done         bool                `json:"dn,omitempty"`
+	Detail       *wireHistoryDetail  `json:"dt,omitempty"`
+	Payload      map[string]any      `json:"pl,omitempty"`
+}
+
+type wireHistoryAttach struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Mime string `json:"mime,omitempty"`
+	Size int64  `json:"sz,omitempty"`
+	Path string `json:"path,omitempty"`
+}
+
+type wireHistoryTool struct {
+	ID           string                   `json:"id"`
+	Name         string                   `json:"name"`
+	Kind         string                   `json:"kind,omitempty"`
+	Input        any                      `json:"in,omitempty"`
+	Output       string                   `json:"out,omitempty"`
+	Status       string                   `json:"st"`
+	Meta         map[string]any           `json:"meta,omitempty"`
+	CommandGroup *wireHistoryCommandGroup `json:"cg,omitempty"`
+}
+
+type wireHistoryCommandGroup struct {
+	ID           string `json:"id"`
+	Count        int    `json:"count"`
+	FirstSeq     int64  `json:"firstSeq,omitempty"`
+	LastSeq      int64  `json:"lastSeq,omitempty"`
+	LatestToolID string `json:"latestToolId,omitempty"`
+	Compacted    bool   `json:"compacted,omitempty"`
+}
+
+type wireHistoryDetail struct {
+	Type      string                `json:"type"`
+	Prompt    string                `json:"prompt,omitempty"`
+	Questions []toolRequestQuestion `json:"questions,omitempty"`
+	Answers   []HistoryAnswerEntry  `json:"answers,omitempty"`
+	Action    string                `json:"action,omitempty"`
 }
 
 func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
@@ -112,9 +166,9 @@ func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireF
 }
 
 func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
-	wireHistory := make([]wireEvent, 0, len(snap.History.Events))
-	for _, event := range snap.History.Events {
-		wireHistory = append(wireHistory, mapWireEvent(event))
+	wireHistory := make([]wireHistItem, 0, len(snap.History.Items))
+	for _, item := range snap.History.Items {
+		wireHistory = append(wireHistory, mapWireHistoryItem(item))
 	}
 	return wireFrame{
 		Version:   protocolVersion,
@@ -123,7 +177,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 		Timestamp: nowUnixMilli(),
 		Session:   mapWireSession(snap.Session),
 		History: &wireHist{
-			Events:       wireHistory,
+			Items:        wireHistory,
 			HasMore:      snap.History.HasMore,
 			BeforeCursor: snap.History.BeforeCursor,
 			Total:        snap.History.Total,
@@ -131,13 +185,49 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 	}
 }
 
-func newEventFrame(sessionID string, event Event) wireFrame {
+func newHistoryPageFrame(sessionID string, window HistoryWindow) wireFrame {
+	wireHistory := make([]wireHistItem, 0, len(window.Items))
+	for _, item := range window.Items {
+		wireHistory = append(wireHistory, mapWireHistoryItem(item))
+	}
 	return wireFrame{
 		Version:   protocolVersion,
 		Kind:      "evt",
 		SessionID: sessionID,
 		Timestamp: nowUnixMilli(),
-		Event:     ptr(mapWireEvent(event)),
+		Operation: "hist_page",
+		History: &wireHist{
+			Items:        wireHistory,
+			HasMore:      window.HasMore,
+			BeforeCursor: window.BeforeCursor,
+			Total:        window.Total,
+		},
+	}
+}
+
+func newHistoryItemFrame(sessionID string, item HistoryItem, summary *SessionSummary) wireFrame {
+	frame := wireFrame{
+		Version:   protocolVersion,
+		Kind:      "evt",
+		SessionID: sessionID,
+		Timestamp: nowUnixMilli(),
+		Operation: "hist_item",
+		Item:      ptr(mapWireHistoryItem(item)),
+	}
+	if summary != nil {
+		frame.Session = mapWireSession(*summary)
+	}
+	return frame
+}
+
+func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
+	return wireFrame{
+		Version:   protocolVersion,
+		Kind:      "evt",
+		SessionID: sessionID,
+		Timestamp: nowUnixMilli(),
+		Operation: "session",
+		Session:   mapWireSession(summary),
 	}
 }
 
@@ -151,6 +241,21 @@ func mapWireSession(session SessionSummary) *wireSess {
 	if session.ArchivedAt != nil {
 		value := session.ArchivedAt.UnixMilli()
 		archivedAt = &value
+	}
+	var sourceCreatedAt *int64
+	if session.SourceCreatedAt != nil {
+		value := session.SourceCreatedAt.UnixMilli()
+		sourceCreatedAt = &value
+	}
+	var sourceUpdatedAt *int64
+	if session.SourceUpdatedAt != nil {
+		value := session.SourceUpdatedAt.UnixMilli()
+		sourceUpdatedAt = &value
+	}
+	var lastSyncedAt *int64
+	if session.LastSyncedAt != nil {
+		value := session.LastSyncedAt.UnixMilli()
+		lastSyncedAt = &value
 	}
 	return &wireSess{
 		ID:              session.ID,
@@ -172,6 +277,16 @@ func mapWireSession(session SessionSummary) *wireSess {
 		CreatedAt:       session.CreatedAt.UnixMilli(),
 		LastUpdated:     session.UpdatedAt.UnixMilli(),
 		LastMessageAt:   lastMessageAt,
+		SourceKind:      session.SourceKind,
+		SyncState:       string(session.SyncState),
+		SourceCreatedAt: sourceCreatedAt,
+		SourceUpdatedAt: sourceUpdatedAt,
+		LastSyncedAt:    lastSyncedAt,
+		ThreadPath:      session.ThreadPath,
+		ThreadPreview:   session.ThreadPreview,
+		TurnCount:       session.TurnCount,
+		ItemCount:       session.ItemCount,
+		SyncError:       session.SyncError,
 		Usage: wireUsage{
 			InputTokens:       session.Usage.InputTokens,
 			CachedInputTokens: session.Usage.CachedInputTokens,
@@ -181,15 +296,43 @@ func mapWireSession(session SessionSummary) *wireSess {
 	}
 }
 
-func mapWireEvent(event Event) wireEvent {
-	return wireEvent{
-		ID:        event.ID,
-		Seq:       event.Seq,
-		Type:      event.Type,
-		RunID:     event.RunID,
-		ParentID:  event.ParentID,
-		Timestamp: event.Timestamp.UnixMilli(),
-		Payload:   event.Payload,
+func mapWireHistoryItem(item HistoryItem) wireHistItem {
+	var timestamp *int64
+	if item.Timestamp != nil {
+		value := item.Timestamp.UnixMilli()
+		timestamp = &value
+	}
+	var observedAt *int64
+	if item.ObservedAt != nil {
+		value := item.ObservedAt.UnixMilli()
+		observedAt = &value
+	}
+	attachments := make([]wireHistoryAttach, 0, len(item.Attachments))
+	for _, attachment := range item.Attachments {
+		attachments = append(attachments, wireHistoryAttach{
+			ID:   attachment.ID,
+			Name: attachment.Name,
+			Mime: attachment.Mime,
+			Size: attachment.Size,
+			Path: attachment.Path,
+		})
+	}
+	return wireHistItem{
+		ID:           item.ID,
+		SourceTurnID: item.SourceTurnID,
+		SourceItemID: item.SourceItemID,
+		OrderIndex:   item.OrderIndex,
+		Kind:         item.Kind,
+		ItemType:     item.ItemType,
+		Text:         item.Text,
+		Timestamp:    timestamp,
+		ObservedAt:   observedAt,
+		Attachments:  attachments,
+		Tool:         mapWireHistoryTool(item.Tool),
+		Level:        item.Level,
+		Done:         item.Done,
+		Detail:       mapWireHistoryDetail(item.Detail),
+		Payload:      item.Payload,
 	}
 }
 
@@ -226,4 +369,47 @@ func nowUnixMilli() int64 {
 
 func ptr[T any](value T) *T {
 	return &value
+}
+
+func mapWireHistoryTool(tool *HistoryTool) *wireHistoryTool {
+	if tool == nil {
+		return nil
+	}
+	return &wireHistoryTool{
+		ID:           tool.ID,
+		Name:         tool.Name,
+		Kind:         tool.Kind,
+		Input:        tool.Input,
+		Output:       tool.Output,
+		Status:       tool.Status,
+		Meta:         tool.Meta,
+		CommandGroup: mapWireHistoryCommandGroup(tool.CommandGroup),
+	}
+}
+
+func mapWireHistoryCommandGroup(group *HistoryToolCommandGroup) *wireHistoryCommandGroup {
+	if group == nil {
+		return nil
+	}
+	return &wireHistoryCommandGroup{
+		ID:           group.ID,
+		Count:        group.Count,
+		FirstSeq:     group.FirstSeq,
+		LastSeq:      group.LastSeq,
+		LatestToolID: group.LatestToolID,
+		Compacted:    group.Compacted,
+	}
+}
+
+func mapWireHistoryDetail(detail *HistoryDetail) *wireHistoryDetail {
+	if detail == nil {
+		return nil
+	}
+	return &wireHistoryDetail{
+		Type:      detail.Type,
+		Prompt:    detail.Prompt,
+		Questions: detail.Questions,
+		Answers:   detail.Answers,
+		Action:    detail.Action,
+	}
 }

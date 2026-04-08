@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -107,18 +108,49 @@ func (m *Manager) GetCommandExecutionGroup(
 	sessionID string,
 	groupID string,
 ) (CommandExecutionGroupDetail, error) {
-	_ = ctx
-	rawEvents, err := m.store.readEvents(sessionID)
+	cachedItem, err := m.findHistoryItemByToolKey(ctx, sessionID, strings.TrimSpace(groupID))
 	if err != nil {
-		return CommandExecutionGroupDetail{}, err
-	}
-
-	groups := buildCommandExecutionGroupLookup(rawEvents)
-	group, ok := groups[strings.TrimSpace(groupID)]
-	if !ok {
 		return CommandExecutionGroupDetail{}, ErrCommandExecutionGroupNotFound
 	}
-	return group, nil
+	if cachedItem.Tool == nil {
+		return CommandExecutionGroupDetail{}, ErrCommandExecutionGroupNotFound
+	}
+
+	items := []CommandExecutionGroupItem{}
+	if rawGroupItems, ok := cachedItem.Payload["groupItems"]; ok {
+		decodeRawObject := mustJSONCompatibleGroupItems(rawGroupItems)
+		if len(decodeRawObject) > 0 {
+			items = decodeRawObject
+		}
+	}
+	if len(items) == 0 {
+		items = append(items, historyGroupDetailItem(cachedItem))
+	}
+
+	return CommandExecutionGroupDetail{
+		GroupID:    firstNonEmpty(groupID, cachedItem.Tool.ID),
+		Kind:       cachedItem.Tool.Kind,
+		Title:      firstNonEmpty(stringValue(cachedItem.Tool.Meta["title"]), cachedItem.Tool.Name),
+		Summary:    compactToolSummary(cachedItem.Tool.Kind, cachedItem.Tool.Input, cachedItem.Tool.Meta, cachedItem.Tool.Output),
+		Count:      len(items),
+		FirstSeq:   0,
+		LastSeq:    0,
+		Status:     cachedItem.Tool.Status,
+		LatestTool: cachedItem.Tool.ID,
+		Items:      items,
+	}, nil
+}
+
+func mustJSONCompatibleGroupItems(raw any) []CommandExecutionGroupItem {
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var items []CommandExecutionGroupItem
+	if err := json.Unmarshal(encoded, &items); err != nil {
+		return nil
+	}
+	return items
 }
 
 func projectHistoryEvents(events []Event) []Event {
@@ -446,7 +478,7 @@ func isCompactToolEvent(event Event) bool {
 
 func isCompactToolKind(kind string) bool {
 	switch strings.TrimSpace(kind) {
-	case "command_execution", "file_change", "mcp_tool_call":
+	case "command_execution", "file_change", "mcp_tool_call", "web_search":
 		return true
 	default:
 		return false
@@ -479,6 +511,8 @@ func compactToolTitle(kind string) string {
 		return "FileChange"
 	case "mcp_tool_call":
 		return "McpToolCall"
+	case "web_search":
+		return "WebSearch"
 	default:
 		return "Tool"
 	}
@@ -577,8 +611,44 @@ func compactToolSummary(kind string, input any, meta map[string]any, output stri
 			return summary
 		}
 		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	case "web_search":
+		if summary := webSearchSummary(input); summary != "" {
+			return summary
+		}
+		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
 	default:
 		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	}
+}
+
+func webSearchSummary(input any) string {
+	record := decodeRawObject(input)
+	query := strings.TrimSpace(stringValue(record["query"]))
+	if query != "" {
+		return query
+	}
+	action := decodeRawObject(record["action"])
+	queries := decodeStringArray(action["queries"])
+	if len(queries) > 0 {
+		return queries[0]
+	}
+	return ""
+}
+
+func decodeStringArray(raw any) []string {
+	switch typed := raw.(type) {
+	case []string:
+		return typed
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := strings.TrimSpace(stringValue(item)); text != "" {
+				items = append(items, text)
+			}
+		}
+		return items
+	default:
+		return nil
 	}
 }
 

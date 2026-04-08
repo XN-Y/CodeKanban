@@ -236,6 +236,30 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/sync", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.SyncSession(ctx, input.SessionID)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-sync"
+		op.Summary = "从 Codex 线程强制同步会话"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Delete(group, "/projects/{projectId}/web-sessions/{sessionId}", func(
 		ctx context.Context,
 		input *struct {

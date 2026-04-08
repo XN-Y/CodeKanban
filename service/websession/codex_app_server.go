@@ -428,6 +428,7 @@ func (m *Manager) runCodexAppServerSession(
 					"updated_at": time.Now(),
 				})
 				_ = client.closeStdin()
+				m.maybeSyncSessionAfterRun(session)
 			}
 		case waitErr = <-waitCh:
 			processExited = true
@@ -921,17 +922,18 @@ func userInputResponsePayload(answers map[string][]string) map[string]any {
 
 func codexThreadStartParams(session tables.WebSessionTable) map[string]any {
 	return map[string]any{
-		"cwd":            session.Cwd,
-		"model":          strings.TrimSpace(session.Model),
-		"sandbox":        codexSandboxMode(effectivePermissionLevel(session)),
-		"approvalPolicy": codexApprovalPolicy(effectivePermissionLevel(session)),
+		"cwd":                    session.Cwd,
+		"model":                  strings.TrimSpace(session.Model),
+		"sandbox":                codexSandboxMode(effectivePermissionLevel(session)),
+		"approvalPolicy":         codexApprovalPolicy(effectivePermissionLevel(session)),
+		"persistExtendedHistory": true,
 	}
 }
 
 func codexThreadResumeParams(session tables.WebSessionTable, threadID string) map[string]any {
 	return map[string]any{
 		"threadId":               strings.TrimSpace(threadID),
-		"persistExtendedHistory": false,
+		"persistExtendedHistory": true,
 		"cwd":                    session.Cwd,
 		"model":                  strings.TrimSpace(session.Model),
 		"sandbox":                codexSandboxMode(effectivePermissionLevel(session)),
