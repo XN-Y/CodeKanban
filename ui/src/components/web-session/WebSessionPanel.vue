@@ -1106,6 +1106,7 @@ import {
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
+import { isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
@@ -1857,16 +1858,13 @@ const tabsThemeOverrides = computed(() => {
 });
 const approvalColors = computed(() => {
   const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
+  const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
   return {
-    bg:
-      theme.terminalTabApprovalBg ||
-      preset?.colors.terminalTabApprovalBg ||
-      'rgba(247, 144, 9, 0.25)',
-    border:
-      theme.terminalTabApprovalBorder ||
-      preset?.colors.terminalTabApprovalBorder ||
-      'rgba(247, 144, 9, 0.5)',
+    bg: isDarkTheme ? 'rgba(251, 146, 60, 0.18)' : 'rgba(249, 115, 22, 0.14)',
+    border: isDarkTheme ? 'rgba(251, 146, 60, 0.4)' : 'rgba(249, 115, 22, 0.3)',
+    accent: isDarkTheme ? '#fb923c' : '#f97316',
+    accentStrong: isDarkTheme ? '#f97316' : '#ea580c',
+    glow: isDarkTheme ? 'rgba(251, 146, 60, 0.24)' : 'rgba(249, 115, 22, 0.16)',
   };
 });
 const webSessionStyleVars = computed(
@@ -1874,6 +1872,9 @@ const webSessionStyleVars = computed(
     ({
       '--web-session-approval-bg': approvalColors.value.bg,
       '--web-session-approval-border': approvalColors.value.border,
+      '--web-session-approval-accent': approvalColors.value.accent,
+      '--web-session-approval-accent-strong': approvalColors.value.accentStrong,
+      '--web-session-approval-glow': approvalColors.value.glow,
     }) as CSSProperties
 );
 const tabTitleStyle = computed(() => ({
@@ -6158,16 +6159,21 @@ onBeforeUnmount(() => {
 
 .live-card.phase-waiting_approval,
 .live-card.phase-waiting_input {
-  border-color: color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
+  border-color: color-mix(in srgb, var(--web-session-approval-border) 82%, var(--n-border-color));
   background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-approval-accent) 12%, transparent) 0%,
+      transparent 42%
+    ),
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--web-session-approval-bg) 18%, var(--app-surface-color, #fff)) 0%,
-      color-mix(in srgb, var(--web-session-approval-bg) 9%, var(--app-surface-color, #fff)) 54%,
+      color-mix(in srgb, var(--web-session-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-bg) 11%, var(--app-surface-color, #fff)) 54%,
       var(--app-surface-color, #fff) 100%
     ),
     var(--app-surface-color, #fff);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--web-session-approval-border) 14%, transparent);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-approval-glow) 70%, transparent);
 }
 
 .live-card.phase-waiting_approval::before,
@@ -6307,17 +6313,21 @@ onBeforeUnmount(() => {
 .live-card.phase-waiting_input .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
-  background: var(--n-warning-color, #f79009);
+  background: linear-gradient(
+    135deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
 }
 
 .live-card.phase-waiting_input .live-orb,
 .live-card.phase-waiting_approval .live-orb {
-  box-shadow: 0 0 0 5px color-mix(in srgb, var(--n-warning-color, #f79009) 18%, transparent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-approval-glow) 82%, transparent);
 }
 
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
-  background: color-mix(in srgb, var(--n-warning-color, #f79009) 24%, transparent);
+  background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
 }
 
 .live-card.phase-done .live-orb {
@@ -6376,14 +6386,40 @@ onBeforeUnmount(() => {
 }
 
 .approval-card {
-  border-color: var(--web-session-approval-border);
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--web-session-approval-border) 10%, var(--app-surface-color, #fff)) 0%,
-    color-mix(in srgb, var(--web-session-approval-border) 3%, var(--app-surface-color, #fff)) 58%,
-    var(--app-surface-color, #fff) 100%
-  );
+  position: relative;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--web-session-approval-border) 88%, transparent);
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-approval-accent) 10%, transparent) 0%,
+      transparent 45%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--web-session-approval-border) 14%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-border) 4%, var(--app-surface-color, #fff)) 58%,
+      var(--app-surface-color, #fff) 100%
+    );
   padding: 11px 12px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--web-session-approval-glow) 42%, transparent);
+}
+
+.approval-card:not(.history-interaction-card)::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(
+    180deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
+}
+
+.approval-card > * {
+  position: relative;
+  z-index: 1;
 }
 
 .history-interaction-card {
@@ -6405,7 +6441,8 @@ onBeforeUnmount(() => {
 .approval-card.is-stale {
   border: 1px dashed
     color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
-  background: color-mix(in srgb, var(--web-session-approval-bg) 46%, transparent);
+  background: color-mix(in srgb, var(--web-session-approval-bg) 58%, transparent);
+  box-shadow: none;
 }
 
 .approval-card-header {
@@ -6435,7 +6472,11 @@ onBeforeUnmount(() => {
 
 .approval-badge.state-user-input-request,
 .approval-badge.state-user-input-response {
-  background: var(--n-warning-color, #f79009);
+  background: linear-gradient(
+    135deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
 }
 
 .approval-prompt {
@@ -6454,7 +6495,7 @@ onBeforeUnmount(() => {
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.55;
-  color: color-mix(in srgb, var(--n-warning-color, #f79009) 82%, #111827);
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 82%, #111827);
   white-space: pre-wrap;
 }
 
