@@ -101,6 +101,10 @@ export default {
     priorityLevel: '优先级 {level}',
     closeAllTerminals: '关闭所有终端',
     closeAllTerminalsConfirm: '确定要关闭项目"{name}"的全部 {count} 个终端吗？',
+    aiStatusSummary: 'AI 状态摘要',
+    aiStatusWorking: '工作中',
+    aiStatusBlocking: '阻塞',
+    aiStatusUnreadCompleted: '未读完成',
   },
   branch: {
     title: '分支管理',

@@ -26,18 +26,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { useTitle } from '@vueuse/core';
 import { BookOutline } from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import GuideContentZhCN from '@/components/guide/GuideContentZhCN.vue';
 import GuideContentEnUS from '@/components/guide/GuideContentEnUS.vue';
 import { useLocale } from '@/composables/useLocale';
-import { APP_NAME } from '@/constants/app';
 
 const { t, locale } = useLocale();
 const router = useRouter();
-
-useTitle(`${t('nav.guide')} - ${APP_NAME}`);
 
 const guideContentComponent = computed(() => {
   return locale.value === 'zh-CN' ? GuideContentZhCN : GuideContentEnUS;

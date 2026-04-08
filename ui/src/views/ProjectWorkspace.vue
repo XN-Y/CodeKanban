@@ -193,7 +193,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { useStorage, useTitle } from '@vueuse/core';
+import { useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
@@ -210,7 +210,6 @@ import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import type { Worktree } from '@/types/models';
-import { APP_NAME } from '@/constants/app';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
@@ -271,9 +270,13 @@ const effectiveLeftSidebarWidth = computed(() =>
   )
 );
 
-watch([windowWidth, worktreeSiderCollapsed], () => {
-  leftProjectSidebarWidth.value = effectiveLeftSidebarWidth.value;
-}, { immediate: true });
+watch(
+  [windowWidth, worktreeSiderCollapsed],
+  () => {
+    leftProjectSidebarWidth.value = effectiveLeftSidebarWidth.value;
+  },
+  { immediate: true }
+);
 
 let cleanupProjectSidebarResize: (() => void) | null = null;
 
@@ -296,11 +299,7 @@ function startProjectSidebarResize(event: MouseEvent) {
   const onMouseMove = (moveEvent: MouseEvent) => {
     const delta = moveEvent.clientX - startX;
     leftProjectSidebarWidth.value = Math.round(
-      clamp(
-        PROJECT_SIDEBAR_MIN_WIDTH,
-        startWidth + delta,
-        maxLeftProjectSidebarWidth.value
-      )
+      clamp(PROJECT_SIDEBAR_MIN_WIDTH, startWidth + delta, maxLeftProjectSidebarWidth.value)
     );
   };
 
@@ -323,9 +322,7 @@ function startProjectSidebarResize(event: MouseEvent) {
 }
 
 // Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
-const isDockMode = computed(
-  () => !isMobileLayout.value && terminalDisplayMode.value === 'docked'
-);
+const isDockMode = computed(() => !isMobileLayout.value && terminalDisplayMode.value === 'docked');
 
 // 移动端视图切换
 type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
@@ -373,13 +370,6 @@ const mobileActiveView = computed<MobileView>({
     };
   },
 });
-
-const pageTitle = computed(() => {
-  const projectName = projectStore.currentProject?.name;
-  return projectName ? `${projectName} - ${APP_NAME}` : APP_NAME;
-});
-
-useTitle(pageTitle);
 
 const loadProject = (id: string) => {
   if (!id) {

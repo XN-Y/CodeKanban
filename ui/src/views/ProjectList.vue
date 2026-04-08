@@ -123,75 +123,106 @@
         tag="div"
         class="project-grid"
       >
-        <n-card
+        <n-popover
           v-for="project in filteredAndSortedProjects"
           :key="project.id"
-          hoverable
-          class="project-card"
-          :class="{ 'has-notifications': hasProjectNotifications(project.id) }"
-          @click="goToProject(project.id)"
+          trigger="hover"
+          placement="top-start"
         >
-          <template #header>
-            <n-space justify="space-between" align="center">
-              <n-ellipsis style="max-width: 240px">
-                <span v-html="highlightText(project.name)"></span>
-              </n-ellipsis>
-              <n-dropdown :options="getCardActions(project)" @select="onCardSelect">
-                <n-button text @click.stop>
-                  <n-icon size="20"><EllipsisHorizontalOutline /></n-icon>
-                </n-button>
-              </n-dropdown>
-            </n-space>
+          <template #trigger>
+            <div class="project-card-popover-trigger">
+              <n-card
+                hoverable
+                class="project-card"
+                :class="{ 'has-notifications': hasProjectNotifications(project.id) }"
+                @click="goToProject(project.id)"
+              >
+                <template #header>
+                  <n-space justify="space-between" align="center">
+                    <n-ellipsis style="max-width: 240px">
+                      <span v-html="highlightText(project.name)"></span>
+                    </n-ellipsis>
+                    <n-dropdown :options="getCardActions(project)" @select="onCardSelect">
+                      <n-button text @click.stop>
+                        <n-icon size="20"><EllipsisHorizontalOutline /></n-icon>
+                      </n-button>
+                    </n-dropdown>
+                  </n-space>
+                </template>
+
+                <n-space vertical size="small">
+                  <n-text v-if="!project.hidePath" depth="3">
+                    <n-icon size="16"><FolderOutline /></n-icon>
+                    <span class="path-text" v-html="highlightText(project.path)"></span>
+                  </n-text>
+                  <n-text v-if="project.description" depth="3">
+                    <span v-html="highlightText(project.description)"></span>
+                  </n-text>
+                  <n-divider style="margin: 8px 0" />
+                  <n-space size="small">
+                    <n-tag size="small" :bordered="false">
+                      <template #icon>
+                        <n-icon size="16"><GitBranchOutline /></n-icon>
+                      </template>
+                      {{ project.defaultBranch || 'main' }}
+                    </n-tag>
+                    <n-tag
+                      v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
+                      size="small"
+                      type="success"
+                      :bordered="false"
+                    >
+                      <template #icon>
+                        <n-icon size="16"><TerminalOutline /></n-icon>
+                      </template>
+                      {{ terminalCounts.get(project.id) }}
+                    </n-tag>
+                    <n-tag
+                      v-if="project.priority"
+                      size="small"
+                      :bordered="false"
+                      :color="{ color: getPriorityTagColor(project.priority), textColor: '#fff' }"
+                    >
+                      <template #icon>
+                        <n-icon size="16">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path
+                              fill="currentColor"
+                              d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
+                            />
+                          </svg>
+                        </n-icon>
+                      </template>
+                      {{ getPriorityLabel(project.priority) }}
+                    </n-tag>
+                  </n-space>
+                </n-space>
+              </n-card>
+            </div>
           </template>
 
-          <n-space vertical size="small">
-            <n-text v-if="!project.hidePath" depth="3">
-              <n-icon size="16"><FolderOutline /></n-icon>
-              <span class="path-text" v-html="highlightText(project.path)"></span>
-            </n-text>
-            <n-text v-if="project.description" depth="3">
-              <span v-html="highlightText(project.description)"></span>
-            </n-text>
-            <n-divider style="margin: 8px 0" />
-            <n-space size="small">
-              <n-tag size="small" :bordered="false">
-                <template #icon>
-                  <n-icon size="16"><GitBranchOutline /></n-icon>
-                </template>
-                {{ project.defaultBranch || 'main' }}
-              </n-tag>
-              <n-tag
-                v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
-                size="small"
-                type="success"
-                :bordered="false"
-              >
-                <template #icon>
-                  <n-icon size="16"><TerminalOutline /></n-icon>
-                </template>
-                {{ terminalCounts.get(project.id) }}
-              </n-tag>
-              <n-tag
-                v-if="project.priority"
-                size="small"
-                :bordered="false"
-                :color="{ color: getPriorityTagColor(project.priority), textColor: '#fff' }"
-              >
-                <template #icon>
-                  <n-icon size="16">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                      <path
-                        fill="currentColor"
-                        d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-                      />
-                    </svg>
-                  </n-icon>
-                </template>
-                {{ getPriorityLabel(project.priority) }}
-              </n-tag>
-            </n-space>
-          </n-space>
-        </n-card>
+          <div class="project-status-popover">
+            <div class="project-status-popover-title">{{ t('project.aiStatusSummary') }}</div>
+            <div class="project-status-row">
+              <span>{{ t('project.aiStatusWorking') }}</span>
+              <n-tag size="small" :bordered="false">{{
+                getProjectStatusSummary(project.id).working
+              }}</n-tag>
+            </div>
+            <div class="project-status-row">
+              <span>{{ t('project.aiStatusBlocking') }}</span>
+              <n-tag size="small" :bordered="false" type="warning">{{
+                getProjectStatusSummary(project.id).blocking
+              }}</n-tag>
+            </div>
+            <div class="project-status-row">
+              <span>{{ t('project.aiStatusUnreadCompleted') }}</span>
+              <n-tag size="small" :bordered="false" type="success">{{
+                getProjectStatusSummary(project.id).unreadCompleted
+              }}</n-tag>
+            </div>
+          </div>
+        </n-popover>
       </transition-group>
       <div v-else class="empty-container">
         <n-empty :description="searchQuery ? t('common.noData') : t('project.noProjects')" />
@@ -242,10 +273,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
-import { useTitle } from '@vueuse/core';
 import {
   AddOutline,
   EllipsisHorizontalOutline,
@@ -266,8 +296,8 @@ import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
-import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useAppStore } from '@/stores/app';
+import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
 import type { Project } from '@/types/models';
 import Apis from '@/api';
@@ -277,12 +307,10 @@ import type { ProjectPriority } from '@/stores/project';
 const appStore = useAppStore();
 const { t } = useLocale();
 
-useTitle(`${t('project.title')} - ${appStore.appInfo.name}`);
-
 const router = useRouter();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
-const reminderStore = useTerminalReminderStore();
+const { getProjectSummary } = useAiStatusSummary();
 const message = useMessage();
 const dialog = useDialog();
 const showCreateDialog = ref(false);
@@ -343,7 +371,12 @@ const terminalCounts = terminalStore.terminalCounts;
 
 // Check if a project has notifications
 function hasProjectNotifications(projectId: string): boolean {
-  return (reminderStore.projectNotificationCountMap[projectId] || 0) > 0;
+  const summary = getProjectSummary(projectId);
+  return summary.blocking > 0 || summary.unreadCompleted > 0;
+}
+
+function getProjectStatusSummary(projectId: string) {
+  return getProjectSummary(projectId);
 }
 
 // 使用 useReq 定义优先级更新请求
@@ -459,13 +492,8 @@ const filteredAndSortedProjects = computed(() => {
 onMounted(() => {
   projectStore.fetchProjects();
   terminalStore.loadTerminalCounts();
-  reminderStore.retain();
   // 延迟检查更新，避免阻塞页面加载
   setTimeout(checkForUpdates, 2000);
-});
-
-onUnmounted(() => {
-  reminderStore.release();
 });
 
 watch(showEditDialog, value => {
@@ -684,6 +712,10 @@ function getPriorityLabel(priority: number): string {
   transition: all 0.3s ease;
 }
 
+.project-card-popover-trigger {
+  display: block;
+}
+
 .project-card:hover {
   transform: translateY(-2px);
 }
@@ -706,6 +738,26 @@ function getPriorityLabel(priority: number): string {
 
 .path-text {
   margin-left: 8px;
+}
+
+.project-status-popover {
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.project-status-popover-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.project-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
 }
 
 /* ========================================

@@ -8,21 +8,35 @@ import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import { useSettingsStore } from '@/stores/settings';
+import { useProjectStore } from '@/stores/project';
+import { useTerminalReminderStore } from '@/stores/terminalReminder';
+import { useWebSessionStore } from '@/stores/webSession';
 import { useResponsive } from '@/composables/useResponsive';
+import { formatAiStatusTitle, useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
 import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
+import { APP_NAME } from '@/constants/app';
 
 const settingsStore = useSettingsStore();
+const projectStore = useProjectStore();
+const reminderStore = useTerminalReminderStore();
+const webSessionStore = useWebSessionStore();
 const {
   activeTheme: theme,
   followSystemTheme,
   currentPresetId,
   terminalDisplayMode,
 } = storeToRefs(settingsStore);
+const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
 const route = useRoute();
+const projectIdsForStatusSync = computed(() => projectStore.projects.map(project => project.id));
+const browserTabTitle = computed(() => formatAiStatusTitle(totalSummary.value, APP_NAME));
+
+const webSessionLoadPromises = new Map<string, Promise<void>>();
+const runningSessionSnapshotIds = new Set<string>();
 
 const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
@@ -213,6 +227,13 @@ onMounted(() => {
     return;
   }
 
+  reminderStore.retain();
+  if (projectStore.projects.length === 0) {
+    void projectStore.fetchProjects().catch(error => {
+      console.error('[App] Failed to preload projects for browser title status', error);
+    });
+  }
+
   mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
   handleChange = () => {
     if (followSystemTheme.value) {
@@ -227,10 +248,74 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  reminderStore.release();
   if (mediaQuery && handleChange) {
     mediaQuery.removeEventListener('change', handleChange);
   }
 });
+
+watch(
+  browserTabTitle,
+  title => {
+    if (typeof document !== 'undefined') {
+      document.title = title;
+    }
+  },
+  { immediate: true }
+);
+
+async function preloadProjectWebSessionStatus(projectId: string) {
+  if (!projectId) {
+    return;
+  }
+
+  const existingTask = webSessionLoadPromises.get(projectId);
+  if (existingTask) {
+    return existingTask;
+  }
+
+  const task = (async () => {
+    try {
+      const sessions = await webSessionStore.loadSessions(projectId);
+      await Promise.allSettled(
+        sessions
+          .filter(session => session.status === 'running')
+          .map(async session => {
+            if (
+              runningSessionSnapshotIds.has(session.id) &&
+              webSessionStore.getLatestEventSeq(session.id) > 0
+            ) {
+              return;
+            }
+            runningSessionSnapshotIds.add(session.id);
+            try {
+              await webSessionStore.refreshSessionSnapshot(session.id);
+            } catch (error) {
+              runningSessionSnapshotIds.delete(session.id);
+              console.warn('[App] Failed to sync running web session status', session.id, error);
+            }
+          })
+      );
+    } catch (error) {
+      console.error('[App] Failed to preload web session summaries', projectId, error);
+    } finally {
+      webSessionLoadPromises.delete(projectId);
+    }
+  })();
+
+  webSessionLoadPromises.set(projectId, task);
+  return task;
+}
+
+watch(
+  projectIdsForStatusSync,
+  projectIds => {
+    projectIds.forEach(projectId => {
+      void preloadProjectWebSessionStatus(projectId);
+    });
+  },
+  { immediate: true }
+);
 </script>
 
 <template>
@@ -243,10 +328,7 @@ onBeforeUnmount(() => {
     <n-global-style />
     <n-loading-bar-provider>
       <n-dialog-provider>
-        <n-notification-provider
-          :scrollable="false"
-          container-class="global-notification-host"
-        >
+        <n-notification-provider :scrollable="false" container-class="global-notification-host">
           <n-message-provider>
             <n-modal-provider>
               <AppInitializer />

@@ -730,7 +730,7 @@
 import { computed, ref, reactive, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import { useTitle, useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
+import { useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
 import {
   ChatbubblesOutline,
@@ -764,7 +764,6 @@ import {
   type TerminalQuickAction,
   type TerminalQuickActionIcon,
 } from '@/stores/settings';
-import { APP_NAME } from '@/constants/app';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -804,8 +803,6 @@ type ItemResponse<T> = {
 };
 
 const { t, locale } = useLocale();
-
-useTitle(`${t('settings.title')} - ${APP_NAME}`);
 
 const router = useRouter();
 const message = useMessage();

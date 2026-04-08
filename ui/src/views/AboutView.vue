@@ -1,9 +1,4 @@
-<script setup lang="ts">
-import { useTitle } from '@vueuse/core';
-import { APP_NAME } from '@/constants/app';
-
-useTitle(`关于 - ${APP_NAME}`);
-</script>
+<script setup lang="ts"></script>
 
 <template>
   <div class="about">

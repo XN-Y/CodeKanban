@@ -105,6 +105,10 @@ export default {
     closeAllTerminals: 'Close All Terminals',
     closeAllTerminalsConfirm:
       'Are you sure you want to close all {count} terminals for project "{name}"?',
+    aiStatusSummary: 'AI Status Summary',
+    aiStatusWorking: 'Working',
+    aiStatusBlocking: 'Blocking',
+    aiStatusUnreadCompleted: 'Unread Completed',
   },
   branch: {
     title: 'Branch Management',

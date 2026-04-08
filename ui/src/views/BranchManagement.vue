@@ -307,7 +307,6 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog, useMessage, type FormInst, type FormRules, type InputInst } from 'naive-ui';
-import { useTitle } from '@vueuse/core';
 import { AddOutline, ChevronBackOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5';
 import type { BranchInfo, BranchListResult, MergeResult } from '@/types/models';
 import { useProjectStore } from '@/stores/project';
@@ -334,13 +333,6 @@ const pageHeading = computed(() =>
   projectStore.currentProject
     ? `${projectStore.currentProject.name} · ${t('branch.title')}`
     : t('branch.title')
-);
-useTitle(
-  computed(() =>
-    projectStore.currentProject
-      ? `${projectStore.currentProject.name} - ${t('branch.title')}`
-      : t('branch.title')
-  )
 );
 
 const branchListReq = useReq(
