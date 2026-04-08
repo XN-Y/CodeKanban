@@ -162,6 +162,7 @@ export interface WebSessionLiveState {
     | 'error';
   running: boolean;
   updatedAt: number;
+  startedAt?: number;
   tool?: {
     id: string;
     name: string;
@@ -1951,11 +1952,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
     let assistantDone = false;
     let errorMessage = '';
     let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
+    let runStartedAt: number | undefined;
 
     for (const event of eventsBySession.value[sessionId] ?? []) {
       const payload = event.p ?? {};
       updatedAt = event.ts;
       switch (event.tp) {
+        case 'run_st':
+          runStartedAt = event.ts;
+          sawAssistantOutput = false;
+          assistantDone = false;
+          activeTool = undefined;
+          errorMessage = '';
+          break;
         case 'msg_a_st':
         case 'txt_d':
           sawAssistantOutput = true;
@@ -2001,6 +2010,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'waiting_approval',
         running: true,
         updatedAt: approval.requestedAt,
+        startedAt: runStartedAt,
         approval,
         tool: activeTool,
       };
@@ -2011,6 +2021,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'waiting_input',
         running: true,
         updatedAt: userInput.requestedAt,
+        startedAt: runStartedAt,
         tool: activeTool,
         userInput,
       };
@@ -2022,6 +2033,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           phase: 'tool',
           running: true,
           updatedAt,
+          startedAt: runStartedAt,
           tool: activeTool,
         };
       }
@@ -2030,12 +2042,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
           phase: 'thinking',
           running: true,
           updatedAt,
+          startedAt: runStartedAt,
         };
       }
       return {
         phase: 'starting',
         running: true,
         updatedAt,
+        startedAt:
+          runStartedAt ??
+          (session ? Date.parse(session.updatedAt || session.createdAt) || Date.now() : Date.now()),
       };
     }
 
@@ -2044,6 +2060,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'done',
         running: false,
         updatedAt,
+        startedAt: runStartedAt,
       };
     }
 
@@ -2052,6 +2069,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'error',
         running: false,
         updatedAt,
+        startedAt: runStartedAt,
         errorMessage,
       };
     }

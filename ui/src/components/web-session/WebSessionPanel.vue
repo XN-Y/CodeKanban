@@ -127,7 +127,7 @@
 
           <div v-if="currentSession" class="timeline-shell">
             <div ref="timelineScrollRef" class="timeline-scroll" @scroll="handleTimelineScroll">
-              <div class="timeline-list">
+              <div ref="timelineListRef" class="timeline-list">
                 <div v-if="historyMeta.loading" class="history-loading">
                   {{ t('common.loading') }}
                 </div>
@@ -446,7 +446,9 @@
                       <span v-if="showJumpToBottom" class="live-jump-hint">
                         {{ t('webSession.jumpToBottom') }}
                       </span>
-                      <span class="live-time">{{ formatTime(liveState.updatedAt) }}</span>
+                      <span class="live-time" :title="getLiveTimeTooltip(liveState)">{{
+                        getLiveTimeText(liveState)
+                      }}</span>
                     </div>
                   </button>
 
@@ -1029,6 +1031,7 @@ const MIN_SESSION_MAIN_WIDTH = 420;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
+const LIVE_TIME_TICK_MS = 1000;
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -1051,6 +1054,9 @@ const props = withDefaults(
     isActive: true,
   }
 );
+
+const liveStateClockMs = ref(Date.now());
+let liveStateClockTimer: number | null = null;
 
 type DraftSessionTab = WebSessionSummary & {
   isDraft: true;
@@ -1121,6 +1127,7 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
+const timelineListRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const composerInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
@@ -2491,6 +2498,39 @@ function formatTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString();
 }
 
+function formatDateTime(timestamp: number) {
+  return new Date(timestamp).toLocaleString();
+}
+
+function formatElapsedDuration(startedAt: number, endedAt: number) {
+  const diff = Math.max(0, endedAt - startedAt);
+  const totalSeconds = Math.floor(diff / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getLiveTimeText(state: WebSessionLiveState) {
+  if (typeof state.startedAt === 'number' && Number.isFinite(state.startedAt) && state.startedAt > 0) {
+    const endedAt = state.running ? liveStateClockMs.value : state.updatedAt;
+    return formatElapsedDuration(state.startedAt, endedAt);
+  }
+  return formatTime(state.updatedAt);
+}
+
+function getLiveTimeTooltip(state: WebSessionLiveState) {
+  if (typeof state.startedAt === 'number' && Number.isFinite(state.startedAt) && state.startedAt > 0) {
+    return formatDateTime(state.startedAt);
+  }
+  return formatDateTime(state.updatedAt);
+}
+
 function stringifyValue(value: unknown): string {
   if (typeof value === 'string') {
     return value;
@@ -3615,18 +3655,41 @@ function syncScrollToBottom() {
   if (!container) {
     return;
   }
-  container.scrollTop = container.scrollHeight;
+  container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
   autoFollowBottom.value = true;
   showJumpToBottom.value = false;
+}
+
+function scheduleScrollToBottom(force = false) {
+  nextTick(() => {
+    const run = () => {
+      const container = timelineScrollRef.value;
+      if (!container) {
+        return;
+      }
+      if (force || autoFollowBottom.value) {
+        syncScrollToBottom();
+      } else {
+        updateBottomState(container);
+      }
+    };
+
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      run();
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(run);
+    });
+  });
 }
 
 function scrollToBottom(force = false) {
   if (!force && !autoFollowBottom.value) {
     return;
   }
-  nextTick(() => {
-    syncScrollToBottom();
-  });
+  scheduleScrollToBottom(force);
 }
 
 function handleLiveCardClick() {
@@ -4214,6 +4277,25 @@ watch(timelineContentVersion, async () => {
   ensureTimelineHistoryFilled();
 });
 
+useResizeObserver(timelineListRef, () => {
+  if (!currentSession.value) {
+    return;
+  }
+  scheduleScrollToBottom();
+});
+
+useResizeObserver(timelineScrollRef, entries => {
+  const container = entries[0]?.target as HTMLDivElement | undefined;
+  if (!container || !currentSession.value) {
+    return;
+  }
+  if (autoFollowBottom.value) {
+    scheduleScrollToBottom(true);
+  } else {
+    updateBottomState(container);
+  }
+});
+
 watch(
   () => selectedAgent.value,
   value => {
@@ -4239,6 +4321,9 @@ useResizeObserver(tabsContainerRef, entries => {
 });
 
 onMounted(() => {
+  liveStateClockTimer = window.setInterval(() => {
+    liveStateClockMs.value = Date.now();
+  }, LIVE_TIME_TICK_MS);
   if (projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
       console.error('[Web Session] Failed to preload projects', error);
@@ -4261,6 +4346,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (liveStateClockTimer != null) {
+    window.clearInterval(liveStateClockTimer);
+    liveStateClockTimer = null;
+  }
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
   cleanupTabScrollListener();
