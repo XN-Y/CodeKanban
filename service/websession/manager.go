@@ -344,38 +344,38 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 	}
 
 	record := tables.WebSessionTable{
-		ProjectID:              project.Id,
-		WorktreeID:             nilIfEmpty(worktreeID),
-		OrderIndex:             orderIndex,
-		Agent:                  string(normalizeAgent(params.Agent)),
-		Backend:                string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
-		Title:                  title,
-		TitleAuto:              strings.TrimSpace(params.Title) == "",
-		Model:                  defaultModel(normalizeAgent(params.Agent), params.Model),
-		ReasoningEffort:        string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
-		WorkflowMode:           string(normalizeWorkflowMode(params.WorkflowMode)),
-		PermissionLevel:        string(normalizePermissionLevel(params.PermissionLevel)),
-		Cwd:                    cwd,
-		Status:                 string(StatusIdle),
-		AssistantState:         "",
-		HasUnread:              false,
-		ArchivedAt:             nil,
-		ActivityAt:             time.Now(),
+		ProjectID:               project.Id,
+		WorktreeID:              nilIfEmpty(worktreeID),
+		OrderIndex:              orderIndex,
+		Agent:                   string(normalizeAgent(params.Agent)),
+		Backend:                 string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
+		Title:                   title,
+		TitleAuto:               strings.TrimSpace(params.Title) == "",
+		Model:                   defaultModel(normalizeAgent(params.Agent), params.Model),
+		ReasoningEffort:         string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
+		WorkflowMode:            string(normalizeWorkflowMode(params.WorkflowMode)),
+		PermissionLevel:         string(normalizePermissionLevel(params.PermissionLevel)),
+		Cwd:                     cwd,
+		Status:                  string(StatusIdle),
+		AssistantState:          "",
+		HasUnread:               false,
+		ArchivedAt:              nil,
+		ActivityAt:              time.Now(),
 		AssistantStateUpdatedAt: nil,
-		SourceKind:             string(defaultSessionBackend(normalizeAgent(params.Agent))),
-		SyncState:              string(SyncStateMissing),
-		SourceCreatedAt:        nil,
-		SourceUpdatedAt:        nil,
-		LastSyncedAt:           nil,
-		ThreadPath:             nil,
-		ThreadPreview:          nil,
-		TurnCount:              0,
-		ItemCount:              0,
-		LastEventSeq:           0,
-		TotalInputTokens:       0,
-		TotalCachedInputTokens: 0,
-		TotalOutputTokens:      0,
-		TotalCost:              0,
+		SourceKind:              string(defaultSessionBackend(normalizeAgent(params.Agent))),
+		SyncState:               string(SyncStateMissing),
+		SourceCreatedAt:         nil,
+		SourceUpdatedAt:         nil,
+		LastSyncedAt:            nil,
+		ThreadPath:              nil,
+		ThreadPreview:           nil,
+		TurnCount:               0,
+		ItemCount:               0,
+		LastEventSeq:            0,
+		TotalInputTokens:        0,
+		TotalCachedInputTokens:  0,
+		TotalOutputTokens:       0,
+		TotalCost:               0,
 	}
 	record.Init()
 
@@ -457,7 +457,15 @@ func (m *Manager) History(ctx context.Context, sessionID string, limit int, befo
 			zap.Error(err),
 		)
 	}
-	return m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
+	window, err := m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
+	if err != nil {
+		return HistoryWindow{}, err
+	}
+	projected, err := m.projectedHistoryWindow(sessionID, limit, beforeSeq)
+	if err == nil {
+		window.Events = projected.Events
+	}
+	return window, nil
 }
 
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
@@ -812,14 +820,7 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 	}
 
 	attachmentID := utils.NewID()
-	attachmentName := strings.TrimSpace(filepath.Base(fileHeader.Filename))
-	if attachmentName == "" {
-		attachmentName = defaultAttachmentStoredName(fileHeader.Header.Get("Content-Type"))
-	}
-	extension := filepath.Ext(attachmentName)
-	if extension == "" {
-		extension = attachmentExtensionFromMime(fileHeader.Header.Get("Content-Type"))
-	}
+	extension := filepath.Ext(fileHeader.Filename)
 	targetPath := m.store.attachmentPath(attachmentID, extension)
 	if err := os.WriteFile(targetPath, buffer.Bytes(), 0o644); err != nil {
 		return Attachment{}, err
@@ -827,7 +828,7 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 
 	attachment := Attachment{
 		ID:        attachmentID,
-		Name:      attachmentName,
+		Name:      filepath.Base(fileHeader.Filename),
 		Mime:      fileHeader.Header.Get("Content-Type"),
 		Size:      written,
 		Path:      targetPath,
@@ -1194,11 +1195,10 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 		}
 		attachments = append(attachments, attachment)
 	}
-	baseText := stripManagedImagePlaceholders(text)
-	if baseText == "" && len(attachments) == 0 {
+	text = strings.TrimSpace(text)
+	if text == "" && len(attachments) == 0 {
 		return fmt.Errorf("message is empty")
 	}
-	text = composeUserMessageText(baseText, len(attachments))
 
 	runID := utils.NewID()
 	userMessageID := utils.NewID()
@@ -1247,7 +1247,7 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 	updates = applyAssistantStateUpdates(updates, AssistantStateWorking, now)
 	titleChanged := false
 	if record.TitleAuto {
-		if autoTitle := deriveAutoTitleFromMessage(baseText); autoTitle != "" {
+		if autoTitle := deriveAutoTitleFromMessage(text); autoTitle != "" {
 			updates["title_auto"] = false
 			if strings.TrimSpace(record.Title) != autoTitle {
 				updates["title"] = autoTitle
@@ -1353,17 +1353,23 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	waitErr := cmd.Wait()
 	<-stderrDone
 	if ctx.Err() != nil {
+		now := time.Now()
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
 			Type:      "run_abort",
 			RunID:     run.runID,
-			Timestamp: time.Now(),
+			Timestamp: now,
 		})
-		_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-			"status":     string(StatusIdle),
-			"updated_at": time.Now(),
-		})
+		_ = m.updateRuntimeState(
+			context.Background(),
+			session.ID,
+			applyAssistantStateUpdates(map[string]any{
+				"status":     string(StatusIdle),
+				"updated_at": now,
+			}, AssistantStateNone, now),
+		)
+		m.broadcastSessionSummary(context.Background(), session.ID)
 		return
 	}
 
@@ -1392,22 +1398,28 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			},
 		})
 	}
-	finalStatus := m.completedRunStatus(context.Background(), session, run)
+	finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
+	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "run_done",
 		RunID:     run.runID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"ok": true,
 			"st": string(finalStatus),
 		},
 	})
-	_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-		"status":     string(finalStatus),
-		"updated_at": time.Now(),
-	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		session.ID,
+		applyAssistantStateUpdates(map[string]any{
+			"status":     string(finalStatus),
+			"updated_at": now,
+		}, finalAssistantState, now),
+	)
+	m.broadcastSessionSummary(context.Background(), session.ID)
 	m.maybeSyncSessionAfterRun(session)
 }
 
@@ -1417,22 +1429,28 @@ func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTa
 		message = "runtime failed"
 	}
 	run.lastError = message
+	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "run_fail",
 		RunID:     run.runID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"code": "runtime_error",
 			"msg":  message,
 		},
 	})
-	_ = m.updateRuntimeState(context.Background(), sessionID, map[string]any{
-		"status":     string(StatusError),
-		"last_error": message,
-		"updated_at": time.Now(),
-	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		sessionID,
+		applyAssistantStateUpdates(map[string]any{
+			"status":     string(StatusError),
+			"last_error": message,
+			"updated_at": now,
+		}, AssistantStateNone, now),
+	)
+	m.broadcastSessionSummary(context.Background(), sessionID)
 }
 
 func (m *Manager) consumeRuntimeOutput(ctx context.Context, session tables.WebSessionTable, run *activeRun, stdout io.Reader) {
@@ -1494,17 +1512,26 @@ func (m *Manager) handleRuntimePlainLine(session tables.WebSessionTable, run *ac
 	if !run.setPendingApproval(prompt) {
 		return
 	}
+	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "approval_req",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"prompt": prompt,
 		},
 	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		session.ID,
+		applyAssistantStateUpdates(map[string]any{
+			"updated_at": now,
+		}, AssistantStateWaitingApproval, now),
+	)
+	m.broadcastSessionSummary(context.Background(), session.ID)
 }
 
 func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeRun, raw map[string]any) {
@@ -2231,18 +2258,27 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 		if err != nil {
 			return err
 		}
+		now := time.Now()
 		_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
 			Type:      "approval_res",
 			RunID:     run.runID,
 			ParentID:  run.assistantMessageID,
-			Timestamp: time.Now(),
+			Timestamp: now,
 			Payload: map[string]any{
 				"act":    action,
 				"prompt": pending.Prompt,
 			},
 		})
+		_ = m.updateRuntimeState(
+			context.Background(),
+			sessionID,
+			applyAssistantStateUpdates(map[string]any{
+				"updated_at": now,
+			}, AssistantStateWorking, now),
+		)
+		m.broadcastSessionSummary(context.Background(), sessionID)
 		return nil
 	}
 
@@ -2258,18 +2294,27 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "approval_res",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"act":    action,
 			"prompt": prompt,
 		},
 	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		sessionID,
+		applyAssistantStateUpdates(map[string]any{
+			"updated_at": now,
+		}, AssistantStateWorking, now),
+	)
+	m.broadcastSessionSummary(context.Background(), sessionID)
 	return nil
 }
 
@@ -2299,18 +2344,27 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 	if err != nil {
 		return err
 	}
+	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "user_input_res",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"iid": pending.ItemID,
 			"ans": answers,
 		},
 	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		sessionID,
+		applyAssistantStateUpdates(map[string]any{
+			"updated_at": now,
+		}, AssistantStateWorking, now),
+	)
+	m.broadcastSessionSummary(context.Background(), sessionID)
 	return nil
 }
 
@@ -2364,36 +2418,40 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	if activityAt.IsZero() {
 		activityAt = chooseSessionActivityAt(record)
 	}
+	assistantState := effectiveAssistantState(record)
+	assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState)
 	return SessionSummary{
-		ID:              record.ID,
-		ProjectID:       record.ProjectID,
-		WorktreeID:      record.WorktreeID,
-		OrderIndex:      record.OrderIndex,
-		Agent:           Agent(record.Agent),
-		Title:           record.Title,
-		Model:           record.Model,
-		ReasoningEffort: ReasoningEffort(record.ReasoningEffort),
-		WorkflowMode:    effectiveWorkflowMode(record),
-		PermissionLevel: effectivePermissionLevel(record),
-		Cwd:             record.Cwd,
-		NativeSessionID: record.NativeSessionID,
-		Status:          Status(record.Status),
-		HasUnread:       record.HasUnread,
-		ArchivedAt:      record.ArchivedAt,
-		ActivityAt:      activityAt,
-		LastMessageAt:   record.LastMessageAt,
-		SourceKind:      record.SourceKind,
-		SyncState:       normalizeSyncState(record.SyncState),
-		SourceCreatedAt: record.SourceCreatedAt,
-		SourceUpdatedAt: record.SourceUpdatedAt,
-		LastSyncedAt:    record.LastSyncedAt,
-		ThreadPath:      record.ThreadPath,
-		ThreadPreview:   record.ThreadPreview,
-		TurnCount:       record.TurnCount,
-		ItemCount:       record.ItemCount,
-		SyncError:       record.SyncError,
-		CreatedAt:       record.CreatedAt,
-		UpdatedAt:       record.UpdatedAt,
+		ID:                      record.ID,
+		ProjectID:               record.ProjectID,
+		WorktreeID:              record.WorktreeID,
+		OrderIndex:              record.OrderIndex,
+		Agent:                   Agent(record.Agent),
+		Title:                   record.Title,
+		Model:                   record.Model,
+		ReasoningEffort:         ReasoningEffort(record.ReasoningEffort),
+		WorkflowMode:            effectiveWorkflowMode(record),
+		PermissionLevel:         effectivePermissionLevel(record),
+		Cwd:                     record.Cwd,
+		NativeSessionID:         record.NativeSessionID,
+		Status:                  effectiveStatus(record, assistantState),
+		AssistantState:          assistantState,
+		HasUnread:               record.HasUnread,
+		ArchivedAt:              record.ArchivedAt,
+		ActivityAt:              activityAt,
+		LastMessageAt:           record.LastMessageAt,
+		AssistantStateUpdatedAt: assistantStateUpdatedAt,
+		SourceKind:              record.SourceKind,
+		SyncState:               normalizeSyncState(record.SyncState),
+		SourceCreatedAt:         record.SourceCreatedAt,
+		SourceUpdatedAt:         record.SourceUpdatedAt,
+		LastSyncedAt:            record.LastSyncedAt,
+		ThreadPath:              record.ThreadPath,
+		ThreadPreview:           record.ThreadPreview,
+		TurnCount:               record.TurnCount,
+		ItemCount:               record.ItemCount,
+		SyncError:               record.SyncError,
+		CreatedAt:               record.CreatedAt,
+		UpdatedAt:               record.UpdatedAt,
 		Usage: Usage{
 			InputTokens:       record.TotalInputTokens,
 			CachedInputTokens: record.TotalCachedInputTokens,
@@ -2418,10 +2476,10 @@ func chooseSessionActivityAt(record tables.WebSessionTable) time.Time {
 
 func attachmentPayloads(items []Attachment) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
-	for index, item := range items {
+	for _, item := range items {
 		result = append(result, map[string]any{
 			"id":   item.ID,
-			"name": normalizeAttachmentDisplayName(item.Name, index+1),
+			"name": item.Name,
 			"mime": item.Mime,
 			"sz":   item.Size,
 		})
@@ -2644,15 +2702,22 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 		Find(&records).Error; err != nil {
 		return err
 	}
-	if len(records) == 0 {
+	recoverable := make([]tables.WebSessionTable, 0, len(records))
+	for _, record := range records {
+		if effectiveAssistantState(record) == AssistantStateWaitingPlanApproval {
+			continue
+		}
+		recoverable = append(recoverable, record)
+	}
+	if len(recoverable) == 0 {
 		return nil
 	}
 
 	if m.logger != nil {
-		m.logger.Info("recovering interrupted web sessions", zap.Int("count", len(records)))
+		m.logger.Info("recovering interrupted web sessions", zap.Int("count", len(recoverable)))
 	}
 
-	for _, record := range records {
+	for _, record := range recoverable {
 		now := time.Now()
 		if _, err := m.appendAndBroadcast(ctx, record.ID, record, Event{
 			Type:      "run_abort",
@@ -2666,13 +2731,16 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 			return err
 		}
 		if err := m.updateRuntimeState(ctx, record.ID, map[string]any{
-			"status":     string(StatusIdle),
-			"last_error": nil,
-			"has_unread": false,
-			"updated_at": now,
+			"status":                     string(StatusIdle),
+			"last_error":                 nil,
+			"has_unread":                 false,
+			"updated_at":                 now,
+			"assistant_state":            nil,
+			"assistant_state_updated_at": nil,
 		}); err != nil {
 			return err
 		}
+		m.broadcastSessionSummary(ctx, record.ID)
 	}
 
 	return nil

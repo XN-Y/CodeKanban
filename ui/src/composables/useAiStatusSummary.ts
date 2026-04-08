@@ -119,7 +119,11 @@ export function useAiStatusSummary() {
         const liveState = webSessionStore.getLiveState(session.id);
         const sessionKey = `web:${session.id}`;
 
-        if (liveState.phase === 'waiting_approval' || liveState.phase === 'waiting_input') {
+        if (
+          liveState.phase === 'waiting_approval' ||
+          liveState.phase === 'waiting_plan_approval' ||
+          liveState.phase === 'waiting_input'
+        ) {
           rememberSessionBucket(buckets, project.id, sessionKey, 'blocking');
           return;
         }

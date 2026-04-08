@@ -2,7 +2,6 @@ package websession
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +14,21 @@ import (
 
 	"go.uber.org/zap"
 )
+
+func attachmentExtensionFromMime(mimeType string) string {
+	switch strings.ToLower(strings.TrimSpace(mimeType)) {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ".png"
+	}
+}
 
 func TestManagerCreateSessionAppendsOrderIndex(t *testing.T) {
 	cleanup := initTestDB(t)
@@ -72,6 +86,32 @@ func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
 	}
 	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
 		t.Fatalf("expected codex sessions to default to %q, got %q", SessionBackendCodexAppServer, effectiveSessionBackend(record))
+	}
+}
+
+func TestDecodeToolQuestionsPreservesStructuredQuestions(t *testing.T) {
+	questions := []toolRequestQuestion{
+		{
+			ID:       "scope",
+			Header:   "范围",
+			Question: "这次要验证哪种计划模式交互？",
+			IsOther:  true,
+			Options: []toolRequestOption{
+				{Label: "仅草稿组内", Description: "保持现在的草稿分组。"},
+				{Label: "整个标签系统统一", Description: "统一插入逻辑。"},
+			},
+		},
+	}
+
+	got := decodeToolQuestions(questions)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(got))
+	}
+	if got[0].ID != questions[0].ID || got[0].Header != questions[0].Header || got[0].Question != questions[0].Question {
+		t.Fatalf("expected question to be preserved, got %#v", got[0])
+	}
+	if len(got[0].Options) != len(questions[0].Options) {
+		t.Fatalf("expected %d options, got %d", len(questions[0].Options), len(got[0].Options))
 	}
 }
 
@@ -577,143 +617,6 @@ func TestSendMessageDoesNotOverrideManualTitle(t *testing.T) {
 	}
 }
 
-func TestSendMessageAppendsImagePlaceholdersAndRenamesGenericAttachmentNames(t *testing.T) {
-	cleanup := initTestDB(t)
-	defer cleanup()
-
-	project := seedProject(t)
-	manager, err := NewManager(Config{
-		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
-	}, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewManager returned error: %v", err)
-	}
-
-	created, err := manager.CreateSession(context.Background(), CreateParams{
-		ProjectID: project.ID,
-		Agent:     AgentCodex,
-	})
-	if err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-
-	first := seedAttachment(t, manager, "image.png", "image/png")
-	second := seedAttachment(t, manager, "pasted-image-20260409-101010.png", "image/png")
-	third := seedAttachment(t, manager, "diagram-final.png", "image/png")
-
-	if err := manager.SendMessage(
-		context.Background(),
-		created.ID,
-		"Review these screenshots",
-		[]string{first.ID, second.ID, third.ID},
-	); err != nil {
-		t.Fatalf("SendMessage returned error: %v", err)
-	}
-
-	waitForSessionToSettle(t, manager, created.ID)
-
-	rawEvents, err := manager.store.readEvents(created.ID)
-	if err != nil {
-		t.Fatalf("readEvents returned error: %v", err)
-	}
-
-	messageEvent := findEventByType(rawEvents, "msg_u")
-	if messageEvent == nil {
-		t.Fatal("expected msg_u event to be recorded")
-	}
-	if got := fmt.Sprint(messageEvent.Payload["txt"]); got != "Review these screenshots\n\n[Image #1] [Image #2] [Image #3]" {
-		t.Fatalf("unexpected user message text %q", got)
-	}
-
-	names := attachmentNamesFromPayload(messageEvent.Payload["atts"])
-	expected := []string{"image 1", "image 2", "diagram-final.png"}
-	if len(names) != len(expected) {
-		t.Fatalf("expected %d attachment names, got %d (%v)", len(expected), len(names), names)
-	}
-	for index, expectedName := range expected {
-		if names[index] != expectedName {
-			t.Fatalf("expected attachment %d name %q, got %q", index, expectedName, names[index])
-		}
-	}
-
-	record, err := manager.GetSession(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetSession returned error: %v", err)
-	}
-	if record.Title != "Review these screenshots" {
-		t.Fatalf("expected title to be derived from user text, got %q", record.Title)
-	}
-}
-
-func TestSendMessageImageOnlyKeepsDefaultTitleAndStoresPlaceholderText(t *testing.T) {
-	cleanup := initTestDB(t)
-	defer cleanup()
-
-	project := seedProject(t)
-	manager, err := NewManager(Config{
-		DataDir:   t.TempDir(),
-		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
-	}, zap.NewNop())
-	if err != nil {
-		t.Fatalf("NewManager returned error: %v", err)
-	}
-
-	created, err := manager.CreateSession(context.Background(), CreateParams{
-		ProjectID: project.ID,
-		Agent:     AgentCodex,
-	})
-	if err != nil {
-		t.Fatalf("CreateSession returned error: %v", err)
-	}
-
-	recordBefore, err := manager.GetSession(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetSession returned error: %v", err)
-	}
-
-	first := seedAttachment(t, manager, "image.png", "image/png")
-	second := seedAttachment(t, manager, "clipboard-image.png", "image/png")
-
-	if err := manager.SendMessage(context.Background(), created.ID, "", []string{first.ID, second.ID}); err != nil {
-		t.Fatalf("SendMessage returned error: %v", err)
-	}
-
-	waitForSessionToSettle(t, manager, created.ID)
-
-	rawEvents, err := manager.store.readEvents(created.ID)
-	if err != nil {
-		t.Fatalf("readEvents returned error: %v", err)
-	}
-
-	messageEvent := findEventByType(rawEvents, "msg_u")
-	if messageEvent == nil {
-		t.Fatal("expected msg_u event to be recorded")
-	}
-	if got := fmt.Sprint(messageEvent.Payload["txt"]); got != "[Image #1] [Image #2]" {
-		t.Fatalf("unexpected image-only message text %q", got)
-	}
-
-	names := attachmentNamesFromPayload(messageEvent.Payload["atts"])
-	expected := []string{"image 1", "image 2"}
-	for index, expectedName := range expected {
-		if index >= len(names) || names[index] != expectedName {
-			t.Fatalf("expected attachment %d name %q, got %v", index, expectedName, names)
-		}
-	}
-
-	recordAfter, err := manager.GetSession(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetSession returned error: %v", err)
-	}
-	if recordAfter.Title != recordBefore.Title {
-		t.Fatalf("expected default title %q to be preserved, got %q", recordBefore.Title, recordAfter.Title)
-	}
-	if !recordAfter.TitleAuto {
-		t.Fatalf("expected image-only message to keep auto title enabled")
-	}
-}
-
 func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -797,6 +700,16 @@ func TestRespondToUserInputCodexAppServer(t *testing.T) {
 	if request == nil {
 		t.Fatal("expected pending user input request")
 	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected session status %q while waiting for input, got %q", StatusRunning, record.Status)
+	}
+	if record.AssistantState != string(AssistantStateWaitingInput) {
+		t.Fatalf("expected assistant state %q, got %q", AssistantStateWaitingInput, record.AssistantState)
+	}
 
 	if err := manager.respondToUserInput(created.ID, request.ItemID, map[string][]string{
 		"scope": {"full migration"},
@@ -806,15 +719,15 @@ func TestRespondToUserInputCodexAppServer(t *testing.T) {
 
 	waitForSessionToSettle(t, manager, created.ID)
 
-	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
-		t.Fatalf("History returned error: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if !historyHasEvent(history.Events, "user_input_req") {
-		t.Fatalf("expected user_input_req event, got %#v", history.Events)
+	if !historyHasEvent(rawEvents, "user_input_req") {
+		t.Fatalf("expected user_input_req event, got %#v", rawEvents)
 	}
-	if !historyHasEvent(history.Events, "user_input_res") {
-		t.Fatalf("expected user_input_res event, got %#v", history.Events)
+	if !historyHasEvent(rawEvents, "user_input_res") {
+		t.Fatalf("expected user_input_res event, got %#v", rawEvents)
 	}
 }
 
@@ -847,6 +760,13 @@ func TestRespondToApprovalCodexAppServer(t *testing.T) {
 	if request == nil {
 		t.Fatal("expected pending approval request")
 	}
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected session status %q while waiting for approval, got %q", StatusRunning, record.Status)
+	}
 
 	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
 		t.Fatalf("respondToApproval returned error: %v", err)
@@ -854,15 +774,15 @@ func TestRespondToApprovalCodexAppServer(t *testing.T) {
 
 	waitForSessionToSettle(t, manager, created.ID)
 
-	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
-		t.Fatalf("History returned error: %v", err)
+		t.Fatalf("readEvents returned error: %v", err)
 	}
-	if !historyHasEvent(history.Events, "approval_req") {
-		t.Fatalf("expected approval_req event, got %#v", history.Events)
+	if !historyHasEvent(rawEvents, "approval_req") {
+		t.Fatalf("expected approval_req event, got %#v", rawEvents)
 	}
-	if !historyHasEvent(history.Events, "approval_res") {
-		t.Fatalf("expected approval_res event, got %#v", history.Events)
+	if !historyHasEvent(rawEvents, "approval_res") {
+		t.Fatalf("expected approval_res event, got %#v", rawEvents)
 	}
 }
 
@@ -898,8 +818,11 @@ func TestCodexPlanCompletionSetsWaitingApprovalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if record.Status != string(StatusWaitingApproval) {
-		t.Fatalf("expected session status %q, got %q", StatusWaitingApproval, record.Status)
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected session status %q, got %q", StatusRunning, record.Status)
+	}
+	if record.AssistantState != string(AssistantStateWaitingPlanApproval) {
+		t.Fatalf("expected assistant state %q, got %q", AssistantStateWaitingPlanApproval, record.AssistantState)
 	}
 
 	history, err := manager.History(context.Background(), created.ID, 200, nil)
@@ -946,6 +869,9 @@ func TestCodexPlanCompletionUsesDoneStatusOutsidePlanWorkflow(t *testing.T) {
 	if record.Status != string(StatusDone) {
 		t.Fatalf("expected session status %q, got %q", StatusDone, record.Status)
 	}
+	if record.AssistantState != "" {
+		t.Fatalf("expected assistant state to be cleared, got %q", record.AssistantState)
+	}
 }
 
 func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
@@ -980,8 +906,11 @@ func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error: %v", err)
 	}
-	if record.Status != string(StatusWaitingApproval) {
-		t.Fatalf("expected first completion status %q, got %q", StatusWaitingApproval, record.Status)
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected first completion status %q, got %q", StatusRunning, record.Status)
+	}
+	if record.AssistantState != string(AssistantStateWaitingPlanApproval) {
+		t.Fatalf("expected first assistant state %q, got %q", AssistantStateWaitingPlanApproval, record.AssistantState)
 	}
 
 	if err := manager.SendMessage(context.Background(), created.ID, "implement now", nil); err != nil {
@@ -995,6 +924,9 @@ func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
 	if record.Status != string(StatusRunning) {
 		t.Fatalf("expected second send to move status to %q, got %q", StatusRunning, record.Status)
 	}
+	if record.AssistantState != string(AssistantStateWorking) {
+		t.Fatalf("expected second send to move assistant state to %q, got %q", AssistantStateWorking, record.AssistantState)
+	}
 
 	waitForSessionToSettle(t, manager, created.ID)
 
@@ -1002,8 +934,11 @@ func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession returned error after second completion: %v", err)
 	}
-	if record.Status != string(StatusWaitingApproval) {
-		t.Fatalf("expected second completion status %q, got %q", StatusWaitingApproval, record.Status)
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected second completion status %q, got %q", StatusRunning, record.Status)
+	}
+	if record.AssistantState != string(AssistantStateWaitingPlanApproval) {
+		t.Fatalf("expected second assistant state %q, got %q", AssistantStateWaitingPlanApproval, record.AssistantState)
 	}
 }
 
@@ -1621,72 +1556,6 @@ func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *
 	return session
 }
 
-func seedAttachment(t *testing.T, manager *Manager, name, mimeType string) Attachment {
-	t.Helper()
-
-	id := fmt.Sprintf("att_%d", time.Now().UnixNano())
-	extension := filepath.Ext(name)
-	if extension == "" {
-		extension = attachmentExtensionFromMime(mimeType)
-	}
-	path := manager.store.attachmentPath(id, extension)
-	if err := os.WriteFile(path, []byte("fake-image"), 0o644); err != nil {
-		t.Fatalf("write attachment payload failed: %v", err)
-	}
-
-	attachment := Attachment{
-		ID:        id,
-		Name:      name,
-		Mime:      mimeType,
-		Size:      int64(len("fake-image")),
-		Path:      path,
-		CreatedAt: time.Now(),
-	}
-
-	metaBytes, err := json.Marshal(attachmentMeta{
-		ID:        attachment.ID,
-		Name:      attachment.Name,
-		Mime:      attachment.Mime,
-		Size:      attachment.Size,
-		Path:      attachment.Path,
-		CreatedAt: attachment.CreatedAt,
-	})
-	if err != nil {
-		t.Fatalf("marshal attachment meta failed: %v", err)
-	}
-	if err := os.WriteFile(manager.store.attachmentPath(id, ".json"), metaBytes, 0o644); err != nil {
-		t.Fatalf("write attachment meta failed: %v", err)
-	}
-
-	return attachment
-}
-
-func findEventByType(events []Event, eventType string) *Event {
-	for index := range events {
-		if events[index].Type == eventType {
-			return &events[index]
-		}
-	}
-	return nil
-}
-
-func attachmentNamesFromPayload(value any) []string {
-	items, ok := value.([]any)
-	if !ok {
-		return nil
-	}
-
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		record, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		names = append(names, fmt.Sprint(record["name"]))
-	}
-	return names
-}
-
 func writeFakeCodexCLI(t *testing.T) string {
 	t.Helper()
 
@@ -1917,9 +1786,10 @@ func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 		if !manager.hasActiveRun(sessionID) {
 			record, err := manager.GetSession(context.Background(), sessionID)
 			if err == nil && (record.Status == string(StatusDone) ||
-				record.Status == string(StatusWaitingApproval) ||
 				record.Status == string(StatusError) ||
-				record.Status == string(StatusIdle)) {
+				record.Status == string(StatusIdle) ||
+				(record.Status == string(StatusRunning) &&
+					record.AssistantState == string(AssistantStateWaitingPlanApproval))) {
 				return
 			}
 		}

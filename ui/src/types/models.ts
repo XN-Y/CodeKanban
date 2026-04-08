@@ -268,10 +268,12 @@ export interface WebSessionSummary {
   cwd: string;
   nativeSessionId?: string | null;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
+  assistantState?: 'working' | 'waiting_approval' | 'waiting_input' | 'waiting_plan_approval' | null;
   hasUnread: boolean;
   archivedAt?: string | null;
   activityAt: string;
   lastMessageAt?: string | null;
+  assistantStateUpdatedAt?: string | null;
   sourceKind: string;
   syncState: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
   sourceCreatedAt?: string | null;

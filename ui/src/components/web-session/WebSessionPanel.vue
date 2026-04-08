@@ -768,7 +768,7 @@
 
                 <div class="composer-footer-right">
                   <n-button
-                    v-if="currentSession?.status === 'running'"
+                    v-if="isRunActive"
                     secondary
                     type="warning"
                     class="composer-stop-btn"
@@ -776,13 +776,19 @@
                   >
                     {{ t('webSession.stop') }}
                   </n-button>
-                  <template v-if="canStageDuringRun">
-                    <n-button secondary class="composer-queue-btn" @click="handlePreinput('queue')">
+                  <template v-if="isRunActive">
+                    <n-button
+                      secondary
+                      class="composer-queue-btn"
+                      :disabled="!canStageDuringRun"
+                      @click="handlePreinput('queue')"
+                    >
                       {{ t('webSession.preinputQueue') }}
                     </n-button>
                     <n-button
                       type="primary"
                       class="composer-send-btn"
+                      :disabled="!canStageDuringRun"
                       @click="handlePreinput('redirect')"
                     >
                       {{ t('webSession.preinputRedirect') }}
@@ -799,6 +805,14 @@
                   </n-button>
                 </div>
               </div>
+              <TransferProgressDialog
+                v-if="composerTransferCard"
+                :message="composerTransferCard.message"
+                :detail="composerTransferCard.detail"
+                :progress="composerTransferCard.progress"
+                :tone="composerTransferCard.tone"
+                :card-style="composerTransferDialogStyle"
+              />
             </div>
           </div>
         </div>
@@ -983,6 +997,7 @@
           </aside>
         </div>
       </div>
+
     </div>
 
     <n-modal
@@ -1125,16 +1140,18 @@ import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
+import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/terminalThemes';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
-import { isDarkHex } from '@/utils/color';
+import { hexToRgba, isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
 import {
-  buildComposerTextWithImagePlaceholders,
+  buildImagePlaceholder,
+  insertImagePlaceholdersAtCursor,
   resolveImageAttachmentDisplayName,
-  stripManagedComposerImagePlaceholders,
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
+import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 
@@ -1247,8 +1264,13 @@ const dialog = useDialog();
 const message = useMessage();
 const { t } = useLocale();
 const { isMobile } = useResponsive();
-const { activeTheme, currentPresetId, confirmBeforeTerminalClose, showWebSessionReasoning } =
-  storeToRefs(settingsStore);
+const {
+  activeTheme,
+  currentPresetId,
+  confirmBeforeTerminalClose,
+  showWebSessionReasoning,
+  effectiveTerminalThemeId,
+} = storeToRefs(settingsStore);
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
   DRAFT_SESSION_STORAGE_KEY,
   {}
@@ -1308,6 +1330,9 @@ const sidebarWidthPx = useStorage<number>(
   DEFAULT_SESSION_SIDEBAR_WIDTH
 );
 let sidebarResizeObserver: ResizeObserver | null = null;
+const composerTransferErrorMessage = ref('');
+const composerTransferErrorDetail = ref('');
+let composerTransferErrorTimer: number | null = null;
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -1346,27 +1371,14 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   return session && !isDraftSession(session) ? session : null;
 });
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
-const composerRawText = computed(
-  () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text
-);
 const composerText = computed({
-  get: () => {
-    const draft = webSessionStore.getDraft(props.projectId, currentDraftSessionId.value);
-    const rawText =
-      draft.attachments.length > 0 ? stripManagedComposerImagePlaceholders(draft.text) : draft.text;
-    return buildComposerTextWithImagePlaceholders(rawText, draft.attachments.length);
-  },
+  get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
   set: value => {
     const sessionId = currentDraftSessionId.value;
     if (!sessionId) {
       return;
     }
-    const attachmentCount = webSessionStore.getDraft(props.projectId, sessionId).attachments.length;
-    webSessionStore.setDraftText(
-      props.projectId,
-      sessionId,
-      attachmentCount > 0 ? stripManagedComposerImagePlaceholders(value) : value
-    );
+    webSessionStore.setDraftText(props.projectId, sessionId, value);
   },
 });
 const liveBlocks = computed(() =>
@@ -1680,7 +1692,7 @@ const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
 });
 const isPlanWaitingApprovalState = computed(
   () =>
-    liveState.value.phase === 'waiting_approval' &&
+    liveState.value.phase === 'waiting_plan_approval' &&
     !pendingApproval.value &&
     Boolean(latestPlanToolId.value) &&
     !hasUserMessageAfterLatestPlan.value
@@ -1728,6 +1740,51 @@ const timelineLoadingRows = [1, 2, 3, 4, 5];
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
+const draftAttachmentUpload = computed(() =>
+  webSessionStore.getDraftAttachmentUpload(props.projectId, currentDraftSessionId.value)
+);
+const isDraftAttachmentUploading = computed(() => Boolean(draftAttachmentUpload.value));
+const activeTerminalTheme = computed(() => {
+  return getTerminalThemeById(effectiveTerminalThemeId.value) || getDefaultTerminalTheme();
+});
+const composerTransferCard = computed(() => {
+  if (draftAttachmentUpload.value) {
+    const upload = draftAttachmentUpload.value;
+    return {
+      tone: 'progress' as const,
+      message:
+        upload.totalFiles > 1
+          ? t('webSession.attachmentUploadingBatch', {
+              current: upload.currentFileIndex,
+              total: upload.totalFiles,
+            })
+          : t('webSession.attachmentUploading'),
+      detail: '',
+      progress: upload.percent ?? 0,
+    };
+  }
+  if (composerTransferErrorMessage.value) {
+    return {
+      tone: 'error' as const,
+      message: composerTransferErrorMessage.value,
+      detail: '',
+      progress: null,
+    };
+  }
+  return null;
+});
+const composerTransferDialogStyle = computed(() => {
+  const theme = activeTerminalTheme.value.theme;
+  const background = theme.background || '#0f111a';
+  const foreground = theme.foreground || '#f6f8ff';
+
+  return {
+    '--terminal-transfer-card-bg': hexToRgba(background, 0.94),
+    '--terminal-transfer-card-fg': foreground,
+    '--terminal-transfer-card-border': hexToRgba(foreground, 0.18),
+    '--terminal-transfer-card-track': hexToRgba(foreground, 0.14),
+  } as CSSProperties;
+});
 function draftAttachmentDisplayName(attachment: { name: string }, index: number) {
   return resolveImageAttachmentDisplayName(attachment.name, index + 1);
 }
@@ -1746,18 +1803,29 @@ const pendingInputs = computed(() =>
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
-const isRunActive = computed(() => Boolean(currentSession.value?.status === 'running'));
+const isRunActive = computed(() => liveState.value.running);
 const hasDraftContent = computed(
-  () => composerRawText.value.trim().length > 0 || draftAttachments.value.length > 0
+  () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
 );
-const canSend = computed(() => !isRunActive.value && hasDraftContent.value);
-const canStageDuringRun = computed(() => isRunActive.value && hasDraftContent.value);
+const canSend = computed(
+  () => !isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
+);
+const canStageDuringRun = computed(
+  () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
+);
 const composerPlaceholder = computed(() => t('webSession.inputPlaceholder'));
 const composerHint = computed(() => {
+  if (isDraftAttachmentUploading.value) {
+    return t('webSession.composerHintUploading');
+  }
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.composerHintRecovered');
   }
-  if (pendingApproval.value || liveState.value.phase === 'waiting_approval') {
+  if (
+    pendingApproval.value ||
+    liveState.value.phase === 'waiting_approval' ||
+    liveState.value.phase === 'waiting_plan_approval'
+  ) {
     return t('webSession.composerHintApproval');
   }
   if (pendingUserInput.value) {
@@ -1768,6 +1836,25 @@ const composerHint = computed(() => {
   }
   return t('webSession.composerHintIdle');
 });
+
+function clearComposerTransferError() {
+  if (composerTransferErrorTimer != null) {
+    window.clearTimeout(composerTransferErrorTimer);
+    composerTransferErrorTimer = null;
+  }
+  composerTransferErrorMessage.value = '';
+  composerTransferErrorDetail.value = '';
+}
+
+function showComposerTransferError(detail?: string) {
+  clearComposerTransferError();
+  composerTransferErrorMessage.value = t('webSession.attachmentUploadFailed');
+  composerTransferErrorDetail.value = String(detail || '').trim();
+  composerTransferErrorTimer = window.setTimeout(() => {
+    composerTransferErrorTimer = null;
+    clearComposerTransferError();
+  }, 900);
+}
 const liveStateLabel = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.liveRecovered');
@@ -1786,6 +1873,7 @@ const liveStateLabel = computed(() => {
       }
       return t('webSession.liveTool', { tool: liveState.value.tool?.name || 'Tool' });
     case 'waiting_approval':
+    case 'waiting_plan_approval':
       return t('webSession.liveWaitingApproval');
     case 'waiting_input':
       return t('webSession.liveWaitingInput');
@@ -1804,7 +1892,10 @@ const liveStateDetail = computed(() => {
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
   }
-  if (liveState.value.phase === 'waiting_approval') {
+  if (
+    liveState.value.phase === 'waiting_approval' ||
+    liveState.value.phase === 'waiting_plan_approval'
+  ) {
     return t('webSession.liveWaitingApprovalDetail');
   }
   if (pendingUserInput.value?.prompt) {
@@ -1833,6 +1924,7 @@ const liveStateSecondaryText = computed(() => {
     case 'tool':
       return compactToolLabel(liveState.value.tool);
     case 'waiting_approval':
+    case 'waiting_plan_approval':
       return t('webSession.liveWaitingApprovalDetail');
     case 'waiting_input':
       return t('webSession.liveWaitingInputDetail');
@@ -3782,13 +3874,21 @@ async function uploadComposerImages(files: File[]) {
   if (!sessionId) {
     return;
   }
-  for (const file of files) {
-    try {
-      await webSessionStore.uploadAttachment(props.projectId, sessionId, file);
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    }
+  clearComposerTransferError();
+  const result = await webSessionStore.uploadAttachments(props.projectId, sessionId, files);
+  if (result.attachments.length > 0) {
+    insertUploadedImagePlaceholders(result.attachments.length);
   }
+  if (result.errors.length === 0) {
+    return;
+  }
+
+  const detail = result.errors[0]?.message || '';
+  showComposerTransferError(detail);
+  result.errors.forEach(error => {
+    const errorMessage = error.fileName ? `${error.fileName}: ${error.message}` : error.message;
+    message.error(errorMessage || t('common.error'));
+  });
 }
 
 async function handleFileChange(event: Event) {
@@ -3797,9 +3897,12 @@ async function handleFileChange(event: Event) {
   if (files.length === 0) {
     return;
   }
-  await uploadComposerImages(files);
-  if (target) {
-    target.value = '';
+  try {
+    await uploadComposerImages(files);
+  } finally {
+    if (target) {
+      target.value = '';
+    }
   }
 }
 
@@ -3880,6 +3983,71 @@ function focusComposer() {
   });
 }
 
+function isComposerTextareaElement(value: unknown): value is HTMLTextAreaElement {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'setSelectionRange' in value &&
+    typeof (value as HTMLTextAreaElement).setSelectionRange === 'function'
+  );
+}
+
+function getComposerTextarea() {
+  const rawTextarea = composerInputRef.value?.textareaElRef as
+    | unknown
+    | { value?: unknown }
+    | null
+    | undefined;
+
+  if (isComposerTextareaElement(rawTextarea)) {
+    return rawTextarea as HTMLTextAreaElement;
+  }
+
+  const nestedTextarea =
+    rawTextarea && typeof rawTextarea === 'object' && 'value' in rawTextarea
+      ? rawTextarea.value
+      : null;
+  if (isComposerTextareaElement(nestedTextarea)) {
+    return nestedTextarea;
+  }
+
+  return null;
+}
+
+function insertUploadedImagePlaceholders(uploadedCount: number) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId || uploadedCount <= 0) {
+    return;
+  }
+
+  const attachmentCount = webSessionStore.getDraftAttachments(props.projectId, sessionId).length;
+  const firstIndex = attachmentCount - uploadedCount + 1;
+  if (firstIndex <= 0) {
+    return;
+  }
+
+  const placeholders = Array.from({ length: uploadedCount }, (_, index) =>
+    buildImagePlaceholder(firstIndex + index)
+  );
+  const textarea = getComposerTextarea();
+  const nextComposer = insertImagePlaceholdersAtCursor(
+    composerText.value,
+    textarea?.selectionStart ?? composerText.value.length,
+    textarea?.selectionEnd ?? (textarea?.selectionStart ?? composerText.value.length),
+    placeholders
+  );
+
+  webSessionStore.setDraftText(props.projectId, sessionId, nextComposer.text);
+
+  nextTick(() => {
+    composerInputRef.value?.focus();
+    const nextTextarea = getComposerTextarea();
+    if (nextTextarea) {
+      nextTextarea.setSelectionRange(nextComposer.cursor, nextComposer.cursor);
+    }
+  });
+}
+
 async function prepareSessionForSend(session: WebSessionSummary) {
   if (!session.archivedAt) {
     return {
@@ -3900,7 +4068,7 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 }
 
 async function handleSubmit() {
-  if (isRunActive.value || !hasDraftContent.value) {
+  if (isRunActive.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
     return;
   }
   try {
@@ -3913,7 +4081,7 @@ async function handleSubmit() {
       return;
     }
     const draftSessionId = currentDraftSessionId.value;
-    const draftText = composerRawText.value;
+    const draftText = composerText.value;
     const attachments = [...draftAttachments.value];
     const prepared = await prepareSessionForSend(session);
     session = prepared.session;
@@ -3938,14 +4106,14 @@ async function handleSubmit() {
 }
 
 async function handlePreinput(mode: 'redirect' | 'queue') {
-  if (!currentRealSession.value || !hasDraftContent.value) {
+  if (!currentRealSession.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
     return;
   }
   try {
     const attachments = draftAttachments.value;
     await webSessionStore.sendMessage(
       currentRealSession.value.id,
-      composerRawText.value,
+      composerText.value,
       attachments.map(item => item.id),
       mode
     );
@@ -3956,6 +4124,12 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
 }
 
 function handleComposerEnter(event: KeyboardEvent) {
+  if (isDraftAttachmentUploading.value) {
+    if (hasDraftContent.value) {
+      event.preventDefault();
+    }
+    return;
+  }
   if (isRunActive.value) {
     if (hasDraftContent.value) {
       event.preventDefault();
@@ -4394,6 +4568,7 @@ function getSessionAssistantStateClass(session: (typeof sessions.value)[number])
     case 'tool':
       return 'working';
     case 'waiting_approval':
+    case 'waiting_plan_approval':
       return 'waiting_approval';
     case 'waiting_input':
       return 'waiting_input';
@@ -4872,6 +5047,10 @@ watch(timelineContentVersion, async () => {
   ensureTimelineHistoryFilled();
 });
 
+watch(currentDraftSessionId, () => {
+  clearComposerTransferError();
+});
+
 useResizeObserver(timelineListRef, () => {
   if (!currentSession.value) {
     return;
@@ -4945,6 +5124,7 @@ onBeforeUnmount(() => {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;
   }
+  clearComposerTransferError();
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
   cleanupTabScrollListener();
@@ -4986,6 +5166,7 @@ onBeforeUnmount(() => {
 }
 
 .panel-content {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
@@ -6356,19 +6537,48 @@ onBeforeUnmount(() => {
 }
 
 .live-card::before {
-  content: none;
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.02) 32%,
+    rgba(255, 255, 255, 0.34) 50%,
+    rgba(255, 255, 255, 0.02) 68%,
+    transparent 100%
+  );
+  transform: translateX(-130%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .live-card::after {
-  content: none;
+  content: '';
+  position: absolute;
+  left: -36%;
+  bottom: 0;
+  width: 36%;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(167, 139, 250, 0.18) 8%,
+    rgba(139, 92, 246, 0.95) 48%,
+    rgba(167, 139, 250, 0.4) 82%,
+    transparent 100%
+  );
+  opacity: 0;
+  pointer-events: none;
 }
 
 .live-card:hover {
-  box-shadow: none;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
 }
 
 .live-card:active {
-  box-shadow: none;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.1);
 }
 
 .live-card:focus-visible {
@@ -6379,51 +6589,88 @@ onBeforeUnmount(() => {
 .live-card.phase-starting,
 .live-card.phase-thinking,
 .live-card.phase-tool {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
-  box-shadow: none;
+  border-color: rgba(139, 92, 246, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(139, 92, 246, 0.11) 0%,
+      rgba(139, 92, 246, 0.03) 52%,
+      transparent 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 8px 20px rgba(139, 92, 246, 0.08);
 }
 
 .live-card.phase-starting::before,
 .live-card.phase-thinking::before,
 .live-card.phase-tool::before {
-  animation: none;
+  opacity: 0.82;
+  animation: liveSweep 1.9s linear infinite;
 }
 
 .live-card.phase-starting::after,
 .live-card.phase-thinking::after,
 .live-card.phase-tool::after {
-  animation: none;
+  opacity: 1;
+  animation: liveTrack 1.45s linear infinite;
 }
 
 .live-card.phase-waiting_approval,
 .live-card.phase-waiting_plan_approval,
 .live-card.phase-waiting_input {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--web-session-approval-border) 82%, var(--n-border-color));
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-approval-accent) 12%, transparent) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--web-session-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-bg) 11%, var(--app-surface-color, #fff)) 54%,
+      var(--app-surface-color, #fff) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-approval-glow) 70%, transparent);
 }
 
 .live-card.phase-waiting_approval::before,
 .live-card.phase-waiting_plan_approval::before,
 .live-card.phase-waiting_input::before {
-  animation: none;
+  opacity: 0.26;
+  animation: liveSweep 3.2s ease-in-out infinite;
 }
 
 .live-card.phase-done {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
-  box-shadow: none;
+  border-color: rgba(16, 185, 129, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(16, 185, 129, 0.12) 0%,
+      rgba(16, 185, 129, 0.035) 48%,
+      transparent 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 8px 20px rgba(16, 185, 129, 0.08);
 }
 
 .live-card.phase-done::before {
-  animation: none;
+  opacity: 0.38;
+  animation: liveSweep 4.2s ease-in-out infinite;
 }
 
 .live-card.phase-error {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
-  box-shadow: none;
+  border-color: rgba(239, 68, 68, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(239, 68, 68, 0.11) 0%,
+      rgba(239, 68, 68, 0.03) 48%,
+      transparent 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 8px 20px rgba(239, 68, 68, 0.08);
 }
 
 .live-card-main {
@@ -6507,53 +6754,66 @@ onBeforeUnmount(() => {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
-  box-shadow: none;
-  animation: none;
+  background: #8b5cf6;
+  box-shadow: 0 0 0 5px rgba(139, 92, 246, 0.16);
+  animation: livePulse 1.05s ease-in-out infinite;
   flex-shrink: 0;
 }
 
 .live-orb::after {
-  content: none;
+  content: '';
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+  background: rgba(139, 92, 246, 0.22);
+  opacity: 0;
+  animation: liveRipple 1.35s ease-out infinite;
 }
 
 .live-card.phase-waiting_input .live-orb,
 .live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
-  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
+  background: linear-gradient(
+    135deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
 }
 
 .live-card.phase-waiting_input .live-orb,
 .live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb {
-  box-shadow: none;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-approval-glow) 82%, transparent);
 }
 
 .live-card.phase-waiting_plan_approval .live-orb::after,
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
-  content: none;
+  background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
 }
 
 .live-card.phase-done .live-orb {
-  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
-  box-shadow: none;
-  animation: none;
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+  animation: livePulse 2.8s ease-in-out infinite;
 }
 
 .live-card.phase-done .live-orb::after {
-  content: none;
+  background: rgba(16, 185, 129, 0.18);
+  animation-duration: 2.6s;
 }
 
 .live-card.phase-error .live-orb {
-  background: color-mix(in srgb, var(--n-text-color-3) 70%, transparent);
-  box-shadow: none;
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
   animation: none;
 }
 
 .live-card.phase-error .live-orb::after {
-  content: none;
+  background: rgba(239, 68, 68, 0.18);
+  opacity: 0.35;
+  animation: none;
 }
 
 .live-copy {
@@ -6591,14 +6851,33 @@ onBeforeUnmount(() => {
 .approval-card {
   position: relative;
   overflow: hidden;
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
+  border-color: color-mix(in srgb, var(--web-session-approval-border) 88%, transparent);
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-approval-accent) 10%, transparent) 0%,
+      transparent 45%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--web-session-approval-border) 14%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-border) 4%, var(--app-surface-color, #fff)) 58%,
+      var(--app-surface-color, #fff) 100%
+    );
   padding: 11px 12px;
-  box-shadow: none;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--web-session-approval-glow) 42%, transparent);
 }
 
 .approval-card:not(.history-interaction-card)::before {
-  content: none;
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: linear-gradient(
+    180deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
 }
 
 .approval-card > * {
@@ -6613,18 +6892,19 @@ onBeforeUnmount(() => {
 }
 
 .history-interaction-card.type-approval-approve {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
+  border-color: rgba(16, 185, 129, 0.28);
+  background: color-mix(in srgb, rgba(16, 185, 129, 0.08) 70%, var(--app-surface-color, #fff));
 }
 
 .history-interaction-card.type-approval-reject {
-  border-color: var(--n-border-color);
-  background: var(--app-surface-color, #fff);
+  border-color: rgba(239, 68, 68, 0.28);
+  background: color-mix(in srgb, rgba(239, 68, 68, 0.08) 70%, var(--app-surface-color, #fff));
 }
 
 .approval-card.is-stale {
-  border: 1px dashed var(--n-border-color);
-  background: var(--app-surface-color, #fff);
+  border: 1px dashed
+    color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
+  background: color-mix(in srgb, var(--web-session-approval-bg) 58%, transparent);
   box-shadow: none;
 }
 
@@ -6640,22 +6920,26 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  color: #fff;
   font-size: 11px;
   font-weight: 600;
 }
 
 .approval-badge.state-approval-approve {
-  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
+  background: #10b981;
 }
 
 .approval-badge.state-approval-reject {
-  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
+  background: #ef4444;
 }
 
 .approval-badge.state-user-input-request,
 .approval-badge.state-user-input-response {
-  background: color-mix(in srgb, var(--n-border-color) 72%, var(--app-surface-color, #fff));
+  background: linear-gradient(
+    135deg,
+    var(--web-session-approval-accent) 0%,
+    var(--web-session-approval-accent-strong) 100%
+  );
 }
 
 .approval-prompt {
@@ -6674,7 +6958,7 @@ onBeforeUnmount(() => {
   margin-top: 8px;
   font-size: 12px;
   line-height: 1.55;
-  color: var(--n-text-color-3);
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 82%, #111827);
   white-space: pre-wrap;
 }
 

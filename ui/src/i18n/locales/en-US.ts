@@ -689,8 +689,13 @@ export default {
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.4',
     customModelEmpty: 'Model name cannot be empty',
+    attachmentUploading: 'Uploading image',
+    attachmentUploadingBatch: 'Uploading image {current}/{total}',
+    attachmentUploadFailed: 'Image upload failed',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
+    composerHintUploading:
+      'Image upload is in progress. Sending is disabled until it finishes, but you can keep adding images.',
     composerHintRunning:
       'The agent is working. You can redirect the next step or add this as a queue item.',
     composerHintApproval:

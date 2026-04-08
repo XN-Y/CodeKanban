@@ -411,22 +411,28 @@ func (m *Manager) runCodexAppServerSession(
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
 				turnCompleted = true
-				finalStatus := m.completedRunStatus(context.Background(), session, run)
+				finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
+				now := time.Now()
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 					ID:        utils.NewID(),
 					Seq:       0,
 					Type:      "run_done",
 					RunID:     run.runID,
-					Timestamp: time.Now(),
+					Timestamp: now,
 					Payload: map[string]any{
 						"ok": true,
 						"st": string(finalStatus),
 					},
 				})
-				_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-					"status":     string(finalStatus),
-					"updated_at": time.Now(),
-				})
+				_ = m.updateRuntimeState(
+					context.Background(),
+					session.ID,
+					applyAssistantStateUpdates(map[string]any{
+						"status":     string(finalStatus),
+						"updated_at": now,
+					}, finalAssistantState, now),
+				)
+				m.broadcastSessionSummary(context.Background(), session.ID)
 				_ = client.closeStdin()
 				m.maybeSyncSessionAfterRun(session)
 			}
@@ -439,17 +445,23 @@ func (m *Manager) runCodexAppServerSession(
 	<-stderrDone
 
 	if ctx.Err() != nil {
+		now := time.Now()
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
 			Type:      "run_abort",
 			RunID:     run.runID,
-			Timestamp: time.Now(),
+			Timestamp: now,
 		})
-		_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-			"status":     string(StatusIdle),
-			"updated_at": time.Now(),
-		})
+		_ = m.updateRuntimeState(
+			context.Background(),
+			session.ID,
+			applyAssistantStateUpdates(map[string]any{
+				"status":     string(StatusIdle),
+				"updated_at": now,
+			}, AssistantStateNone, now),
+		)
+		m.broadcastSessionSummary(context.Background(), session.ID)
 		return
 	}
 
@@ -800,19 +812,30 @@ func (m *Manager) handleCodexAppServerUserInputRequest(
 		Questions: questions,
 	}
 	run.setPendingServerRequest(request)
+	now := time.Now()
 	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "user_input_req",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"iid": itemID,
 			"txt": request.Prompt,
 			"qs":  questions,
 		},
 	})
+	if err == nil {
+		_ = m.updateRuntimeState(
+			context.Background(),
+			session.ID,
+			applyAssistantStateUpdates(map[string]any{
+				"updated_at": now,
+			}, AssistantStateWaitingInput, now),
+		)
+		m.broadcastSessionSummary(context.Background(), session.ID)
+	}
 	return err
 }
 
@@ -823,17 +846,28 @@ func (m *Manager) handleCodexAppServerApprovalRequest(
 ) error {
 	request := decodePendingApprovalRequest(message)
 	run.setPendingServerRequest(request)
+	now := time.Now()
 	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
 		Type:      "approval_req",
 		RunID:     run.runID,
 		ParentID:  run.assistantMessageID,
-		Timestamp: time.Now(),
+		Timestamp: now,
 		Payload: map[string]any{
 			"prompt": request.Prompt,
 		},
 	})
+	if err == nil {
+		_ = m.updateRuntimeState(
+			context.Background(),
+			session.ID,
+			applyAssistantStateUpdates(map[string]any{
+				"updated_at": now,
+			}, AssistantStateWaitingApproval, now),
+		)
+		m.broadcastSessionSummary(context.Background(), session.ID)
+	}
 	return err
 }
 
@@ -1059,6 +1093,8 @@ func decodeToolQuestions(raw any) []toolRequestQuestion {
 	switch typed := raw.(type) {
 	case json.RawMessage:
 		_ = json.Unmarshal(typed, &items)
+	case []toolRequestQuestion:
+		return append([]toolRequestQuestion(nil), typed...)
 	case []map[string]any:
 		items = typed
 	case []any:
@@ -1079,6 +1115,21 @@ func decodeToolQuestions(raw any) []toolRequestQuestion {
 			IsOther:  item["isOther"] == true,
 			IsSecret: item["isSecret"] == true,
 		}
+		if question.ID == "" {
+			question.ID = stringValue(item["ID"])
+		}
+		if question.Header == "" {
+			question.Header = stringValue(item["Header"])
+		}
+		if question.Question == "" {
+			question.Question = stringValue(item["Question"])
+		}
+		if !question.IsOther {
+			question.IsOther = item["IsOther"] == true
+		}
+		if !question.IsSecret {
+			question.IsSecret = item["IsSecret"] == true
+		}
 		if options, ok := item["options"].([]any); ok {
 			question.Options = make([]toolRequestOption, 0, len(options))
 			for _, optionRaw := range options {
@@ -1089,6 +1140,20 @@ func decodeToolQuestions(raw any) []toolRequestQuestion {
 				question.Options = append(question.Options, toolRequestOption{
 					Label:       stringValue(option["label"]),
 					Description: stringValue(option["description"]),
+				})
+			}
+		} else if options, ok := item["Options"].([]toolRequestOption); ok {
+			question.Options = append([]toolRequestOption(nil), options...)
+		} else if options, ok := item["Options"].([]any); ok {
+			question.Options = make([]toolRequestOption, 0, len(options))
+			for _, optionRaw := range options {
+				option, ok := optionRaw.(map[string]any)
+				if !ok {
+					continue
+				}
+				question.Options = append(question.Options, toolRequestOption{
+					Label:       firstNonEmpty(stringValue(option["label"]), stringValue(option["Label"])),
+					Description: firstNonEmpty(stringValue(option["description"]), stringValue(option["Description"])),
 				})
 			}
 		}

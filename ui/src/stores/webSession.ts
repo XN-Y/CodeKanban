@@ -1,12 +1,14 @@
 import EventEmitter from 'eventemitter3';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import { webSessionApi } from '@/api/webSession';
+import { webSessionApi, type WebSessionAttachmentUploadProgress } from '@/api/webSession';
 import type { WebSessionAttachment, WebSessionSummary } from '@/types/models';
+import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
 type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err';
 type SessionStatus = WebSessionSummary['status'];
+type SessionAssistantState = 'working' | 'waiting_approval' | 'waiting_input' | 'waiting_plan_approval';
 
 type WireSession = {
   id: string;
@@ -22,12 +24,14 @@ type WireSession = {
   cwd: string;
   nsid?: string | null;
   st: SessionStatus;
+  ast?: SessionAssistantState | null;
   unr: boolean;
   aa?: number | null;
   act?: number | null;
   ca?: number | null;
   lu: number;
   lma?: number | null;
+  asu?: number | null;
   sk: string;
   ss: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
   sca?: number | null;
@@ -213,6 +217,7 @@ export interface WebSessionLiveState {
     | 'thinking'
     | 'tool'
     | 'waiting_approval'
+    | 'waiting_plan_approval'
     | 'waiting_input'
     | 'done'
     | 'error';
@@ -244,6 +249,26 @@ export interface WebSessionDraftState {
   text: string;
   attachments: WebSessionAttachment[];
   updatedAt: number;
+}
+
+export interface WebSessionDraftAttachmentUploadState {
+  id: string;
+  fileName: string;
+  currentFileIndex: number;
+  totalFiles: number;
+  loaded: number;
+  total?: number;
+  percent: number | null;
+}
+
+export interface WebSessionDraftAttachmentUploadError {
+  fileName: string;
+  message: string;
+}
+
+export interface WebSessionDraftAttachmentUploadBatchResult {
+  attachments: WebSessionAttachment[];
+  errors: WebSessionDraftAttachmentUploadError[];
 }
 
 type WebSessionAssistantDescriptor = {
@@ -417,6 +442,38 @@ function compareSessions(left: WebSessionSummary, right: WebSessionSummary) {
 
 function sortSessions(sessions: WebSessionSummary[]) {
   return [...sessions].sort(compareSessions);
+}
+
+function normalizeAssistantStateValue(value: unknown): SessionAssistantState | '' {
+  switch (String(value ?? '').trim()) {
+    case 'working':
+    case 'waiting_approval':
+    case 'waiting_input':
+    case 'waiting_plan_approval':
+      return String(value).trim() as SessionAssistantState;
+    default:
+      return '';
+  }
+}
+
+function getSessionAssistantStateValue(session?: WebSessionSummary | null): SessionAssistantState | '' {
+  if (!session) {
+    return '';
+  }
+  return normalizeAssistantStateValue(session.assistantState);
+}
+
+function getAssistantStateUpdatedAt(session?: WebSessionSummary | null) {
+  if (!session) {
+    return undefined;
+  }
+  if (session.assistantStateUpdatedAt) {
+    const parsed = Date.parse(session.assistantStateUpdatedAt);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 function isWorkingPhase(phase: WebSessionLiveState['phase']) {
@@ -662,6 +719,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
+  const draftAttachmentUploadsByProject =
+    ref<Record<string, Record<string, WebSessionDraftAttachmentUploadState>>>({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
@@ -684,6 +743,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const redirectAbortSessions = new Set<string>();
   const pendingFlushTimers = new Map<string, number>();
   const flushingSessions = new Set<string>();
+  const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
+  let draftAttachmentUploadSeed = 0;
 
   const allSessionIds = computed(() => {
     const ids = new Set<string>();
@@ -771,6 +832,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return getDraft(projectId, sessionId).attachments;
   }
 
+  function getDraftAttachmentUpload(projectId: string, sessionId: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return null;
+    }
+    return draftAttachmentUploadsByProject.value[normalizedProjectId]?.[normalizedSessionId] ?? null;
+  }
+
   function getPendingInputs(sessionId: string) {
     return pendingInputsBySession.value[sessionId] ?? [];
   }
@@ -831,6 +901,159 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     draftStateByProject.value = nextDraftState;
     persistSessionDrafts(nextDraftState);
+  }
+
+  function commitDraftAttachmentUploads(
+    projectId: string,
+    uploads: Record<string, WebSessionDraftAttachmentUploadState>
+  ) {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) {
+      return;
+    }
+    const nextUploads = { ...draftAttachmentUploadsByProject.value };
+    if (Object.keys(uploads).length > 0) {
+      nextUploads[normalizedProjectId] = uploads;
+    } else {
+      delete nextUploads[normalizedProjectId];
+    }
+    draftAttachmentUploadsByProject.value = nextUploads;
+  }
+
+  function setDraftAttachmentUploadState(
+    projectId: string,
+    sessionId: string,
+    upload: WebSessionDraftAttachmentUploadState | null
+  ) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return;
+    }
+    const projectUploads = draftAttachmentUploadsByProject.value[normalizedProjectId] ?? {};
+    const nextProjectUploads = { ...projectUploads };
+    if (upload) {
+      nextProjectUploads[normalizedSessionId] = upload;
+    } else {
+      delete nextProjectUploads[normalizedSessionId];
+    }
+    commitDraftAttachmentUploads(normalizedProjectId, nextProjectUploads);
+  }
+
+  function createDraftAttachmentUploadID() {
+    draftAttachmentUploadSeed += 1;
+    return `upload-${Date.now()}-${draftAttachmentUploadSeed}`;
+  }
+
+  function draftAttachmentUploadQueueKey(projectId: string, sessionId: string) {
+    return `${projectId}:${sessionId}`;
+  }
+
+  function normalizeDraftAttachmentFileName(file: File, index: number) {
+    return buildUploadImageFileName(file.name, index, file.type);
+  }
+
+  function normalizeDraftAttachmentFile(file: File, index: number) {
+    const fileName = normalizeDraftAttachmentFileName(file, index);
+    if (fileName === file.name) {
+      return {
+        file,
+        fileName,
+      };
+    }
+    return {
+      file: new File([file], fileName, {
+        type: file.type,
+        lastModified: file.lastModified,
+      }),
+      fileName,
+    };
+  }
+
+  async function uploadAttachments(
+    projectId: string,
+    sessionId: string,
+    files: File[]
+  ): Promise<WebSessionDraftAttachmentUploadBatchResult> {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+    if (!normalizedProjectId || !normalizedSessionId || imageFiles.length === 0) {
+      return {
+        attachments: [],
+        errors: [],
+      };
+    }
+
+    const queueKey = draftAttachmentUploadQueueKey(normalizedProjectId, normalizedSessionId);
+    const previousTask = draftAttachmentUploadQueues.get(queueKey) ?? Promise.resolve();
+    const task = previousTask.catch(() => undefined).then(async () => {
+      const attachments: WebSessionAttachment[] = [];
+      const errors: WebSessionDraftAttachmentUploadError[] = [];
+      const batchID = createDraftAttachmentUploadID();
+      const existingAttachmentCount =
+        getDraft(normalizedProjectId, normalizedSessionId).attachments.length;
+
+      for (const [index, file] of imageFiles.entries()) {
+        const nextAttachmentIndex = existingAttachmentCount + attachments.length + 1;
+        const normalizedFile = normalizeDraftAttachmentFile(file, nextAttachmentIndex);
+        const fileName = normalizedFile.fileName;
+        const applyProgress = (progress: WebSessionAttachmentUploadProgress) => {
+          setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, {
+            id: batchID,
+            fileName,
+            currentFileIndex: index + 1,
+            totalFiles: imageFiles.length,
+            loaded: progress.loaded,
+            total: progress.total,
+            percent: progress.percent ?? 0,
+          });
+        };
+
+        applyProgress({
+          loaded: 0,
+          total: file.size > 0 ? file.size : undefined,
+          percent: 0,
+        });
+
+        try {
+          const attachment = await webSessionApi.uploadAttachment(
+            normalizedProjectId,
+            normalizedFile.file,
+            {
+              onProgress: applyProgress,
+            }
+          );
+          attachments.push(attachment);
+          updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
+            ...draft,
+            attachments: [...draft.attachments, attachment],
+            updatedAt: Date.now(),
+          }));
+        } catch (error) {
+          errors.push({
+            fileName,
+            message: error instanceof Error ? error.message : 'failed to upload attachment',
+          });
+        }
+      }
+
+      setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, null);
+      return {
+        attachments,
+        errors,
+      };
+    });
+
+    draftAttachmentUploadQueues.set(queueKey, task);
+
+    try {
+      return await task;
+    } finally {
+      if (draftAttachmentUploadQueues.get(queueKey) === task) {
+        draftAttachmentUploadQueues.delete(queueKey);
+      }
+    }
   }
 
   function updateDraft(
@@ -1015,10 +1238,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       status: session.st,
+      assistantState: normalizeAssistantStateValue(session.ast) || null,
       hasUnread: session.unr,
       archivedAt,
       activityAt,
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
+      assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
       syncState: session.ss ?? 'missing',
       sourceCreatedAt: session.sca ? new Date(session.sca).toISOString() : null,
@@ -1486,6 +1711,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const session = findSessionById(sessionId);
     const approval = getPendingApproval(sessionId);
     const userInput = getPendingUserInput(sessionId);
+    const assistantState = getSessionAssistantStateValue(session);
     let activeTool:
       | {
           id: string;
@@ -1500,6 +1726,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     let assistantDone = false;
     let errorMessage = '';
     let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
+    const assistantStateUpdatedAt = getAssistantStateUpdatedAt(session);
 
     for (const block of buildBlocks(sessionId)) {
       updatedAt = block.observedAt || block.timestamp || updatedAt;
@@ -1534,29 +1761,29 @@ export const useWebSessionStore = defineStore('web-session', () => {
       }
     }
 
-    if (approval && !approval.stale && session?.status === 'running') {
+    if (assistantState === 'waiting_approval') {
       return {
         phase: 'waiting_approval',
-        running: true,
-        updatedAt: approval.requestedAt,
+        running: session?.status === 'running',
+        updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
         approval,
         tool: activeTool,
       };
     }
 
-    if (session?.status === 'waiting_approval') {
+    if (assistantState === 'waiting_plan_approval') {
       return {
-        phase: 'waiting_approval',
+        phase: 'waiting_plan_approval',
         running: false,
-        updatedAt,
+        updatedAt: assistantStateUpdatedAt || updatedAt,
       };
     }
 
-    if (userInput && !userInput.stale && session?.status === 'running') {
+    if (assistantState === 'waiting_input') {
       return {
         phase: 'waiting_input',
-        running: true,
-        updatedAt: userInput.requestedAt,
+        running: session?.status === 'running',
+        updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
         tool: activeTool,
         userInput,
       };
@@ -1669,7 +1896,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextApproval = getPendingApproval(sessionId);
     const approvalForNotification =
       nextApproval ??
-      (nextState.phase === 'waiting_approval'
+      ((nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval')
         ? {
             id: `status:${sessionId}:${nextState.updatedAt}`,
             prompt: '',
@@ -1693,7 +1920,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
       (!previousApproval ||
         previousApproval.id !== approvalForNotification.id ||
         previousApproval.requestedAt !== approvalForNotification.requestedAt ||
-        previousState.phase !== 'waiting_approval')
+        (previousState.phase !== 'waiting_approval' &&
+          previousState.phase !== 'waiting_plan_approval'))
     ) {
       emitter.emit('ai:approval-needed', {
         ...baseEvent,
@@ -2226,12 +2454,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function uploadAttachment(projectId: string, sessionId: string, file: File) {
-    const attachment = await webSessionApi.uploadAttachment(projectId, file);
-    updateDraft(projectId, sessionId, draft => ({
-      ...draft,
-      attachments: [...draft.attachments, attachment],
-      updatedAt: Date.now(),
-    }));
+    const result = await uploadAttachments(projectId, sessionId, [file]);
+    if (result.errors.length > 0) {
+      throw new Error(result.errors[0]?.message || 'failed to upload attachment');
+    }
+    const attachment = result.attachments[0];
+    if (!attachment) {
+      throw new Error('failed to upload attachment');
+    }
     return attachment;
   }
 
@@ -2281,6 +2511,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     hasStoredActiveSession,
     getActiveSession,
     getDraftAttachments,
+    getDraftAttachmentUpload,
     setDraftText,
     getPendingInputs,
     getHistoryMeta,
@@ -2313,6 +2544,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getPendingApproval,
     getPendingUserInput,
     getLiveState,
+    uploadAttachments,
     uploadAttachment,
     removeDraftAttachment,
     removePendingInput,

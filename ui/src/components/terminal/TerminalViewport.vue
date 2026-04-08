@@ -4,20 +4,13 @@
     <div v-if="statusOverlayMessage" class="terminal-overlay" :style="terminalOverlayStyle">
       <span>{{ statusOverlayMessage }}</span>
     </div>
-    <div
+    <TransferProgressDialog
       v-if="transferCardMessage"
-      class="terminal-transfer-card"
-      :class="{ 'is-error': transferCardTone === 'error' }"
-      :style="transferCardStyle"
-    >
-      <span class="terminal-transfer-message">{{ transferCardMessage }}</span>
-      <div v-if="transferProgress !== null" class="terminal-transfer-progress">
-        <div class="terminal-transfer-progress-fill" :style="transferProgressStyle"></div>
-      </div>
-      <span v-if="transferProgress !== null" class="terminal-transfer-percent">
-        {{ transferProgress }}%
-      </span>
-    </div>
+      :message="transferCardMessage"
+      :progress="transferProgress"
+      :tone="transferCardTone"
+      :card-style="transferCardStyle"
+    />
   </div>
 </template>
 
@@ -51,6 +44,7 @@ import {
   type TerminalImageUploadSource,
 } from '@/utils/terminalImageUpload';
 import { useLocale } from '@/composables/useLocale';
+import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 
 type TerminalClientPayload = {
   type: string;
@@ -513,12 +507,6 @@ const statusOverlayMessage = computed(() => {
     default:
       return '';
   }
-});
-
-const transferProgressStyle = computed(() => {
-  return {
-    width: `${transferProgress.value ?? 0}%`,
-  };
 });
 
 function clearTransferOverlay() {
@@ -1708,60 +1696,6 @@ onBeforeUnmount(() => {
   background: var(--terminal-overlay-bg, rgba(0, 0, 0, 0.35));
   color: var(--terminal-overlay-color, var(--kanban-terminal-fg, #f6f8ff));
   font-size: 13px;
-}
-
-.terminal-transfer-card {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  min-width: 220px;
-  max-width: min(320px, calc(100% - 32px));
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--terminal-transfer-card-border, rgba(255, 255, 255, 0.14));
-  background: var(--terminal-transfer-card-bg, rgba(15, 17, 26, 0.92));
-  color: var(--terminal-transfer-card-fg, var(--kanban-terminal-fg, #f6f8ff));
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
-  pointer-events: none;
-}
-
-.terminal-transfer-card.is-error {
-  border-color: rgba(255, 117, 117, 0.35);
-}
-
-.terminal-transfer-message {
-  font-size: 13px;
-  line-height: 1.4;
-}
-
-.terminal-transfer-progress {
-  width: 100%;
-  height: 6px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--terminal-transfer-card-track, rgba(255, 255, 255, 0.12));
-}
-
-.terminal-transfer-progress-fill {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, rgba(112, 211, 255, 0.95), rgba(116, 170, 156, 0.95));
-  transition: width 120ms ease-out;
-}
-
-.terminal-transfer-card.is-error .terminal-transfer-progress-fill {
-  background: linear-gradient(90deg, rgba(255, 131, 131, 0.95), rgba(255, 180, 117, 0.95));
-}
-
-.terminal-transfer-percent {
-  font-size: 12px;
-  opacity: 0.8;
 }
 </style>
 

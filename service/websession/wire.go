@@ -38,37 +38,39 @@ type wireFrame struct {
 }
 
 type wireSess struct {
-	ID              string    `json:"id"`
-	ProjectID       string    `json:"pid"`
-	WorktreeID      *string   `json:"wid,omitempty"`
-	OrderIndex      float64   `json:"oi"`
-	Agent           string    `json:"ag"`
-	Model           string    `json:"md"`
-	ReasoningEffort string    `json:"re"`
-	WorkflowMode    string    `json:"wm"`
-	PermissionLevel string    `json:"pl"`
-	Title           string    `json:"ttl"`
-	Cwd             string    `json:"cwd"`
-	NativeSessionID *string   `json:"nsid,omitempty"`
-	Status          string    `json:"st"`
-	Unread          bool      `json:"unr"`
-	ArchivedAt      *int64    `json:"aa,omitempty"`
-	ActivityAt      int64     `json:"act"`
-	CreatedAt       int64     `json:"ca"`
-	LastUpdated     int64     `json:"lu"`
-	LastMessageAt   *int64    `json:"lma,omitempty"`
-	SourceKind      string    `json:"sk"`
-	SyncState       string    `json:"ss"`
-	SourceCreatedAt *int64    `json:"sca,omitempty"`
-	SourceUpdatedAt *int64    `json:"sua,omitempty"`
-	LastSyncedAt    *int64    `json:"lsa,omitempty"`
-	ThreadPath      *string   `json:"tp,omitempty"`
-	ThreadPreview   *string   `json:"tpv,omitempty"`
-	TurnCount       int       `json:"tc"`
-	ItemCount       int       `json:"ic"`
-	SyncError       *string   `json:"se,omitempty"`
-	Usage           wireUsage `json:"usa"`
-	Cost            float64   `json:"cost"`
+	ID                      string    `json:"id"`
+	ProjectID               string    `json:"pid"`
+	WorktreeID              *string   `json:"wid,omitempty"`
+	OrderIndex              float64   `json:"oi"`
+	Agent                   string    `json:"ag"`
+	Model                   string    `json:"md"`
+	ReasoningEffort         string    `json:"re"`
+	WorkflowMode            string    `json:"wm"`
+	PermissionLevel         string    `json:"pl"`
+	Title                   string    `json:"ttl"`
+	Cwd                     string    `json:"cwd"`
+	NativeSessionID         *string   `json:"nsid,omitempty"`
+	Status                  string    `json:"st"`
+	AssistantState          string    `json:"ast,omitempty"`
+	Unread                  bool      `json:"unr"`
+	ArchivedAt              *int64    `json:"aa,omitempty"`
+	ActivityAt              int64     `json:"act"`
+	CreatedAt               int64     `json:"ca"`
+	LastUpdated             int64     `json:"lu"`
+	LastMessageAt           *int64    `json:"lma,omitempty"`
+	AssistantStateUpdatedAt *int64    `json:"asu,omitempty"`
+	SourceKind              string    `json:"sk"`
+	SyncState               string    `json:"ss"`
+	SourceCreatedAt         *int64    `json:"sca,omitempty"`
+	SourceUpdatedAt         *int64    `json:"sua,omitempty"`
+	LastSyncedAt            *int64    `json:"lsa,omitempty"`
+	ThreadPath              *string   `json:"tp,omitempty"`
+	ThreadPreview           *string   `json:"tpv,omitempty"`
+	TurnCount               int       `json:"tc"`
+	ItemCount               int       `json:"ic"`
+	SyncError               *string   `json:"se,omitempty"`
+	Usage                   wireUsage `json:"usa"`
+	Cost                    float64   `json:"cost"`
 }
 
 type wireUsage struct {
@@ -237,6 +239,11 @@ func mapWireSession(session SessionSummary) *wireSess {
 		value := session.LastMessageAt.UnixMilli()
 		lastMessageAt = &value
 	}
+	var assistantStateUpdatedAt *int64
+	if session.AssistantStateUpdatedAt != nil {
+		value := session.AssistantStateUpdatedAt.UnixMilli()
+		assistantStateUpdatedAt = &value
+	}
 	var archivedAt *int64
 	if session.ArchivedAt != nil {
 		value := session.ArchivedAt.UnixMilli()
@@ -258,35 +265,37 @@ func mapWireSession(session SessionSummary) *wireSess {
 		lastSyncedAt = &value
 	}
 	return &wireSess{
-		ID:              session.ID,
-		ProjectID:       session.ProjectID,
-		WorktreeID:      session.WorktreeID,
-		OrderIndex:      session.OrderIndex,
-		Agent:           string(session.Agent),
-		Model:           session.Model,
-		ReasoningEffort: string(session.ReasoningEffort),
-		WorkflowMode:    string(session.WorkflowMode),
-		PermissionLevel: string(session.PermissionLevel),
-		Title:           session.Title,
-		Cwd:             session.Cwd,
-		NativeSessionID: session.NativeSessionID,
-		Status:          string(session.Status),
-		Unread:          session.HasUnread,
-		ArchivedAt:      archivedAt,
-		ActivityAt:      session.ActivityAt.UnixMilli(),
-		CreatedAt:       session.CreatedAt.UnixMilli(),
-		LastUpdated:     session.UpdatedAt.UnixMilli(),
-		LastMessageAt:   lastMessageAt,
-		SourceKind:      session.SourceKind,
-		SyncState:       string(session.SyncState),
-		SourceCreatedAt: sourceCreatedAt,
-		SourceUpdatedAt: sourceUpdatedAt,
-		LastSyncedAt:    lastSyncedAt,
-		ThreadPath:      session.ThreadPath,
-		ThreadPreview:   session.ThreadPreview,
-		TurnCount:       session.TurnCount,
-		ItemCount:       session.ItemCount,
-		SyncError:       session.SyncError,
+		ID:                      session.ID,
+		ProjectID:               session.ProjectID,
+		WorktreeID:              session.WorktreeID,
+		OrderIndex:              session.OrderIndex,
+		Agent:                   string(session.Agent),
+		Model:                   session.Model,
+		ReasoningEffort:         string(session.ReasoningEffort),
+		WorkflowMode:            string(session.WorkflowMode),
+		PermissionLevel:         string(session.PermissionLevel),
+		Title:                   session.Title,
+		Cwd:                     session.Cwd,
+		NativeSessionID:         session.NativeSessionID,
+		Status:                  string(session.Status),
+		AssistantState:          string(session.AssistantState),
+		Unread:                  session.HasUnread,
+		ArchivedAt:              archivedAt,
+		ActivityAt:              session.ActivityAt.UnixMilli(),
+		CreatedAt:               session.CreatedAt.UnixMilli(),
+		LastUpdated:             session.UpdatedAt.UnixMilli(),
+		LastMessageAt:           lastMessageAt,
+		AssistantStateUpdatedAt: assistantStateUpdatedAt,
+		SourceKind:              session.SourceKind,
+		SyncState:               string(session.SyncState),
+		SourceCreatedAt:         sourceCreatedAt,
+		SourceUpdatedAt:         sourceUpdatedAt,
+		LastSyncedAt:            lastSyncedAt,
+		ThreadPath:              session.ThreadPath,
+		ThreadPreview:           session.ThreadPreview,
+		TurnCount:               session.TurnCount,
+		ItemCount:               session.ItemCount,
+		SyncError:               session.SyncError,
 		Usage: wireUsage{
 			InputTokens:       session.Usage.InputTokens,
 			CachedInputTokens: session.Usage.CachedInputTokens,

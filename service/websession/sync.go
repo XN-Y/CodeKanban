@@ -11,6 +11,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const cacheSyncReadTimeout = 10 * time.Second
+
 func syncedToolStatus(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "completed", "success", "succeeded", "done":
@@ -549,6 +551,8 @@ func (m *Manager) syncSessionIfCacheMissing(
 	if session.ItemCount > 0 {
 		return nil
 	}
-	_, err := m.syncSessionFromSource(ctx, session.ID, false)
+	timeoutCtx, cancel := context.WithTimeout(ctx, cacheSyncReadTimeout)
+	defer cancel()
+	_, err := m.syncSessionFromSource(timeoutCtx, session.ID, false)
 	return err
 }

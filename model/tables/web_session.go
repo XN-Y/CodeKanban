@@ -26,22 +26,22 @@ type WebSessionTable struct {
 	LegacyPermissionMode string `gorm:"column:permission_mode;type:text" json:"-"`
 	Cwd                  string `gorm:"type:text;not null" json:"cwd"`
 
-	NativeSessionID *string    `gorm:"type:text" json:"nativeSessionId"`
-	Status          string     `gorm:"type:text;not null;index" json:"status"`
-	AssistantState  string     `gorm:"type:text;index" json:"assistantState"`
-	HasUnread       bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
-	ArchivedAt      *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
-	ActivityAt      time.Time  `gorm:"type:datetime;index" json:"activityAt"`
+	NativeSessionID         *string    `gorm:"type:text" json:"nativeSessionId"`
+	Status                  string     `gorm:"type:text;not null;index" json:"status"`
+	AssistantState          string     `gorm:"type:text;index" json:"assistantState"`
+	HasUnread               bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
+	ArchivedAt              *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
+	ActivityAt              time.Time  `gorm:"type:datetime;index" json:"activityAt"`
 	AssistantStateUpdatedAt *time.Time `gorm:"type:datetime" json:"assistantStateUpdatedAt"`
-	SourceKind      string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
-	SyncState       string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`
-	SourceCreatedAt *time.Time `gorm:"type:datetime" json:"sourceCreatedAt"`
-	SourceUpdatedAt *time.Time `gorm:"type:datetime;index" json:"sourceUpdatedAt"`
-	LastSyncedAt    *time.Time `gorm:"type:datetime" json:"lastSyncedAt"`
-	ThreadPath      *string    `gorm:"type:text" json:"threadPath"`
-	ThreadPreview   *string    `gorm:"type:text" json:"threadPreview"`
-	TurnCount       int        `gorm:"type:integer;not null;default:0" json:"turnCount"`
-	ItemCount       int        `gorm:"type:integer;not null;default:0" json:"itemCount"`
+	SourceKind              string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
+	SyncState               string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`
+	SourceCreatedAt         *time.Time `gorm:"type:datetime" json:"sourceCreatedAt"`
+	SourceUpdatedAt         *time.Time `gorm:"type:datetime;index" json:"sourceUpdatedAt"`
+	LastSyncedAt            *time.Time `gorm:"type:datetime" json:"lastSyncedAt"`
+	ThreadPath              *string    `gorm:"type:text" json:"threadPath"`
+	ThreadPreview           *string    `gorm:"type:text" json:"threadPreview"`
+	TurnCount               int        `gorm:"type:integer;not null;default:0" json:"turnCount"`
+	ItemCount               int        `gorm:"type:integer;not null;default:0" json:"itemCount"`
 
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`

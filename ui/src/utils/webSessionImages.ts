@@ -1,6 +1,3 @@
-const IMAGE_PLACEHOLDER_TOKEN_PATTERN = /\[Image #\d+\]/g;
-const IMAGE_PLACEHOLDER_LINE_PATTERN = /(^|\n)\s*(?:\[Image #\d+\]\s*)+(?=\n|$)/g;
-
 export function buildImagePlaceholder(index: number) {
   return `[Image #${index}]`;
 }
@@ -13,42 +10,45 @@ export function buildImagePlaceholderLine(count: number) {
   return Array.from({ length: count }, (_, index) => buildImagePlaceholder(index + 1)).join(' ');
 }
 
-export function stripManagedComposerImagePlaceholders(value: string) {
-  if (!value) {
-    return '';
+const IMAGE_EXTENSION_BY_MIME: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+  'image/bmp': '.bmp',
+  'image/svg+xml': '.svg',
+  'image/tiff': '.tiff',
+};
+
+export function insertImagePlaceholdersAtCursor(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  placeholders: string[]
+) {
+  const insertion = placeholders.join(' ');
+  if (!insertion) {
+    return {
+      text,
+      cursor: selectionStart,
+    };
   }
 
-  let normalized = value.replace(/\r\n/g, '\n');
-  normalized = normalized.replace(IMAGE_PLACEHOLDER_LINE_PATTERN, '\n');
-  normalized = normalized
-    .split('\n')
-    .map(line => {
-      if (!/\[Image #\d+\]/.test(line)) {
-        return line.replace(/[ \t]+$/g, '');
-      }
+  const normalizedText = String(text ?? '');
+  const safeStart = Math.max(0, Math.min(selectionStart, normalizedText.length));
+  const safeEnd = Math.max(safeStart, Math.min(selectionEnd, normalizedText.length));
+  const prefix = normalizedText.slice(0, safeStart);
+  const suffix = normalizedText.slice(safeEnd);
+  const needsLeadingSpace = prefix.length > 0 && !/[\s(\[{'"`]/.test(prefix[prefix.length - 1] || '');
+  const needsTrailingSpace = suffix.length > 0 && !/[\s)\]}.,!?;:'"`]/.test(suffix[0] || '');
+  const insertedText =
+    `${needsLeadingSpace ? ' ' : ''}${insertion}${needsTrailingSpace ? ' ' : ''}`;
 
-      return line
-        .replace(IMAGE_PLACEHOLDER_TOKEN_PATTERN, ' ')
-        .trim()
-        .replace(/[ \t]{2,}/g, ' ');
-    })
-    .join('\n');
-  normalized = normalized.replace(/[ \t]+\n/g, '\n');
-  normalized = normalized.replace(/\n{3,}/g, '\n\n');
-  return normalized.trim();
-}
-
-export function buildComposerTextWithImagePlaceholders(text: string, attachmentCount: number) {
-  const placeholderLine = buildImagePlaceholderLine(attachmentCount);
-  if (!placeholderLine) {
-    return text;
-  }
-
-  const trimmedText = text.replace(/\s+$/g, '');
-  if (!trimmedText) {
-    return placeholderLine;
-  }
-  return `${trimmedText}\n\n${placeholderLine}`;
+  return {
+    text: `${prefix}${insertedText}${suffix}`,
+    cursor: prefix.length + insertedText.length,
+  };
 }
 
 export function isGenericImageAttachmentName(name: string) {
@@ -69,11 +69,24 @@ export function isGenericImageAttachmentName(name: string) {
   return stem.startsWith('pasted-image-');
 }
 
+export function buildUploadImageFileName(name: string, index: number, mimeType?: string) {
+  if (!isGenericImageAttachmentName(name)) {
+    return String(name || '').trim();
+  }
+
+  const normalizedMime = String(mimeType || '').trim().toLowerCase();
+  const extension = IMAGE_EXTENSION_BY_MIME[normalizedMime] || '.png';
+  return `image ${index}${extension}`;
+}
+
 export function resolveImageAttachmentDisplayName(name: string, index: number) {
   const trimmed = String(name || '')
     .trim()
     .split(/[\\/]/)
     .pop();
+  if (trimmed && /^image \d+\.[a-z0-9]+$/i.test(trimmed)) {
+    return trimmed.replace(/\.[a-z0-9]+$/i, '');
+  }
   if (!trimmed || isGenericImageAttachmentName(trimmed)) {
     return `image ${index}`;
   }
