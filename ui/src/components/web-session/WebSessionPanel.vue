@@ -146,7 +146,7 @@
                   class="timeline-item"
                   :class="`kind-${item.kind}`"
                 >
-                  <div class="item-meta">
+                  <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
                     <span class="item-role">{{ timelineRoleLabel(item) }}</span>
                     <span class="item-time">{{ formatTime(item.timestamp) }}</span>
                   </div>
@@ -193,7 +193,47 @@
                   </div>
 
                   <div v-else-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
-                    <div class="tool-card timeline-tool-card">
+                    <div
+                      v-if="isCommandExecutionTool(item.tool)"
+                      class="tool-card timeline-tool-card command-tool-card"
+                      :class="`state-${item.tool.status}`"
+                    >
+                      <button
+                        type="button"
+                        class="command-tool-button"
+                        @click="openCommandExecutionDetail(item.tool)"
+                      >
+                        <span class="command-tool-copy">
+                          <span class="command-tool-topline">
+                            <span class="command-tool-label">{{
+                              t('webSession.toolCommandExecution')
+                            }}</span>
+                            <span
+                              v-if="getCommandExecutionCount(item.tool) > 1"
+                              class="command-tool-count"
+                            >
+                              x{{ getCommandExecutionCount(item.tool) }}
+                            </span>
+                            <span class="command-tool-time">{{ formatTime(item.timestamp) }}</span>
+                          </span>
+                          <span
+                            class="command-tool-command"
+                            :title="getCommandExecutionCommand(item.tool)"
+                          >
+                            {{
+                              getCommandExecutionCommand(item.tool) ||
+                              t('webSession.commandExecutionNoCommand')
+                            }}
+                          </span>
+                        </span>
+                        <span class="tool-state-badge" :class="`state-${item.tool.status}`">
+                          <span class="tool-state-dot"></span>
+                          {{ toolStateLabel(item.tool) }}
+                        </span>
+                      </button>
+                    </div>
+
+                    <div v-else class="tool-card timeline-tool-card">
                       <button
                         type="button"
                         class="tool-header"
@@ -847,6 +887,76 @@
         />
       </div>
     </n-modal>
+
+    <n-modal
+      :show="showCommandExecutionDetail"
+      preset="card"
+      class="command-execution-detail-modal"
+      :title="commandExecutionDetailTitle"
+      :bordered="false"
+      :segmented="{ content: false, footer: false }"
+      :mask-closable="true"
+      closable
+      style="width: min(92vw, 960px)"
+      @update:show="handleCommandExecutionDetailVisibilityChange"
+    >
+      <div v-if="activeCommandExecutionDetail" class="command-execution-detail-summary">
+        {{
+          t('webSession.commandExecutionDetailCount', { count: activeCommandExecutionDetail.count })
+        }}
+      </div>
+      <div v-if="loadingCommandExecutionDetail" class="command-execution-detail-loading">
+        {{ t('common.loading') }}
+      </div>
+      <div v-else-if="commandExecutionDetailItems.length > 0" class="command-execution-detail-list">
+        <details
+          v-for="(detailItem, index) in commandExecutionDetailItems"
+          :key="`${detailItem.toolId}:${detailItem.timestamp}`"
+          class="command-execution-detail-item"
+          :open="index === 0"
+        >
+          <summary class="command-execution-detail-item-summary">
+            <span class="command-execution-detail-item-label">
+              {{
+                index === 0
+                  ? t('webSession.commandExecutionLatest')
+                  : `#${commandExecutionDetailItems.length - index}`
+              }}
+            </span>
+            <span class="command-execution-detail-item-command">
+              {{ detailItem.command || t('webSession.commandExecutionNoCommand') }}
+            </span>
+            <span class="tool-state-badge" :class="`state-${detailItem.status}`">
+              <span class="tool-state-dot"></span>
+              {{ toolStateLabel(detailItem) }}
+            </span>
+            <span class="command-execution-detail-item-time">
+              {{ formatCommandExecutionDetailTime(detailItem) }}
+            </span>
+          </summary>
+
+          <div class="command-execution-detail-item-body">
+            <div class="tool-section">
+              <div class="tool-section-label">{{ t('webSession.commandExecutionCommand') }}</div>
+              <pre class="tool-code">{{
+                detailItem.command || t('webSession.commandExecutionNoCommand')
+              }}</pre>
+            </div>
+            <div v-if="showCommandExecutionInput(detailItem)" class="tool-section">
+              <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
+              <pre class="tool-code">{{ stringifyValue(detailItem.input) }}</pre>
+            </div>
+            <div v-if="detailItem.output" class="tool-section">
+              <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
+              <pre class="tool-code">{{ detailItem.output }}</pre>
+            </div>
+          </div>
+        </details>
+      </div>
+      <div v-else class="command-execution-detail-empty">
+        {{ t('webSession.commandExecutionEmpty') }}
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -897,6 +1007,7 @@ import {
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { renderMarkdown } from '@/utils/markdown';
 import { urlBase } from '@/api';
+import { http } from '@/api/http';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 
@@ -951,6 +1062,27 @@ type InlinePlanChoice = {
   options: InlinePlanChoiceOption[];
 };
 
+type CommandExecutionDetailItem = {
+  toolId: string;
+  command: string;
+  input?: unknown;
+  output?: string;
+  status: 'running' | 'done' | 'error';
+  timestamp: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+type CommandExecutionDetail = {
+  groupId: string;
+  count: number;
+  firstSeq: number;
+  lastSeq: number;
+  status: 'running' | 'done' | 'error';
+  latestToolId?: string;
+  items: CommandExecutionDetailItem[];
+};
+
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -989,6 +1121,10 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
+const showCommandExecutionDetail = ref(false);
+const loadingCommandExecutionDetail = ref(false);
+const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
+const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
@@ -1056,6 +1192,7 @@ function cloneBlockForFreeze(block: WebSessionBlock): WebSessionBlock {
       ? {
           ...block.tool,
           meta: block.tool.meta ? { ...block.tool.meta } : undefined,
+          commandGroup: block.tool.commandGroup ? { ...block.tool.commandGroup } : undefined,
         }
       : undefined,
     detail: block.detail
@@ -2138,6 +2275,57 @@ function stringifyValue(value: unknown): string {
   }
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeToolKindValue(value: string | undefined) {
+  const normalized = String(value ?? '').trim();
+  if (normalized === 'commandExecution') {
+    return 'command_execution';
+  }
+  if (normalized === 'mcpToolCall') {
+    return 'mcp_tool_call';
+  }
+  if (normalized === 'fileChange') {
+    return 'file_change';
+  }
+  return normalized;
+}
+
+function isCommandExecutionTool(
+  tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta' | 'commandGroup'>
+) {
+  if (normalizeToolKindValue(tool.kind) === 'command_execution') {
+    return true;
+  }
+  return normalizeToolKindValue(String(tool.meta?.kind ?? '')) === 'command_execution';
+}
+
+function getCommandExecutionCommand(tool: NonNullable<WebSessionBlock['tool']>) {
+  const input = asRecord(tool.input);
+  const command = String(input?.command ?? '').trim();
+  if (command) {
+    return command;
+  }
+  const subtitle = String(tool.meta?.subtitle ?? '').trim();
+  if (subtitle) {
+    return subtitle;
+  }
+  return '';
+}
+
+function getCommandExecutionCount(tool: NonNullable<WebSessionBlock['tool']>) {
+  return Math.max(1, Number(tool.commandGroup?.count ?? 1) || 1);
+}
+
+function shouldHideTimelineMeta(item: WebSessionBlock) {
+  return item.kind === 'tool' && item.tool ? isCommandExecutionTool(item.tool) : false;
+}
+
 function canPreviewAttachment(attachment: { name: string; mime?: string }) {
   const normalizedMime = attachment.mime?.trim().toLowerCase();
   if (normalizedMime) {
@@ -2174,6 +2362,92 @@ function handleAttachmentPreviewVisibilityChange(show: boolean) {
   }
 }
 
+const commandExecutionDetailTitle = computed(() =>
+  activeCommandExecutionDetail.value
+    ? t('webSession.commandExecutionDetailTitleWithCount', {
+        count: activeCommandExecutionDetail.value.count,
+      })
+    : t('webSession.commandExecutionDetailTitle')
+);
+
+const commandExecutionDetailItems = computed(() => {
+  if (!activeCommandExecutionDetail.value) {
+    return [];
+  }
+  return [...activeCommandExecutionDetail.value.items].sort((left, right) => {
+    const leftTime = Date.parse(left.completedAt || left.startedAt || left.timestamp || '') || 0;
+    const rightTime =
+      Date.parse(right.completedAt || right.startedAt || right.timestamp || '') || 0;
+    return rightTime - leftTime;
+  });
+});
+
+async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['tool']>) {
+  if (!currentRealSession.value) {
+    return;
+  }
+  const groupId = tool.commandGroup?.id || tool.id;
+  if (!groupId) {
+    return;
+  }
+
+  activeCommandExecutionGroupId.value = groupId;
+  showCommandExecutionDetail.value = true;
+  loadingCommandExecutionDetail.value = true;
+  const requestGroupId = groupId;
+
+  try {
+    const response =
+      (await http
+        .Get<{
+          item?: CommandExecutionDetail;
+        }>(`/projects/${encodeURIComponent(props.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`, { cacheFor: 0 })
+        .send()) ?? {};
+    if (activeCommandExecutionGroupId.value === requestGroupId) {
+      activeCommandExecutionDetail.value = response.item ?? null;
+    }
+  } catch (error) {
+    if (activeCommandExecutionGroupId.value === requestGroupId) {
+      activeCommandExecutionDetail.value = null;
+    }
+    message.error(
+      error instanceof Error && error.message
+        ? error.message
+        : t('webSession.commandExecutionLoadFailed')
+    );
+  } finally {
+    if (activeCommandExecutionGroupId.value === requestGroupId) {
+      loadingCommandExecutionDetail.value = false;
+    }
+  }
+}
+
+function handleCommandExecutionDetailVisibilityChange(show: boolean) {
+  showCommandExecutionDetail.value = show;
+  if (!show) {
+    activeCommandExecutionDetail.value = null;
+    activeCommandExecutionGroupId.value = '';
+    loadingCommandExecutionDetail.value = false;
+  }
+}
+
+function showCommandExecutionInput(item: CommandExecutionDetailItem) {
+  const input = asRecord(item.input);
+  if (!input) {
+    return Boolean(item.input);
+  }
+  const keys = Object.keys(input);
+  return !(keys.length === 1 && keys[0] === 'command');
+}
+
+function formatCommandExecutionDetailTime(item: CommandExecutionDetailItem) {
+  const value = Date.parse(item.completedAt || item.startedAt || item.timestamp || '');
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  return formatTime(value);
+}
+
 function isToolExpanded(toolId: string) {
   return Boolean(expandedTools.value[toolId]);
 }
@@ -2206,9 +2480,12 @@ function setPlanActionsDismissed(toolId: string, dismissed: boolean) {
 }
 
 function toolKindLabel(tool: { name: string; kind?: string }) {
-  const kind = (tool.kind || '').trim();
+  const kind = normalizeToolKindValue(tool.kind);
   if (!kind) {
     return t('webSession.toolKindDefault');
+  }
+  if (kind === 'command_execution') {
+    return t('webSession.toolCommandExecution');
   }
   if (kind === 'tool_use') {
     return t('webSession.toolKindTool');
@@ -2219,7 +2496,16 @@ function toolKindLabel(tool: { name: string; kind?: string }) {
   return kind;
 }
 
-function formatToolPreview(tool: { input?: unknown; output?: string }) {
+function formatToolPreview(tool: {
+  input?: unknown;
+  output?: string;
+  kind?: string;
+  meta?: Record<string, unknown>;
+  commandGroup?: { count: number };
+}) {
+  if (isCommandExecutionTool(tool as NonNullable<WebSessionBlock['tool']>)) {
+    return getCommandExecutionCommand(tool as NonNullable<WebSessionBlock['tool']>);
+  }
   const source =
     typeof tool.output === 'string' && tool.output.trim()
       ? tool.output
@@ -3481,6 +3767,7 @@ watch(
   sessionId => {
     stopWebSessionCatchUp('session-change');
     pendingHistoryAnchor.value = null;
+    handleCommandExecutionDetailVisibilityChange(false);
     if (!sessionId) {
       showMobileTabSelector.value = false;
       return;
@@ -4476,6 +4763,85 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
+.command-execution-detail-summary {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--n-text-color-3);
+}
+
+.command-execution-detail-loading,
+.command-execution-detail-empty {
+  padding: 16px 4px 8px;
+  font-size: 13px;
+  color: var(--n-text-color-3);
+}
+
+.command-execution-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.command-execution-detail-item {
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
+  overflow: hidden;
+}
+
+.command-execution-detail-item[open] {
+  border-color: color-mix(in srgb, var(--n-primary-color) 22%, var(--n-border-color));
+}
+
+.command-execution-detail-item-summary {
+  list-style: none;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  cursor: pointer;
+}
+
+.command-execution-detail-item-summary::-webkit-details-marker {
+  display: none;
+}
+
+.command-execution-detail-item-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.command-execution-detail-item-command {
+  min-width: 0;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.command-execution-detail-item-time {
+  font-size: 11px;
+  color: var(--n-text-color-3);
+}
+
+.command-execution-detail-item-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
 .timeline-tool-shell {
   width: min(860px, 84%);
   max-width: 100%;
@@ -4624,6 +4990,88 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+.command-tool-card {
+  border-color: color-mix(in srgb, #0ea5e9 20%, var(--n-border-color));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-surface-color, #fff) 92%, rgba(14, 165, 233, 0.08)) 0%,
+    var(--app-surface-color, #fff) 100%
+  );
+}
+
+.command-tool-card.state-running {
+  border-color: rgba(124, 58, 237, 0.22);
+}
+
+.command-tool-card.state-done {
+  border-color: rgba(5, 150, 105, 0.2);
+}
+
+.command-tool-card.state-error {
+  border-color: rgba(220, 38, 38, 0.22);
+}
+
+.command-tool-button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.command-tool-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.command-tool-topline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.command-tool-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.command-tool-count {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.command-tool-time {
+  font-size: 11px;
+  color: var(--n-text-color-3);
+}
+
+.command-tool-command {
+  min-width: 0;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--n-text-color-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .plan-tool-body {
@@ -5695,6 +6143,27 @@ onBeforeUnmount(() => {
 
   100% {
     transform: translateX(380%);
+  }
+}
+
+@media (max-width: 720px) {
+  .command-execution-detail-item-summary {
+    grid-template-columns: 1fr auto;
+    align-items: start;
+  }
+
+  .command-execution-detail-item-label {
+    grid-column: 1 / -1;
+    width: fit-content;
+  }
+
+  .command-execution-detail-item-command {
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .command-execution-detail-item-time {
+    justify-self: end;
   }
 }
 

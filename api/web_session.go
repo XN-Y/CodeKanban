@@ -211,6 +211,36 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/command-groups/{groupId}", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			GroupID   string `path:"groupId"`
+		},
+	) (*h.ItemResponse[websession.CommandExecutionGroupDetail], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+
+		item, err := c.manager.GetCommandExecutionGroup(ctx, input.SessionID, input.GroupID)
+		if err != nil {
+			if errors.Is(err, websession.ErrCommandExecutionGroupNotFound) {
+				return nil, huma.Error404NotFound("command execution group not found")
+			}
+			return nil, huma.Error500InternalServerError("failed to load command execution group", err)
+		}
+
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-command-group-detail"
+		op.Summary = "获取连续命令执行详情"
+		op.Tags = []string{webSessionTag}
+	})
+
 	app.Post("/api/v1/projects/:projectId/web-sessions/attachments", func(ctx *fiber.Ctx) error {
 		projectID := strings.TrimSpace(ctx.Params("projectId"))
 		if projectID == "" {

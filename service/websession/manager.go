@@ -85,6 +85,10 @@ type activeRun struct {
 	pendingServerReq   *pendingServerRequest
 	app                *codexAppServerClient
 	assistantDeltaSeen map[string]bool
+	commandGroupID     string
+	commandGroupFirst  int64
+	commandGroupCount  int
+	commandGroupTools  map[string]struct{}
 }
 
 type attachmentMeta struct {
@@ -247,7 +251,7 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	history, err := m.store.readWindow(sessionID, limit, nil)
+	history, err := m.projectedHistoryWindow(sessionID, limit, nil)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
@@ -279,7 +283,7 @@ func (m *Manager) History(ctx context.Context, sessionID string, limit int, befo
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	return m.store.readWindow(sessionID, limit, beforeSeq)
+	return m.projectedHistoryWindow(sessionID, limit, beforeSeq)
 }
 
 func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (SessionSummary, error) {
@@ -1474,6 +1478,7 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now()
 	}
+	m.decorateProjectedEvent(sessionID, &event)
 	if err := m.store.appendEvent(sessionID, event); err != nil {
 		return Event{}, err
 	}
@@ -1495,6 +1500,92 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 
 	m.broadcast(newEventFrame(sessionID, event))
 	return event, nil
+}
+
+func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
+	if event == nil {
+		return
+	}
+	if isCommandExecutionToolEvent(*event) {
+		m.decorateCommandExecutionGroupEvent(sessionID, event)
+		return
+	}
+	m.resetCommandExecutionGroup(sessionID)
+}
+
+func (m *Manager) decorateCommandExecutionGroupEvent(sessionID string, event *Event) {
+	toolID := eventToolID(*event)
+	if toolID == "" {
+		toolID = event.ID
+	}
+
+	groupID := commandExecutionGroupID(toolID)
+	firstSeq := event.Seq
+	count := 1
+
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+
+	if run != nil {
+		run.mu.Lock()
+		if run.commandGroupTools == nil {
+			run.commandGroupTools = make(map[string]struct{})
+		}
+		if run.commandGroupID == "" {
+			run.commandGroupID = groupID
+		}
+		groupID = run.commandGroupID
+		if run.commandGroupFirst == 0 {
+			run.commandGroupFirst = event.Seq
+		}
+		firstSeq = run.commandGroupFirst
+		if _, exists := run.commandGroupTools[toolID]; !exists {
+			run.commandGroupTools[toolID] = struct{}{}
+			run.commandGroupCount += 1
+		}
+		if run.commandGroupCount > 0 {
+			count = run.commandGroupCount
+		}
+		run.mu.Unlock()
+	}
+
+	meta := eventToolMeta(*event)
+	if meta == nil {
+		meta = make(map[string]any)
+	}
+	meta["kind"] = "command_execution"
+	meta["title"] = firstNonEmpty(stringValue(meta["title"]), eventToolName(*event), "CommandExecution")
+	if command := commandFromInput(eventToolInput(*event)); command != "" {
+		meta["subtitle"] = command
+	}
+	meta["commandGroup"] = map[string]any{
+		"id":           groupID,
+		"count":        count,
+		"firstSeq":     firstSeq,
+		"lastSeq":      event.Seq,
+		"latestToolId": toolID,
+		"compacted":    true,
+	}
+	if event.Payload == nil {
+		event.Payload = make(map[string]any)
+	}
+	event.Payload["meta"] = meta
+}
+
+func (m *Manager) resetCommandExecutionGroup(sessionID string) {
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+	if run == nil {
+		return
+	}
+	run.mu.Lock()
+	run.commandGroupID = ""
+	run.commandGroupFirst = 0
+	run.commandGroupCount = 0
+	run.commandGroupTools = nil
+	run.mu.Unlock()
 }
 
 func (m *Manager) nextEventSeq(ctx context.Context, sessionID string) (int64, error) {
@@ -2450,6 +2541,9 @@ func codexToolResult(item map[string]any) string {
 		return ""
 	}
 	if output := stringValue(item["aggregated_output"]); output != "" {
+		return output
+	}
+	if output := stringValue(item["aggregatedOutput"]); output != "" {
 		return output
 	}
 	if text := stringValue(item["text"]); text != "" {

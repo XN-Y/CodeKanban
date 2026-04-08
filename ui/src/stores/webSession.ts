@@ -73,6 +73,14 @@ export interface WebSessionToolBlock {
   output?: string;
   status: 'running' | 'done' | 'error';
   meta?: Record<string, unknown>;
+  commandGroup?: {
+    id: string;
+    count: number;
+    firstSeq?: number;
+    lastSeq?: number;
+    latestToolId?: string;
+    compacted?: boolean;
+  };
 }
 
 export interface WebSessionHistoryAnswerEntry {
@@ -265,6 +273,31 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     return undefined;
   }
   return value as Record<string, unknown>;
+}
+
+function parseToolCommandGroup(value: unknown) {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const id = String(record.id ?? '').trim();
+  if (!id) {
+    return undefined;
+  }
+  return {
+    id,
+    count: Math.max(1, Number(record.count ?? 1) || 1),
+    firstSeq:
+      typeof record.firstSeq === 'number' && Number.isFinite(record.firstSeq)
+        ? record.firstSeq
+        : undefined,
+    lastSeq:
+      typeof record.lastSeq === 'number' && Number.isFinite(record.lastSeq)
+        ? record.lastSeq
+        : undefined,
+    latestToolId: String(record.latestToolId ?? '').trim() || undefined,
+    compacted: record.compacted === true,
+  };
 }
 
 function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
@@ -1161,8 +1194,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   async function updateWorkflowMode(sessionId: string, workflowMode: 'default' | 'plan') {
     const session = findSessionById(sessionId);
     const previousWorkflowMode = session?.workflowMode;
-    const shouldOptimisticallyUpdate =
-      Boolean(session) && previousWorkflowMode !== workflowMode;
+    const shouldOptimisticallyUpdate = Boolean(session) && previousWorkflowMode !== workflowMode;
 
     if (shouldOptimisticallyUpdate) {
       updateSessionStatus(sessionId, current => ({
@@ -1300,35 +1332,64 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return block;
     };
 
+    const resolveToolBlockId = (payload: Record<string, unknown>, fallback: string) =>
+      parseToolCommandGroup(asRecord(payload.meta)?.commandGroup)?.id ?? fallback;
+
+    const applyToolPayload = (
+      tool: WebSessionToolBlock,
+      payload: Record<string, unknown>,
+      status: WebSessionToolBlock['status']
+    ) => {
+      tool.name = String(payload.name ?? tool.name ?? 'Tool');
+      if (typeof payload.kind === 'string') {
+        tool.kind = payload.kind;
+      }
+      if (Object.prototype.hasOwnProperty.call(payload, 'in')) {
+        tool.input = payload.in;
+      }
+      if (Object.prototype.hasOwnProperty.call(payload, 'out')) {
+        tool.output = String(payload.out ?? '');
+      }
+      tool.status = status;
+      const meta = asRecord(payload.meta);
+      if (meta) {
+        tool.meta = meta;
+      }
+      tool.commandGroup = parseToolCommandGroup(meta?.commandGroup);
+    };
+
     const ensureToolBlock = (
       toolId: string,
       timestamp: number,
       payload: Record<string, unknown>,
       initialStatus: WebSessionToolBlock['status']
     ) => {
-      const existingIndex = toolIndex.get(toolId);
+      const blockId = resolveToolBlockId(payload, toolId);
+      const existingIndex = toolIndex.get(blockId);
       if (existingIndex != null) {
+        blocks[existingIndex].timestamp = timestamp;
         return blocks[existingIndex];
       }
 
       const block = appendBlock({
-        key: `tool:${toolId}`,
-        id: toolId,
+        key: `tool:${blockId}`,
+        id: blockId,
         kind: 'tool',
         text: '',
         timestamp,
         attachments: [],
         tool: {
-          id: toolId,
+          id: blockId,
           name: String(payload.name ?? 'Tool'),
           kind: typeof payload.kind === 'string' ? payload.kind : undefined,
           input: payload.in,
           output: typeof payload.out === 'string' ? payload.out : undefined,
           meta: asRecord(payload.meta),
           status: initialStatus,
+          commandGroup: parseToolCommandGroup(asRecord(payload.meta)?.commandGroup),
         },
       });
-      toolIndex.set(toolId, blocks.length - 1);
+      toolIndex.set(blockId, blocks.length - 1);
       return block;
     };
 
@@ -1380,7 +1441,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
         }
         case 'tool_st': {
           const toolId = String(payload.tid ?? event.id);
-          ensureToolBlock(toolId, event.ts, payload, 'running');
+          const block = ensureToolBlock(toolId, event.ts, payload, 'running');
+          if (block.tool) {
+            applyToolPayload(block.tool, payload, 'running');
+          }
           break;
         }
         case 'tool_end': {
@@ -1395,19 +1459,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           if (!tool) {
             break;
           }
-          tool.name = String(payload.name ?? tool.name ?? 'Tool');
-          if (typeof payload.kind === 'string') {
-            tool.kind = payload.kind;
-          }
-          if (Object.prototype.hasOwnProperty.call(payload, 'in')) {
-            tool.input = payload.in;
-          }
-          tool.output = String(payload.out ?? '');
-          tool.status = payload.ok === false ? 'error' : 'done';
-          const meta = asRecord(payload.meta);
-          if (meta) {
-            tool.meta = meta;
-          }
+          applyToolPayload(tool, payload, payload.ok === false ? 'error' : 'done');
           break;
         }
         case 'approval_req': {

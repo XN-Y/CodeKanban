@@ -625,6 +625,224 @@ func TestSendMessageResumesRecoveredCodexSession(t *testing.T) {
 	}
 }
 
+func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Grouped Commands", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "cmd1",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "ls"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "ls"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "cmd1",
+			"out": "ls output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_st",
+		Seq:       3,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "cmd2",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "pwd"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_end",
+		Seq:       4,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "cmd2",
+			"out": "pwd output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_note",
+		Seq:       5,
+		Type:      "note",
+		Timestamp: time.UnixMilli(5_000),
+		Payload: map[string]any{
+			"txt": "done",
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 2 {
+		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	}
+
+	grouped := history.Events[0]
+	if grouped.Type != "tool_end" {
+		t.Fatalf("expected grouped event type tool_end, got %q", grouped.Type)
+	}
+	if grouped.Seq != 4 {
+		t.Fatalf("expected grouped event seq 4, got %d", grouped.Seq)
+	}
+	if got := fmt.Sprint(grouped.Payload["tid"]); got != commandExecutionGroupID("cmd1") {
+		t.Fatalf("expected grouped tool id %q, got %q", commandExecutionGroupID("cmd1"), got)
+	}
+	groupMeta := decodeRawObject(decodeRawObject(grouped.Payload["meta"])["commandGroup"])
+	if got := int(numberValue(groupMeta["count"])); got != 2 {
+		t.Fatalf("expected grouped count 2, got %d", got)
+	}
+	input := decodeRawObject(grouped.Payload["in"])
+	if got := stringValue(input["command"]); got != "pwd" {
+		t.Fatalf("expected latest grouped command pwd, got %q", got)
+	}
+	if got := stringValue(grouped.Payload["out"]); got != "pwd output" {
+		t.Fatalf("expected latest grouped output, got %q", got)
+	}
+
+	if history.Events[1].Type != "note" {
+		t.Fatalf("expected second event note, got %q", history.Events[1].Type)
+	}
+}
+
+func TestGetCommandExecutionGroupReturnsFullItems(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Grouped Commands", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "cmd1",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "ls"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "ls"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "cmd1",
+			"out": "ls output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_st",
+		Seq:       3,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "cmd2",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "pwd"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_end",
+		Seq:       4,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "cmd2",
+			"out": "pwd output",
+			"ok":  false,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+
+	group, err := manager.GetCommandExecutionGroup(
+		context.Background(),
+		session.ID,
+		commandExecutionGroupID("cmd1"),
+	)
+	if err != nil {
+		t.Fatalf("GetCommandExecutionGroup returned error: %v", err)
+	}
+	if group.Count != 2 {
+		t.Fatalf("expected group count 2, got %d", group.Count)
+	}
+	if group.FirstSeq != 1 || group.LastSeq != 4 {
+		t.Fatalf("expected seq range 1-4, got %d-%d", group.FirstSeq, group.LastSeq)
+	}
+	if group.Status != "error" {
+		t.Fatalf("expected latest status error, got %q", group.Status)
+	}
+	if len(group.Items) != 2 {
+		t.Fatalf("expected 2 group items, got %d", len(group.Items))
+	}
+	if group.Items[0].Command != "ls" || group.Items[0].Output != "ls output" {
+		t.Fatalf("unexpected first group item: %#v", group.Items[0])
+	}
+	if group.Items[1].Command != "pwd" || group.Items[1].Status != "error" {
+		t.Fatalf("unexpected second group item: %#v", group.Items[1])
+	}
+}
+
+func TestCodexToolResultUsesCamelCaseAggregatedOutput(t *testing.T) {
+	got := codexToolResult(map[string]any{
+		"type":             "commandExecution",
+		"aggregatedOutput": "const styles = {}",
+	})
+	if got != "const styles = {}" {
+		t.Fatalf("expected camelCase aggregatedOutput to be used, got %q", got)
+	}
+}
+
 func initTestDB(t *testing.T) func() {
 	t.Helper()
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
@@ -936,4 +1154,11 @@ func historyHasToolKind(events []Event, kind string) bool {
 		}
 	}
 	return false
+}
+
+func appendHistoryEvent(t *testing.T, manager *Manager, sessionID string, event Event) {
+	t.Helper()
+	if err := manager.store.appendEvent(sessionID, event); err != nil {
+		t.Fatalf("appendEvent returned error: %v", err)
+	}
 }

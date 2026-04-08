@@ -111,6 +111,27 @@ type SessionSnapshot struct {
 	History HistoryWindow  `json:"history"`
 }
 
+type CommandExecutionGroupItem struct {
+	ToolID      string    `json:"toolId"`
+	Command     string    `json:"command"`
+	Input       any       `json:"input,omitempty"`
+	Output      string    `json:"output,omitempty"`
+	Status      string    `json:"status"`
+	Timestamp   time.Time `json:"timestamp"`
+	StartedAt   time.Time `json:"startedAt,omitempty"`
+	CompletedAt time.Time `json:"completedAt,omitempty"`
+}
+
+type CommandExecutionGroupDetail struct {
+	GroupID    string                      `json:"groupId"`
+	Count      int                         `json:"count"`
+	FirstSeq   int64                       `json:"firstSeq"`
+	LastSeq    int64                       `json:"lastSeq"`
+	Status     string                      `json:"status"`
+	LatestTool string                      `json:"latestToolId,omitempty"`
+	Items      []CommandExecutionGroupItem `json:"items"`
+}
+
 type CreateParams struct {
 	ProjectID       string
 	WorktreeID      string
