@@ -599,6 +599,7 @@ func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistan
 		zap.String("userInput", userInput),
 		zap.String("lastInput", lastInput),
 		zap.String("sessionLastRecentInput", session.LastRecentInput()))
+	startedAt := time.Now()
 
 	record := &CompletionRecord{
 		ID:            utils.NewID(),
@@ -606,7 +607,8 @@ func (m *Manager) handleSessionWorkingRecord(session *Session, info *ai_assistan
 		ProjectID:     session.ProjectID(),
 		Title:         session.Title(),
 		Assistant:     cloneAssistantInfo(info),
-		CompletedAt:   time.Now(),
+		StartedAt:     &startedAt,
+		CompletedAt:   startedAt,
 		State:         "working",
 		LastUserInput: lastInput,
 	}

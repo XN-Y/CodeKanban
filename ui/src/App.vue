@@ -243,7 +243,10 @@ onBeforeUnmount(() => {
     <n-global-style />
     <n-loading-bar-provider>
       <n-dialog-provider>
-        <n-notification-provider>
+        <n-notification-provider
+          :scrollable="false"
+          container-class="global-notification-host"
+        >
           <n-message-provider>
             <n-modal-provider>
               <AppInitializer />
@@ -301,5 +304,15 @@ onBeforeUnmount(() => {
 .n-input .n-input__input-el::placeholder,
 .n-input .n-input__textarea-el::placeholder {
   color: var(--n-text-color-3, #8c8c8c);
+}
+
+.global-notification-host {
+  pointer-events: none;
+}
+
+.global-notification-host .n-notification-wrapper,
+.global-notification-host .n-notification,
+.global-notification-host .n-notification__close {
+  pointer-events: auto;
 }
 </style>

@@ -17,6 +17,7 @@ export interface TerminalCompletionRecord {
   projectName?: string;
   title: string;
   assistant?: TerminalReminderAssistantInfo;
+  startedAt?: string;
   completedAt?: string;
   readAt?: string;
   dismissed?: boolean;

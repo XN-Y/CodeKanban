@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"code-kanban/utils/ai_assistant2"
+	"go.uber.org/zap"
 )
 
 func TestRecordManager_AddAndGetCompletions(t *testing.T) {
@@ -145,6 +146,68 @@ func TestRecordManager_UpdateCompletionBySession_UpdatesTimestamp(t *testing.T) 
 	// 验证时间戳确实被更新了
 	if !completions[0].CompletedAt.After(oldSess1Time) {
 		t.Fatalf("expected CompletedAt to be updated, old=%v, new=%v", oldSess1Time, completions[0].CompletedAt)
+	}
+}
+
+func TestRecordManager_UpdateCompletionBySession_PreservesStartedAtWhileWorking(t *testing.T) {
+	rm := NewRecordManager()
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec1",
+		SessionID:   "sess1",
+		ProjectID:   "proj1",
+		State:       "working",
+		StartedAt:   &startedAt,
+		CompletedAt: startedAt,
+	})
+
+	if ok := rm.UpdateCompletionBySession("sess1", "working", ""); !ok {
+		t.Fatal("expected UpdateCompletionBySession to return true")
+	}
+
+	completions := rm.GetCompletions()
+	if len(completions) != 1 {
+		t.Fatalf("expected 1 completion, got %d", len(completions))
+	}
+	if completions[0].StartedAt == nil {
+		t.Fatal("expected StartedAt to remain set")
+	}
+	if !completions[0].StartedAt.Equal(startedAt) {
+		t.Fatalf("expected StartedAt to remain %v, got %v", startedAt, completions[0].StartedAt)
+	}
+}
+
+func TestRecordManager_UpdateCompletionBySession_ResetsStartedAtWhenReenteringWorking(t *testing.T) {
+	rm := NewRecordManager()
+
+	startedAt := time.Now().Add(-30 * time.Minute)
+	rm.AddCompletion(&CompletionRecord{
+		ID:          "rec1",
+		SessionID:   "sess1",
+		ProjectID:   "proj1",
+		State:       "completed",
+		StartedAt:   &startedAt,
+		CompletedAt: time.Now().Add(-time.Minute),
+	})
+
+	before := time.Now()
+	if ok := rm.UpdateCompletionBySession("sess1", "working", ""); !ok {
+		t.Fatal("expected UpdateCompletionBySession to return true")
+	}
+
+	completions := rm.GetCompletions()
+	if len(completions) != 1 {
+		t.Fatalf("expected 1 completion, got %d", len(completions))
+	}
+	if completions[0].StartedAt == nil {
+		t.Fatal("expected StartedAt to be set")
+	}
+	if !completions[0].StartedAt.After(startedAt) {
+		t.Fatalf("expected StartedAt to be reset after %v, got %v", startedAt, completions[0].StartedAt)
+	}
+	if completions[0].StartedAt.Before(before) {
+		t.Fatalf("expected StartedAt to be refreshed around now, got %v", completions[0].StartedAt)
 	}
 }
 
@@ -338,5 +401,36 @@ func TestCompletionRecord_WithAssistantInfo(t *testing.T) {
 	}
 	if completions[0].Assistant.DisplayName != "Claude" {
 		t.Fatalf("expected Assistant.DisplayName 'Claude', got %q", completions[0].Assistant.DisplayName)
+	}
+}
+
+func TestManagerHandleSessionWorkingRecord_SetsStartedAt(t *testing.T) {
+	mgr := &Manager{
+		logger:        zap.NewNop(),
+		recordManager: NewRecordManager(),
+	}
+	session := &Session{
+		id:        "sess1",
+		projectID: "proj1",
+		title:     "Test Session",
+	}
+	info := &ai_assistant2.AIAssistantInfo{
+		Type:        "codex",
+		Name:        "codex",
+		DisplayName: "Codex",
+	}
+
+	before := time.Now()
+	mgr.handleSessionWorkingRecord(session, info, "")
+
+	completions := mgr.recordManager.GetCompletions()
+	if len(completions) != 1 {
+		t.Fatalf("expected 1 completion, got %d", len(completions))
+	}
+	if completions[0].StartedAt == nil {
+		t.Fatal("expected StartedAt to be set")
+	}
+	if completions[0].StartedAt.Before(before) {
+		t.Fatalf("expected StartedAt to be refreshed around now, got %v", completions[0].StartedAt)
 	}
 }

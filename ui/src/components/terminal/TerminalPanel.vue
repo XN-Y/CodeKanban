@@ -2999,37 +2999,6 @@ async function completeLinkedTask(taskId: string) {
   }
 }
 
-// 获取完成/审批提醒的颜色
-const completionColors = computed(() => {
-  const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
-  return {
-    bg:
-      theme.terminalTabCompletionBg ||
-      preset?.colors.terminalTabCompletionBg ||
-      'rgba(16, 185, 129, 0.25)',
-    border:
-      theme.terminalTabCompletionBorder ||
-      preset?.colors.terminalTabCompletionBorder ||
-      'rgba(16, 185, 129, 0.5)',
-  };
-});
-
-const approvalColors = computed(() => {
-  const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
-  return {
-    bg:
-      theme.terminalTabApprovalBg ||
-      preset?.colors.terminalTabApprovalBg ||
-      'rgba(247, 144, 9, 0.25)',
-    border:
-      theme.terminalTabApprovalBorder ||
-      preset?.colors.terminalTabApprovalBorder ||
-      'rgba(247, 144, 9, 0.5)',
-  };
-});
-
 function createTabProps(tab: CombinedTab): HTMLAttributes {
   const isActive = activeId.value === tab.id;
   const theme = activeTheme.value;
@@ -3072,18 +3041,18 @@ function createTabProps(tab: CombinedTab): HTMLAttributes {
   // 优先级: 审批提醒 > 完成提醒 > 激活/非激活状态的默认颜色
   if (hasUnviewedApproval(realTab)) {
     classes.push('has-unviewed-approval');
-    props.style = {
-      backgroundColor: approvalColors.value.bg,
-      borderColor: approvalColors.value.border,
-      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
-    };
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
   } else if (hasUnviewedCompletion(realTab)) {
     classes.push('has-unviewed-completion');
-    props.style = {
-      backgroundColor: completionColors.value.bg,
-      borderColor: completionColors.value.border,
-      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
-    };
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
   } else {
     // 设置普通标签的背景色（根据激活状态）
     if (isActive) {
@@ -4312,13 +4281,14 @@ defineExpose({
   border-radius: 4px;
 }
 
-/* Tab with unviewed completion - green background */
-:deep(.n-tabs-tab.has-unviewed-completion) {
+/* State tab backgrounds need to outrank the base card-tab rule. */
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion) {
   background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.2)) !important;
   border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.5)) !important;
 }
 
-:deep(.n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
   background-color: var(
     --kanban-terminal-tab-completion-active-bg,
     rgba(16, 185, 129, 0.25)
@@ -4330,12 +4300,13 @@ defineExpose({
 }
 
 /* Tab with unviewed approval - orange background (higher priority than completion) */
-:deep(.n-tabs-tab.has-unviewed-approval) {
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
   background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.2)) !important;
   border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.5)) !important;
 }
 
-:deep(.n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
   background-color: var(
     --kanban-terminal-tab-approval-active-bg,
     rgba(247, 144, 9, 0.25)

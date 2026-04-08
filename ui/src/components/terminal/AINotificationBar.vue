@@ -313,6 +313,7 @@ interface NotificationItem {
   assistantType?: string;
   assistantIcon?: string;
   assistantColor?: string;
+  startedAt?: Date;
   timestamp: Date;
   readAt?: Date;
   state?: 'completed' | 'working';
@@ -322,6 +323,9 @@ interface NotificationItem {
   processStatus?: 'idle' | 'busy' | 'unknown';
   interrupted?: boolean;
 }
+
+const notificationClockMs = ref(Date.now());
+let notificationClockTimer: number | null = null;
 
 function isNotificationRead(notification: NotificationItem): boolean {
   if (isNotificationClicked(notification.id)) {
@@ -966,6 +970,39 @@ function formatNotificationTime(timestamp: Date): string {
   }
 }
 
+function formatElapsedDuration(startedAt: Date): string {
+  const diff = Math.max(0, notificationClockMs.value - startedAt.getTime());
+  const totalSeconds = Math.floor(diff / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getNotificationStartedAt(notification: NotificationItem): Date | null {
+  if (notification.type === 'completion' && notification.state === 'working' && notification.startedAt) {
+    return notification.startedAt;
+  }
+  return null;
+}
+
+function getNotificationTimeText(notification: NotificationItem): string {
+  const startedAt = getNotificationStartedAt(notification);
+  if (startedAt) {
+    return formatElapsedDuration(startedAt);
+  }
+  return formatNotificationTime(notification.timestamp);
+}
+
+function getNotificationTimeTooltip(notification: NotificationItem): string {
+  const startedAt = getNotificationStartedAt(notification);
+  return (startedAt || notification.timestamp).toLocaleString();
+}
+
 // 判断是否在项目列表页
 const isOnProjectListPage = computed(() => {
   return currentRoute.name === 'projects';
@@ -1008,6 +1045,7 @@ function mapCompletionRecord(record: TerminalCompletionRecord): NotificationItem
     assistantType,
     assistantIcon: getAssistantIconByType(assistantType),
     assistantColor: getAssistantColorByType(assistantType),
+    startedAt: record.startedAt ? new Date(record.startedAt) : undefined,
     timestamp: record.completedAt ? new Date(record.completedAt) : new Date(),
     readAt: record.readAt ? new Date(record.readAt) : undefined,
     state: record.state === 'working' ? 'working' : 'completed',
@@ -1172,11 +1210,18 @@ onMounted(() => {
   loadDisplayModeSetting();
   loadCurrentProjectOnlySetting();
   reminderStore.retain();
+  notificationClockTimer = window.setInterval(() => {
+    notificationClockMs.value = Date.now();
+  }, 1000);
 
   terminalStore.emitter.on('terminal:viewed', handleTerminalViewedEvent);
 });
 
 onUnmounted(() => {
+  if (notificationClockTimer != null) {
+    window.clearInterval(notificationClockTimer);
+    notificationClockTimer = null;
+  }
   terminalStore.emitter.off('terminal:viewed', handleTerminalViewedEvent);
   reminderStore.release();
   sessionSnapshotStore.releaseScope(sessionSnapshotScopeId);
@@ -1371,8 +1416,8 @@ watch(
                 <span class="notification-action-hint">{{
                   t('terminal.clickToJumpTerminal')
                 }}</span>
-                <span class="notification-time" :title="notification.timestamp.toLocaleString()">{{
-                  formatNotificationTime(notification.timestamp)
+                <span class="notification-time" :title="getNotificationTimeTooltip(notification)">{{
+                  getNotificationTimeText(notification)
                 }}</span>
               </div>
             </div>
@@ -1706,8 +1751,8 @@ watch(
                 <span class="notification-action-hint">
                   {{ t('terminal.clickToJumpTerminal') }}
                 </span>
-                <span class="notification-time" :title="notification.timestamp.toLocaleString()">
-                  {{ formatNotificationTime(notification.timestamp) }}
+                <span class="notification-time" :title="getNotificationTimeTooltip(notification)">
+                  {{ getNotificationTimeText(notification) }}
                 </span>
               </div>
             </div>

@@ -16,6 +16,7 @@ type CompletionRecord struct {
 	ProjectName string                         `json:"projectName,omitempty"`
 	Title       string                         `json:"title"`
 	Assistant   *ai_assistant2.AIAssistantInfo `json:"assistant"`
+	StartedAt   *time.Time                     `json:"startedAt,omitempty"`
 	CompletedAt time.Time                      `json:"completedAt"`
 	// ReadAt 标记此通知是否已被用户查看（已读）
 	ReadAt *time.Time `json:"readAt,omitempty"`
@@ -165,11 +166,17 @@ func (rm *RecordManager) ClearApprovalsBySession(sessionID string) {
 func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state string) bool {
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
+			now := time.Now()
+			previousState := record.State
 			record.State = state
 			if state == "working" {
+				if previousState != "working" || record.StartedAt == nil {
+					startedAt := now
+					record.StartedAt = &startedAt
+				}
 				record.ReadAt = nil
 			}
-			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
+			record.CompletedAt = now // 每次状态更新都刷新时间戳
 			return true
 		}
 	}
@@ -182,11 +189,17 @@ func (rm *RecordManager) UpdateCompletionStateBySession(sessionID string, state 
 func (rm *RecordManager) UpdateCompletionBySession(sessionID string, state string, userInput string) bool {
 	if value, ok := rm.completions.Load(sessionID); ok {
 		if record, ok := value.(*CompletionRecord); ok {
+			now := time.Now()
+			previousState := record.State
 			record.State = state
 			if state == "working" {
+				if previousState != "working" || record.StartedAt == nil {
+					startedAt := now
+					record.StartedAt = &startedAt
+				}
 				record.ReadAt = nil
 			}
-			record.CompletedAt = time.Now() // 每次状态更新都刷新时间戳
+			record.CompletedAt = now // 每次状态更新都刷新时间戳
 			if userInput != "" {
 				record.LastUserInput = userInput
 			}

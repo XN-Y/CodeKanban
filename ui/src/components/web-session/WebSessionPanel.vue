@@ -1712,20 +1712,6 @@ const tabsThemeOverrides = computed(() => {
     tabColorSegment: tabActiveBg,
   };
 });
-const completionColors = computed(() => {
-  const theme = activeTheme.value;
-  const preset = getPresetById(currentPresetId.value);
-  return {
-    bg:
-      theme.terminalTabCompletionBg ||
-      preset?.colors.terminalTabCompletionBg ||
-      'rgba(16, 185, 129, 0.25)',
-    border:
-      theme.terminalTabCompletionBorder ||
-      preset?.colors.terminalTabCompletionBorder ||
-      'rgba(16, 185, 129, 0.5)',
-  };
-});
 const approvalColors = computed(() => {
   const theme = activeTheme.value;
   const preset = getPresetById(currentPresetId.value);
@@ -3777,18 +3763,18 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
 
   if (hasSessionUnviewedApproval(session)) {
     classes.push('has-unviewed-approval');
-    props.style = {
-      backgroundColor: approvalColors.value.bg,
-      borderColor: approvalColors.value.border,
-      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
-    };
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
   } else if (hasSessionUnviewedCompletion(session)) {
     classes.push('has-unviewed-completion');
-    props.style = {
-      backgroundColor: completionColors.value.bg,
-      borderColor: completionColors.value.border,
-      ...(isActive && hideHeaderBorder ? { borderBottom: 'none' } : {}),
-    };
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
   } else if (isActive) {
     props.style = {
       backgroundColor:
@@ -4528,12 +4514,13 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-:deep(.n-tabs-tab.has-unviewed-completion) {
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion) {
   background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.2)) !important;
   border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.5)) !important;
 }
 
-:deep(.n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
   background-color: var(
     --kanban-terminal-tab-completion-active-bg,
     rgba(16, 185, 129, 0.25)
@@ -4544,12 +4531,13 @@ onBeforeUnmount(() => {
   ) !important;
 }
 
-:deep(.n-tabs-tab.has-unviewed-approval) {
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
   background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.2)) !important;
   border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.5)) !important;
 }
 
-:deep(.n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
   background-color: var(
     --kanban-terminal-tab-approval-active-bg,
     rgba(247, 144, 9, 0.25)
