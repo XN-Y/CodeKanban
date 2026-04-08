@@ -86,6 +86,7 @@ type activeRun struct {
 	app                *codexAppServerClient
 	assistantDeltaSeen map[string]bool
 	commandGroupID     string
+	commandGroupKind   string
 	commandGroupFirst  int64
 	commandGroupCount  int
 	commandGroupTools  map[string]struct{}
@@ -1506,18 +1507,25 @@ func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
 	if event == nil {
 		return
 	}
-	if isCommandExecutionToolEvent(*event) {
-		m.decorateCommandExecutionGroupEvent(sessionID, event)
+	if isCompactToolEvent(*event) {
+		m.decorateCompactToolGroupEvent(sessionID, event)
+		return
+	}
+	if isReasoningToolEvent(*event) {
+		if reasoningEventHasDisplayContent(*event) {
+			m.resetCommandExecutionGroup(sessionID)
+		}
 		return
 	}
 	m.resetCommandExecutionGroup(sessionID)
 }
 
-func (m *Manager) decorateCommandExecutionGroupEvent(sessionID string, event *Event) {
+func (m *Manager) decorateCompactToolGroupEvent(sessionID string, event *Event) {
 	toolID := eventToolID(*event)
 	if toolID == "" {
 		toolID = event.ID
 	}
+	kind := compactToolKind(*event)
 
 	groupID := commandExecutionGroupID(toolID)
 	firstSeq := event.Seq
@@ -1529,11 +1537,21 @@ func (m *Manager) decorateCommandExecutionGroupEvent(sessionID string, event *Ev
 
 	if run != nil {
 		run.mu.Lock()
+		if run.commandGroupKind != "" && run.commandGroupKind != kind {
+			run.commandGroupID = ""
+			run.commandGroupKind = ""
+			run.commandGroupFirst = 0
+			run.commandGroupCount = 0
+			run.commandGroupTools = nil
+		}
 		if run.commandGroupTools == nil {
 			run.commandGroupTools = make(map[string]struct{})
 		}
 		if run.commandGroupID == "" {
 			run.commandGroupID = groupID
+		}
+		if run.commandGroupKind == "" {
+			run.commandGroupKind = kind
 		}
 		groupID = run.commandGroupID
 		if run.commandGroupFirst == 0 {
@@ -1554,11 +1572,9 @@ func (m *Manager) decorateCommandExecutionGroupEvent(sessionID string, event *Ev
 	if meta == nil {
 		meta = make(map[string]any)
 	}
-	meta["kind"] = "command_execution"
-	meta["title"] = firstNonEmpty(stringValue(meta["title"]), eventToolName(*event), "CommandExecution")
-	if command := commandFromInput(eventToolInput(*event)); command != "" {
-		meta["subtitle"] = command
-	}
+	meta["kind"] = kind
+	meta["title"] = firstNonEmpty(stringValue(meta["title"]), eventToolName(*event), compactToolTitle(kind))
+	meta["subtitle"] = compactToolSummary(kind, eventToolInput(*event), meta, eventToolOutput(*event))
 	meta["commandGroup"] = map[string]any{
 		"id":           groupID,
 		"count":        count,
@@ -1582,6 +1598,7 @@ func (m *Manager) resetCommandExecutionGroup(sessionID string) {
 	}
 	run.mu.Lock()
 	run.commandGroupID = ""
+	run.commandGroupKind = ""
 	run.commandGroupFirst = 0
 	run.commandGroupCount = 0
 	run.commandGroupTools = nil

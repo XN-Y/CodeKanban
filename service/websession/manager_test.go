@@ -463,8 +463,16 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("History returned error: %v", err)
 	}
-	if !historyHasToolKind(history.Events, "reasoning") {
-		t.Fatalf("expected reasoning items to be persisted for optional display, got %#v", history.Events)
+	if historyHasToolKind(history.Events, "reasoning") {
+		t.Fatalf("expected empty reasoning items to be filtered from projected history, got %#v", history.Events)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if !historyHasToolKind(rawEvents, "reasoning") {
+		t.Fatalf("expected raw history to retain reasoning items, got %#v", rawEvents)
 	}
 }
 
@@ -665,8 +673,21 @@ func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
 		},
 	})
 	appendHistoryEvent(t, manager, session.ID, Event{
-		ID:        "evt_cmd2_st",
+		ID:        "evt_reasoning_empty_end",
 		Seq:       3,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_500),
+		Payload: map[string]any{
+			"tid":  "rs1",
+			"name": "Reasoning",
+			"kind": "reasoning",
+			"out":  "",
+			"ok":   true,
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_st",
+		Seq:       4,
 		Type:      "tool_st",
 		Timestamp: time.UnixMilli(3_000),
 		Payload: map[string]any{
@@ -679,7 +700,7 @@ func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
 	})
 	appendHistoryEvent(t, manager, session.ID, Event{
 		ID:        "evt_cmd2_end",
-		Seq:       4,
+		Seq:       5,
 		Type:      "tool_end",
 		Timestamp: time.UnixMilli(4_000),
 		Payload: map[string]any{
@@ -694,7 +715,7 @@ func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
 	})
 	appendHistoryEvent(t, manager, session.ID, Event{
 		ID:        "evt_note",
-		Seq:       5,
+		Seq:       6,
 		Type:      "note",
 		Timestamp: time.UnixMilli(5_000),
 		Payload: map[string]any{
@@ -714,8 +735,8 @@ func TestHistoryAggregatesConsecutiveCommandExecutions(t *testing.T) {
 	if grouped.Type != "tool_end" {
 		t.Fatalf("expected grouped event type tool_end, got %q", grouped.Type)
 	}
-	if grouped.Seq != 4 {
-		t.Fatalf("expected grouped event seq 4, got %d", grouped.Seq)
+	if grouped.Seq != 5 {
+		t.Fatalf("expected grouped event seq 5, got %d", grouped.Seq)
 	}
 	if got := fmt.Sprint(grouped.Payload["tid"]); got != commandExecutionGroupID("cmd1") {
 		t.Fatalf("expected grouped tool id %q, got %q", commandExecutionGroupID("cmd1"), got)
@@ -830,6 +851,284 @@ func TestGetCommandExecutionGroupReturnsFullItems(t *testing.T) {
 	}
 	if group.Items[1].Command != "pwd" || group.Items[1].Status != "error" {
 		t.Fatalf("unexpected second group item: %#v", group.Items[1])
+	}
+}
+
+func TestHistoryReasoningWithContentBreaksCommandExecutionGroup(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Grouped Commands", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "cmd1",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "ls"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "ls"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "cmd1",
+			"out": "ls output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_reasoning_end",
+		Seq:       3,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_500),
+		Payload: map[string]any{
+			"tid":  "rs1",
+			"name": "Reasoning",
+			"kind": "reasoning",
+			"out":  "Need to try a different command.",
+			"ok":   true,
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_st",
+		Seq:       4,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "cmd2",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "pwd"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_end",
+		Seq:       5,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "cmd2",
+			"out": "pwd output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 3 {
+		t.Fatalf("expected 3 projected events, got %d", len(history.Events))
+	}
+	if history.Events[0].Type != "tool_end" || eventToolKind(history.Events[0]) != "command_execution" {
+		t.Fatalf("expected first event grouped command execution, got %#v", history.Events[0])
+	}
+	if history.Events[1].Type != "tool_end" || eventToolKind(history.Events[1]) != "reasoning" {
+		t.Fatalf("expected second event reasoning, got %#v", history.Events[1])
+	}
+	if history.Events[2].Type != "tool_end" || eventToolKind(history.Events[2]) != "command_execution" {
+		t.Fatalf("expected third event grouped command execution, got %#v", history.Events[2])
+	}
+}
+
+func TestHistoryAggregatesConsecutiveFileChanges(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Grouped File Changes", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "fc1",
+			"name": "FileChange",
+			"kind": "file_change",
+			"in": map[string]any{
+				"path": "ui/src/App.vue",
+				"changes": []any{
+					map[string]any{"path": "ui/src/App.vue"},
+				},
+			},
+			"meta": map[string]any{"kind": "file_change", "title": "FileChange", "subtitle": "ui/src/App.vue"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "fc1",
+			"out": "patched",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind": "file_change", "title": "FileChange", "subtitle": "ui/src/App.vue",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc2_st",
+		Seq:       3,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "fc2",
+			"name": "FileChange",
+			"kind": "file_change",
+			"in": map[string]any{
+				"path": "ui/src/components/Panel.vue",
+				"changes": []any{
+					map[string]any{"path": "ui/src/components/Panel.vue"},
+				},
+			},
+			"meta": map[string]any{"kind": "file_change", "title": "FileChange", "subtitle": "ui/src/components/Panel.vue"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc2_end",
+		Seq:       4,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "fc2",
+			"out": "patched",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind": "file_change", "title": "FileChange", "subtitle": "ui/src/components/Panel.vue",
+			},
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 1 {
+		t.Fatalf("expected 1 projected file_change event, got %d", len(history.Events))
+	}
+	if got := eventToolKind(history.Events[0]); got != "file_change" {
+		t.Fatalf("expected file_change kind, got %q", got)
+	}
+	groupMeta := decodeRawObject(decodeRawObject(history.Events[0].Payload["meta"])["commandGroup"])
+	if got := int(numberValue(groupMeta["count"])); got != 2 {
+		t.Fatalf("expected grouped count 2, got %d", got)
+	}
+	if got := stringValue(decodeRawObject(history.Events[0].Payload["meta"])["subtitle"]); got != "ui/src/components/Panel.vue" {
+		t.Fatalf("expected latest file path summary, got %q", got)
+	}
+}
+
+func TestHistorySeparatesDifferentCompactToolKinds(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Mixed Compact Tools", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "cmd1",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "pwd"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "cmd1",
+			"out": "pwd output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_mcp_st",
+		Seq:       3,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "mcp1",
+			"name": "McpToolCall",
+			"kind": "mcp_tool_call",
+			"in": map[string]any{
+				"tool_name": "fetch",
+				"arguments": map[string]any{"url": "http://127.0.0.1:3007"},
+			},
+			"meta": map[string]any{"kind": "mcp_tool_call", "title": "McpToolCall", "subtitle": "fetch"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_mcp_end",
+		Seq:       4,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "mcp1",
+			"out": "ok",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind": "mcp_tool_call", "title": "McpToolCall", "subtitle": "fetch",
+			},
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 2 {
+		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	}
+	if got := eventToolKind(history.Events[0]); got != "command_execution" {
+		t.Fatalf("expected first kind command_execution, got %q", got)
+	}
+	if got := eventToolKind(history.Events[1]); got != "mcp_tool_call" {
+		t.Fatalf("expected second kind mcp_tool_call, got %q", got)
 	}
 }
 

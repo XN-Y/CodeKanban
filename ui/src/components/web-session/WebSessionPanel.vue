@@ -194,7 +194,7 @@
 
                   <div v-else-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
                     <div
-                      v-if="isCommandExecutionTool(item.tool)"
+                      v-if="isCompactTool(item.tool)"
                       class="tool-card timeline-tool-card command-tool-card"
                       :class="`state-${item.tool.status}`"
                     >
@@ -206,23 +206,23 @@
                         <span class="command-tool-copy">
                           <span class="command-tool-topline">
                             <span class="command-tool-label">{{
-                              t('webSession.toolCommandExecution')
+                              compactToolLabel(item.tool)
                             }}</span>
                             <span
-                              v-if="getCommandExecutionCount(item.tool) > 1"
+                              v-if="getCompactToolCount(item.tool) > 1"
                               class="command-tool-count"
                             >
-                              x{{ getCommandExecutionCount(item.tool) }}
+                              x{{ getCompactToolCount(item.tool) }}
                             </span>
                             <span class="command-tool-time">{{ formatTime(item.timestamp) }}</span>
                           </span>
                           <span
                             class="command-tool-command"
-                            :title="getCommandExecutionCommand(item.tool)"
+                            :title="getCompactToolSummary(item.tool)"
                           >
                             {{
-                              getCommandExecutionCommand(item.tool) ||
-                              t('webSession.commandExecutionNoCommand')
+                              getCompactToolSummary(item.tool) ||
+                              t('webSession.compactToolNoSummary')
                             }}
                           </span>
                         </span>
@@ -902,7 +902,10 @@
     >
       <div v-if="activeCommandExecutionDetail" class="command-execution-detail-summary">
         {{
-          t('webSession.commandExecutionDetailCount', { count: activeCommandExecutionDetail.count })
+          t('webSession.compactToolDetailCount', {
+            kind: compactToolLabel(activeCommandExecutionDetail),
+            count: activeCommandExecutionDetail.count,
+          })
         }}
       </div>
       <div v-if="loadingCommandExecutionDetail" class="command-execution-detail-loading">
@@ -919,12 +922,12 @@
             <span class="command-execution-detail-item-label">
               {{
                 index === 0
-                  ? t('webSession.commandExecutionLatest')
+                  ? t('webSession.compactToolLatest')
                   : `#${commandExecutionDetailItems.length - index}`
               }}
             </span>
             <span class="command-execution-detail-item-command">
-              {{ detailItem.command || t('webSession.commandExecutionNoCommand') }}
+              {{ detailItem.summary || detailItem.command || t('webSession.compactToolNoSummary') }}
             </span>
             <span class="tool-state-badge" :class="`state-${detailItem.status}`">
               <span class="tool-state-dot"></span>
@@ -937,9 +940,9 @@
 
           <div class="command-execution-detail-item-body">
             <div class="tool-section">
-              <div class="tool-section-label">{{ t('webSession.commandExecutionCommand') }}</div>
+              <div class="tool-section-label">{{ t('webSession.compactToolSummary') }}</div>
               <pre class="tool-code">{{
-                detailItem.command || t('webSession.commandExecutionNoCommand')
+                detailItem.summary || detailItem.command || t('webSession.compactToolNoSummary')
               }}</pre>
             </div>
             <div v-if="showCommandExecutionInput(detailItem)" class="tool-section">
@@ -954,7 +957,7 @@
         </details>
       </div>
       <div v-else class="command-execution-detail-empty">
-        {{ t('webSession.commandExecutionEmpty') }}
+        {{ t('webSession.compactToolEmpty') }}
       </div>
     </n-modal>
   </div>
@@ -1064,6 +1067,9 @@ type InlinePlanChoice = {
 
 type CommandExecutionDetailItem = {
   toolId: string;
+  kind: string;
+  title: string;
+  summary: string;
   command: string;
   input?: unknown;
   output?: string;
@@ -1075,6 +1081,9 @@ type CommandExecutionDetailItem = {
 
 type CommandExecutionDetail = {
   groupId: string;
+  kind: string;
+  title: string;
+  summary: string;
   count: number;
   firstSeq: number;
   lastSeq: number;
@@ -1323,7 +1332,20 @@ function handleWebSessionWindowPageShow() {
 }
 
 function isReasoningBlock(block: WebSessionBlock) {
-  return block.tool?.kind === 'reasoning';
+  if (!block.tool) {
+    return false;
+  }
+  return (
+    normalizeToolKindValue(block.tool.kind) === 'reasoning' ||
+    normalizeToolKindValue(String(block.tool.meta?.kind ?? '')) === 'reasoning'
+  );
+}
+
+function hasReasoningContent(block: WebSessionBlock) {
+  if (!isReasoningBlock(block)) {
+    return false;
+  }
+  return Boolean(block.tool?.output?.trim());
 }
 function normalizeChoiceText(value: string) {
   return String(value || '')
@@ -1374,12 +1396,41 @@ function isPlanChoiceRequestBlock(block: WebSessionBlock) {
     isPlanChoiceQuestion(block.detail.questions?.[0])
   );
 }
+
+const currentRunStartIndex = computed(() => {
+  for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
+    if (blocks.value[index].kind === 'user') {
+      return index;
+    }
+  }
+  return -1;
+});
+
+function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) {
+  if (block.kind !== 'tool' || !block.tool) {
+    return true;
+  }
+  if (isReasoningBlock(block)) {
+    return hasReasoningContent(block);
+  }
+  if (liveState.value.running && isCompactTool(block.tool) && index > currentRunStartIndex.value) {
+    return false;
+  }
+  if (block.tool.status === 'running') {
+    return !liveState.value.running;
+  }
+  return true;
+}
+
 const visibleBlocks = computed(() =>
-  blocks.value.filter(block => {
+  blocks.value.filter((block, index) => {
     if (!showWebSessionReasoning.value && isReasoningBlock(block)) {
       return false;
     }
     if (isPlanChoiceRequestBlock(block)) {
+      return false;
+    }
+    if (!shouldRenderToolBlockInTimeline(block, index)) {
       return false;
     }
     return true;
@@ -1507,6 +1558,12 @@ const liveStateLabel = computed(() => {
     case 'thinking':
       return t('webSession.liveThinking');
     case 'tool':
+      if (isCompactToolKind(liveState.value.tool?.kind)) {
+        const count = Math.max(1, Number(liveState.value.tool?.count ?? 1) || 1);
+        const label = compactToolLabel(liveState.value.tool);
+        const toolLabel = count > 1 ? `${label} x${count}` : label;
+        return t('webSession.liveTool', { tool: toolLabel });
+      }
       return t('webSession.liveTool', { tool: liveState.value.tool?.name || 'Tool' });
     case 'waiting_approval':
       return t('webSession.liveWaitingApproval');
@@ -1529,6 +1586,9 @@ const liveStateDetail = computed(() => {
   }
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
+  }
+  if (liveState.value.phase === 'tool' && liveState.value.tool?.summary) {
+    return liveState.value.tool.summary;
   }
   if (liveState.value.phase === 'tool' && liveState.value.tool?.kind) {
     return liveState.value.tool.kind;
@@ -2296,34 +2356,87 @@ function normalizeToolKindValue(value: string | undefined) {
   return normalized;
 }
 
-function isCommandExecutionTool(
+function isCompactToolKind(value: string | undefined) {
+  return ['command_execution', 'file_change', 'mcp_tool_call'].includes(
+    normalizeToolKindValue(value)
+  );
+}
+
+function compactToolLabel(tool?: { kind?: string; meta?: Record<string, unknown> }) {
+  const kind = normalizeToolKindValue(tool?.kind || String(tool?.meta?.kind ?? ''));
+  if (kind === 'command_execution') {
+    return t('webSession.toolCommandExecution');
+  }
+  if (kind === 'file_change') {
+    return t('webSession.toolFileChange');
+  }
+  if (kind === 'mcp_tool_call') {
+    return t('webSession.toolMcpToolCall');
+  }
+  return t('webSession.toolKindDefault');
+}
+
+function isCompactTool(
   tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta' | 'commandGroup'>
 ) {
-  if (normalizeToolKindValue(tool.kind) === 'command_execution') {
-    return true;
-  }
-  return normalizeToolKindValue(String(tool.meta?.kind ?? '')) === 'command_execution';
+  return isCompactToolKind(tool.kind || String(tool.meta?.kind ?? ''));
 }
 
-function getCommandExecutionCommand(tool: NonNullable<WebSessionBlock['tool']>) {
+function getCompactToolKind(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
+  return normalizeToolKindValue(tool.kind || String(tool.meta?.kind ?? ''));
+}
+
+function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
+  const kind = getCompactToolKind(tool);
   const input = asRecord(tool.input);
-  const command = String(input?.command ?? '').trim();
-  if (command) {
-    return command;
-  }
   const subtitle = String(tool.meta?.subtitle ?? '').trim();
-  if (subtitle) {
-    return subtitle;
+
+  if (kind === 'command_execution') {
+    const command = String(input?.command ?? '').trim();
+    return command || subtitle;
   }
-  return '';
+
+  if (kind === 'file_change') {
+    const path =
+      String(input?.path ?? input?.file_path ?? input?.new_path ?? input?.old_path ?? '').trim() ||
+      subtitle;
+    if (path) {
+      return path;
+    }
+    const changes = Array.isArray(input?.changes) ? input.changes.length : 0;
+    return changes > 0 ? `${changes} change${changes > 1 ? 's' : ''}` : '';
+  }
+
+  if (kind === 'mcp_tool_call') {
+    const toolName = String(input?.tool_name ?? input?.name ?? '').trim();
+    const args = asRecord(input?.arguments);
+    const target =
+      String(
+        args?.url ??
+          args?.query ??
+          args?.path ??
+          args?.file ??
+          args?.name ??
+          args?.id ??
+          input?.server ??
+          input?.path ??
+          ''
+      ).trim() || subtitle;
+    if (toolName && target && toolName !== target) {
+      return `${toolName} · ${target}`;
+    }
+    return toolName || target;
+  }
+
+  return subtitle;
 }
 
-function getCommandExecutionCount(tool: NonNullable<WebSessionBlock['tool']>) {
+function getCompactToolCount(tool: NonNullable<WebSessionBlock['tool']>) {
   return Math.max(1, Number(tool.commandGroup?.count ?? 1) || 1);
 }
 
 function shouldHideTimelineMeta(item: WebSessionBlock) {
-  return item.kind === 'tool' && item.tool ? isCommandExecutionTool(item.tool) : false;
+  return item.kind === 'tool' && item.tool ? isCompactTool(item.tool) : false;
 }
 
 function canPreviewAttachment(attachment: { name: string; mime?: string }) {
@@ -2364,10 +2477,11 @@ function handleAttachmentPreviewVisibilityChange(show: boolean) {
 
 const commandExecutionDetailTitle = computed(() =>
   activeCommandExecutionDetail.value
-    ? t('webSession.commandExecutionDetailTitleWithCount', {
+    ? t('webSession.compactToolDetailTitleWithCount', {
+        kind: compactToolLabel(activeCommandExecutionDetail.value),
         count: activeCommandExecutionDetail.value.count,
       })
-    : t('webSession.commandExecutionDetailTitle')
+    : t('webSession.compactToolDetailTitle')
 );
 
 const commandExecutionDetailItems = computed(() => {
@@ -2401,7 +2515,10 @@ async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['too
       (await http
         .Get<{
           item?: CommandExecutionDetail;
-        }>(`/projects/${encodeURIComponent(props.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`, { cacheFor: 0 })
+        }>(
+          `/projects/${encodeURIComponent(props.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`,
+          { cacheFor: 0 }
+        )
         .send()) ?? {};
     if (activeCommandExecutionGroupId.value === requestGroupId) {
       activeCommandExecutionDetail.value = response.item ?? null;
@@ -2413,7 +2530,7 @@ async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['too
     message.error(
       error instanceof Error && error.message
         ? error.message
-        : t('webSession.commandExecutionLoadFailed')
+        : t('webSession.compactToolLoadFailed')
     );
   } finally {
     if (activeCommandExecutionGroupId.value === requestGroupId) {
@@ -2437,7 +2554,10 @@ function showCommandExecutionInput(item: CommandExecutionDetailItem) {
     return Boolean(item.input);
   }
   const keys = Object.keys(input);
-  return !(keys.length === 1 && keys[0] === 'command');
+  if (item.kind === 'command_execution') {
+    return !(keys.length === 1 && keys[0] === 'command');
+  }
+  return keys.length > 0;
 }
 
 function formatCommandExecutionDetailTime(item: CommandExecutionDetailItem) {
@@ -2487,6 +2607,12 @@ function toolKindLabel(tool: { name: string; kind?: string }) {
   if (kind === 'command_execution') {
     return t('webSession.toolCommandExecution');
   }
+  if (kind === 'file_change') {
+    return t('webSession.toolFileChange');
+  }
+  if (kind === 'mcp_tool_call') {
+    return t('webSession.toolMcpToolCall');
+  }
   if (kind === 'tool_use') {
     return t('webSession.toolKindTool');
   }
@@ -2503,8 +2629,8 @@ function formatToolPreview(tool: {
   meta?: Record<string, unknown>;
   commandGroup?: { count: number };
 }) {
-  if (isCommandExecutionTool(tool as NonNullable<WebSessionBlock['tool']>)) {
-    return getCommandExecutionCommand(tool as NonNullable<WebSessionBlock['tool']>);
+  if (isCompactTool(tool as NonNullable<WebSessionBlock['tool']>)) {
+    return getCompactToolSummary(tool as NonNullable<WebSessionBlock['tool']>);
   }
   const source =
     typeof tool.output === 'string' && tool.output.trim()

@@ -227,9 +227,9 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		item, err := c.manager.GetCommandExecutionGroup(ctx, input.SessionID, input.GroupID)
 		if err != nil {
 			if errors.Is(err, websession.ErrCommandExecutionGroupNotFound) {
-				return nil, huma.Error404NotFound("command execution group not found")
+				return nil, huma.Error404NotFound("tool group not found")
 			}
-			return nil, huma.Error500InternalServerError("failed to load command execution group", err)
+			return nil, huma.Error500InternalServerError("failed to load tool group", err)
 		}
 
 		resp := h.NewItemResponse(item)
@@ -237,7 +237,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-command-group-detail"
-		op.Summary = "获取连续命令执行详情"
+		op.Summary = "获取工具批次详情"
 		op.Tags = []string{webSessionTag}
 	})
 

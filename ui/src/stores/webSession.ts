@@ -166,6 +166,9 @@ export interface WebSessionLiveState {
     id: string;
     name: string;
     kind?: string;
+    summary?: string;
+    count?: number;
+    groupId?: string;
   };
   approval?: WebSessionApprovalState | null;
   userInput?: WebSessionUserInputState | null;
@@ -298,6 +301,66 @@ function parseToolCommandGroup(value: unknown) {
     latestToolId: String(record.latestToolId ?? '').trim() || undefined,
     compacted: record.compacted === true,
   };
+}
+
+function normalizeToolKindValue(value: unknown) {
+  const normalized = String(value ?? '').trim();
+  if (normalized === 'commandExecution') {
+    return 'command_execution';
+  }
+  if (normalized === 'mcpToolCall') {
+    return 'mcp_tool_call';
+  }
+  if (normalized === 'fileChange') {
+    return 'file_change';
+  }
+  return normalized;
+}
+
+function extractToolSummary(payload: Record<string, unknown>) {
+  const kind = normalizeToolKindValue(payload.kind ?? asRecord(payload.meta)?.kind);
+  const input = asRecord(payload.in);
+  const meta = asRecord(payload.meta);
+  const subtitle = String(meta?.subtitle ?? '').trim();
+
+  if (kind === 'command_execution') {
+    const command = String(input?.command ?? '').trim();
+    return command || subtitle;
+  }
+
+  if (kind === 'file_change') {
+    const path =
+      String(input?.path ?? input?.file_path ?? input?.new_path ?? input?.old_path ?? '').trim() ||
+      subtitle;
+    if (path) {
+      return path;
+    }
+    const changes = Array.isArray(input?.changes) ? input.changes.length : 0;
+    return changes > 0 ? `${changes} change${changes > 1 ? 's' : ''}` : '';
+  }
+
+  if (kind === 'mcp_tool_call') {
+    const toolName = String(input?.tool_name ?? input?.name ?? '').trim();
+    const args = asRecord(input?.arguments);
+    const target =
+      String(
+        args?.url ??
+          args?.query ??
+          args?.path ??
+          args?.file ??
+          args?.name ??
+          args?.id ??
+          input?.server ??
+          input?.path ??
+          ''
+      ).trim() || subtitle;
+    if (toolName && target && toolName !== target) {
+      return `${toolName} · ${target}`;
+    }
+    return toolName || target;
+  }
+
+  return subtitle;
 }
 
 function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
@@ -1670,6 +1733,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           id: string;
           name: string;
           kind?: string;
+          summary?: string;
+          count?: number;
+          groupId?: string;
         }
       | undefined;
     let sawAssistantOutput = false;
@@ -1693,11 +1759,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
           if (payload.kind === 'reasoning') {
             break;
           }
-          activeTool = {
-            id: String(payload.tid ?? event.id),
-            name: String(payload.name ?? 'Tool'),
-            kind: typeof payload.kind === 'string' ? payload.kind : undefined,
-          };
+          {
+            const commandGroup = parseToolCommandGroup(asRecord(payload.meta)?.commandGroup);
+            activeTool = {
+              id: String(payload.tid ?? event.id),
+              name: String(payload.name ?? 'Tool'),
+              kind: typeof payload.kind === 'string' ? payload.kind : undefined,
+              summary: extractToolSummary(payload),
+              count: commandGroup?.count,
+              groupId: commandGroup?.id,
+            };
+          }
           break;
         case 'tool_end': {
           if (payload.kind === 'reasoning') {

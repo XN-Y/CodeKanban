@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,7 @@ type toolSnapshot struct {
 
 type commandExecutionProjectionGroup struct {
 	groupID         string
+	kind            string
 	firstSeq        int64
 	lastSeq         int64
 	count           int
@@ -43,6 +45,9 @@ type commandExecutionProjectionGroup struct {
 
 type commandExecutionDetailAccumulator struct {
 	groupID    string
+	kind       string
+	title      string
+	summary    string
 	firstSeq   int64
 	lastSeq    int64
 	status     string
@@ -135,25 +140,38 @@ func projectHistoryEvents(events []Event) []Event {
 			activeTools[toolID] = snapshotToolEvent(event)
 		}
 
-		if isCommandExecutionToolEvent(event) {
+		if isCompactToolEvent(event) {
+			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
 			if groupID == "" {
-				if currentGroup != nil {
+				if currentGroup != nil && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && currentGroup.groupID != groupID {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
 				flushGroup()
 			}
 			if currentGroup == nil {
 				currentGroup = &commandExecutionProjectionGroup{
 					groupID: groupID,
+					kind:    kind,
 					toolIDs: make(map[string]struct{}),
 				}
 			}
 			currentGroup.applyEvent(event, activeTools[toolID])
+			if event.Type == "tool_end" && toolID != "" {
+				delete(activeTools, toolID)
+			}
+			continue
+		}
+
+		if isReasoningToolEvent(event) {
+			if reasoningEventHasDisplayContent(event) {
+				flushGroup()
+				projected = append(projected, event)
+			}
 			if event.Type == "tool_end" && toolID != "" {
 				delete(activeTools, toolID)
 			}
@@ -182,26 +200,38 @@ func buildCommandExecutionGroupLookup(events []Event) map[string]CommandExecutio
 			activeTools[toolID] = snapshotToolEvent(event)
 		}
 
-		if isCommandExecutionToolEvent(event) {
+		if isCompactToolEvent(event) {
+			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
 			if groupID == "" {
-				if currentGroup != nil {
+				if currentGroup != nil && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
 					groupID = commandExecutionGroupID(toolID)
 				}
 			}
-			if currentGroup != nil && currentGroup.groupID != groupID {
+			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
 				currentGroup = nil
 			}
 			if currentGroup == nil {
 				currentGroup = &commandExecutionDetailAccumulator{
 					groupID:   groupID,
+					kind:      kind,
 					itemIndex: make(map[string]int),
 				}
 				groups[groupID] = currentGroup
 			}
 			currentGroup.applyEvent(event, activeTools[toolID])
+			if event.Type == "tool_end" && toolID != "" {
+				delete(activeTools, toolID)
+			}
+			continue
+		}
+
+		if isReasoningToolEvent(event) {
+			if reasoningEventHasDisplayContent(event) {
+				currentGroup = nil
+			}
 			if event.Type == "tool_end" && toolID != "" {
 				delete(activeTools, toolID)
 			}
@@ -226,6 +256,9 @@ func (g *commandExecutionProjectionGroup) applyEvent(event Event, snapshot toolS
 	if toolID == "" {
 		toolID = event.ID
 	}
+	if g.kind == "" {
+		g.kind = compactToolKind(event)
+	}
 	if g.toolIDs == nil {
 		g.toolIDs = make(map[string]struct{})
 	}
@@ -246,8 +279,13 @@ func (g *commandExecutionProjectionGroup) applyEvent(event Event, snapshot toolS
 	g.latestRunID = event.RunID
 	g.latestParentID = event.ParentID
 
-	name := firstNonEmpty(eventToolName(event), snapshot.name, g.latestName, "CommandExecution")
-	kind := firstNonEmpty(eventToolKind(event), snapshot.kind, g.latestKind, "command_execution")
+	name := firstNonEmpty(
+		eventToolName(event),
+		snapshot.name,
+		g.latestName,
+		compactToolTitle(g.kind),
+	)
+	kind := firstNonEmpty(eventToolKind(event), snapshot.kind, g.latestKind, g.kind)
 	input := firstNonNil(eventToolInput(event), snapshot.input, g.latestInput)
 	meta := firstMap(eventToolMeta(event), snapshot.meta, g.latestMeta)
 
@@ -255,6 +293,10 @@ func (g *commandExecutionProjectionGroup) applyEvent(event Event, snapshot toolS
 	g.latestKind = kind
 	g.latestInput = input
 	g.latestMeta = cloneMap(meta)
+	if g.latestMeta == nil {
+		g.latestMeta = make(map[string]any)
+	}
+	g.latestMeta["subtitle"] = compactToolSummary(g.kind, g.latestInput, g.latestMeta, eventToolOutput(event))
 
 	if event.Type == "tool_end" {
 		g.latestOutput = eventToolOutput(event)
@@ -275,11 +317,9 @@ func (g *commandExecutionProjectionGroup) toEvent() Event {
 	if meta == nil {
 		meta = make(map[string]any)
 	}
-	meta["kind"] = "command_execution"
-	meta["title"] = firstNonEmpty(stringValue(meta["title"]), g.latestName, "CommandExecution")
-	if command := commandFromInput(g.latestInput); command != "" {
-		meta["subtitle"] = command
-	}
+	meta["kind"] = g.kind
+	meta["title"] = firstNonEmpty(stringValue(meta["title"]), g.latestName, compactToolTitle(g.kind))
+	meta["subtitle"] = compactToolSummary(g.kind, g.latestInput, meta, g.latestOutput)
 	meta["commandGroup"] = map[string]any{
 		"id":           g.groupID,
 		"count":        g.count,
@@ -291,8 +331,8 @@ func (g *commandExecutionProjectionGroup) toEvent() Event {
 
 	payload := map[string]any{
 		"tid":  g.groupID,
-		"name": firstNonEmpty(g.latestName, "CommandExecution"),
-		"kind": "command_execution",
+		"name": firstNonEmpty(g.latestName, compactToolTitle(g.kind)),
+		"kind": g.kind,
 		"in":   g.latestInput,
 		"meta": meta,
 	}
@@ -329,6 +369,8 @@ func (g *commandExecutionDetailAccumulator) applyEvent(event Event, snapshot too
 		g.itemIndex[toolID] = index
 		g.items = append(g.items, CommandExecutionGroupItem{
 			ToolID: toolID,
+			Kind:   g.kind,
+			Title:  compactToolTitle(g.kind),
 			Status: "running",
 		})
 	}
@@ -342,8 +384,12 @@ func (g *commandExecutionDetailAccumulator) applyEvent(event Event, snapshot too
 	g.latestTool = toolID
 
 	item := g.items[index]
+	meta := firstMap(eventToolMeta(event), snapshot.meta)
 	item.Input = firstNonNil(item.Input, eventToolInput(event), snapshot.input)
-	item.Command = firstNonEmpty(item.Command, commandFromInput(item.Input), commandFromMeta(snapshot.meta))
+	item.Title = compactToolTitle(g.kind)
+	item.Kind = g.kind
+	item.Summary = compactToolSummary(g.kind, item.Input, meta, eventToolOutput(event))
+	item.Command = compactToolSummary(g.kind, item.Input, meta, eventToolOutput(event))
 	if event.Type == "tool_st" {
 		item.StartedAt = event.Timestamp
 		item.Timestamp = event.Timestamp
@@ -363,12 +409,17 @@ func (g *commandExecutionDetailAccumulator) applyEvent(event Event, snapshot too
 	}
 
 	g.status = item.Status
+	g.title = item.Title
+	g.summary = item.Summary
 	g.items[index] = item
 }
 
 func (g *commandExecutionDetailAccumulator) toDetail() CommandExecutionGroupDetail {
 	return CommandExecutionGroupDetail{
 		GroupID:    g.groupID,
+		Kind:       g.kind,
+		Title:      firstNonEmpty(g.title, compactToolTitle(g.kind)),
+		Summary:    g.summary,
 		Count:      len(g.items),
 		FirstSeq:   g.firstSeq,
 		LastSeq:    g.lastSeq,
@@ -390,11 +441,51 @@ func snapshotToolEvent(event Event) toolSnapshot {
 	}
 }
 
-func isCommandExecutionToolEvent(event Event) bool {
+func isCompactToolEvent(event Event) bool {
 	if event.Type != "tool_st" && event.Type != "tool_end" {
 		return false
 	}
-	return eventToolKind(event) == "command_execution"
+	return isCompactToolKind(eventToolKind(event))
+}
+
+func isCompactToolKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "command_execution", "file_change", "mcp_tool_call":
+		return true
+	default:
+		return false
+	}
+}
+
+func compactToolKind(event Event) string {
+	return eventToolKind(event)
+}
+
+func isReasoningToolEvent(event Event) bool {
+	if event.Type != "tool_st" && event.Type != "tool_end" {
+		return false
+	}
+	return eventToolKind(event) == "reasoning"
+}
+
+func reasoningEventHasDisplayContent(event Event) bool {
+	if !isReasoningToolEvent(event) {
+		return false
+	}
+	return strings.TrimSpace(eventToolOutput(event)) != ""
+}
+
+func compactToolTitle(kind string) string {
+	switch strings.TrimSpace(kind) {
+	case "command_execution":
+		return "CommandExecution"
+	case "file_change":
+		return "FileChange"
+	case "mcp_tool_call":
+		return "McpToolCall"
+	default:
+		return "Tool"
+	}
 }
 
 func eventToolID(event Event) string {
@@ -474,6 +565,117 @@ func commandFromInput(input any) string {
 
 func commandFromMeta(meta map[string]any) string {
 	return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), stringValue(meta["command"])))
+}
+
+func compactToolSummary(kind string, input any, meta map[string]any, output string) string {
+	switch strings.TrimSpace(kind) {
+	case "command_execution":
+		return strings.TrimSpace(firstNonEmpty(commandFromInput(input), commandFromMeta(meta)))
+	case "file_change":
+		if summary := fileChangeSummary(input); summary != "" {
+			return summary
+		}
+		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), summarizeChanges(input)))
+	case "mcp_tool_call":
+		if summary := mcpToolCallSummary(input); summary != "" {
+			return summary
+		}
+		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	default:
+		return strings.TrimSpace(firstNonEmpty(stringValue(meta["subtitle"]), output))
+	}
+}
+
+func fileChangeSummary(input any) string {
+	record := decodeRawObject(input)
+	if path := strings.TrimSpace(firstNonEmpty(
+		stringValue(record["path"]),
+		stringValue(record["file_path"]),
+		stringValue(record["new_path"]),
+		stringValue(record["old_path"]),
+	)); path != "" {
+		return path
+	}
+
+	if changes := decodeRawArray(record["changes"]); len(changes) > 0 {
+		paths := make([]string, 0, len(changes))
+		for _, change := range changes {
+			path := strings.TrimSpace(firstNonEmpty(
+				stringValue(change["path"]),
+				stringValue(change["file_path"]),
+				stringValue(change["new_path"]),
+				stringValue(change["old_path"]),
+			))
+			if path == "" {
+				continue
+			}
+			paths = append(paths, path)
+		}
+		if len(paths) == 1 {
+			return paths[0]
+		}
+		if len(paths) > 1 {
+			return paths[0] + " +" + strconv.Itoa(len(paths)-1)
+		}
+	}
+	return ""
+}
+
+func summarizeChanges(input any) string {
+	record := decodeRawObject(input)
+	changes := decodeRawArray(record["changes"])
+	if len(changes) == 1 {
+		return "1 change"
+	}
+	if len(changes) > 1 {
+		return strconv.Itoa(len(changes)) + " changes"
+	}
+	return ""
+}
+
+func mcpToolCallSummary(input any) string {
+	record := decodeRawObject(input)
+	toolName := strings.TrimSpace(firstNonEmpty(
+		stringValue(record["tool_name"]),
+		stringValue(record["name"]),
+	))
+	target := strings.TrimSpace(firstNonEmpty(
+		extractMcpArgumentHint(record["arguments"]),
+		stringValue(record["server"]),
+		stringValue(record["path"]),
+	))
+	if toolName != "" && target != "" && toolName != target {
+		return toolName + " · " + target
+	}
+	return firstNonEmpty(toolName, target)
+}
+
+func extractMcpArgumentHint(value any) string {
+	record := decodeRawObject(value)
+	return strings.TrimSpace(firstNonEmpty(
+		stringValue(record["url"]),
+		stringValue(record["query"]),
+		stringValue(record["path"]),
+		stringValue(record["file"]),
+		stringValue(record["name"]),
+		stringValue(record["id"]),
+	))
+}
+
+func decodeRawArray(raw any) []map[string]any {
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		record := decodeRawObject(item)
+		if len(record) == 0 {
+			continue
+		}
+		result = append(result, record)
+	}
+	return result
 }
 
 func cloneMap(value map[string]any) map[string]any {

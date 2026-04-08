@@ -113,6 +113,9 @@ type SessionSnapshot struct {
 
 type CommandExecutionGroupItem struct {
 	ToolID      string    `json:"toolId"`
+	Kind        string    `json:"kind"`
+	Title       string    `json:"title"`
+	Summary     string    `json:"summary"`
 	Command     string    `json:"command"`
 	Input       any       `json:"input,omitempty"`
 	Output      string    `json:"output,omitempty"`
@@ -124,6 +127,9 @@ type CommandExecutionGroupItem struct {
 
 type CommandExecutionGroupDetail struct {
 	GroupID    string                      `json:"groupId"`
+	Kind       string                      `json:"kind"`
+	Title      string                      `json:"title"`
+	Summary    string                      `json:"summary"`
 	Count      int                         `json:"count"`
 	FirstSeq   int64                       `json:"firstSeq"`
 	LastSeq    int64                       `json:"lastSeq"`
