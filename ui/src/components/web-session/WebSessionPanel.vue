@@ -209,8 +209,8 @@
                             {{ toolStateLabel(item.tool) }}
                           </span>
                         </span>
-                        <span v-if="toolPreview(item.tool)" class="tool-preview">{{
-                          toolPreview(item.tool)
+                        <span v-if="formatToolPreview(item.tool)" class="tool-preview">{{
+                          formatToolPreview(item.tool)
                         }}</span>
                       </button>
                       <div v-if="isToolExpanded(item.tool.id)" class="tool-body">
@@ -1964,12 +1964,13 @@ function formatTime(timestamp: number) {
   return new Date(timestamp).toLocaleTimeString();
 }
 
-function stringifyValue(value: unknown) {
+function stringifyValue(value: unknown): string {
   if (typeof value === 'string') {
     return value;
   }
   try {
-    return JSON.stringify(value, null, 2);
+    const serialized = JSON.stringify(value, null, 2);
+    return typeof serialized === 'string' ? serialized : String(value ?? '');
   } catch {
     return String(value ?? '');
   }
@@ -2056,12 +2057,15 @@ function toolKindLabel(tool: { name: string; kind?: string }) {
   return kind;
 }
 
-function toolPreview(tool: { input?: unknown; output?: string }) {
+function formatToolPreview(tool: { input?: unknown; output?: string }) {
   const source =
     typeof tool.output === 'string' && tool.output.trim()
       ? tool.output
       : stringifyValue(tool.input);
-  return source.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return String(source ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
 }
 
 function toolStateLabel(tool: { status: 'running' | 'done' | 'error' }) {
