@@ -9,10 +9,10 @@
     @positive-click="handleCreate"
   >
     <n-form ref="formRef" :model="formData" :rules="rules" label-placement="top">
-      <n-form-item :label="t('project.projectName')" path="name">
+      <n-form-item ref="nameFormItemRef" :label="t('project.projectName')" path="name">
         <n-input v-model:value="formData.name" :placeholder="t('project.namePlaceholder')" />
       </n-form-item>
-      <n-form-item :label="t('project.projectDirectory')" path="path">
+      <n-form-item ref="pathFormItemRef" :label="t('project.projectDirectory')" path="path">
         <n-input-group>
           <n-input
             v-model:value="formData.path"
@@ -56,8 +56,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
-import { useMessage, type FormInst, type FormRules } from 'naive-ui';
+import { computed, nextTick, ref, watch } from 'vue';
+import { useMessage, type FormInst, type FormItemInst, type FormRules } from 'naive-ui';
 import { FolderOpenOutline } from '@vicons/ionicons5';
 import { useProjectStore } from '@/stores/project';
 import type { Project } from '@/types/models';
@@ -85,6 +85,8 @@ const visible = computed({
 });
 
 const formRef = ref<FormInst | null>(null);
+const nameFormItemRef = ref<FormItemInst | null>(null);
+const pathFormItemRef = ref<FormItemInst | null>(null);
 const loading = ref(false);
 const showDirectoryPicker = ref(false);
 const homeDir = ref('');
@@ -108,11 +110,13 @@ function fillPathWithHomeIfEmpty() {
 function handleDirectorySelected(path: string) {
   formData.value.path = path;
   syncProjectNameFromPath(path);
+  void syncProgrammaticValidation();
 }
 
 function handlePathBlur() {
   formData.value.path = formData.value.path.trim();
   syncProjectNameFromPath(formData.value.path);
+  void syncProgrammaticValidation();
 }
 
 function extractDirectoryName(path: string) {
@@ -141,6 +145,31 @@ function syncProjectNameFromPath(path: string) {
     formData.value.name = directoryName;
     lastAutoFilledName.value = directoryName;
   }
+}
+
+async function refreshFormItemValidation(field: 'name' | 'path') {
+  await nextTick();
+
+  const formItemRef = field === 'name' ? nameFormItemRef.value : pathFormItemRef.value;
+  if (!formItemRef) {
+    return;
+  }
+
+  formItemRef.restoreValidation();
+
+  if (!formData.value[field].trim()) {
+    return;
+  }
+
+  try {
+    await formItemRef.validate({ trigger: 'input' });
+  } catch {
+    // Keep Naive UI's own error state when the field still fails validation.
+  }
+}
+
+async function syncProgrammaticValidation() {
+  await Promise.all([refreshFormItemValidation('path'), refreshFormItemValidation('name')]);
 }
 
 async function fetchHomeDir() {
@@ -184,9 +213,11 @@ watch(visible, newVal => {
   if (newVal) {
     fillPathWithHomeIfEmpty();
     void fetchHomeDir();
+    void nextTick().then(() => formRef.value?.restoreValidation());
   } else {
     lastAutoFilledName.value = '';
     formData.value = { name: '', path: '', description: '', hidePath: false };
+    void nextTick().then(() => formRef.value?.restoreValidation());
   }
 });
 
