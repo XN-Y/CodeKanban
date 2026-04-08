@@ -432,7 +432,9 @@
                       <span class="live-orb"></span>
                       <div class="live-copy">
                         <div class="live-title">{{ liveStateLabel }}</div>
-                        <div v-if="liveStateDetail" class="live-detail">{{ liveStateDetail }}</div>
+                        <div class="live-detail" :class="{ 'is-placeholder': !liveStateDetail }">
+                          {{ liveStateSecondaryText }}
+                        </div>
                       </div>
                     </div>
                     <div class="live-meta">
@@ -1025,6 +1027,8 @@ const MAX_SESSION_SIDEBAR_WIDTH = 400;
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 240;
 const MIN_SESSION_MAIN_WIDTH = 420;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
+const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
+const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -1106,13 +1110,20 @@ const { t } = useLocale();
 const { isMobile } = useResponsive();
 const { activeTheme, currentPresetId, confirmBeforeTerminalClose, showWebSessionReasoning } =
   storeToRefs(settingsStore);
+const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
+  DRAFT_SESSION_STORAGE_KEY,
+  {}
+);
+const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>>(
+  ACTIVE_DRAFT_SESSION_STORAGE_KEY,
+  {}
+);
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const composerInputRef = ref<InstanceType<typeof NInput> | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
-const composerText = ref('');
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
@@ -1185,6 +1196,17 @@ const currentSession = computed<SessionTab | null>(() => {
 const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
+});
+const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const composerText = computed({
+  get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
+  set: value => {
+    const sessionId = currentDraftSessionId.value;
+    if (!sessionId) {
+      return;
+    }
+    webSessionStore.setDraftText(props.projectId, sessionId, value);
+  },
 });
 const liveBlocks = computed(() =>
   currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
@@ -1517,7 +1539,9 @@ const historyMeta = computed(() =>
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
-const draftAttachments = computed(() => webSessionStore.getDraftAttachments(props.projectId));
+const draftAttachments = computed(() =>
+  webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
+);
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
@@ -1526,9 +1550,7 @@ const currentSessionLatestEventSeq = computed(() =>
 );
 const isRunActive = computed(() => Boolean(currentSession.value?.status === 'running'));
 const hasDraftContent = computed(
-  () =>
-    composerText.value.trim().length > 0 ||
-    webSessionStore.getDraftAttachments(props.projectId).length > 0
+  () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
 );
 const canSend = computed(() => !isRunActive.value && hasDraftContent.value);
 const canStageDuringRun = computed(() => isRunActive.value && hasDraftContent.value);
@@ -1597,6 +1619,29 @@ const liveStateDetail = computed(() => {
     return liveState.value.errorMessage;
   }
   return '';
+});
+const liveStateSecondaryText = computed(() => {
+  if (liveStateDetail.value) {
+    return liveStateDetail.value;
+  }
+  switch (liveState.value.phase) {
+    case 'starting':
+      return t('webSession.liveStartingDetail');
+    case 'thinking':
+      return t('webSession.liveThinkingDetail');
+    case 'tool':
+      return compactToolLabel(liveState.value.tool);
+    case 'waiting_approval':
+      return t('webSession.liveWaitingApprovalDetail');
+    case 'waiting_input':
+      return t('webSession.liveWaitingInputDetail');
+    case 'done':
+      return t('webSession.liveDoneDetail');
+    case 'error':
+      return t('webSession.liveErrorDetail');
+    default:
+      return t('webSession.liveIdleDetail');
+  }
 });
 const liveStateWorking = computed(() =>
   ['starting', 'thinking', 'tool'].includes(liveState.value.phase)
@@ -1741,6 +1786,137 @@ function parseTimestamp(value?: string | null) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function fallbackDraftTitle(agent: 'claude' | 'codex') {
+  const baseAgent = agent === 'claude' ? 'Claude' : 'Codex';
+  const projectName = projectStore.currentProject?.name?.trim();
+  return projectName ? `${baseAgent} · ${projectName}` : baseAgent;
+}
+
+function normalizeDraftSession(
+  session: Partial<DraftSessionTab>,
+  index: number,
+  projectId: string
+): DraftSessionTab | null {
+  const id = String(session.id || '').trim();
+  if (!id) {
+    return null;
+  }
+  const agent = session.agent === 'claude' ? 'claude' : 'codex';
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    projectId,
+    worktreeId: typeof session.worktreeId === 'string' ? session.worktreeId || null : null,
+    orderIndex: Number.MAX_SAFE_INTEGER - index,
+    agent,
+    title:
+      typeof session.title === 'string' && session.title.trim()
+        ? session.title.trim()
+        : fallbackDraftTitle(agent),
+    model:
+      typeof session.model === 'string' && session.model.trim()
+        ? session.model.trim()
+        : defaultModelForAgent(agent),
+    reasoningEffort:
+      session.reasoningEffort === 'default' ||
+      session.reasoningEffort === 'none' ||
+      session.reasoningEffort === 'low' ||
+      session.reasoningEffort === 'medium' ||
+      session.reasoningEffort === 'high' ||
+      session.reasoningEffort === 'xhigh'
+        ? session.reasoningEffort
+        : defaultReasoningEffortForAgent(agent),
+    workflowMode: session.workflowMode === 'plan' ? 'plan' : 'default',
+    permissionLevel:
+      session.permissionLevel === 'default' ||
+      session.permissionLevel === 'elevated' ||
+      session.permissionLevel === 'yolo'
+        ? session.permissionLevel
+        : 'elevated',
+    cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
+    nativeSessionId: null,
+    status: 'idle',
+    hasUnread: false,
+    lastMessageAt: null,
+    createdAt:
+      typeof session.createdAt === 'string' && session.createdAt.trim()
+        ? session.createdAt
+        : nowIso,
+    updatedAt:
+      typeof session.updatedAt === 'string' && session.updatedAt.trim()
+        ? session.updatedAt
+        : nowIso,
+    usage: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      cost: 0,
+    },
+    isDraft: true,
+  };
+}
+
+function loadPersistedDraftSessions(projectId: string) {
+  const stored = persistedDraftSessionsByProject.value[projectId];
+  if (!Array.isArray(stored) || stored.length === 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return stored
+    .map((session, index) => normalizeDraftSession(session, index, projectId))
+    .filter((session): session is DraftSessionTab => {
+      if (!session || seen.has(session.id)) {
+        return false;
+      }
+      seen.add(session.id);
+      return true;
+    });
+}
+
+function persistDraftSessionState(
+  projectId: string,
+  nextDrafts = draftSessions.value,
+  nextActiveDraftId = activeDraftSessionId.value
+) {
+  if (!projectId) {
+    return;
+  }
+  const normalizedDrafts = nextDrafts
+    .map((session, index) => normalizeDraftSession(session, index, projectId))
+    .filter((session): session is DraftSessionTab => Boolean(session));
+  persistedDraftSessionsByProject.value = normalizedDrafts.length
+    ? {
+        ...persistedDraftSessionsByProject.value,
+        [projectId]: normalizedDrafts,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedDraftSessionsByProject.value).filter(([key]) => key !== projectId)
+      );
+  const normalizedActiveDraftId = normalizedDrafts.some(session => session.id === nextActiveDraftId)
+    ? nextActiveDraftId
+    : '';
+  persistedActiveDraftSessionIdByProject.value = normalizedActiveDraftId
+    ? {
+        ...persistedActiveDraftSessionIdByProject.value,
+        [projectId]: normalizedActiveDraftId,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedActiveDraftSessionIdByProject.value).filter(
+          ([key]) => key !== projectId
+        )
+      );
+}
+
+function replaceDraftSessionState(
+  nextDrafts: DraftSessionTab[],
+  nextActiveDraftId: string,
+  projectId = props.projectId
+) {
+  draftSessions.value = nextDrafts;
+  activeDraftSessionId.value = nextActiveDraftId;
+  persistDraftSessionState(projectId, nextDrafts, nextActiveDraftId);
+}
+
 function resolveDraftContext(worktreeId?: string | null) {
   const normalizedWorktreeId = String(worktreeId || '').trim();
   const worktree = normalizedWorktreeId
@@ -1753,9 +1929,7 @@ function resolveDraftContext(worktreeId?: string | null) {
 }
 
 function buildDraftTitle(agent: 'claude' | 'codex') {
-  const baseAgent = agent === 'claude' ? 'Claude' : 'Codex';
-  const projectName = projectStore.currentProject?.name?.trim();
-  const baseTitle = projectName ? `${baseAgent} · ${projectName}` : baseAgent;
+  const baseTitle = fallbackDraftTitle(agent);
   const samePrefixCount = draftSessions.value.filter(
     session => session.title === baseTitle || session.title.startsWith(`${baseTitle} `)
   ).length;
@@ -1763,8 +1937,9 @@ function buildDraftTitle(agent: 'claude' | 'codex') {
 }
 
 function updateDraftSession(draftId: string, updater: (draft: DraftSessionTab) => DraftSessionTab) {
-  draftSessions.value = draftSessions.value.map(session =>
-    session.id === draftId ? updater(session) : session
+  replaceDraftSessionState(
+    draftSessions.value.map(session => (session.id === draftId ? updater(session) : session)),
+    activeDraftSessionId.value
   );
 }
 
@@ -1811,8 +1986,7 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     },
     isDraft: true,
   };
-  draftSessions.value = [...draftSessions.value, draft];
-  activeDraftSessionId.value = draft.id;
+  replaceDraftSessionState([...draftSessions.value, draft], draft.id);
   webSessionStore.setActiveSession(props.projectId, '');
   return draft;
 }
@@ -1829,7 +2003,7 @@ function activateRealSession(sessionId: string, connect = true) {
   if (!targetSession) {
     return false;
   }
-  activeDraftSessionId.value = '';
+  replaceDraftSessionState(draftSessions.value, '');
   if (connect) {
     void webSessionStore.ensureSessionConnected(props.projectId, targetSession.id);
   } else {
@@ -1838,15 +2012,23 @@ function activateRealSession(sessionId: string, connect = true) {
   return true;
 }
 
-function removeDraftSession(sessionId: string, options?: { nextRealSessionId?: string }) {
+function removeDraftSession(
+  sessionId: string,
+  options?: { nextRealSessionId?: string; preserveDraftState?: boolean }
+) {
   const nextDrafts = draftSessions.value.filter(session => session.id !== sessionId);
   const removedActive = activeDraftSessionId.value === sessionId;
-  draftSessions.value = nextDrafts;
+  const nextActiveDraftId = removedActive
+    ? (nextDrafts[nextDrafts.length - 1]?.id ?? '')
+    : activeDraftSessionId.value;
+  replaceDraftSessionState(nextDrafts, nextActiveDraftId);
+  if (!options?.preserveDraftState) {
+    webSessionStore.clearDraft(props.projectId, sessionId);
+  }
   if (!removedActive) {
     return;
   }
   const nextActiveDraft = nextDrafts[nextDrafts.length - 1] ?? null;
-  activeDraftSessionId.value = nextActiveDraft?.id ?? '';
   if (!nextActiveDraft) {
     if (options?.nextRealSessionId && activateRealSession(options.nextRealSessionId, false)) {
       return;
@@ -2739,16 +2921,30 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
-  draftSessions.value = [];
-  activeDraftSessionId.value = '';
+  const restoredDrafts = loadPersistedDraftSessions(projectId);
+  const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
+  const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
+    ? storedActiveDraftId
+    : '';
+  replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
   const loadedSessions = await webSessionStore.loadSessions(projectId);
   await webSessionStore.openSocket();
+  if (activeDraftId) {
+    webSessionStore.setActiveSession(projectId, '');
+    return;
+  }
   const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
   const targetSessionId = webSessionStore.hasStoredActiveSession(projectId)
     ? rememberedSessionId
     : loadedSessions[0]?.id;
   if (targetSessionId) {
     await webSessionStore.ensureSessionConnected(projectId, targetSessionId);
+    return;
+  }
+  if (restoredDrafts.length > 0) {
+    const fallbackDraftId = restoredDrafts[restoredDrafts.length - 1]?.id ?? '';
+    replaceDraftSessionState(restoredDrafts, fallbackDraftId, projectId);
+    webSessionStore.setActiveSession(projectId, '');
     return;
   }
   ensureDefaultDraftSession();
@@ -2761,12 +2957,12 @@ async function handleSessionSelect(sessionId: string) {
   showMobileTabSelector.value = false;
   const draft = draftSessions.value.find(session => session.id === sessionId);
   if (draft) {
-    activeDraftSessionId.value = draft.id;
+    replaceDraftSessionState(draftSessions.value, draft.id);
     webSessionStore.setActiveSession(props.projectId, '');
     scrollToBottom(true);
     return;
   }
-  activeDraftSessionId.value = '';
+  replaceDraftSessionState(draftSessions.value, '');
   await webSessionStore.ensureSessionConnected(props.projectId, sessionId);
   scrollToBottom(true);
 }
@@ -2781,7 +2977,6 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       scrollToBottom(true);
       return;
     }
-    activeDraftSessionId.value = '';
     await webSessionStore.ensureSessionConnected(item.projectId, sessionId);
     if (item.projectId !== props.projectId) {
       projectStore.addRecentProject(item.projectId);
@@ -2791,6 +2986,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       });
       return;
     }
+    replaceDraftSessionState(draftSessions.value, '');
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -2865,9 +3061,14 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
       workflowMode: source?.workflowMode || draftWorkflowMode.value,
       permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+      title: isDraftSession(source) ? source.title : undefined,
     });
     if (isDraftSession(source)) {
-      removeDraftSession(source.id, { nextRealSessionId: session.id });
+      webSessionStore.moveDraft(props.projectId, source.id, session.id);
+      removeDraftSession(source.id, {
+        nextRealSessionId: session.id,
+        preserveDraftState: true,
+      });
     }
     draftAgent.value = session.agent;
     draftModel.value = session.model;
@@ -2989,6 +3190,11 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     const nextSession = webSessionStore.getActiveSession(props.projectId);
     if (nextSession?.id) {
       await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
+    } else if (draftSessions.value.length > 0) {
+      replaceDraftSessionState(
+        draftSessions.value,
+        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
+      );
     } else {
       ensureDefaultDraftSession();
     }
@@ -3074,9 +3280,13 @@ function resetComposerDragState() {
 }
 
 async function uploadComposerImages(files: File[]) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
   for (const file of files) {
     try {
-      await webSessionStore.uploadAttachment(props.projectId, file);
+      await webSessionStore.uploadAttachment(props.projectId, sessionId, file);
     } catch (error) {
       message.error(error instanceof Error ? error.message : t('common.error'));
     }
@@ -3159,7 +3369,11 @@ async function handleComposerDrop(event: DragEvent) {
 }
 
 function removeAttachment(attachmentId: string) {
-  webSessionStore.removeDraftAttachment(props.projectId, attachmentId);
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+  webSessionStore.removeDraftAttachment(props.projectId, sessionId, attachmentId);
 }
 
 function focusComposer() {
@@ -3187,8 +3401,7 @@ async function handleSubmit() {
       composerText.value,
       attachments.map(item => item.id)
     );
-    composerText.value = '';
-    webSessionStore.clearDraftAttachments(props.projectId);
+    webSessionStore.clearDraft(props.projectId, session.id);
     autoFollowBottom.value = true;
     scrollToBottom(true);
   } catch (error) {
@@ -3208,8 +3421,7 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
       attachments.map(item => item.id),
       mode
     );
-    composerText.value = '';
-    webSessionStore.clearDraftAttachments(props.projectId);
+    webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -3477,6 +3689,26 @@ function handleTimelineScroll(event: Event) {
       console.error('[Web Session] Failed to load more history', error);
     });
   }
+}
+
+function ensureTimelineHistoryFilled() {
+  const container = timelineScrollRef.value;
+  if (
+    !container ||
+    !currentRealSession.value ||
+    pendingHistoryAnchor.value ||
+    historyMeta.value.loading ||
+    !historyMeta.value.hasMore
+  ) {
+    return;
+  }
+  const lacksScrollableOverflow = container.scrollHeight <= container.clientHeight + 24;
+  if (!lacksScrollableOverflow) {
+    return;
+  }
+  void webSessionStore.loadMoreHistory(currentRealSession.value.id).catch(error => {
+    console.error('[Web Session] Failed to auto-fill history', error);
+  });
 }
 
 function recalcTabTitleWidth(explicitWidth?: number) {
@@ -3980,6 +4212,7 @@ watch(timelineContentVersion, async () => {
   await nextTick();
   if (restoreHistoryAnchor()) {
     markSessionViewed(currentRealSession.value?.id);
+    ensureTimelineHistoryFilled();
     return;
   }
   const container = timelineScrollRef.value;
@@ -3992,6 +4225,7 @@ watch(timelineContentVersion, async () => {
     updateBottomState(container);
   }
   markSessionViewed(currentRealSession.value?.id);
+  ensureTimelineHistoryFilled();
 });
 
 watch(
@@ -5610,6 +5844,11 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-height: 16px;
+}
+
+.live-detail.is-placeholder {
+  color: color-mix(in srgb, var(--n-text-color-3) 78%, transparent);
 }
 
 .live-time,
@@ -5838,30 +6077,27 @@ onBeforeUnmount(() => {
 
 .composer {
   border-top: 1px solid var(--n-border-color);
-  padding: 10px 12px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .composer-shell {
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
   border-radius: 12px;
-  padding: 8px 10px 6px;
+  padding: 5px 6px 4px;
   background: var(--app-surface-color, #fff);
   transition:
-    border-color 0.2s ease,
     background-color 0.2s ease,
     box-shadow 0.2s ease,
     transform 0.2s ease;
 }
 
 .composer-shell.is-running {
-  border-color: rgba(139, 92, 246, 0.28);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
 }
 
 .composer-shell.is-drag-over {
-  border-color: color-mix(in srgb, var(--n-primary-color) 58%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-primary-color) 5%, var(--app-surface-color, #fff));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 16%, transparent);
 }
@@ -5870,8 +6106,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   width: 100%;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
+  margin-bottom: 2px;
+  padding-bottom: 3px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 72%, transparent);
 }
 
@@ -5944,7 +6180,7 @@ onBeforeUnmount(() => {
 }
 
 .composer-input :deep(.n-input__textarea-el) {
-  min-height: 52px !important;
+  min-height: 42px !important;
   font-size: 14px;
   line-height: 1.55;
 }
@@ -5954,7 +6190,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 6px;
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .composer-footer-left,
@@ -6015,14 +6251,14 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .pending-inputs {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .pending-input-item {
@@ -6188,7 +6424,7 @@ onBeforeUnmount(() => {
   }
 
   .composer {
-    padding: 10px;
+    padding: 8px;
   }
 
   .runtime-strip {

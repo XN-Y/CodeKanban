@@ -183,6 +183,12 @@ export interface WebSessionPendingInput {
   createdAt: number;
 }
 
+export interface WebSessionDraftState {
+  text: string;
+  attachments: WebSessionAttachment[];
+  updatedAt: number;
+}
+
 type WebSessionAssistantDescriptor = {
   type: 'claude-code' | 'codex';
   name: 'Claude Code' | 'Codex';
@@ -215,10 +221,75 @@ type SessionSnapshotWaiter = {
 };
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
+const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
 const WS_PATH = '/api/v1/web-sessions/ws';
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizeStoredAttachment(value: unknown): WebSessionAttachment | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+  const id = typeof value.id === 'string' ? value.id.trim() : '';
+  const name = typeof value.name === 'string' ? value.name.trim() : '';
+  if (!id || !name) {
+    return null;
+  }
+  return {
+    id,
+    name,
+    mime: typeof value.mime === 'string' ? value.mime : '',
+    size: typeof value.size === 'number' && Number.isFinite(value.size) ? value.size : 0,
+    path: typeof value.path === 'string' ? value.path : '',
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : '',
+  };
+}
+
+function normalizeStoredDrafts(
+  value: unknown
+): Record<string, Record<string, WebSessionDraftState>> {
+  if (!isRecord(value)) {
+    return {};
+  }
+  const result: Record<string, Record<string, WebSessionDraftState>> = {};
+  Object.entries(value).forEach(([projectId, projectValue]) => {
+    if (!projectId.trim() || !isRecord(projectValue)) {
+      return;
+    }
+    const projectDrafts: Record<string, WebSessionDraftState> = {};
+    Object.entries(projectValue).forEach(([sessionId, draftValue]) => {
+      if (!sessionId.trim() || !isRecord(draftValue)) {
+        return;
+      }
+      const text = typeof draftValue.text === 'string' ? draftValue.text : '';
+      const attachments = Array.isArray(draftValue.attachments)
+        ? draftValue.attachments
+            .map(item => normalizeStoredAttachment(item))
+            .filter((item): item is WebSessionAttachment => Boolean(item))
+        : [];
+      if (!text.trim() && attachments.length === 0) {
+        return;
+      }
+      projectDrafts[sessionId] = {
+        text,
+        attachments,
+        updatedAt:
+          typeof draftValue.updatedAt === 'number' && Number.isFinite(draftValue.updatedAt)
+            ? draftValue.updatedAt
+            : Date.now(),
+      };
+    });
+    if (Object.keys(projectDrafts).length > 0) {
+      result[projectId] = projectDrafts;
+    }
+  });
+  return result;
+}
 
 function loadStoredActiveSessions() {
   try {
@@ -241,6 +312,31 @@ function persistActiveSessions(value: Record<string, string>) {
     localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.warn('[Web Session] Failed to persist active sessions', error);
+  }
+}
+
+function loadStoredSessionDrafts() {
+  try {
+    const raw = localStorage.getItem(SESSION_DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return {};
+    }
+    return normalizeStoredDrafts(JSON.parse(raw));
+  } catch {
+    return {};
+  }
+}
+
+function persistSessionDrafts(value: Record<string, Record<string, WebSessionDraftState>>) {
+  try {
+    const persisted = normalizeStoredDrafts(value);
+    if (Object.keys(persisted).length === 0) {
+      localStorage.removeItem(SESSION_DRAFT_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(SESSION_DRAFT_STORAGE_KEY, JSON.stringify(persisted));
+  } catch (error) {
+    console.warn('[Web Session] Failed to persist session drafts', error);
   }
 }
 
@@ -459,7 +555,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
   const eventsBySession = ref<Record<string, WireEvent[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
-  const draftAttachmentsByProject = ref<Record<string, WebSessionAttachment[]>>({});
+  const draftStateByProject =
+    ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
@@ -524,8 +621,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return events.length > 0 ? (events[events.length - 1]?.sq ?? 0) : 0;
   }
 
-  function getDraftAttachments(projectId: string) {
-    return draftAttachmentsByProject.value[projectId] ?? [];
+  function getDraft(projectId: string, sessionId: string): WebSessionDraftState {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return {
+        text: '',
+        attachments: [],
+        updatedAt: 0,
+      };
+    }
+    return (
+      draftStateByProject.value[normalizedProjectId]?.[normalizedSessionId] ?? {
+        text: '',
+        attachments: [],
+        updatedAt: 0,
+      }
+    );
+  }
+
+  function getDraftAttachments(projectId: string, sessionId: string) {
+    return getDraft(projectId, sessionId).attachments;
   }
 
   function getPendingInputs(sessionId: string) {
@@ -563,6 +679,104 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return;
     }
     rememberActiveSession(projectId, sessionId);
+  }
+
+  function commitProjectDrafts(projectId: string, drafts: Record<string, WebSessionDraftState>) {
+    const normalizedProjectId = String(projectId || '').trim();
+    if (!normalizedProjectId) {
+      return;
+    }
+    const nextDraftState = { ...draftStateByProject.value };
+    if (Object.keys(drafts).length > 0) {
+      nextDraftState[normalizedProjectId] = drafts;
+    } else {
+      delete nextDraftState[normalizedProjectId];
+    }
+    draftStateByProject.value = nextDraftState;
+    persistSessionDrafts(nextDraftState);
+  }
+
+  function updateDraft(
+    projectId: string,
+    sessionId: string,
+    updater: (draft: WebSessionDraftState) => WebSessionDraftState | null
+  ) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (!normalizedProjectId || !normalizedSessionId) {
+      return;
+    }
+    const projectDrafts = draftStateByProject.value[normalizedProjectId] ?? {};
+    const currentDraft = projectDrafts[normalizedSessionId] ?? {
+      text: '',
+      attachments: [],
+      updatedAt: 0,
+    };
+    const nextDraft = updater({
+      text: currentDraft.text,
+      attachments: [...currentDraft.attachments],
+      updatedAt: currentDraft.updatedAt,
+    });
+    const nextProjectDrafts = { ...projectDrafts };
+    if (!nextDraft || (!nextDraft.text.trim() && nextDraft.attachments.length === 0)) {
+      delete nextProjectDrafts[normalizedSessionId];
+    } else {
+      nextProjectDrafts[normalizedSessionId] = {
+        text: nextDraft.text,
+        attachments: [...nextDraft.attachments],
+        updatedAt: nextDraft.updatedAt || Date.now(),
+      };
+    }
+    commitProjectDrafts(normalizedProjectId, nextProjectDrafts);
+  }
+
+  function setDraftText(projectId: string, sessionId: string, text: string) {
+    updateDraft(projectId, sessionId, draft => ({
+      ...draft,
+      text,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  function clearDraft(projectId: string, sessionId: string) {
+    updateDraft(projectId, sessionId, () => null);
+  }
+
+  function moveDraft(projectId: string, fromSessionId: string, toSessionId: string) {
+    const normalizedProjectId = String(projectId || '').trim();
+    const normalizedFromSessionId = String(fromSessionId || '').trim();
+    const normalizedToSessionId = String(toSessionId || '').trim();
+    if (!normalizedProjectId || !normalizedFromSessionId || !normalizedToSessionId) {
+      return;
+    }
+    if (normalizedFromSessionId === normalizedToSessionId) {
+      return;
+    }
+    const projectDrafts = draftStateByProject.value[normalizedProjectId] ?? {};
+    const sourceDraft = projectDrafts[normalizedFromSessionId];
+    if (!sourceDraft) {
+      return;
+    }
+    const targetDraft = projectDrafts[normalizedToSessionId] ?? {
+      text: '',
+      attachments: [],
+      updatedAt: 0,
+    };
+    const mergedAttachments = [
+      ...sourceDraft.attachments,
+      ...targetDraft.attachments.filter(
+        attachment =>
+          !sourceDraft.attachments.some(sourceAttachment => sourceAttachment.id === attachment.id)
+      ),
+    ];
+    const nextProjectDrafts = { ...projectDrafts };
+    delete nextProjectDrafts[normalizedFromSessionId];
+    nextProjectDrafts[normalizedToSessionId] = {
+      text: sourceDraft.text.trim() ? sourceDraft.text : targetDraft.text,
+      attachments: mergedAttachments,
+      updatedAt: Date.now(),
+    };
+    commitProjectDrafts(normalizedProjectId, nextProjectDrafts);
   }
 
   function ensureSeenSet(sessionId: string) {
@@ -744,6 +958,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         waiter.reject(new Error(`Session removed before snapshot refresh completed: ${sessionId}`));
       });
     }
+    clearDraft(projectId, sessionId);
   }
 
   function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
@@ -1337,28 +1552,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
-  async function uploadAttachment(projectId: string, file: File) {
+  async function uploadAttachment(projectId: string, sessionId: string, file: File) {
     const attachment = await webSessionApi.uploadAttachment(projectId, file);
-    const current = getDraftAttachments(projectId);
-    draftAttachmentsByProject.value = {
-      ...draftAttachmentsByProject.value,
-      [projectId]: [...current, attachment],
-    };
+    updateDraft(projectId, sessionId, draft => ({
+      ...draft,
+      attachments: [...draft.attachments, attachment],
+      updatedAt: Date.now(),
+    }));
     return attachment;
   }
 
-  function removeDraftAttachment(projectId: string, attachmentId: string) {
-    draftAttachmentsByProject.value = {
-      ...draftAttachmentsByProject.value,
-      [projectId]: getDraftAttachments(projectId).filter(item => item.id !== attachmentId),
-    };
-  }
-
-  function clearDraftAttachments(projectId: string) {
-    draftAttachmentsByProject.value = {
-      ...draftAttachmentsByProject.value,
-      [projectId]: [],
-    };
+  function removeDraftAttachment(projectId: string, sessionId: string, attachmentId: string) {
+    updateDraft(projectId, sessionId, draft => ({
+      ...draft,
+      attachments: draft.attachments.filter(item => item.id !== attachmentId),
+      updatedAt: Date.now(),
+    }));
   }
 
   function buildBlocks(sessionId: string): WebSessionBlock[] {
@@ -1884,11 +2093,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
   return {
     connectionState,
     lastError,
+    getDraft,
     getSessions,
     getActiveSessionId,
     hasStoredActiveSession,
     getActiveSession,
     getDraftAttachments,
+    setDraftText,
     getPendingInputs,
     getHistoryMeta,
     getBlocks,
@@ -1918,7 +2129,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     uploadAttachment,
     removeDraftAttachment,
     removePendingInput,
-    clearDraftAttachments,
+    clearDraft,
+    moveDraft,
     openSocket,
     emitter,
   };
