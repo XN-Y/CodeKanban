@@ -2591,37 +2591,54 @@ function openFilePicker() {
   fileInputRef.value?.click();
 }
 
+function getTransferImageKey(file: File) {
+  const normalizedName = file.name.trim().toLowerCase() || 'clipboard-image';
+  const normalizedType = file.type.trim().toLowerCase();
+  return [normalizedName, normalizedType, String(file.size)].join(':');
+}
+
+function collectImageFiles(
+  items: Iterable<File | DataTransferItem>,
+  options: { fromDataTransferItem: boolean }
+) {
+  const imageFiles: File[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of items) {
+    const file = options.fromDataTransferItem
+      ? (entry as DataTransferItem).getAsFile()
+      : (entry as File);
+    if (!file || !file.type.startsWith('image/')) {
+      continue;
+    }
+    const key = getTransferImageKey(file);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    imageFiles.push(file);
+  }
+
+  return imageFiles;
+}
+
 function getImageFilesFromTransfer(dataTransfer: DataTransfer | null) {
   if (!dataTransfer) {
     return [];
   }
 
-  const imageFiles: File[] = [];
-  const seen = new Set<string>();
-  const register = (file: File | null) => {
-    if (!file || !file.type.startsWith('image/')) {
-      return;
-    }
-    const key = [file.name, file.type, file.size, file.lastModified].join(':');
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    imageFiles.push(file);
-  };
-
-  for (const item of Array.from(dataTransfer.items || [])) {
-    if (!item.type.startsWith('image/')) {
-      continue;
-    }
-    register(item.getAsFile());
+  // Clipboard paste can expose the same image through both items and files.
+  // Prefer items when available and only fall back to files if items yield nothing.
+  const itemFiles = collectImageFiles(Array.from(dataTransfer.items || []), {
+    fromDataTransferItem: true,
+  });
+  if (itemFiles.length > 0) {
+    return itemFiles;
   }
 
-  for (const file of Array.from(dataTransfer.files || [])) {
-    register(file);
-  }
-
-  return imageFiles;
+  return collectImageFiles(Array.from(dataTransfer.files || []), {
+    fromDataTransferItem: false,
+  });
 }
 
 function hasFileTransfer(dataTransfer: DataTransfer | null) {
