@@ -520,6 +520,13 @@ func (m *Manager) monitorAssistantRecordsWithStream(session *Session, stream *Se
 
 			// 从元数据中获取最近的用户输入（仅在 waiting_input -> working 时有值）
 			recentInput := strings.TrimSpace(metadata.AIAssistantRecentInput)
+			leftApprovalState :=
+				lastState == string(types.StateWaitingApproval) &&
+					state != string(types.StateWaitingApproval)
+
+			if leftApprovalState {
+				m.recordManager.ClearApprovalsBySession(session.ID())
+			}
 
 			switch state {
 			case string(types.StateWaitingInput):
@@ -541,14 +548,6 @@ func (m *Manager) monitorAssistantRecordsWithStream(session *Session, stream *Se
 					zap.String("lastState", lastState))
 				if !m.recordManager.UpdateCompletionBySession(session.ID(), "working", recentInput) {
 					m.handleSessionWorkingRecord(session, metadata.AIAssistant, recentInput)
-				}
-				if lastState == string(types.StateWaitingApproval) {
-					// 从审批状态恢复工作时也需要清理审批记录
-					m.recordManager.ClearApprovalsBySession(session.ID())
-				}
-			default:
-				if lastState == string(types.StateWaitingApproval) {
-					m.recordManager.ClearApprovalsBySession(session.ID())
 				}
 			}
 
