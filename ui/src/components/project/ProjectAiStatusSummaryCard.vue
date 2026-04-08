@@ -3,15 +3,15 @@
     <div class="project-status-popover-title">{{ t('project.aiStatusSummary') }}</div>
     <div class="project-status-row">
       <span>{{ t('project.aiStatusWorking') }}</span>
-      <n-tag :size="tagSize" :bordered="false">{{ summary.working }}</n-tag>
+      <n-tag size="small" :bordered="false">{{ summary.working }}</n-tag>
     </div>
     <div class="project-status-row">
       <span>{{ t('project.aiStatusBlocking') }}</span>
-      <n-tag :size="tagSize" :bordered="false" type="warning">{{ summary.blocking }}</n-tag>
+      <n-tag size="small" :bordered="false" type="warning">{{ summary.blocking }}</n-tag>
     </div>
     <div class="project-status-row">
       <span>{{ t('project.aiStatusUnreadCompleted') }}</span>
-      <n-tag :size="tagSize" :bordered="false" type="success">{{ summary.unreadCompleted }}</n-tag>
+      <n-tag size="small" :bordered="false" type="success">{{ summary.unreadCompleted }}</n-tag>
     </div>
   </div>
 </template>
@@ -31,7 +31,6 @@ const { getProjectSummary } = useAiStatusSummary();
 
 const summary = computed(() => getProjectSummary(props.projectId));
 const compact = computed(() => props.compact === true);
-const tagSize = computed(() => (compact.value ? 'tiny' : 'small'));
 </script>
 
 <style scoped>
@@ -56,16 +55,6 @@ const tagSize = computed(() => (compact.value ? 'tiny' : 'small'));
 }
 
 .project-status-popover.is-compact {
-  min-width: 148px;
-  gap: 8px;
-}
-
-.project-status-popover.is-compact .project-status-popover-title {
-  font-size: 12px;
-}
-
-.project-status-popover.is-compact .project-status-row {
-  gap: 12px;
-  font-size: 12px;
+  min-width: 156px;
 }
 </style>

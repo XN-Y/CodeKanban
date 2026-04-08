@@ -61,6 +61,7 @@
           trigger="hover"
           placement="right-start"
           :disabled="isMobile === true"
+          :content-style="compactPopoverContentStyle"
         >
           <template #trigger>
             <div class="project-item-popover-trigger">
@@ -281,6 +282,7 @@ const loading = computed(() => projectStore.loading);
 const currentProject = computed(() => projectStore.currentProject);
 const recentProjects = computed(() => projectStore.recentProjects);
 const terminalCounts = terminalStore.terminalCounts;
+const compactPopoverContentStyle = 'padding: 4px 6px;';
 
 const contextMenu = ref<ContextMenuState>({
   show: false,
