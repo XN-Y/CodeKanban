@@ -196,6 +196,13 @@ type HistoryMeta = {
   loading: boolean;
 };
 
+type SessionSnapshotWaiter = {
+  id: string;
+  resolve: (frame: WireFrame) => void;
+  reject: (reason?: unknown) => void;
+  timer: number | null;
+};
+
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const WS_PATH = '/api/v1/web-sessions/ws';
 const PROCESS_RESTART_REASON = 'process_restart';
@@ -375,6 +382,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reject: (reason?: unknown) => void;
     }
   >();
+  const snapshotWaitersBySession = new Map<string, SessionSnapshotWaiter[]>();
   const seenSeqBySession = new Map<string, Set<number>>();
   const redirectAbortSessions = new Set<string>();
   const pendingFlushTimers = new Map<string, number>();
@@ -470,6 +478,78 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return seen;
   }
 
+  function removeSnapshotWaiter(sessionId: string, waiterId: string) {
+    const current = snapshotWaitersBySession.get(sessionId);
+    if (!current?.length) {
+      return;
+    }
+    const next = current.filter(waiter => waiter.id !== waiterId);
+    if (next.length > 0) {
+      snapshotWaitersBySession.set(sessionId, next);
+    } else {
+      snapshotWaitersBySession.delete(sessionId);
+    }
+  }
+
+  function resolveSnapshotWaiters(sessionId: string, frame: WireFrame) {
+    const waiters = snapshotWaitersBySession.get(sessionId);
+    if (!waiters?.length) {
+      return;
+    }
+    snapshotWaitersBySession.delete(sessionId);
+    waiters.forEach(waiter => {
+      if (waiter.timer != null) {
+        window.clearTimeout(waiter.timer);
+      }
+      waiter.resolve(frame);
+    });
+  }
+
+  function waitForNextSessionSnapshot(sessionId: string, timeoutMs = 4000) {
+    const waiterId = `snap_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let active = true;
+    let rejectWaiter: ((reason?: unknown) => void) | null = null;
+
+    const promise = new Promise<WireFrame>((resolve, reject) => {
+      rejectWaiter = reason => {
+        active = false;
+        reject(reason);
+      };
+      const waiter: SessionSnapshotWaiter = {
+        id: waiterId,
+        resolve: frame => {
+          active = false;
+          resolve(frame);
+        },
+        reject: reason => rejectWaiter?.(reason),
+        timer:
+          timeoutMs > 0
+            ? window.setTimeout(() => {
+                removeSnapshotWaiter(sessionId, waiterId);
+                waiter.reject(new Error(`Timed out waiting for session snapshot: ${sessionId}`));
+              }, timeoutMs)
+            : null,
+      };
+      const current = snapshotWaitersBySession.get(sessionId) ?? [];
+      snapshotWaitersBySession.set(sessionId, [...current, waiter]);
+    });
+
+    return {
+      promise,
+      cancel(reason?: unknown) {
+        if (!active) {
+          return;
+        }
+        removeSnapshotWaiter(sessionId, waiterId);
+        if (reason instanceof Error) {
+          rejectWaiter?.(reason);
+          return;
+        }
+        rejectWaiter?.(new Error(String(reason ?? `Cancelled snapshot wait for ${sessionId}`)));
+      },
+    };
+  }
+
   function normalizeSession(session: WireSession): WebSessionSummary {
     return {
       id: session.id,
@@ -557,6 +637,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
         projectId: removed.projectId,
         assistant: getAssistantDescriptor(removed),
       } satisfies WebSessionAIEvent);
+    }
+    const waiters = snapshotWaitersBySession.get(sessionId);
+    if (waiters?.length) {
+      snapshotWaitersBySession.delete(sessionId);
+      waiters.forEach(waiter => {
+        if (waiter.timer != null) {
+          window.clearTimeout(waiter.timer);
+        }
+        waiter.reject(new Error(`Session removed before snapshot refresh completed: ${sessionId}`));
+      });
     }
   }
 
@@ -789,6 +879,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           loading: false,
         },
       };
+      resolveSnapshotWaiters(frame.sid, frame);
       return;
     }
 
@@ -962,6 +1053,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     rememberActiveSession(projectId, sessionId);
     await sendCommand('connect', sessionId, {});
+  }
+
+  async function refreshSessionSnapshot(sessionId: string, timeoutMs = 4000) {
+    if (!sessionId) {
+      return null;
+    }
+    const waiter = waitForNextSessionSnapshot(sessionId, timeoutMs);
+    try {
+      await sendCommand('connect', sessionId, {});
+      return await waiter.promise;
+    } catch (error) {
+      try {
+        waiter.cancel(error);
+      } catch {
+        // waiter cancel rethrows for a single-path caller API; swallow here and
+        // preserve the original failure below.
+      }
+      throw error;
+    }
   }
 
   async function renameSession(projectId: string, sessionId: string, title: string) {
@@ -1662,6 +1772,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     loadSessions,
     setActiveSession,
     ensureSessionConnected,
+    refreshSessionSnapshot,
     createSession: createSessionViaHttp,
     renameSession,
     deleteSession,

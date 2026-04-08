@@ -73,7 +73,6 @@ const compactModeEnabled = computed({
 const canToggleCompactMode = computed(() => props.compactMode === 'auto');
 const currentProjectOnly = ref(false);
 
-
 // 项目序号颜色表
 const PROJECT_INDEX_COLORS = [
   '#10b981', // 绿色
@@ -462,7 +461,6 @@ function getProjectIndex(notification: NotificationItem) {
   return projectIndexMap.value.get(notification.projectId);
 }
 
-
 const currentProjectId = computed(() => {
   const id = currentRoute.params.id;
   return typeof id === 'string' ? id : '';
@@ -662,7 +660,6 @@ const isSingleDockedProject = computed(() => {
   return ids.size <= 1;
 });
 
-
 const filteredNotifications = computed(() => {
   if (!notificationsEnabled.value) {
     return [];
@@ -681,7 +678,6 @@ const filteredNotifications = computed(() => {
     return true;
   });
 });
-
 
 function matchesDisplayMode(notification: NotificationItem) {
   if (notificationDisplayMode.value === 'idle-only') {
@@ -810,7 +806,6 @@ async function handleDockedSessionClick(item: DockedSessionItem) {
   await terminalStore.loadSessions(item.projectId);
   terminalStore.focusSession(item.projectId, item.sessionId);
 }
-
 
 watch(
   () =>
@@ -1799,7 +1794,8 @@ watch(
   box-sizing: border-box;
 }
 
-.notification-bar-container.is-docked-sidebar.is-docked-collapsed .notification-item.docked-session-item {
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed
+  .notification-item.docked-session-item {
   padding: 6px;
   gap: 6px;
 }
@@ -1874,13 +1870,15 @@ watch(
   justify-content: center;
 }
 
-.notification-bar-container.is-docked-sidebar.is-docked-collapsed .project-index-badge.docked-project-badge,
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed
+  .project-index-badge.docked-project-badge,
 .notification-bar-container.is-docked-sidebar.is-docked-collapsed .docked-current-indicator {
   width: 14px;
   height: 14px;
 }
 
-.notification-bar-container.is-docked-sidebar.is-docked-collapsed .project-index-badge.docked-project-badge {
+.notification-bar-container.is-docked-sidebar.is-docked-collapsed
+  .project-index-badge.docked-project-badge {
   font-size: 7px;
   color: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.55);
@@ -2396,34 +2394,11 @@ watch(
   position: relative;
 }
 
-/* 项目序号标签样式（在卡片外部） */
-.project-index-badge {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background-color: var(--badge-color, #3b82f6);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: default;
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14);
-}
-
+/* 项目序号标签尺寸调整 */
 .notification-list.is-compact .project-index-badge {
   width: 18px;
   height: 18px;
   font-size: 10px;
-}
-
-/* 单项目时序号不可见但占位 */
-.project-index-badge.is-single-project {
-  visibility: hidden;
-  pointer-events: none;
 }
 
 /* 当前激活 tab 指示器样式 - 绝对定位不占宽度 */

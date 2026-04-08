@@ -126,6 +126,7 @@ let pendingServerResizeTimer: number | null = null;
 const pendingTerminalMessages: ServerMessage[] = [];
 let pendingServerSnapshot: TerminalRemoteSnapshot | null = null;
 let pendingFrontendSnapshot: TerminalSerializedSnapshot | null = null;
+let pendingServerSnapshotUpdatedAt = 0;
 let debugRefreshHandler: (() => boolean) | null = null;
 let terminalTaskQueue: Promise<void> = Promise.resolve();
 let initialRestorePromise: Promise<void> | null = null;
@@ -143,9 +144,15 @@ let isDisposed = false;
 const textDecoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8') : null;
 const INITIAL_OUTPUT_BUFFER_MAX = 5000;
 const TERMINAL_SERVER_RESIZE_SETTLE_MS = 100;
+const TERMINAL_CATCH_UP_SETTLE_MS = 180;
+const TERMINAL_CATCH_UP_MAX_SNAPSHOT_ATTEMPTS = 3;
 const transferCardMessage = ref('');
 const transferCardTone = ref<'progress' | 'error'>('progress');
 const transferProgress = ref<number | null>(null);
+let terminalCatchUpActive = false;
+let terminalCatchUpTimer: number | null = null;
+let terminalCatchUpSnapshotRequestedAt = 0;
+let terminalCatchUpSnapshotAttempts = 0;
 const TERMINAL_DEBUG_FN = '__codeKanbanForceRefreshVisibleTerminal';
 const TERMINAL_DEBUG_REGISTRY = '__codeKanbanTerminalDebugHandlers';
 const TERMINAL_RESTORE_DEBUG_REGISTRY = '__codeKanbanTerminalRestoreDebug';
@@ -275,6 +282,22 @@ function updateLiveBufferedCount() {
   publishRestoreDebugState();
 }
 
+function bufferPendingTerminalMessage(payload: ServerMessage) {
+  if (pendingTerminalMessages.length >= INITIAL_OUTPUT_BUFFER_MAX) {
+    pendingTerminalMessages.shift();
+  }
+  pendingTerminalMessages.push(payload);
+  updateLiveBufferedCount();
+}
+
+function clearPendingTerminalMessages() {
+  if (pendingTerminalMessages.length === 0) {
+    return;
+  }
+  pendingTerminalMessages.length = 0;
+  updateLiveBufferedCount();
+}
+
 function logRestoreTrace(reason: string, extra: Record<string, unknown> = {}) {
   console.debug('[Terminal Restore]', {
     sessionId: props.tab.id,
@@ -292,6 +315,97 @@ function logRestoreTrace(reason: string, extra: Record<string, unknown> = {}) {
     liveBufferedCount: restoreDebugState.liveBufferedCount,
     ...extra,
   });
+}
+
+function isDocumentVisible() {
+  return typeof document === 'undefined' || document.visibilityState === 'visible';
+}
+
+function clearTerminalCatchUpTimer() {
+  if (terminalCatchUpTimer != null) {
+    window.clearTimeout(terminalCatchUpTimer);
+    terminalCatchUpTimer = null;
+  }
+}
+
+function scheduleTerminalCatchUpSettle(reason: string) {
+  clearTerminalCatchUpTimer();
+  terminalCatchUpTimer = window.setTimeout(() => {
+    terminalCatchUpTimer = null;
+    void settleTerminalCatchUp(reason);
+  }, TERMINAL_CATCH_UP_SETTLE_MS);
+}
+
+function beginTerminalCatchUp(
+  reason: string,
+  options: {
+    requestSnapshot?: boolean;
+  } = {}
+) {
+  if (!terminal || !initialViewportReady) {
+    return;
+  }
+
+  terminalCatchUpActive = true;
+  logRestoreTrace('terminal-catch-up-start', {
+    reason,
+    requestSnapshot: options.requestSnapshot === true,
+  });
+
+  if (options.requestSnapshot) {
+    terminalCatchUpSnapshotRequestedAt = Date.now();
+    terminalCatchUpSnapshotAttempts = 1;
+    requestSnapshot(`${reason}-catch-up`, {
+      allowLive: true,
+      continueAfterResize: true,
+    });
+  }
+
+  scheduleTerminalCatchUpSettle(reason);
+}
+
+async function settleTerminalCatchUp(reason: string) {
+  if (!terminalCatchUpActive) {
+    return;
+  }
+
+  if (!isDocumentVisible()) {
+    scheduleTerminalCatchUpSettle(`${reason}-hidden`);
+    return;
+  }
+
+  const waitingForFreshSnapshot =
+    terminalCatchUpSnapshotRequestedAt > 0 &&
+    pendingServerSnapshotUpdatedAt < terminalCatchUpSnapshotRequestedAt;
+
+  if (
+    waitingForFreshSnapshot &&
+    terminalCatchUpSnapshotAttempts < TERMINAL_CATCH_UP_MAX_SNAPSHOT_ATTEMPTS
+  ) {
+    terminalCatchUpSnapshotAttempts += 1;
+    requestSnapshot(`${reason}-retry`, {
+      allowLive: true,
+      continueAfterResize: true,
+    });
+    scheduleTerminalCatchUpSettle(`${reason}-await-snapshot`);
+    return;
+  }
+
+  const restored = await restoreServerSnapshotIfAvailable();
+  terminalCatchUpActive = false;
+  terminalCatchUpSnapshotRequestedAt = 0;
+  terminalCatchUpSnapshotAttempts = 0;
+  clearPendingTerminalMessages();
+
+  if (restored) {
+    setRestoreSource('server');
+    logRestoreTrace('terminal-catch-up-restored', { reason });
+    scheduleInitialViewportRepair('terminal-catch-up-restored');
+    return;
+  }
+
+  logRestoreTrace('terminal-catch-up-settled-without-snapshot', { reason });
+  scheduleInitialViewportRepair('terminal-catch-up-settled');
 }
 
 function isRestoreBlockingRefresh() {
@@ -842,7 +956,12 @@ function handleMessage(payload: ServerMessage) {
 
   if (payload.type === 'snapshot' && payload.snapshot) {
     pendingServerSnapshot = payload.snapshot;
+    pendingServerSnapshotUpdatedAt = Date.now();
     updateSnapshotDebugState();
+    if (terminalCatchUpActive || !isDocumentVisible()) {
+      scheduleTerminalCatchUpSettle('live-server-snapshot-catch-up');
+      return;
+    }
     if (initialViewportReady) {
       void restoreServerSnapshotIfAvailable().then(restored => {
         if (!restored) {
@@ -872,12 +991,14 @@ function handleMessage(payload: ServerMessage) {
     return;
   }
 
+  if (initialViewportReady && (terminalCatchUpActive || !isDocumentVisible()) && isDeferredTerminalMessage(payload)) {
+    bufferPendingTerminalMessage(payload);
+    scheduleTerminalCatchUpSettle('deferred-terminal-message');
+    return;
+  }
+
   if (!initialViewportReady && isDeferredTerminalMessage(payload)) {
-    if (pendingTerminalMessages.length >= INITIAL_OUTPUT_BUFFER_MAX) {
-      pendingTerminalMessages.shift();
-    }
-    pendingTerminalMessages.push(payload);
-    updateLiveBufferedCount();
+    bufferPendingTerminalMessage(payload);
     return;
   }
 
@@ -921,13 +1042,19 @@ function sendTerminalInput(data: string) {
   props.send(props.tab.id, { type: 'input', data });
 }
 
-function requestSnapshot(reason: string) {
-  if (props.tab.renderMode !== 'snapshot') {
+function requestSnapshot(
+  reason: string,
+  options: {
+    allowLive?: boolean;
+    continueAfterResize?: boolean;
+  } = {}
+) {
+  if (props.tab.renderMode !== 'snapshot' && options.allowLive !== true) {
     return;
   }
   if (pendingServerResize) {
     const resizeSent = flushPendingServerResize();
-    if (resizeSent) {
+    if (resizeSent && options.continueAfterResize !== true) {
       return;
     }
   }
@@ -1414,6 +1541,11 @@ onMounted(() => {
   props.emitter.on(`terminal-activated-${props.tab.id}`, handleTerminalActivated);
   props.emitter.on('terminal-blur-all', handleTerminalBlurEvent);
   window.addEventListener('resize', debouncedResize);
+  window.addEventListener('focus', handleTerminalWindowFocus);
+  window.addEventListener('pageshow', handleTerminalWindowPageShow);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleTerminalDocumentVisibilityChange);
+  }
   installDebugForceRefreshHook();
 
   // Replay any buffered messages that were received while this component was unmounted
@@ -1462,6 +1594,28 @@ function handleTerminalActivated() {
   }
 }
 
+function handleTerminalDocumentVisibilityChange() {
+  if (!isDocumentVisible()) {
+    beginTerminalCatchUp('document-hidden');
+    return;
+  }
+  beginTerminalCatchUp('document-visible', { requestSnapshot: true });
+}
+
+function handleTerminalWindowFocus() {
+  if (!isDocumentVisible()) {
+    return;
+  }
+  beginTerminalCatchUp('window-focus', { requestSnapshot: true });
+}
+
+function handleTerminalWindowPageShow() {
+  if (!isDocumentVisible()) {
+    return;
+  }
+  beginTerminalCatchUp('window-pageshow', { requestSnapshot: true });
+}
+
 onBeforeUnmount(() => {
   isDisposed = true;
   persistFrontendSnapshot();
@@ -1471,6 +1625,11 @@ onBeforeUnmount(() => {
   props.emitter.off(`terminal-activated-${props.tab.id}`, handleTerminalActivated);
   props.emitter.off('terminal-blur-all', handleTerminalBlurEvent);
   window.removeEventListener('resize', debouncedResize);
+  window.removeEventListener('focus', handleTerminalWindowFocus);
+  window.removeEventListener('pageshow', handleTerminalWindowPageShow);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleTerminalDocumentVisibilityChange);
+  }
   if (containerRef.value) {
     if (keydownCaptureHandler) {
       containerRef.value.removeEventListener('keydown', keydownCaptureHandler, true);
@@ -1490,16 +1649,20 @@ onBeforeUnmount(() => {
     initialViewportRepairTimer = null;
   }
   clearPendingServerResize();
+  clearTerminalCatchUpTimer();
+  terminalCatchUpActive = false;
+  terminalCatchUpSnapshotRequestedAt = 0;
+  terminalCatchUpSnapshotAttempts = 0;
   initialViewportReady = false;
   initialRestorePromise = null;
   terminalTaskQueue = Promise.resolve();
   deferredViewportRefresh = null;
   lastReportedCols = 0;
   lastReportedRows = 0;
-  pendingTerminalMessages.length = 0;
-  updateLiveBufferedCount();
+  clearPendingTerminalMessages();
   pendingServerSnapshot = null;
   pendingFrontendSnapshot = null;
+  pendingServerSnapshotUpdatedAt = 0;
   if (typeof window !== 'undefined') {
     const debugWindow = window as TerminalDebugWindow;
     debugWindow[TERMINAL_DEBUG_REGISTRY]?.delete(props.tab.id);

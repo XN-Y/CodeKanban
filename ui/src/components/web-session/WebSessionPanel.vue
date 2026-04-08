@@ -1,5 +1,5 @@
 <template>
-  <div class="web-session-panel">
+  <div class="web-session-panel" :style="webSessionStyleVars">
     <WebSessionCompletionNotifier />
     <WebSessionApprovalNotifier />
 
@@ -159,7 +159,9 @@
                       <div class="tool-body plan-tool-body">
                         <div class="plan-tool-header">
                           <span class="plan-tool-badge">{{ t('webSession.planCardBadge') }}</span>
-                          <span class="plan-tool-caption">{{ t('webSession.planCardCaption') }}</span>
+                          <span class="plan-tool-caption">{{
+                            t('webSession.planCardCaption')
+                          }}</span>
                         </div>
                         <div
                           v-if="item.tool.output"
@@ -191,9 +193,7 @@
                   </div>
 
                   <div v-else-if="item.kind === 'tool' && item.tool" class="timeline-tool-shell">
-                    <div
-                      class="tool-card timeline-tool-card"
-                    >
+                    <div class="tool-card timeline-tool-card">
                       <button
                         type="button"
                         class="tool-header"
@@ -852,6 +852,7 @@
 
 <script setup lang="ts">
 import {
+  type CSSProperties,
   computed,
   h,
   nextTick,
@@ -909,6 +910,7 @@ const MIN_SESSION_SIDEBAR_WIDTH = 200;
 const MAX_SESSION_SIDEBAR_WIDTH = 400;
 const DEFAULT_SESSION_SIDEBAR_WIDTH = 240;
 const MIN_SESSION_MAIN_WIDTH = 420;
+const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -991,6 +993,8 @@ const dismissedPlanActions = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const viewedEventSeqBySession = ref<Record<string, number>>({});
+const webSessionCatchUpActive = ref(false);
+const frozenBlocks = ref<WebSessionBlock[] | null>(null);
 const pendingHistoryAnchor = ref<{
   sessionId: string;
   previousHeight: number;
@@ -998,6 +1002,8 @@ const pendingHistoryAnchor = ref<{
 } | null>(null);
 const tabDragSortable = shallowRef<Sortable | null>(null);
 let composerDragDepth = 0;
+let webSessionCatchUpTimer: number | null = null;
+let webSessionCatchUpToken = 0;
 const loadedSidebarProjectIds = new Set<string>();
 const sidebarContainerWidth = ref(0);
 const isSidebarResizing = ref(false);
@@ -1035,9 +1041,150 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
-const blocks = computed(() =>
+const liveBlocks = computed(() =>
   currentRealSession.value ? webSessionStore.getBlocks(currentRealSession.value.id) : []
 );
+const blocks = computed(() =>
+  webSessionCatchUpActive.value ? (frozenBlocks.value ?? []) : liveBlocks.value
+);
+
+function cloneBlockForFreeze(block: WebSessionBlock): WebSessionBlock {
+  return {
+    ...block,
+    attachments: block.attachments.map(attachment => ({ ...attachment })),
+    tool: block.tool
+      ? {
+          ...block.tool,
+          meta: block.tool.meta ? { ...block.tool.meta } : undefined,
+        }
+      : undefined,
+    detail: block.detail
+      ? {
+          ...block.detail,
+          questions: block.detail.questions?.map(question => ({
+            ...question,
+            options: question.options.map(option => ({ ...option })),
+          })),
+          answers: block.detail.answers?.map(answer => ({
+            ...answer,
+            values: [...answer.values],
+          })),
+        }
+      : undefined,
+  };
+}
+
+function snapshotBlocksForFreeze() {
+  frozenBlocks.value = liveBlocks.value.map(cloneBlockForFreeze);
+}
+
+function clearWebSessionCatchUpTimer() {
+  if (webSessionCatchUpTimer != null) {
+    window.clearTimeout(webSessionCatchUpTimer);
+    webSessionCatchUpTimer = null;
+  }
+}
+
+function stopWebSessionCatchUp(reason: string) {
+  clearWebSessionCatchUpTimer();
+  if (!webSessionCatchUpActive.value && !frozenBlocks.value) {
+    return;
+  }
+  webSessionCatchUpActive.value = false;
+  frozenBlocks.value = null;
+  webSessionCatchUpToken += 1;
+  console.debug('[Web Session Catch-Up] settled', {
+    sessionId: currentRealSession.value?.id,
+    reason,
+  });
+}
+
+function isDocumentVisible() {
+  return typeof document === 'undefined' || document.visibilityState === 'visible';
+}
+
+function beginWebSessionCatchUp(reason: string) {
+  if (!currentRealSession.value) {
+    return;
+  }
+  if (!webSessionCatchUpActive.value) {
+    snapshotBlocksForFreeze();
+    webSessionCatchUpActive.value = true;
+  }
+  clearWebSessionCatchUpTimer();
+  console.debug('[Web Session Catch-Up] start', {
+    sessionId: currentRealSession.value.id,
+    reason,
+  });
+}
+
+async function refreshWebSessionCatchUp(reason: string) {
+  const sessionId = currentRealSession.value?.id;
+  if (!sessionId) {
+    stopWebSessionCatchUp(`${reason}-no-session`);
+    return;
+  }
+
+  beginWebSessionCatchUp(reason);
+  const token = ++webSessionCatchUpToken;
+
+  try {
+    await webSessionStore.refreshSessionSnapshot(sessionId);
+  } catch (error) {
+    console.warn('[Web Session Catch-Up] Failed to refresh session snapshot', {
+      sessionId,
+      reason,
+      error,
+    });
+  }
+
+  if (token !== webSessionCatchUpToken) {
+    return;
+  }
+
+  clearWebSessionCatchUpTimer();
+  webSessionCatchUpTimer = window.setTimeout(() => {
+    if (token !== webSessionCatchUpToken) {
+      return;
+    }
+    stopWebSessionCatchUp(reason);
+    nextTick(() => {
+      const container = timelineScrollRef.value;
+      if (!container) {
+        return;
+      }
+      if (autoFollowBottom.value) {
+        syncScrollToBottom();
+      } else {
+        updateBottomState(container);
+      }
+      markSessionViewed(sessionId);
+    });
+  }, WEB_SESSION_CATCH_UP_SETTLE_MS);
+}
+
+function handleWebSessionDocumentVisibilityChange() {
+  if (!isDocumentVisible()) {
+    beginWebSessionCatchUp('document-hidden');
+    return;
+  }
+  void refreshWebSessionCatchUp('document-visible');
+}
+
+function handleWebSessionWindowFocus() {
+  if (!isDocumentVisible()) {
+    return;
+  }
+  void refreshWebSessionCatchUp('window-focus');
+}
+
+function handleWebSessionWindowPageShow() {
+  if (!isDocumentVisible()) {
+    return;
+  }
+  void refreshWebSessionCatchUp('window-pageshow');
+}
+
 function isReasoningBlock(block: WebSessionBlock) {
   return block.tool?.kind === 'reasoning';
 }
@@ -1047,7 +1194,11 @@ function normalizeChoiceText(value: string) {
     .toLowerCase()
     .replace(/\s+/g, ' ');
 }
-function isPlanTool(tool?: { name: string; kind?: string; meta?: Record<string, unknown> | undefined }) {
+function isPlanTool(tool?: {
+  name: string;
+  kind?: string;
+  meta?: Record<string, unknown> | undefined;
+}) {
   if (!tool) {
     return false;
   }
@@ -1155,7 +1306,11 @@ const showRuntimeStrip = computed(() => {
   if (liveState.value.phase === 'idle') {
     return false;
   }
-  if (liveState.value.phase === 'done' && latestPlanToolId.value && !hasUserMessageAfterLatestPlan.value) {
+  if (
+    liveState.value.phase === 'done' &&
+    latestPlanToolId.value &&
+    !hasUserMessageAfterLatestPlan.value
+  ) {
     return false;
   }
   return true;
@@ -1343,6 +1498,13 @@ const approvalColors = computed(() => {
       'rgba(247, 144, 9, 0.5)',
   };
 });
+const webSessionStyleVars = computed(
+  () =>
+    ({
+      '--web-session-approval-bg': approvalColors.value.bg,
+      '--web-session-approval-border': approvalColors.value.border,
+    }) as CSSProperties
+);
 const tabTitleStyle = computed(() => ({
   maxWidth: `${tabTitleMaxWidth.value}px`,
 }));
@@ -3300,6 +3462,7 @@ watch(
 watch(
   () => currentSession.value?.id,
   sessionId => {
+    stopWebSessionCatchUp('session-change');
     pendingHistoryAnchor.value = null;
     if (!sessionId) {
       showMobileTabSelector.value = false;
@@ -3431,6 +3594,11 @@ onMounted(() => {
       console.error('[Web Session] Failed to preload projects', error);
     });
   }
+  window.addEventListener('focus', handleWebSessionWindowFocus);
+  window.addEventListener('pageshow', handleWebSessionWindowPageShow);
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
+  }
   nextTick(() => {
     setupSidebarResizeObserver();
     recalcTabTitleWidth();
@@ -3443,16 +3611,24 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  stopWebSessionCatchUp('unmount');
   resetComposerDragState();
   cleanupTabScrollListener();
   destroyTabSorting();
   sidebarResizeObserver?.disconnect();
   sidebarResizeObserver = null;
+  window.removeEventListener('focus', handleWebSessionWindowFocus);
+  window.removeEventListener('pageshow', handleWebSessionWindowPageShow);
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
+  }
 });
 </script>
 
 <style scoped>
 .web-session-panel {
+  --web-session-approval-bg: rgba(247, 144, 9, 0.25);
+  --web-session-approval-border: rgba(247, 144, 9, 0.5);
   height: 100%;
   overflow: hidden;
 }
@@ -3970,6 +4146,10 @@ onBeforeUnmount(() => {
   height: 18px;
   font-size: 10px;
   border-width: 1px;
+  margin-left: 2px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.12),
+    0 3px 8px color-mix(in srgb, var(--badge-color, #3b82f6) 16%, transparent);
 }
 
 .project-index-badge.session-project-badge.is-single-project {
@@ -4635,43 +4815,23 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_approval,
-.approval-card {
-  border-color: rgba(247, 144, 9, 0.28);
-}
-
-.live-card.phase-waiting_approval {
+.live-card.phase-waiting_input {
+  border-color: var(--web-session-approval-border);
   background:
     linear-gradient(
       135deg,
-      rgba(247, 144, 9, 0.14) 0%,
-      rgba(247, 144, 9, 0.04) 50%,
+      color-mix(in srgb, var(--web-session-approval-border) 22%, transparent) 0%,
+      color-mix(in srgb, var(--web-session-approval-border) 8%, transparent) 50%,
       transparent 100%
     ),
     var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(247, 144, 9, 0.08);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--web-session-approval-border) 28%, transparent);
 }
 
-.live-card.phase-waiting_approval::before {
+.live-card.phase-waiting_approval::before,
+.live-card.phase-waiting_input::before {
   opacity: 0.48;
   animation: liveSweep 3.2s ease-in-out infinite;
-}
-
-.live-card.phase-waiting_input {
-  border-color: rgba(14, 116, 144, 0.24);
-  background:
-    linear-gradient(
-      135deg,
-      rgba(14, 116, 144, 0.12) 0%,
-      rgba(14, 116, 144, 0.04) 50%,
-      transparent 100%
-    ),
-    var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px rgba(14, 116, 144, 0.08);
-}
-
-.live-card.phase-waiting_input::before {
-  opacity: 0.42;
-  animation: liveSweep 3.8s ease-in-out infinite;
 }
 
 .live-card.phase-done {
@@ -4802,22 +4962,20 @@ onBeforeUnmount(() => {
   animation: liveRipple 1.35s ease-out infinite;
 }
 
+.live-card.phase-waiting_input .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
-  background: #f79009;
-}
-
-.live-card.phase-waiting_approval .live-orb::after {
-  background: rgba(247, 144, 9, 0.2);
+  background: var(--n-warning-color, #f79009);
 }
 
 .live-card.phase-waiting_input .live-orb,
-.user-input-card .approval-badge {
-  background: #0f766e;
+.live-card.phase-waiting_approval .live-orb {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--n-warning-color, #f79009) 18%, transparent);
 }
 
+.live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
-  background: rgba(15, 118, 110, 0.18);
+  background: color-mix(in srgb, var(--n-warning-color, #f79009) 24%, transparent);
 }
 
 .live-card.phase-done .live-orb {
@@ -4871,6 +5029,13 @@ onBeforeUnmount(() => {
 }
 
 .approval-card {
+  border-color: var(--web-session-approval-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--web-session-approval-border) 10%, var(--app-surface-color, #fff)) 0%,
+    color-mix(in srgb, var(--web-session-approval-border) 3%, var(--app-surface-color, #fff)) 58%,
+    var(--app-surface-color, #fff) 100%
+  );
   padding: 11px 12px;
 }
 
@@ -4890,14 +5055,10 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, rgba(239, 68, 68, 0.08) 70%, var(--app-surface-color, #fff));
 }
 
-.history-interaction-card.type-user-input-request,
-.history-interaction-card.type-user-input-response {
-  border-color: rgba(15, 118, 110, 0.24);
-}
-
 .approval-card.is-stale {
-  border: 1px dashed color-mix(in srgb, #f79009 40%, var(--n-border-color));
-  background: color-mix(in srgb, #f79009 8%, transparent);
+  border: 1px dashed
+    color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
+  background: color-mix(in srgb, var(--web-session-approval-bg) 46%, transparent);
 }
 
 .approval-card-header {
@@ -4927,7 +5088,7 @@ onBeforeUnmount(() => {
 
 .approval-badge.state-user-input-request,
 .approval-badge.state-user-input-response {
-  background: #0f766e;
+  background: var(--n-warning-color, #f79009);
 }
 
 .approval-prompt {
@@ -4976,7 +5137,7 @@ onBeforeUnmount(() => {
 }
 
 .user-input-question + .user-input-question {
-  border-top: 1px dashed color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  border-top: 1px dashed color-mix(in srgb, var(--web-session-approval-border) 42%, transparent);
   padding-top: 10px;
 }
 
@@ -4984,8 +5145,12 @@ onBeforeUnmount(() => {
 .history-answer-card {
   padding: 10px 12px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
-  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%);
+  border: 1px solid color-mix(in srgb, var(--web-session-approval-border) 38%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-color, #fff) 84%,
+    var(--web-session-approval-bg) 16%
+  );
 }
 
 .user-input-question-header {
@@ -5032,8 +5197,12 @@ onBeforeUnmount(() => {
 .history-option-row {
   padding: 8px 10px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--n-primary-color) 7%, transparent);
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, transparent);
+  background: color-mix(
+    in srgb,
+    var(--app-surface-color, #fff) 86%,
+    var(--web-session-approval-bg) 14%
+  );
+  border: 1px solid color-mix(in srgb, var(--web-session-approval-border) 34%, transparent);
 }
 
 .history-option-label {
