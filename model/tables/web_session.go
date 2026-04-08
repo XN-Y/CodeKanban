@@ -28,9 +28,11 @@ type WebSessionTable struct {
 
 	NativeSessionID *string    `gorm:"type:text" json:"nativeSessionId"`
 	Status          string     `gorm:"type:text;not null;index" json:"status"`
+	AssistantState  string     `gorm:"type:text;index" json:"assistantState"`
 	HasUnread       bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
 	ArchivedAt      *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
 	ActivityAt      time.Time  `gorm:"type:datetime;index" json:"activityAt"`
+	AssistantStateUpdatedAt *time.Time `gorm:"type:datetime" json:"assistantStateUpdatedAt"`
 	SourceKind      string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
 	SyncState       string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`
 	SourceCreatedAt *time.Time `gorm:"type:datetime" json:"sourceCreatedAt"`

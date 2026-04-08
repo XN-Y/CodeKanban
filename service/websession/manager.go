@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -100,6 +101,77 @@ type attachmentMeta struct {
 	Size      int64     `json:"size"`
 	Path      string    `json:"path"`
 	CreatedAt time.Time `json:"createdAt"`
+}
+
+func normalizeAssistantState(state AssistantState) AssistantState {
+	switch strings.ToLower(strings.TrimSpace(string(state))) {
+	case string(AssistantStateWorking):
+		return AssistantStateWorking
+	case string(AssistantStateWaitingApproval):
+		return AssistantStateWaitingApproval
+	case string(AssistantStateWaitingInput):
+		return AssistantStateWaitingInput
+	case string(AssistantStateWaitingPlanApproval):
+		return AssistantStateWaitingPlanApproval
+	default:
+		return AssistantStateNone
+	}
+}
+
+func effectiveAssistantState(record tables.WebSessionTable) AssistantState {
+	if normalized := normalizeAssistantState(AssistantState(record.AssistantState)); normalized != AssistantStateNone {
+		return normalized
+	}
+	if strings.EqualFold(strings.TrimSpace(record.Status), string(StatusWaitingApproval)) {
+		return AssistantStateWaitingPlanApproval
+	}
+	return AssistantStateNone
+}
+
+func effectiveAssistantStateUpdatedAt(record tables.WebSessionTable, state AssistantState) *time.Time {
+	if record.AssistantStateUpdatedAt != nil {
+		return record.AssistantStateUpdatedAt
+	}
+	if state == AssistantStateWaitingPlanApproval && strings.EqualFold(strings.TrimSpace(record.Status), string(StatusWaitingApproval)) {
+		value := record.UpdatedAt
+		return &value
+	}
+	return nil
+}
+
+func effectiveStatus(record tables.WebSessionTable, assistantState AssistantState) Status {
+	switch strings.ToLower(strings.TrimSpace(record.Status)) {
+	case string(StatusRunning):
+		return StatusRunning
+	case string(StatusWaitingApproval):
+		if assistantState == AssistantStateWaitingPlanApproval {
+			return StatusRunning
+		}
+		return StatusWaitingApproval
+	case string(StatusDone):
+		return StatusDone
+	case string(StatusError):
+		return StatusError
+	case string(StatusAborting):
+		return StatusAborting
+	default:
+		return StatusIdle
+	}
+}
+
+func applyAssistantStateUpdates(updates map[string]any, state AssistantState, updatedAt time.Time) map[string]any {
+	if updates == nil {
+		updates = map[string]any{}
+	}
+	normalized := normalizeAssistantState(state)
+	if normalized == AssistantStateNone {
+		updates["assistant_state"] = nil
+		updates["assistant_state_updated_at"] = nil
+		return updates
+	}
+	updates["assistant_state"] = string(normalized)
+	updates["assistant_state_updated_at"] = updatedAt
+	return updates
 }
 
 func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
@@ -285,9 +357,11 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		PermissionLevel:        string(normalizePermissionLevel(params.PermissionLevel)),
 		Cwd:                    cwd,
 		Status:                 string(StatusIdle),
+		AssistantState:         "",
 		HasUnread:              false,
 		ArchivedAt:             nil,
 		ActivityAt:             time.Now(),
+		AssistantStateUpdatedAt: nil,
 		SourceKind:             string(defaultSessionBackend(normalizeAgent(params.Agent))),
 		SyncState:              string(SyncStateMissing),
 		SourceCreatedAt:        nil,
@@ -544,6 +618,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 		return mapSessionRecord(record), nil
 	}
 
+	hadActiveRun := m.hasActiveRun(sessionID)
 	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
 		return SessionSummary{}, err
 	}
@@ -559,8 +634,9 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	if currentErr == nil {
 		record = current
 	}
-	if record.Status == string(StatusRunning) || record.Status == string(StatusAborting) {
+	if hadActiveRun || record.Status == string(StatusAborting) {
 		updates["status"] = string(StatusIdle)
+		updates = applyAssistantStateUpdates(updates, AssistantStateNone, now)
 	}
 
 	if err := m.updateRuntimeState(ctx, sessionID, updates); err != nil {
@@ -736,7 +812,14 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 	}
 
 	attachmentID := utils.NewID()
-	extension := filepath.Ext(fileHeader.Filename)
+	attachmentName := strings.TrimSpace(filepath.Base(fileHeader.Filename))
+	if attachmentName == "" {
+		attachmentName = defaultAttachmentStoredName(fileHeader.Header.Get("Content-Type"))
+	}
+	extension := filepath.Ext(attachmentName)
+	if extension == "" {
+		extension = attachmentExtensionFromMime(fileHeader.Header.Get("Content-Type"))
+	}
 	targetPath := m.store.attachmentPath(attachmentID, extension)
 	if err := os.WriteFile(targetPath, buffer.Bytes(), 0o644); err != nil {
 		return Attachment{}, err
@@ -744,7 +827,7 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 
 	attachment := Attachment{
 		ID:        attachmentID,
-		Name:      filepath.Base(fileHeader.Filename),
+		Name:      attachmentName,
 		Mime:      fileHeader.Header.Get("Content-Type"),
 		Size:      written,
 		Path:      targetPath,
@@ -752,6 +835,8 @@ func (m *Manager) SaveAttachment(fileHeader *multipart.FileHeader) (Attachment, 
 	}
 	if attachment.Mime == "" {
 		attachment.Mime = http.DetectContentType(buffer.Bytes())
+	} else if parsedMime, _, err := mime.ParseMediaType(attachment.Mime); err == nil && parsedMime != "" {
+		attachment.Mime = parsedMime
 	}
 
 	meta := attachmentMeta{
@@ -1101,7 +1186,6 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 		return fmt.Errorf("session is already running")
 	}
 
-	text = strings.TrimSpace(text)
 	attachments := make([]Attachment, 0, len(attachmentIDs))
 	for _, id := range attachmentIDs {
 		attachment, err := m.loadAttachment(strings.TrimSpace(id))
@@ -1110,9 +1194,11 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 		}
 		attachments = append(attachments, attachment)
 	}
-	if text == "" && len(attachments) == 0 {
+	baseText := stripManagedImagePlaceholders(text)
+	if baseText == "" && len(attachments) == 0 {
 		return fmt.Errorf("message is empty")
 	}
+	text = composeUserMessageText(baseText, len(attachments))
 
 	runID := utils.NewID()
 	userMessageID := utils.NewID()
@@ -1158,9 +1244,10 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 		"updated_at":      now,
 		"last_message_at": now,
 	}
+	updates = applyAssistantStateUpdates(updates, AssistantStateWorking, now)
 	titleChanged := false
 	if record.TitleAuto {
-		if autoTitle := deriveAutoTitleFromMessage(text); autoTitle != "" {
+		if autoTitle := deriveAutoTitleFromMessage(baseText); autoTitle != "" {
 			updates["title_auto"] = false
 			if strings.TrimSpace(record.Title) != autoTitle {
 				updates["title"] = autoTitle
@@ -1174,13 +1261,11 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 		Updates(updates).Error; err != nil {
 		return err
 	}
-	if titleChanged {
-		if err := m.broadcastSnapshot(ctx, sessionID); err != nil {
-			m.logger.Warn("failed to broadcast auto-renamed session title",
-				zap.String("sessionId", sessionID),
-				zap.Error(err),
-			)
-		}
+	m.broadcastSessionSummary(ctx, sessionID)
+	if titleChanged && m.logger != nil {
+		m.logger.Debug("auto-renamed web session title",
+			zap.String("sessionId", sessionID),
+		)
 	}
 
 	runCtx, cancel := context.WithCancel(context.Background())
@@ -1835,16 +1920,16 @@ func (m *Manager) updateRuntimeState(ctx context.Context, sessionID string, upda
 		Updates(updates).Error
 }
 
-func (m *Manager) completedRunStatus(ctx context.Context, session tables.WebSessionTable, run *activeRun) Status {
+func (m *Manager) completedRunState(ctx context.Context, session tables.WebSessionTable, run *activeRun) (Status, AssistantState) {
 	current := session
 	record, err := m.GetSession(ctx, session.ID)
 	if err == nil {
 		current = record
 	}
 	if effectiveWorkflowMode(current) == WorkflowModePlan && run.completedPlanToolSeen() {
-		return StatusWaitingApproval
+		return StatusRunning, AssistantStateWaitingPlanApproval
 	}
-	return StatusDone
+	return StatusDone, AssistantStateNone
 }
 
 func (m *Manager) updateFields(ctx context.Context, sessionID string, updates map[string]any) (SessionSummary, error) {
@@ -2260,6 +2345,14 @@ func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error
 	return nil
 }
 
+func (m *Manager) broadcastSessionSummary(ctx context.Context, sessionID string) {
+	summary := m.summaryForBroadcast(ctx, sessionID)
+	if summary == nil {
+		return
+	}
+	m.broadcast(newSessionFrame(sessionID, *summary))
+}
+
 func (c *client) send(frame wireFrame) error {
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
@@ -2325,10 +2418,10 @@ func chooseSessionActivityAt(record tables.WebSessionTable) time.Time {
 
 func attachmentPayloads(items []Attachment) []map[string]any {
 	result := make([]map[string]any, 0, len(items))
-	for _, item := range items {
+	for index, item := range items {
 		result = append(result, map[string]any{
 			"id":   item.ID,
-			"name": item.Name,
+			"name": normalizeAttachmentDisplayName(item.Name, index+1),
 			"mime": item.Mime,
 			"sz":   item.Size,
 		})

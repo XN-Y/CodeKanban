@@ -55,60 +55,72 @@
     </div>
     <div v-else class="projects-list">
       <TransitionGroup name="project-list" tag="div">
-        <div
+        <n-popover
           v-for="project in recentProjects"
           :key="project.id"
-          class="project-item"
-          :class="{ active: project.id === currentProjectId }"
-          @click="handleSelectProject(project.id)"
-          @contextmenu="handleContextMenu($event, project.id)"
+          trigger="hover"
+          placement="right-start"
+          :disabled="isMobile === true"
         >
-          <n-icon
-            v-if="projectStore.getProjectPriority(project.id)"
-            size="12"
-            :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
-            class="pin-icon-corner"
-            :title="t('project.unpinProject')"
-            @click.stop="handleUnpinProject(project.id)"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-              <path
-                fill="currentColor"
-                d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-              />
-            </svg>
-          </n-icon>
-          <div class="project-info">
-            <div class="project-name-row">
-              <n-tag
-                v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
-                size="small"
-                type="success"
-                :bordered="false"
-                class="terminal-tag"
-                :class="{ clickable: project.id === currentProjectId }"
-                @click.stop="handleTerminalTagClick(project.id)"
+          <template #trigger>
+            <div class="project-item-popover-trigger">
+              <div
+                class="project-item"
+                :class="{ active: project.id === currentProjectId }"
+                @click="handleSelectProject(project.id)"
+                @contextmenu="handleContextMenu($event, project.id)"
               >
-                <template #icon>
-                  <n-icon size="14"><TerminalOutline /></n-icon>
-                </template>
-                {{ terminalCounts.get(project.id) }}
-              </n-tag>
-              <n-text class="project-name" strong>{{ project.name }}</n-text>
+                <n-icon
+                  v-if="projectStore.getProjectPriority(project.id)"
+                  size="12"
+                  :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
+                  class="pin-icon-corner"
+                  :title="t('project.unpinProject')"
+                  @click.stop="handleUnpinProject(project.id)"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
+                    />
+                  </svg>
+                </n-icon>
+                <div class="project-info">
+                  <div class="project-name-row">
+                    <n-tag
+                      v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
+                      size="small"
+                      type="success"
+                      :bordered="false"
+                      class="terminal-tag"
+                      :class="{ clickable: project.id === currentProjectId }"
+                      @click.stop="handleTerminalTagClick(project.id)"
+                    >
+                      <template #icon>
+                        <n-icon size="14"><TerminalOutline /></n-icon>
+                      </template>
+                      {{ terminalCounts.get(project.id) }}
+                    </n-tag>
+                    <n-text class="project-name" strong>{{ project.name }}</n-text>
+                  </div>
+                  <n-text v-if="!project.hidePath" class="project-path" depth="3">
+                    {{ project.path }}
+                  </n-text>
+                </div>
+                <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+                    />
+                  </svg>
+                </n-icon>
+              </div>
             </div>
-            <n-text v-if="!project.hidePath" class="project-path" depth="3">
-              {{ project.path }}
-            </n-text>
-          </div>
-          <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-              <path
-                fill="currentColor"
-                d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
-              />
-            </svg>
-          </n-icon>
-        </div>
+          </template>
+
+          <ProjectAiStatusSummaryCard :project-id="project.id" compact />
+        </n-popover>
       </TransitionGroup>
     </div>
     <n-dropdown
@@ -200,6 +212,7 @@ import {
 } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
+import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSummaryCard.vue';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
@@ -527,6 +540,10 @@ onMounted(() => {
   min-height: 0;
   overflow-y: auto;
   padding: 8px 0;
+}
+
+.project-item-popover-trigger {
+  display: block;
 }
 
 .project-item {

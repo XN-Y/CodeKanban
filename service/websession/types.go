@@ -42,6 +42,16 @@ const (
 	StatusAborting        Status = "aborting"
 )
 
+type AssistantState string
+
+const (
+	AssistantStateNone                AssistantState = ""
+	AssistantStateWorking             AssistantState = "working"
+	AssistantStateWaitingApproval     AssistantState = "waiting_approval"
+	AssistantStateWaitingInput        AssistantState = "waiting_input"
+	AssistantStateWaitingPlanApproval AssistantState = "waiting_plan_approval"
+)
+
 type ReasoningEffort string
 
 const (
@@ -84,10 +94,12 @@ type SessionSummary struct {
 	Cwd             string          `json:"cwd"`
 	NativeSessionID *string         `json:"nativeSessionId,omitempty"`
 	Status          Status          `json:"status"`
+	AssistantState  AssistantState  `json:"assistantState,omitempty"`
 	HasUnread       bool            `json:"hasUnread"`
 	ArchivedAt      *time.Time      `json:"archivedAt,omitempty"`
 	ActivityAt      time.Time       `json:"activityAt"`
 	LastMessageAt   *time.Time      `json:"lastMessageAt,omitempty"`
+	AssistantStateUpdatedAt *time.Time `json:"assistantStateUpdatedAt,omitempty"`
 	SourceKind      string          `json:"sourceKind"`
 	SyncState       SyncState       `json:"syncState"`
 	SourceCreatedAt *time.Time      `json:"sourceCreatedAt,omitempty"`

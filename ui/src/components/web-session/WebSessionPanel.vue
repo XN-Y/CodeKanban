@@ -136,7 +136,11 @@
                   }}
                 </div>
 
-                <div v-if="showTimelineSyncLoading" class="timeline-loading-shell" aria-hidden="true">
+                <div
+                  v-if="showTimelineSyncLoading"
+                  class="timeline-loading-shell"
+                  aria-hidden="true"
+                >
                   <div
                     v-for="row in timelineLoadingRows"
                     :key="row"
@@ -571,6 +575,7 @@
                         :disabled="pendingUserInput.stale"
                         :show-password-on="question.isSecret ? 'mousedown' : undefined"
                         :placeholder="userInputPlaceholder(question)"
+                        @keydown="handleUserInputEnter"
                       />
                     </div>
                     <div class="approval-actions">
@@ -677,7 +682,7 @@
 
               <div v-if="draftAttachments.length > 0" class="draft-attachments">
                 <span
-                  v-for="attachment in draftAttachments"
+                  v-for="(attachment, index) in draftAttachments"
                   :key="attachment.id"
                   class="draft-attachment-pill"
                 >
@@ -691,10 +696,12 @@
                       <button
                         type="button"
                         class="attachment-preview-trigger"
-                        :title="attachment.name"
-                        @click="openAttachmentPreview(attachment)"
+                        :title="draftAttachmentDisplayName(attachment, index)"
+                        @click="openDraftAttachmentPreview(attachment, index)"
                       >
-                        <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
+                        <span class="attachment-preview-trigger-text">{{
+                          draftAttachmentDisplayName(attachment, index)
+                        }}</span>
                       </button>
                     </template>
                     <div class="attachment-hover-preview">
@@ -710,9 +717,11 @@
                     v-else
                     type="button"
                     class="attachment-preview-trigger is-static"
-                    :title="attachment.name"
+                    :title="draftAttachmentDisplayName(attachment, index)"
                   >
-                    <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
+                    <span class="attachment-preview-trigger-text">{{
+                      draftAttachmentDisplayName(attachment, index)
+                    }}</span>
                   </button>
                   <button
                     type="button"
@@ -1120,6 +1129,11 @@ import {
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
+import {
+  buildComposerTextWithImagePlaceholders,
+  resolveImageAttachmentDisplayName,
+  stripManagedComposerImagePlaceholders,
+} from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
@@ -1333,14 +1347,27 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   return session && !isDraftSession(session) ? session : null;
 });
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const composerRawText = computed(
+  () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text
+);
 const composerText = computed({
-  get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
+  get: () => {
+    const draft = webSessionStore.getDraft(props.projectId, currentDraftSessionId.value);
+    const rawText =
+      draft.attachments.length > 0 ? stripManagedComposerImagePlaceholders(draft.text) : draft.text;
+    return buildComposerTextWithImagePlaceholders(rawText, draft.attachments.length);
+  },
   set: value => {
     const sessionId = currentDraftSessionId.value;
     if (!sessionId) {
       return;
     }
-    webSessionStore.setDraftText(props.projectId, sessionId, value);
+    const attachmentCount = webSessionStore.getDraft(props.projectId, sessionId).attachments.length;
+    webSessionStore.setDraftText(
+      props.projectId,
+      sessionId,
+      attachmentCount > 0 ? stripManagedComposerImagePlaceholders(value) : value
+    );
   },
 });
 const liveBlocks = computed(() =>
@@ -1702,6 +1729,18 @@ const timelineLoadingRows = [1, 2, 3, 4, 5];
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
+function draftAttachmentDisplayName(attachment: { name: string }, index: number) {
+  return resolveImageAttachmentDisplayName(attachment.name, index + 1);
+}
+function openDraftAttachmentPreview(
+  attachment: { id: string; name: string; mime?: string },
+  index: number
+) {
+  openAttachmentPreview({
+    ...attachment,
+    name: draftAttachmentDisplayName(attachment, index),
+  });
+}
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
@@ -1710,7 +1749,7 @@ const currentSessionLatestEventSeq = computed(() =>
 );
 const isRunActive = computed(() => Boolean(currentSession.value?.status === 'running'));
 const hasDraftContent = computed(
-  () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
+  () => composerRawText.value.trim().length > 0 || draftAttachments.value.length > 0
 );
 const canSend = computed(() => !isRunActive.value && hasDraftContent.value);
 const canStageDuringRun = computed(() => isRunActive.value && hasDraftContent.value);
@@ -3034,7 +3073,10 @@ function buildLocalCommandExecutionDetail(block: WebSessionBlock): CommandExecut
     kind: block.tool.kind ?? '',
     title: block.tool.name,
     summary: getCompactToolSummary(block.tool),
-    count: Math.max(items.length, Number(block.tool.commandGroup?.count ?? items.length) || items.length),
+    count: Math.max(
+      items.length,
+      Number(block.tool.commandGroup?.count ?? items.length) || items.length
+    ),
     firstSeq: Number(block.tool.commandGroup?.firstSeq ?? 0),
     lastSeq: Number(block.tool.commandGroup?.lastSeq ?? 0),
     status: block.tool.status,
@@ -3872,7 +3914,7 @@ async function handleSubmit() {
       return;
     }
     const draftSessionId = currentDraftSessionId.value;
-    const draftText = composerText.value;
+    const draftText = composerRawText.value;
     const attachments = [...draftAttachments.value];
     const prepared = await prepareSessionForSend(session);
     session = prepared.session;
@@ -3904,7 +3946,7 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     const attachments = draftAttachments.value;
     await webSessionStore.sendMessage(
       currentRealSession.value.id,
-      composerText.value,
+      composerRawText.value,
       attachments.map(item => item.id),
       mode
     );
@@ -3927,6 +3969,21 @@ function handleComposerEnter(event: KeyboardEvent) {
   }
   event.preventDefault();
   void handleSubmit();
+}
+
+function handleUserInputEnter(event: KeyboardEvent) {
+  if (event.key !== 'Enter') {
+    return;
+  }
+  if (event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) {
+    return;
+  }
+  if (event.isComposing || event.keyCode === 229) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  void handleUserInputSubmit();
 }
 
 function pendingModeLabel(mode: WebSessionPendingInput['mode']) {
@@ -5656,13 +5713,12 @@ onBeforeUnmount(() => {
   height: 52px;
   border-radius: 16px;
   border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 0%,
-      color-mix(in srgb, var(--app-surface-color, #fff) 76%, #e3eaf5) 48%,
-      color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 100%
-    );
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 0%,
+    color-mix(in srgb, var(--app-surface-color, #fff) 76%, #e3eaf5) 48%,
+    color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 100%
+  );
   background-size: 220% 100%;
   animation: web-session-sync-loading 1.2s ease-in-out infinite;
   box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);

@@ -1,21 +1,25 @@
 <template>
   <div class="conversation-viewer">
     <n-spin :show="loading" class="conversation-content-wrap">
-      <n-virtual-list
-        v-if="displayMessages.length > 0"
-        ref="virtualListRef"
+      <div
+        v-if="renderMessages.length > 0"
+        ref="conversationContainerRef"
         class="conversation-container"
-        :items="displayMessages"
-        :item-size="140"
-        :item-resizable="true"
-        :items-style="virtualItemsStyle"
-        key-field="key"
-        @scroll="handleVirtualListScroll"
-        @resize="scheduleNavigationSync"
+        @scroll="handleConversationScroll"
       >
-        <template #default="{ item }">
+        <div
+          v-if="useVirtualizedView && virtualBeforeHeight > 0"
+          class="conversation-spacer"
+          :style="{ height: `${virtualBeforeHeight}px` }"
+        ></div>
+
+        <div
+          v-for="item in visibleRenderMessages"
+          :key="item.renderKey"
+          :ref="el => setMessageRef(el, item)"
+          class="message-shell"
+        >
           <div
-            :ref="el => setMessageRef(el, item.key)"
             class="message-item"
             :class="[
               item.message.role,
@@ -47,19 +51,18 @@
               </div>
             </div>
 
-            <pre
-              v-if="isRawMode(item.key) && getSynchronousRawContent(item.message)"
-              class="message-raw"
-            ><code>{{ getSynchronousRawContent(item.message) }}</code></pre>
+            <pre v-if="isRawMode(item.key) && item.rawContent" class="message-raw"><code>{{
+              item.rawContent
+            }}</code></pre>
             <div
-              v-else-if="getRenderedContent(item.message)"
+              v-else-if="item.renderedContent"
               class="message-content chat-markdown"
-              v-html="renderMarkdown(getRenderedContent(item.message))"
+              v-html="renderMarkdown(item.renderedContent)"
             ></div>
 
-            <div v-if="getDisplayAttachments(item).length" class="message-attachments">
+            <div v-if="item.attachments.length" class="message-attachments">
               <n-popover
-                v-for="attachment in getDisplayAttachments(item)"
+                v-for="attachment in item.attachments"
                 :key="attachment.id"
                 trigger="hover"
                 placement="bottom-start"
@@ -115,30 +118,29 @@
               </n-popover>
             </div>
 
-            <div
-              v-if="
-                isToolResult(item.message) &&
-                item.message.toolUseId &&
-                (item.message.hasMore || item.message.full)
-              "
-              class="tool-result-controls"
-            >
+            <div v-if="item.hasToolControls" class="tool-result-controls">
               <n-button
                 size="tiny"
                 quaternary
-                :loading="!!toolResultLoading[item.message.toolUseId]"
+                :loading="!!toolResultLoading[item.message.toolUseId || '']"
                 @click.stop="toggleToolResult(item.message)"
               >
                 {{
-                  isExpanded(item.message.toolUseId)
+                  isExpanded(item.message.toolUseId || '')
                     ? t('terminal.collapseToolResult')
                     : t('terminal.expandToolResult')
                 }}
               </n-button>
             </div>
           </div>
-        </template>
-      </n-virtual-list>
+        </div>
+
+        <div
+          v-if="useVirtualizedView && virtualAfterHeight > 0"
+          class="conversation-spacer"
+          :style="{ height: `${virtualAfterHeight}px` }"
+        ></div>
+      </div>
       <n-empty v-else-if="!loading" :description="emptyText" class="conversation-empty" />
     </n-spin>
 
@@ -254,10 +256,15 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTimeAgo } from '@vueuse/core';
-import { type VirtualListInst, useMessage } from 'naive-ui';
+import { useMessage } from 'naive-ui';
 import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
+import { useConversationVirtualizer } from '@/composables/useConversationVirtualizer';
 import { renderMarkdown } from '@/utils/markdown';
+import {
+  estimateConversationMessageHeight,
+  recordConversationMessageHeight,
+} from '@/utils/conversationHeightCache';
 
 export interface ConversationImageAttachment {
   id: string;
@@ -296,6 +303,17 @@ interface DisplayMessageItem {
   message: ConversationMessage;
 }
 
+interface RenderMessageItem extends DisplayMessageItem {
+  renderKey: string;
+  heightVariant: string;
+  renderedContent: string;
+  rawContent: string;
+  attachments: DisplayAttachment[];
+  imageCount: number;
+  hasToolControls: boolean;
+  estimatedHeight: number;
+}
+
 interface ImagePreviewState {
   status: 'idle' | 'loading' | 'loaded' | 'error';
   objectUrl?: string;
@@ -304,6 +322,9 @@ interface ImagePreviewState {
 interface DisplayAttachment extends ConversationImageAttachment {
   source: 'parsed' | 'placeholder';
 }
+
+const DIRECT_RENDER_LIMIT = 120;
+const MIN_MEASURED_MESSAGE_HEIGHT = 72;
 
 const props = withDefaults(
   defineProps<{
@@ -336,11 +357,7 @@ const { t } = useLocale();
 const message = useMessage();
 
 const showUserOnly = ref(false);
-const virtualListRef = ref<null | {
-  scrollTo?: (options: { key: string }) => void;
-  getScrollContainer?: () => HTMLElement | null;
-}>(null);
-const messageRefs = new Map<string, HTMLElement>();
+const conversationContainerRef = ref<HTMLElement | null>(null);
 const expandedToolResults = ref<Record<string, boolean>>({});
 const toolResultLoading = ref<Record<string, boolean>>({});
 const rawMode = ref<Record<string, boolean>>({});
@@ -352,11 +369,14 @@ const imagePreviewIndex = ref(0);
 
 const toolResultRequests = new Map<string, Promise<string>>();
 const imagePreviewRequests = new Map<string, Promise<void>>();
+const messageRefs = new Map<string, HTMLElement>();
+const renderKeyToElement = new Map<string, HTMLElement>();
+const observedRenderKeyByElement = new WeakMap<HTMLElement, string>();
+
 let navigationFrame = 0;
+let messageResizeObserver: ResizeObserver | null = null;
+
 const imagePlaceholderPattern = /\[Image #(\d+)\]/g;
-const virtualItemsStyle = {
-  padding: '18px 16px 12px 8px',
-};
 
 const displayMessages = computed<DisplayMessageItem[]>(() => {
   return props.messages
@@ -378,195 +398,12 @@ const userMessageIndexMap = computed(() => {
   return new Map(userMessageKeys.value.map((key, index) => [key, index]));
 });
 
-const navState = computed<ConversationViewerNavState>(() => {
-  const totalUserMessages = userMessageKeys.value.length;
-  if (totalUserMessages === 0) {
-    return {
-      currentUserPosition: 0,
-      totalUserMessages: 0,
-      hasPrev: false,
-      hasNext: false,
-    };
-  }
-
-  const currentIndex = activeUserMessageKey.value
-    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
-    : 0;
-
-  return {
-    currentUserPosition: currentIndex + 1,
-    totalUserMessages,
-    hasPrev: currentIndex > 0,
-    hasNext: currentIndex < totalUserMessages - 1,
-  };
-});
-
-const currentPreviewAttachment = computed(() => {
-  return imagePreviewImages.value[imagePreviewIndex.value] ?? null;
-});
-
-watch(
-  navState,
-  value => {
-    emit('nav-state-change', value);
-  },
-  { immediate: true, deep: true }
-);
-
-watch(
-  displayMessages,
-  async value => {
-    if (value.length === 0) {
-      activeUserMessageKey.value = null;
-      emit('nav-state-change', {
-        currentUserPosition: 0,
-        totalUserMessages: 0,
-        hasPrev: false,
-        hasNext: false,
-      });
-      return;
-    }
-    await nextTick();
-    scheduleNavigationSync();
-  },
-  { deep: true }
-);
-
-watch(
-  () => props.sessionInfo?.sessionId,
-  () => {
-    rawMode.value = {};
-    expandedToolResults.value = {};
-    toolResultLoading.value = {};
-    activeUserMessageKey.value = null;
-    cleanupPreviewCache();
-    imagePreviewVisible.value = false;
-    imagePreviewImages.value = [];
-    imagePreviewIndex.value = 0;
-  },
-  { immediate: true }
-);
-
-watch(showUserOnly, async () => {
-  await nextTick();
-  scheduleNavigationSync();
-});
-
-function setMessageRef(el: unknown, key: string) {
-  if (el) {
-    messageRefs.set(key, el as HTMLElement);
-    return;
-  }
-  messageRefs.delete(key);
-}
-
-function getScrollContainer(): HTMLElement | null {
-  return (
-    (
-      virtualListRef.value as unknown as { getScrollContainer?: () => HTMLElement | null }
-    )?.getScrollContainer?.() ?? null
-  );
-}
-
-function scheduleNavigationSync() {
-  if (navigationFrame) {
-    cancelAnimationFrame(navigationFrame);
-  }
-  navigationFrame = requestAnimationFrame(() => {
-    navigationFrame = 0;
-    syncActiveUserMessage();
-  });
-}
-
-function syncActiveUserMessage() {
-  const userKeys = userMessageKeys.value;
-  if (userKeys.length === 0) {
-    activeUserMessageKey.value = null;
-    return;
-  }
-
-  const container = getScrollContainer();
-  if (!container) {
-    activeUserMessageKey.value = userKeys[0];
-    return;
-  }
-
-  const containerTop = container.getBoundingClientRect().top;
-  let closestAbove: { key: string; offset: number } | null = null;
-  let closestBelow: { key: string; offset: number } | null = null;
-
-  for (const key of userKeys) {
-    const element = messageRefs.get(key);
-    if (!element) {
-      continue;
-    }
-    const offset = element.getBoundingClientRect().top - containerTop;
-    if (offset <= 16) {
-      if (!closestAbove || offset > closestAbove.offset) {
-        closestAbove = { key, offset };
-      }
-      continue;
-    }
-    if (!closestBelow || offset < closestBelow.offset) {
-      closestBelow = { key, offset };
-    }
-  }
-
-  activeUserMessageKey.value = closestAbove?.key ?? closestBelow?.key ?? userKeys[0];
-}
-
-function handleVirtualListScroll() {
-  scheduleNavigationSync();
-}
-
-function scrollToUserMessageByKey(targetKey: string) {
-  if (!targetKey) {
-    return;
-  }
-  (
-    virtualListRef.value as unknown as { scrollTo?: (options: { key: string }) => void }
-  )?.scrollTo?.({ key: targetKey });
-  activeUserMessageKey.value = targetKey;
-  void nextTick().then(() => {
-    scheduleNavigationSync();
-  });
-}
-
-function goToPrevUserMessage() {
-  const currentIndex = activeUserMessageKey.value
-    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
-    : 0;
-  if (currentIndex <= 0) {
-    return;
-  }
-  scrollToUserMessageByKey(userMessageKeys.value[currentIndex - 1]);
-}
-
-function goToNextUserMessage() {
-  const currentIndex = activeUserMessageKey.value
-    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
-    : 0;
-  if (currentIndex >= userMessageKeys.value.length - 1) {
-    return;
-  }
-  scrollToUserMessageByKey(userMessageKeys.value[currentIndex + 1]);
-}
-
-defineExpose({
-  goToPrevUserMessage,
-  goToNextUserMessage,
-  syncNavigationState: scheduleNavigationSync,
-});
-
-function formatTime(timestamp: string) {
-  if (props.useRelativeTime) {
-    return useTimeAgo(new Date(timestamp)).value;
-  }
-  return new Date(timestamp).toLocaleString();
-}
-
 function isToolResult(msg: ConversationMessage) {
   return msg.kind === 'tool_result' && !!msg.toolUseId;
+}
+
+function messageHasToolControls(msg: ConversationMessage) {
+  return isToolResult(msg) && !!msg.toolUseId && !!(msg.hasMore || msg.full);
 }
 
 function isExpanded(toolUseId: string) {
@@ -578,11 +415,9 @@ function isRawMode(key: string) {
 }
 
 function getRenderedContent(msg: ConversationMessage) {
-  const content =
-    isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full
-      ? msg.full
-      : msg.content;
-  return content;
+  return isToolResult(msg) && msg.toolUseId && isExpanded(msg.toolUseId) && msg.full
+    ? msg.full
+    : msg.content;
 }
 
 function getSynchronousRawContent(msg: ConversationMessage) {
@@ -637,6 +472,392 @@ function getDisplayAttachments(item: DisplayMessageItem): DisplayAttachment[] {
   return [...dedupedAttachments, ...placeholders];
 }
 
+function getHeightVariant(item: DisplayMessageItem) {
+  if (isRawMode(item.key)) {
+    return 'raw';
+  }
+  if (isToolResult(item.message)) {
+    return item.message.toolUseId && isExpanded(item.message.toolUseId)
+      ? 'tool-expanded'
+      : 'tool-collapsed';
+  }
+  return 'markdown';
+}
+
+const renderMessages = computed<RenderMessageItem[]>(() => {
+  const sessionId = props.sessionInfo?.sessionId;
+  return displayMessages.value.map(item => {
+    const renderedContent = getRenderedContent(item.message);
+    const rawContent = getSynchronousRawContent(item.message);
+    const attachments = getDisplayAttachments(item);
+    const heightVariant = getHeightVariant(item);
+    const hasToolControls = messageHasToolControls(item.message);
+    const estimateContent = heightVariant === 'raw' ? rawContent : renderedContent;
+
+    return {
+      ...item,
+      renderKey: `${item.key}:${heightVariant}`,
+      heightVariant,
+      renderedContent,
+      rawContent,
+      attachments,
+      imageCount: attachments.length,
+      hasToolControls,
+      estimatedHeight: estimateConversationMessageHeight({
+        sessionId,
+        sourceIndex: item.sourceIndex,
+        variant: heightVariant,
+        role: item.message.role,
+        kind: item.message.kind,
+        content: estimateContent,
+        imageCount: attachments.length,
+        hasToolControls,
+      }),
+    };
+  });
+});
+
+const renderMessageByRenderKey = computed(() => {
+  return new Map(renderMessages.value.map(item => [item.renderKey, item]));
+});
+
+const renderMessageIndexMap = computed(() => {
+  return new Map(renderMessages.value.map((item, index) => [item.key, index]));
+});
+
+const useVirtualizedView = computed(() => renderMessages.value.length > DIRECT_RENDER_LIMIT);
+
+const virtualizer = useConversationVirtualizer<RenderMessageItem>({
+  items: renderMessages,
+  containerRef: conversationContainerRef,
+  estimateHeight: item => item.estimatedHeight,
+  overscanPx: 720,
+});
+
+const virtualBeforeHeight = computed(() => {
+  return useVirtualizedView.value ? virtualizer.beforeHeight.value : 0;
+});
+
+const virtualAfterHeight = computed(() => {
+  return useVirtualizedView.value ? virtualizer.afterHeight.value : 0;
+});
+
+const visibleRenderMessages = computed(() => {
+  return useVirtualizedView.value
+    ? virtualizer.visibleItems.value.map(entry => entry.item)
+    : renderMessages.value;
+});
+
+const navState = computed<ConversationViewerNavState>(() => {
+  const totalUserMessages = userMessageKeys.value.length;
+  if (totalUserMessages === 0) {
+    return {
+      currentUserPosition: 0,
+      totalUserMessages: 0,
+      hasPrev: false,
+      hasNext: false,
+    };
+  }
+
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+
+  return {
+    currentUserPosition: currentIndex + 1,
+    totalUserMessages,
+    hasPrev: currentIndex > 0,
+    hasNext: currentIndex < totalUserMessages - 1,
+  };
+});
+
+const currentPreviewAttachment = computed(() => {
+  return imagePreviewImages.value[imagePreviewIndex.value] ?? null;
+});
+
+watch(
+  navState,
+  value => {
+    emit('nav-state-change', value);
+  },
+  { immediate: true, deep: true }
+);
+
+watch(
+  renderMessages,
+  async value => {
+    if (value.length === 0) {
+      activeUserMessageKey.value = null;
+      emit('nav-state-change', {
+        currentUserPosition: 0,
+        totalUserMessages: 0,
+        hasPrev: false,
+        hasNext: false,
+      });
+      return;
+    }
+    await nextTick();
+    virtualizer.syncScrollPosition();
+    scheduleNavigationSync();
+  },
+  { deep: true }
+);
+
+watch(
+  () => props.messages,
+  async () => {
+    await nextTick();
+    resetScrollToPrimaryMessage();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => props.sessionInfo?.sessionId,
+  () => {
+    rawMode.value = {};
+    expandedToolResults.value = {};
+    toolResultLoading.value = {};
+    activeUserMessageKey.value = null;
+    clearMessageElements();
+    cleanupPreviewCache();
+    imagePreviewVisible.value = false;
+    imagePreviewImages.value = [];
+    imagePreviewIndex.value = 0;
+  },
+  { immediate: true }
+);
+
+watch(showUserOnly, async () => {
+  await nextTick();
+  if (activeUserMessageKey.value && userMessageIndexMap.value.has(activeUserMessageKey.value)) {
+    scheduleNavigationSync();
+    return;
+  }
+  const firstKey = userMessageKeys.value[0];
+  if (firstKey) {
+    scrollToUserMessageByKey(firstKey);
+    return;
+  }
+  conversationContainerRef.value?.scrollTo({ top: 0, behavior: 'auto' });
+  activeUserMessageKey.value = null;
+});
+
+function ensureMessageResizeObserver() {
+  if (
+    messageResizeObserver ||
+    typeof window === 'undefined' ||
+    typeof ResizeObserver === 'undefined'
+  ) {
+    return;
+  }
+  messageResizeObserver = new ResizeObserver(entries => {
+    for (const entry of entries) {
+      const target = entry.target;
+      if (!(target instanceof HTMLElement)) {
+        continue;
+      }
+      const renderKey = observedRenderKeyByElement.get(target);
+      if (!renderKey) {
+        continue;
+      }
+      const item = renderMessageByRenderKey.value.get(renderKey);
+      if (!item) {
+        continue;
+      }
+      const measuredHeight = Math.ceil(
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height ?? 0
+      );
+      if (!Number.isFinite(measuredHeight) || measuredHeight < MIN_MEASURED_MESSAGE_HEIGHT) {
+        continue;
+      }
+
+      virtualizer.setMeasuredHeight(renderKey, measuredHeight);
+      recordConversationMessageHeight({
+        sessionId: props.sessionInfo?.sessionId,
+        sourceIndex: item.sourceIndex,
+        variant: item.heightVariant,
+        role: item.message.role,
+        kind: item.message.kind,
+        content: item.heightVariant === 'raw' ? item.rawContent : item.renderedContent,
+        imageCount: item.imageCount,
+        hasToolControls: item.hasToolControls,
+        height: measuredHeight,
+      });
+    }
+    scheduleNavigationSync();
+  });
+}
+
+function clearMessageElements() {
+  if (messageResizeObserver) {
+    renderKeyToElement.forEach(element => {
+      messageResizeObserver?.unobserve(element);
+    });
+  }
+  renderKeyToElement.clear();
+  messageRefs.clear();
+}
+
+function setMessageRef(el: unknown, item: RenderMessageItem) {
+  ensureMessageResizeObserver();
+
+  const previous = renderKeyToElement.get(item.renderKey);
+  if (previous && previous !== el) {
+    messageResizeObserver?.unobserve(previous);
+    renderKeyToElement.delete(item.renderKey);
+    if (messageRefs.get(item.key) === previous) {
+      messageRefs.delete(item.key);
+    }
+  }
+
+  if (!(el instanceof HTMLElement)) {
+    return;
+  }
+
+  renderKeyToElement.set(item.renderKey, el);
+  messageRefs.set(item.key, el);
+  observedRenderKeyByElement.set(el, item.renderKey);
+  messageResizeObserver?.unobserve(el);
+  messageResizeObserver?.observe(el);
+}
+
+function getScrollContainer() {
+  return conversationContainerRef.value;
+}
+
+function scheduleNavigationSync() {
+  if (navigationFrame) {
+    cancelAnimationFrame(navigationFrame);
+  }
+  navigationFrame = requestAnimationFrame(() => {
+    navigationFrame = 0;
+    syncActiveUserMessage();
+  });
+}
+
+function syncActiveUserMessage() {
+  const userKeys = userMessageKeys.value;
+  if (userKeys.length === 0) {
+    activeUserMessageKey.value = null;
+    return;
+  }
+
+  const container = getScrollContainer();
+  if (!container) {
+    activeUserMessageKey.value = userKeys[0];
+    return;
+  }
+
+  const containerTop = container.getBoundingClientRect().top;
+  let closestAbove: { key: string; offset: number } | null = null;
+  let closestBelow: { key: string; offset: number } | null = null;
+
+  for (const key of userKeys) {
+    const element = messageRefs.get(key);
+    if (!element) {
+      continue;
+    }
+    const offset = element.getBoundingClientRect().top - containerTop;
+    if (offset <= 16) {
+      if (!closestAbove || offset > closestAbove.offset) {
+        closestAbove = { key, offset };
+      }
+      continue;
+    }
+    if (!closestBelow || offset < closestBelow.offset) {
+      closestBelow = { key, offset };
+    }
+  }
+
+  activeUserMessageKey.value = closestAbove?.key ?? closestBelow?.key ?? userKeys[0];
+}
+
+function handleConversationScroll() {
+  virtualizer.syncScrollPosition();
+  scheduleNavigationSync();
+}
+
+async function resetScrollToPrimaryMessage() {
+  const container = conversationContainerRef.value;
+  if (container) {
+    container.scrollTo({ top: 0, behavior: 'auto' });
+  }
+  virtualizer.syncScrollPosition();
+
+  const firstUserKey = userMessageKeys.value[0];
+  if (!firstUserKey) {
+    activeUserMessageKey.value = null;
+    scheduleNavigationSync();
+    return;
+  }
+
+  await nextTick();
+  scrollToUserMessageByKey(firstUserKey);
+}
+
+function scrollToUserMessageByKey(targetKey: string, behavior: ScrollBehavior = 'auto') {
+  if (!targetKey) {
+    return;
+  }
+
+  const container = conversationContainerRef.value;
+  const element = messageRefs.get(targetKey);
+  if (container && element) {
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const targetTop = container.scrollTop + (elementRect.top - containerRect.top);
+    container.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior,
+    });
+    virtualizer.syncScrollPosition();
+  } else {
+    const targetIndex = renderMessageIndexMap.value.get(targetKey);
+    if (targetIndex !== undefined) {
+      virtualizer.scrollToIndex(targetIndex, behavior);
+    }
+  }
+
+  activeUserMessageKey.value = targetKey;
+  void nextTick().then(() => {
+    scheduleNavigationSync();
+  });
+}
+
+function goToPrevUserMessage() {
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+  if (currentIndex <= 0) {
+    return;
+  }
+  scrollToUserMessageByKey(userMessageKeys.value[currentIndex - 1], 'smooth');
+}
+
+function goToNextUserMessage() {
+  const currentIndex = activeUserMessageKey.value
+    ? (userMessageIndexMap.value.get(activeUserMessageKey.value) ?? 0)
+    : 0;
+  if (currentIndex >= userMessageKeys.value.length - 1) {
+    return;
+  }
+  scrollToUserMessageByKey(userMessageKeys.value[currentIndex + 1], 'smooth');
+}
+
+defineExpose({
+  goToPrevUserMessage,
+  goToNextUserMessage,
+  syncNavigationState: scheduleNavigationSync,
+});
+
+function formatTime(timestamp: string) {
+  if (props.useRelativeTime) {
+    return useTimeAgo(new Date(timestamp)).value;
+  }
+  return new Date(timestamp).toLocaleString();
+}
+
 function isAssistantActionLoading(msg: ConversationMessage) {
   return !!(msg.toolUseId && toolResultLoading.value[msg.toolUseId]);
 }
@@ -683,7 +904,7 @@ async function toggleToolResult(msg: ConversationMessage) {
   }
 }
 
-async function toggleRawMode(item: DisplayMessageItem) {
+async function toggleRawMode(item: RenderMessageItem) {
   const nextValue = !isRawMode(item.key);
   rawMode.value = { ...rawMode.value, [item.key]: nextValue };
   if (nextValue) {
@@ -752,12 +973,12 @@ function handleAttachmentPreviewToggle(attachment: ConversationImageAttachment, 
   }
 }
 
-function handleAttachmentClick(item: DisplayMessageItem, attachment: DisplayAttachment) {
+function handleAttachmentClick(item: RenderMessageItem, attachment: DisplayAttachment) {
   if (!attachment.previewable) {
     message.info(getAttachmentUnavailableReason(attachment));
     return;
   }
-  void openImagePreview(getDisplayAttachments(item), attachment.id);
+  void openImagePreview(item.attachments, attachment.id);
 }
 
 async function openImagePreview(images: ConversationImageAttachment[], attachmentId: string) {
@@ -807,6 +1028,8 @@ onBeforeUnmount(() => {
   if (navigationFrame) {
     cancelAnimationFrame(navigationFrame);
   }
+  clearMessageElements();
+  messageResizeObserver?.disconnect();
   cleanupPreviewCache();
 });
 </script>
@@ -827,15 +1050,26 @@ onBeforeUnmount(() => {
   height: 60vh;
   max-height: 60vh;
   min-height: 240px;
-  padding: 8px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px 16px 12px 8px;
+}
+
+.conversation-spacer {
+  width: 100%;
+  pointer-events: none;
 }
 
 .conversation-empty {
   height: 240px;
 }
 
+.message-shell {
+  box-sizing: border-box;
+  padding-bottom: 16px;
+}
+
 .message-item {
-  margin-bottom: 16px;
   padding: 12px 16px;
   border-radius: 8px;
   background: var(--n-color-embedded);

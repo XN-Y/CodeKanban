@@ -2,6 +2,7 @@ package websession
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -573,6 +574,143 @@ func TestSendMessageDoesNotOverrideManualTitle(t *testing.T) {
 	}
 	if record.TitleAuto {
 		t.Fatalf("expected manual title to remain non-auto")
+	}
+}
+
+func TestSendMessageAppendsImagePlaceholdersAndRenamesGenericAttachmentNames(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	first := seedAttachment(t, manager, "image.png", "image/png")
+	second := seedAttachment(t, manager, "pasted-image-20260409-101010.png", "image/png")
+	third := seedAttachment(t, manager, "diagram-final.png", "image/png")
+
+	if err := manager.SendMessage(
+		context.Background(),
+		created.ID,
+		"Review these screenshots",
+		[]string{first.ID, second.ID, third.ID},
+	); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+
+	messageEvent := findEventByType(rawEvents, "msg_u")
+	if messageEvent == nil {
+		t.Fatal("expected msg_u event to be recorded")
+	}
+	if got := fmt.Sprint(messageEvent.Payload["txt"]); got != "Review these screenshots\n\n[Image #1] [Image #2] [Image #3]" {
+		t.Fatalf("unexpected user message text %q", got)
+	}
+
+	names := attachmentNamesFromPayload(messageEvent.Payload["atts"])
+	expected := []string{"image 1", "image 2", "diagram-final.png"}
+	if len(names) != len(expected) {
+		t.Fatalf("expected %d attachment names, got %d (%v)", len(expected), len(names), names)
+	}
+	for index, expectedName := range expected {
+		if names[index] != expectedName {
+			t.Fatalf("expected attachment %d name %q, got %q", index, expectedName, names[index])
+		}
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Title != "Review these screenshots" {
+		t.Fatalf("expected title to be derived from user text, got %q", record.Title)
+	}
+}
+
+func TestSendMessageImageOnlyKeepsDefaultTitleAndStoresPlaceholderText(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	recordBefore, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+
+	first := seedAttachment(t, manager, "image.png", "image/png")
+	second := seedAttachment(t, manager, "clipboard-image.png", "image/png")
+
+	if err := manager.SendMessage(context.Background(), created.ID, "", []string{first.ID, second.ID}); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+
+	messageEvent := findEventByType(rawEvents, "msg_u")
+	if messageEvent == nil {
+		t.Fatal("expected msg_u event to be recorded")
+	}
+	if got := fmt.Sprint(messageEvent.Payload["txt"]); got != "[Image #1] [Image #2]" {
+		t.Fatalf("unexpected image-only message text %q", got)
+	}
+
+	names := attachmentNamesFromPayload(messageEvent.Payload["atts"])
+	expected := []string{"image 1", "image 2"}
+	for index, expectedName := range expected {
+		if index >= len(names) || names[index] != expectedName {
+			t.Fatalf("expected attachment %d name %q, got %v", index, expectedName, names)
+		}
+	}
+
+	recordAfter, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if recordAfter.Title != recordBefore.Title {
+		t.Fatalf("expected default title %q to be preserved, got %q", recordBefore.Title, recordAfter.Title)
+	}
+	if !recordAfter.TitleAuto {
+		t.Fatalf("expected image-only message to keep auto title enabled")
 	}
 }
 
@@ -1481,6 +1619,72 @@ func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *
 		t.Fatalf("seed web session failed: %v", err)
 	}
 	return session
+}
+
+func seedAttachment(t *testing.T, manager *Manager, name, mimeType string) Attachment {
+	t.Helper()
+
+	id := fmt.Sprintf("att_%d", time.Now().UnixNano())
+	extension := filepath.Ext(name)
+	if extension == "" {
+		extension = attachmentExtensionFromMime(mimeType)
+	}
+	path := manager.store.attachmentPath(id, extension)
+	if err := os.WriteFile(path, []byte("fake-image"), 0o644); err != nil {
+		t.Fatalf("write attachment payload failed: %v", err)
+	}
+
+	attachment := Attachment{
+		ID:        id,
+		Name:      name,
+		Mime:      mimeType,
+		Size:      int64(len("fake-image")),
+		Path:      path,
+		CreatedAt: time.Now(),
+	}
+
+	metaBytes, err := json.Marshal(attachmentMeta{
+		ID:        attachment.ID,
+		Name:      attachment.Name,
+		Mime:      attachment.Mime,
+		Size:      attachment.Size,
+		Path:      attachment.Path,
+		CreatedAt: attachment.CreatedAt,
+	})
+	if err != nil {
+		t.Fatalf("marshal attachment meta failed: %v", err)
+	}
+	if err := os.WriteFile(manager.store.attachmentPath(id, ".json"), metaBytes, 0o644); err != nil {
+		t.Fatalf("write attachment meta failed: %v", err)
+	}
+
+	return attachment
+}
+
+func findEventByType(events []Event, eventType string) *Event {
+	for index := range events {
+		if events[index].Type == eventType {
+			return &events[index]
+		}
+	}
+	return nil
+}
+
+func attachmentNamesFromPayload(value any) []string {
+	items, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		record, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		names = append(names, fmt.Sprint(record["name"]))
+	}
+	return names
 }
 
 func writeFakeCodexCLI(t *testing.T) string {

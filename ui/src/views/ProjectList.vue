@@ -201,27 +201,7 @@
             </div>
           </template>
 
-          <div class="project-status-popover">
-            <div class="project-status-popover-title">{{ t('project.aiStatusSummary') }}</div>
-            <div class="project-status-row">
-              <span>{{ t('project.aiStatusWorking') }}</span>
-              <n-tag size="small" :bordered="false">{{
-                getProjectStatusSummary(project.id).working
-              }}</n-tag>
-            </div>
-            <div class="project-status-row">
-              <span>{{ t('project.aiStatusBlocking') }}</span>
-              <n-tag size="small" :bordered="false" type="warning">{{
-                getProjectStatusSummary(project.id).blocking
-              }}</n-tag>
-            </div>
-            <div class="project-status-row">
-              <span>{{ t('project.aiStatusUnreadCompleted') }}</span>
-              <n-tag size="small" :bordered="false" type="success">{{
-                getProjectStatusSummary(project.id).unreadCompleted
-              }}</n-tag>
-            </div>
-          </div>
+          <ProjectAiStatusSummaryCard :project-id="project.id" />
         </n-popover>
       </transition-group>
       <div v-else class="empty-container">
@@ -292,6 +272,7 @@ import {
 } from '@vicons/ionicons5';
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
+import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSummaryCard.vue';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { useProjectStore } from '@/stores/project';
@@ -373,10 +354,6 @@ const terminalCounts = terminalStore.terminalCounts;
 function hasProjectNotifications(projectId: string): boolean {
   const summary = getProjectSummary(projectId);
   return summary.blocking > 0 || summary.unreadCompleted > 0;
-}
-
-function getProjectStatusSummary(projectId: string) {
-  return getProjectSummary(projectId);
 }
 
 // 使用 useReq 定义优先级更新请求
@@ -738,26 +715,6 @@ function getPriorityLabel(priority: number): string {
 
 .path-text {
   margin-left: 8px;
-}
-
-.project-status-popover {
-  min-width: 180px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.project-status-popover-title {
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.project-status-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  font-size: 13px;
 }
 
 /* ========================================
