@@ -34,11 +34,12 @@ const (
 type Status string
 
 const (
-	StatusIdle     Status = "idle"
-	StatusRunning  Status = "running"
-	StatusDone     Status = "done"
-	StatusError    Status = "err"
-	StatusAborting Status = "aborting"
+	StatusIdle            Status = "idle"
+	StatusRunning         Status = "running"
+	StatusWaitingApproval Status = "waiting_approval"
+	StatusDone            Status = "done"
+	StatusError           Status = "err"
+	StatusAborting        Status = "aborting"
 )
 
 type ReasoningEffort string
@@ -74,10 +75,19 @@ type SessionSummary struct {
 	NativeSessionID *string         `json:"nativeSessionId,omitempty"`
 	Status          Status          `json:"status"`
 	HasUnread       bool            `json:"hasUnread"`
+	ArchivedAt      *time.Time      `json:"archivedAt,omitempty"`
+	ActivityAt      time.Time       `json:"activityAt"`
 	LastMessageAt   *time.Time      `json:"lastMessageAt,omitempty"`
 	CreatedAt       time.Time       `json:"createdAt"`
 	UpdatedAt       time.Time       `json:"updatedAt"`
 	Usage           Usage           `json:"usage"`
+}
+
+type ArchivedQueryResult struct {
+	Items      []SessionSummary `json:"items"`
+	Total      int              `json:"total"`
+	HasMore    bool             `json:"hasMore"`
+	NextOffset int              `json:"nextOffset"`
 }
 
 type Attachment struct {

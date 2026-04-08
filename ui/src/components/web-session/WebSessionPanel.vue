@@ -57,7 +57,7 @@
                 size="small"
                 :theme-overrides="tabsThemeOverrides"
                 @update:value="handleSessionSelect"
-                @close="handleDeleteSession"
+                @close="handleArchiveSession"
               >
                 <n-tab-pane
                   v-for="session in sessions"
@@ -77,7 +77,7 @@
                       <span
                         class="ai-status-pill"
                         :class="[
-                          `state-${getSessionAssistantStateClass(session)}`,
+                          `state-${getSessionPillStateClass(session)}`,
                           getSessionPillSizeClass(),
                         ]"
                         :title="getSessionStatusTooltip(session)"
@@ -800,71 +800,165 @@
                   {{ t('webSession.crossProjectSessions') }}
                 </div>
               </div>
-              <span class="session-sidebar-count">{{ crossProjectSessions.length }}</span>
+              <span class="session-sidebar-count">{{
+                crossProjectSessions.length + archivedSidebarMeta.total
+              }}</span>
             </div>
 
-            <div v-if="crossProjectSessions.length === 0" class="session-sidebar-empty">
+            <div
+              v-if="crossProjectSessions.length === 0 && crossProjectArchivedSessions.length === 0"
+              class="session-sidebar-empty"
+            >
               {{ t('webSession.emptyTitle') }}
             </div>
 
             <div v-else class="session-sidebar-list">
-              <button
-                v-for="item in crossProjectSessions"
-                :key="`${item.projectId}:${item.session.id}`"
-                type="button"
-                class="session-sidebar-item"
-                :class="[
-                  'session-sidebar-row',
-                  ...getSidebarSessionClasses(item),
-                  { 'is-active': item.isCurrent },
-                ]"
-                :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
-                :title="`${item.projectName} · ${item.session.title}${getSidebarSessionSubtitle(item) ? ` · ${getSidebarSessionSubtitle(item)}` : ''}`"
-                @click="handleSidebarSessionSelect(item)"
-              >
-                <div class="session-sidebar-main">
-                  <div class="session-sidebar-title-line">
+              <div class="session-sidebar-section">
+                <div class="session-sidebar-section-header">
+                  <span>{{ t('webSession.currentSessions') }}</span>
+                  <span class="session-sidebar-section-count">{{
+                    crossProjectSessions.length
+                  }}</span>
+                </div>
+                <div v-if="crossProjectSessions.length === 0" class="session-sidebar-section-empty">
+                  {{ t('webSession.currentSessionsEmpty') }}
+                </div>
+                <button
+                  v-for="item in crossProjectSessions"
+                  :key="`current:${item.projectId}:${item.session.id}`"
+                  type="button"
+                  class="session-sidebar-item"
+                  :class="[
+                    'session-sidebar-row',
+                    ...getSidebarSessionClasses(item),
+                    { 'is-active': item.isCurrent },
+                  ]"
+                  :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
+                  :title="`${item.projectName} · ${item.session.title}${getSidebarSessionSubtitle(item) ? ` · ${getSidebarSessionSubtitle(item)}` : ''}`"
+                  @click="handleSidebarSessionSelect(item)"
+                >
+                  <div class="session-sidebar-main">
+                    <div class="session-sidebar-title-line">
+                      <span
+                        class="session-sidebar-agent-icon"
+                        v-html="getSessionAssistantIcon(item.session)"
+                      ></span>
+                      <span class="session-sidebar-item-title">{{ item.session.title }}</span>
+                      <span
+                        v-if="getSidebarSessionSubtitle(item)"
+                        class="session-sidebar-state-text"
+                      >
+                        · {{ getSidebarSessionSubtitle(item) }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="session-sidebar-actions">
                     <span
-                      class="session-sidebar-agent-icon"
-                      v-html="getSessionAssistantIcon(item.session)"
-                    ></span>
-                    <span class="session-sidebar-item-title">{{ item.session.title }}</span>
-                    <span v-if="getSidebarSessionSubtitle(item)" class="session-sidebar-state-text">
-                      · {{ getSidebarSessionSubtitle(item) }}
+                      v-if="item.projectIndex"
+                      class="project-index-badge session-project-badge"
+                      :class="{ 'is-single-project': isSingleSidebarProject }"
+                      :style="{ '--badge-color': item.projectIndex.color }"
+                    >
+                      {{ item.projectIndex.index }}
+                    </span>
+                    <span
+                      class="session-current-indicator"
+                      :class="{ 'is-hidden': !item.isCurrent }"
+                      :title="t('terminal.currentActiveSession')"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2.5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                        <circle cx="12" cy="12" r="3"></circle>
+                      </svg>
                     </span>
                   </div>
-                </div>
+                </button>
+              </div>
 
-                <div class="session-sidebar-actions">
-                  <span
-                    v-if="item.projectIndex"
-                    class="project-index-badge session-project-badge"
-                    :class="{ 'is-single-project': isSingleSidebarProject }"
-                    :style="{ '--badge-color': item.projectIndex.color }"
-                  >
-                    {{ item.projectIndex.index }}
-                  </span>
-                  <span
-                    class="session-current-indicator"
-                    :class="{ 'is-hidden': !item.isCurrent }"
-                    :title="t('terminal.currentActiveSession')"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2.5"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                      <circle cx="12" cy="12" r="3"></circle>
-                    </svg>
-                  </span>
+              <div class="session-sidebar-section">
+                <div class="session-sidebar-section-header">
+                  <span>{{ t('webSession.archivedSessions') }}</span>
+                  <span class="session-sidebar-section-count">{{ archivedSidebarMeta.total }}</span>
                 </div>
-              </button>
+                <div
+                  v-if="crossProjectArchivedSessions.length === 0 && !archivedSidebarMeta.loading"
+                  class="session-sidebar-section-empty"
+                >
+                  {{ t('webSession.archivedSessionsEmpty') }}
+                </div>
+                <div
+                  v-if="archivedSidebarMeta.loading && crossProjectArchivedSessions.length === 0"
+                  class="session-sidebar-section-empty"
+                >
+                  {{ t('common.loading') }}
+                </div>
+                <button
+                  v-for="item in crossProjectArchivedSessions"
+                  :key="`archived:${item.projectId}:${item.session.id}`"
+                  type="button"
+                  class="session-sidebar-item"
+                  :class="[
+                    'session-sidebar-row',
+                    'is-archived',
+                    ...getSidebarSessionClasses(item),
+                    { 'is-active': item.isCurrent },
+                  ]"
+                  :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
+                  :title="`${item.projectName} · ${item.session.title}${getSidebarSessionSubtitle(item) ? ` · ${getSidebarSessionSubtitle(item)}` : ''}`"
+                  @click="handleArchivedSidebarSessionSelect(item)"
+                >
+                  <div class="session-sidebar-main">
+                    <div class="session-sidebar-title-line">
+                      <span
+                        class="session-sidebar-agent-icon"
+                        v-html="getSessionAssistantIcon(item.session)"
+                      ></span>
+                      <span class="session-sidebar-item-title">{{ item.session.title }}</span>
+                      <span
+                        v-if="getSidebarSessionSubtitle(item)"
+                        class="session-sidebar-state-text"
+                      >
+                        · {{ getSidebarSessionSubtitle(item) }}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="session-sidebar-actions">
+                    <span
+                      v-if="item.projectIndex"
+                      class="project-index-badge session-project-badge"
+                      :class="{ 'is-single-project': isSingleSidebarProject }"
+                      :style="{ '--badge-color': item.projectIndex.color }"
+                    >
+                      {{ item.projectIndex.index }}
+                    </span>
+                    <span class="session-archived-pill">{{ t('webSession.archivedBadge') }}</span>
+                  </div>
+                </button>
+                <button
+                  v-if="archivedSidebarMeta.hasMore"
+                  type="button"
+                  class="session-sidebar-load-more"
+                  :disabled="archivedSidebarMeta.loading"
+                  @click="handleLoadMoreArchived"
+                >
+                  {{
+                    archivedSidebarMeta.loading
+                      ? t('common.loading')
+                      : t('webSession.loadMoreArchived')
+                  }}
+                </button>
+              </div>
             </div>
           </aside>
         </div>
@@ -1062,7 +1156,14 @@ type DraftSessionTab = WebSessionSummary & {
   isDraft: true;
 };
 
-type SessionTab = (WebSessionSummary & { isDraft?: false }) | DraftSessionTab;
+type ArchivedPreviewSessionTab = WebSessionSummary & {
+  isArchivedPreview: true;
+};
+
+type SessionTab =
+  | (WebSessionSummary & { isDraft?: false; isArchivedPreview?: false })
+  | DraftSessionTab
+  | ArchivedPreviewSessionTab;
 
 type InlinePlanChoiceOption = {
   label: string;
@@ -1104,6 +1205,12 @@ type CommandExecutionDetail = {
 
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
+}
+
+function isArchivedPreviewSession(
+  session: SessionTab | null | undefined
+): session is ArchivedPreviewSessionTab {
+  return Boolean(session && 'isArchivedPreview' in session && session.isArchivedPreview);
 }
 
 const webSessionStore = useWebSessionStore();
@@ -1185,6 +1292,7 @@ const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
 const draftSessions = ref<DraftSessionTab[]>([]);
 const activeDraftSessionId = ref('');
+const archivedPreviewSession = ref<ArchivedPreviewSessionTab | null>(null);
 
 const realSessions = computed<SessionTab[]>(() =>
   webSessionStore.getSessions(props.projectId).map(session => ({
@@ -1192,10 +1300,17 @@ const realSessions = computed<SessionTab[]>(() =>
     isDraft: false as const,
   }))
 );
-const sessions = computed<SessionTab[]>(() => [...realSessions.value, ...draftSessions.value]);
+const sessions = computed<SessionTab[]>(() => [
+  ...realSessions.value,
+  ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
+  ...draftSessions.value,
+]);
 const currentSession = computed<SessionTab | null>(() => {
   if (activeDraftSessionId.value) {
     return draftSessions.value.find(session => session.id === activeDraftSessionId.value) ?? null;
+  }
+  if (archivedPreviewSession.value) {
+    return archivedPreviewSession.value;
   }
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
   return realSessions.value.find(session => session.id === activeRealId) ?? null;
@@ -1516,9 +1631,19 @@ const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
     })),
   };
 });
+const isPlanWaitingApprovalState = computed(
+  () =>
+    liveState.value.phase === 'waiting_approval' &&
+    !pendingApproval.value &&
+    Boolean(latestPlanToolId.value) &&
+    !hasUserMessageAfterLatestPlan.value
+);
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
     return true;
+  }
+  if (isPlanWaitingApprovalState.value) {
+    return false;
   }
   if (liveState.value.phase === 'idle') {
     return false;
@@ -1566,7 +1691,7 @@ const composerHint = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.composerHintRecovered');
   }
-  if (pendingApproval.value) {
+  if (pendingApproval.value || liveState.value.phase === 'waiting_approval') {
     return t('webSession.composerHintApproval');
   }
   if (pendingUserInput.value) {
@@ -1612,6 +1737,9 @@ const liveStateDetail = computed(() => {
   }
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
+  }
+  if (liveState.value.phase === 'waiting_approval') {
+    return t('webSession.liveWaitingApprovalDetail');
   }
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
@@ -1701,6 +1829,14 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     label: t('common.edit'),
     key: 'rename',
     disabled: !contextMenuSession.value,
+  },
+  {
+    label: t('webSession.archiveAction'),
+    key: 'archive',
+    disabled:
+      !contextMenuSession.value ||
+      isDraftSession(contextMenuSession.value) ||
+      isArchivedPreviewSession(contextMenuSession.value),
   },
   {
     label: t('common.delete'),
@@ -1830,6 +1966,11 @@ function normalizeDraftSession(
     nativeSessionId: null,
     status: 'idle',
     hasUnread: false,
+    archivedAt: null,
+    activityAt:
+      typeof session.activityAt === 'string' && session.activityAt.trim()
+        ? session.activityAt
+        : nowIso,
     lastMessageAt: null,
     createdAt:
       typeof session.createdAt === 'string' && session.createdAt.trim()
@@ -1968,6 +2109,8 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     nativeSessionId: null,
     status: 'idle',
     hasUnread: false,
+    archivedAt: null,
+    activityAt: nowIso,
     lastMessageAt: null,
     createdAt: nowIso,
     updatedAt: nowIso,
@@ -1985,10 +2128,28 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
 }
 
 function ensureDefaultDraftSession() {
-  if (realSessions.value.length > 0 || draftSessions.value.length > 0) {
+  if (
+    realSessions.value.length > 0 ||
+    draftSessions.value.length > 0 ||
+    archivedPreviewSession.value
+  ) {
     return;
   }
   createDraftSession();
+}
+
+function clearArchivedPreviewSession() {
+  archivedPreviewSession.value = null;
+}
+
+async function openArchivedPreviewSession(session: WebSessionSummary) {
+  clearArchivedPreviewSession();
+  replaceDraftSessionState(draftSessions.value, '');
+  archivedPreviewSession.value = {
+    ...session,
+    isArchivedPreview: true,
+  };
+  await webSessionStore.refreshSessionSnapshot(session.id);
 }
 
 function activateRealSession(sessionId: string, connect = true) {
@@ -1996,6 +2157,7 @@ function activateRealSession(sessionId: string, connect = true) {
   if (!targetSession) {
     return false;
   }
+  clearArchivedPreviewSession();
   replaceDraftSessionState(draftSessions.value, '');
   if (connect) {
     void webSessionStore.ensureSessionConnected(props.projectId, targetSession.id);
@@ -2035,7 +2197,9 @@ function removeDraftSession(
 }
 
 function getSessionActivityTimestamp(session: WebSessionSummary) {
-  return parseTimestamp(session.lastMessageAt || session.updatedAt || session.createdAt);
+  return parseTimestamp(
+    session.activityAt || session.lastMessageAt || session.updatedAt || session.createdAt
+  );
 }
 
 function markSessionViewed(sessionId?: string) {
@@ -2094,8 +2258,36 @@ type CrossProjectSessionItem = {
   projectIndex?: { index: number; color: string };
 };
 
+function withProjectIndexes(items: CrossProjectSessionItem[]) {
+  const presentProjectIds = new Set(items.map(item => item.projectId).filter(Boolean));
+  const projectIds: string[] = [];
+  projectStore.projects.forEach(project => {
+    if (project.id && presentProjectIds.has(project.id)) {
+      projectIds.push(project.id);
+    }
+  });
+  items.forEach(item => {
+    if (item.projectId && !projectIds.includes(item.projectId)) {
+      projectIds.push(item.projectId);
+    }
+  });
+
+  const projectIndex = new Map<string, { index: number; color: string }>();
+  projectIds.forEach((projectId, idx) => {
+    projectIndex.set(projectId, {
+      index: idx + 1,
+      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
+    });
+  });
+
+  return items.map(item => ({
+    ...item,
+    projectIndex: projectIndex.get(item.projectId),
+  }));
+}
+
 const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
-  const rawItems: Omit<CrossProjectSessionItem, 'projectIndex'>[] = [];
+  const rawItems: CrossProjectSessionItem[] = [];
   sidebarProjectIdsToLoad.value.forEach(projectId => {
     webSessionStore.getSessions(projectId).forEach(session => {
       rawItems.push({
@@ -2129,35 +2321,30 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
     return left.session.id.localeCompare(right.session.id);
   });
 
-  const presentProjectIds = new Set(sorted.map(item => item.projectId).filter(Boolean));
-  const projectIds: string[] = [];
-  projectStore.projects.forEach(project => {
-    if (project.id && presentProjectIds.has(project.id)) {
-      projectIds.push(project.id);
-    }
-  });
-  sorted.forEach(item => {
-    if (item.projectId && !projectIds.includes(item.projectId)) {
-      projectIds.push(item.projectId);
-    }
-  });
-
-  const projectIndex = new Map<string, { index: number; color: string }>();
-  projectIds.forEach((projectId, idx) => {
-    projectIndex.set(projectId, {
-      index: idx + 1,
-      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
-    });
-  });
-
-  return sorted.map(item => ({
-    ...item,
-    projectIndex: projectIndex.get(item.projectId),
-  }));
+  return withProjectIndexes(sorted);
 });
 
+const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
+  const items = webSessionStore.getArchivedSessions(sidebarProjectIdsToLoad.value).map(session => ({
+    session,
+    projectId: session.projectId,
+    projectName: getProjectName(session.projectId),
+    activityAt: getSessionActivityTimestamp(session),
+    isCurrent: Boolean(archivedPreviewSession.value?.id === session.id),
+  }));
+  return withProjectIndexes(items);
+});
+
+const archivedSidebarMeta = computed(() =>
+  webSessionStore.getArchivedMeta(sidebarProjectIdsToLoad.value)
+);
+
 const isSingleSidebarProject = computed(() => {
-  const ids = new Set(crossProjectSessions.value.map(item => item.projectId).filter(Boolean));
+  const ids = new Set(
+    [...crossProjectSessions.value, ...crossProjectArchivedSessions.value]
+      .map(item => item.projectId)
+      .filter(Boolean)
+  );
   return ids.size <= 1;
 });
 
@@ -2517,7 +2704,11 @@ function formatElapsedDuration(startedAt: number, endedAt: number) {
 }
 
 function getLiveTimeText(state: WebSessionLiveState) {
-  if (typeof state.startedAt === 'number' && Number.isFinite(state.startedAt) && state.startedAt > 0) {
+  if (
+    typeof state.startedAt === 'number' &&
+    Number.isFinite(state.startedAt) &&
+    state.startedAt > 0
+  ) {
     const endedAt = state.running ? liveStateClockMs.value : state.updatedAt;
     return formatElapsedDuration(state.startedAt, endedAt);
   }
@@ -2525,7 +2716,11 @@ function getLiveTimeText(state: WebSessionLiveState) {
 }
 
 function getLiveTimeTooltip(state: WebSessionLiveState) {
-  if (typeof state.startedAt === 'number' && Number.isFinite(state.startedAt) && state.startedAt > 0) {
+  if (
+    typeof state.startedAt === 'number' &&
+    Number.isFinite(state.startedAt) &&
+    state.startedAt > 0
+  ) {
     return formatDateTime(state.startedAt);
   }
   return formatDateTime(state.updatedAt);
@@ -2724,7 +2919,7 @@ async function openCommandExecutionDetail(tool: NonNullable<WebSessionBlock['too
         .Get<{
           item?: CommandExecutionDetail;
         }>(
-          `/projects/${encodeURIComponent(props.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`,
+          `/projects/${encodeURIComponent(currentRealSession.value.projectId)}/web-sessions/${encodeURIComponent(currentRealSession.value.id)}/command-groups/${encodeURIComponent(groupId)}`,
           { cacheFor: 0 }
         )
         .send()) ?? {};
@@ -2947,6 +3142,7 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
+  clearArchivedPreviewSession();
   const restoredDrafts = loadPersistedDraftSessions(projectId);
   const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
   const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
@@ -2981,13 +3177,19 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   showMobileTabSelector.value = false;
+  if (archivedPreviewSession.value?.id === sessionId) {
+    scrollToBottom(true);
+    return;
+  }
   const draft = draftSessions.value.find(session => session.id === sessionId);
   if (draft) {
+    clearArchivedPreviewSession();
     replaceDraftSessionState(draftSessions.value, draft.id);
     webSessionStore.setActiveSession(props.projectId, '');
     scrollToBottom(true);
     return;
   }
+  clearArchivedPreviewSession();
   replaceDraftSessionState(draftSessions.value, '');
   await webSessionStore.ensureSessionConnected(props.projectId, sessionId);
   scrollToBottom(true);
@@ -3003,6 +3205,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       scrollToBottom(true);
       return;
     }
+    clearArchivedPreviewSession();
     await webSessionStore.ensureSessionConnected(item.projectId, sessionId);
     if (item.projectId !== props.projectId) {
       projectStore.addRecentProject(item.projectId);
@@ -3014,6 +3217,29 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
     }
     replaceDraftSessionState(draftSessions.value, '');
     scrollToBottom(true);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem) {
+  if (!item.session.id) {
+    return;
+  }
+  try {
+    await openArchivedPreviewSession(item.session);
+    scrollToBottom(true);
+  } catch (error) {
+    clearArchivedPreviewSession();
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleLoadMoreArchived() {
+  try {
+    await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
+      limit: 20,
+    });
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -3102,6 +3328,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
+    clearArchivedPreviewSession();
     scrollToBottom(true);
     return session;
   } catch (error) {
@@ -3111,6 +3338,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  clearArchivedPreviewSession();
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
@@ -3169,7 +3397,13 @@ async function handleRenameSession(sessionId: string) {
         return true;
       }
       try {
-        await webSessionStore.renameSession(props.projectId, sessionId, nextTitle);
+        await webSessionStore.renameSession(session.projectId, sessionId, nextTitle);
+        if (isArchivedPreviewSession(session) && archivedPreviewSession.value?.id === session.id) {
+          archivedPreviewSession.value = {
+            ...archivedPreviewSession.value,
+            title: nextTitle,
+          };
+        }
         message.success(t('webSession.renameSuccess'));
         return true;
       } catch (error) {
@@ -3180,7 +3414,14 @@ async function handleRenameSession(sessionId: string) {
   });
 }
 
-function handleDeleteSession(sessionId: string) {
+async function refreshArchivedSidebar() {
+  await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
+    reset: true,
+    limit: 20,
+  });
+}
+
+function handleArchiveSession(sessionId: string) {
   const session = sessions.value.find(item => item.id === sessionId);
   if (!session) {
     return;
@@ -3188,6 +3429,10 @@ function handleDeleteSession(sessionId: string) {
 
   if (isDraftSession(session)) {
     removeDraftSession(sessionId);
+    return;
+  }
+  if (isArchivedPreviewSession(session)) {
+    clearArchivedPreviewSession();
     return;
   }
 
@@ -3202,17 +3447,48 @@ function handleDeleteSession(sessionId: string) {
         ]),
       positiveText: t('webSession.confirmCloseButton'),
       negativeText: t('common.cancel'),
-      onPositiveClick: async () => performDeleteSession(sessionId),
+      onPositiveClick: async () => performArchiveSession(session),
     });
     return;
   }
 
-  void performDeleteSession(sessionId);
+  void performArchiveSession(session);
+}
+
+async function performArchiveSession(session: WebSessionSummary): Promise<boolean> {
+  try {
+    await webSessionStore.archiveSession(session.projectId, session.id);
+    await refreshArchivedSidebar();
+    const nextSession = webSessionStore.getActiveSession(props.projectId);
+    if (nextSession?.id) {
+      await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
+    } else if (draftSessions.value.length > 0) {
+      replaceDraftSessionState(
+        draftSessions.value,
+        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
+      );
+    } else {
+      ensureDefaultDraftSession();
+    }
+    return true;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+    return false;
+  }
 }
 
 async function performDeleteSession(sessionId: string): Promise<boolean> {
+  const session = sessions.value.find(item => item.id === sessionId);
+  if (!session) {
+    return false;
+  }
   try {
-    await webSessionStore.deleteSession(props.projectId, sessionId);
+    await webSessionStore.deleteSession(session.projectId, sessionId);
+    if (isArchivedPreviewSession(session)) {
+      clearArchivedPreviewSession();
+    } else if (!isDraftSession(session)) {
+      await refreshArchivedSidebar();
+    }
     const nextSession = webSessionStore.getActiveSession(props.projectId);
     if (nextSession?.id) {
       await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
@@ -3408,6 +3684,25 @@ function focusComposer() {
   });
 }
 
+async function prepareSessionForSend(session: WebSessionSummary) {
+  if (!session.archivedAt) {
+    return {
+      session,
+      navigateProjectId: '',
+    };
+  }
+
+  const restored = await webSessionStore.unarchiveSession(session.projectId, session.id);
+  await refreshArchivedSidebar();
+  clearArchivedPreviewSession();
+  await webSessionStore.ensureSessionConnected(restored.projectId, restored.id);
+
+  return {
+    session: restored,
+    navigateProjectId: restored.projectId !== props.projectId ? restored.projectId : '',
+  };
+}
+
 async function handleSubmit() {
   if (isRunActive.value || !hasDraftContent.value) {
     return;
@@ -3421,13 +3716,24 @@ async function handleSubmit() {
     if (!session) {
       return;
     }
-    const attachments = draftAttachments.value;
+    const draftSessionId = currentDraftSessionId.value;
+    const draftText = composerText.value;
+    const attachments = [...draftAttachments.value];
+    const prepared = await prepareSessionForSend(session);
+    session = prepared.session;
     await webSessionStore.sendMessage(
       session.id,
-      composerText.value,
+      draftText,
       attachments.map(item => item.id)
     );
-    webSessionStore.clearDraft(props.projectId, session.id);
+    webSessionStore.clearDraft(props.projectId, draftSessionId);
+    if (prepared.navigateProjectId) {
+      projectStore.addRecentProject(prepared.navigateProjectId);
+      await router.push({
+        name: 'project',
+        params: { id: prepared.navigateProjectId },
+      });
+    }
     autoFollowBottom.value = true;
     scrollToBottom(true);
   } catch (error) {
@@ -3565,8 +3871,11 @@ async function handlePlanCardImplement() {
   }
 
   try {
-    if (currentRealSession.value.workflowMode === 'plan') {
-      await webSessionStore.updateWorkflowMode(currentRealSession.value.id, 'default');
+    const prepared = await prepareSessionForSend(currentRealSession.value);
+    const targetSession = prepared.session;
+
+    if (targetSession.workflowMode === 'plan') {
+      await webSessionStore.updateWorkflowMode(targetSession.id, 'default');
     }
 
     const answered = await answerInlinePlanChoice('execute');
@@ -3574,7 +3883,14 @@ async function handlePlanCardImplement() {
       return;
     }
 
-    await webSessionStore.sendMessage(currentRealSession.value.id, 'Implement the plan.', []);
+    await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
+    if (prepared.navigateProjectId) {
+      projectStore.addRecentProject(prepared.navigateProjectId);
+      await router.push({
+        name: 'project',
+        params: { id: prepared.navigateProjectId },
+      });
+    }
     autoFollowBottom.value = true;
     scrollToBottom(true);
   } catch (error) {
@@ -3891,6 +4207,13 @@ function getSessionStatusLabel(session: (typeof sessions.value)[number]) {
   }
 }
 
+function getSessionPillStateClass(session: (typeof sessions.value)[number]) {
+  if (hasSessionUnviewedCompletion(session)) {
+    return 'completion';
+  }
+  return getSessionAssistantStateClass(session);
+}
+
 function getSessionStatusEmoji(session: (typeof sessions.value)[number]) {
   switch (getSessionAssistantStateClass(session)) {
     case 'working':
@@ -4016,8 +4339,18 @@ async function handleContextMenuSelect(key: string | number) {
     await handleRenameSession(session.id);
     return;
   }
+  if (action === 'archive') {
+    handleArchiveSession(session.id);
+    return;
+  }
   if (action === 'delete') {
-    await handleDeleteSession(session.id);
+    dialog.warning({
+      title: t('common.delete'),
+      content: t('webSession.deleteConfirm', { title: session.title }),
+      positiveText: t('common.delete'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: async () => performDeleteSession(session.id),
+    });
   }
 }
 
@@ -4051,7 +4384,12 @@ function setupTabSorting() {
     return;
   }
   const container = tabsContainerRef.value;
-  if (!container || sessions.value.length <= 1 || draftSessions.value.length > 0) {
+  if (
+    !container ||
+    sessions.value.length <= 1 ||
+    draftSessions.value.length > 0 ||
+    archivedPreviewSession.value
+  ) {
     destroyTabSorting();
     return;
   }
@@ -4064,7 +4402,7 @@ function setupTabSorting() {
     if (tabDragSortable.value.el === wrapper) {
       tabDragSortable.value.option(
         'disabled',
-        sessions.value.length <= 1 || draftSessions.value.length > 0
+        sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
       );
       return;
     }
@@ -4084,7 +4422,7 @@ function setupTabSorting() {
   });
   tabDragSortable.value.option(
     'disabled',
-    sessions.value.length <= 1 || draftSessions.value.length > 0
+    sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
   );
 }
 
@@ -4096,7 +4434,7 @@ function destroyTabSorting() {
 }
 
 function handleTabDragEnd(event: SortableEvent) {
-  if (draftSessions.value.length > 0) {
+  if (draftSessions.value.length > 0 || archivedPreviewSession.value) {
     return;
   }
   const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
@@ -4135,6 +4473,21 @@ watch(
         console.error('[Web Session] Failed to preload sidebar sessions', projectId, error);
       });
     });
+  },
+  { immediate: true }
+);
+
+watch(
+  sidebarProjectIdsToLoad,
+  projectIds => {
+    void webSessionStore
+      .loadArchivedSessions(projectIds, {
+        reset: true,
+        limit: 20,
+      })
+      .catch(error => {
+        console.error('[Web Session] Failed to preload archived sidebar sessions', error);
+      });
   },
   { immediate: true }
 );
@@ -4572,6 +4925,13 @@ onBeforeUnmount(() => {
   color: #f79009;
 }
 
+.ai-status-pill.state-completion {
+  background-color: rgba(255, 255, 255, 0.84);
+  color: #475467;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
 .ai-status-pill.state-waiting_input {
   background-color: #eceef2;
   color: #475467;
@@ -4603,44 +4963,22 @@ onBeforeUnmount(() => {
   line-height: 1;
 }
 
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion) {
-  background-color: var(--kanban-terminal-tab-completion-bg, rgba(16, 185, 129, 0.2)) !important;
-  border-color: var(--kanban-terminal-tab-completion-border, rgba(16, 185, 129, 0.5)) !important;
-}
-
-.panel-header
-  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
-  background-color: var(
-    --kanban-terminal-tab-completion-active-bg,
-    rgba(16, 185, 129, 0.25)
-  ) !important;
-  border-color: var(
-    --kanban-terminal-tab-completion-active-border,
-    rgba(16, 185, 129, 0.6)
-  ) !important;
-}
-
-.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
-  background-color: var(--kanban-terminal-tab-approval-bg, rgba(247, 144, 9, 0.2)) !important;
-  border-color: var(--kanban-terminal-tab-approval-border, rgba(247, 144, 9, 0.5)) !important;
-}
-
-.panel-header
-  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: var(
-    --kanban-terminal-tab-approval-active-bg,
-    rgba(247, 144, 9, 0.25)
-  ) !important;
-  border-color: var(
-    --kanban-terminal-tab-approval-active-border,
-    rgba(247, 144, 9, 0.6)
-  ) !important;
-}
-
 .empty-tabs-label {
   font-size: 13px;
   color: var(--n-text-color-3);
   padding-bottom: 6px;
+}
+
+/* TODO: unify terminal/web-session completion tab theming without reusing terminal CSS vars directly. */
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion) {
+  background-color: rgba(16, 185, 129, 0.16) !important;
+  border-color: rgba(16, 185, 129, 0.42) !important;
+}
+
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
+  background-color: rgba(16, 185, 129, 0.22) !important;
+  border-color: rgba(16, 185, 129, 0.54) !important;
 }
 
 .header-actions {
@@ -4785,7 +5123,38 @@ onBeforeUnmount(() => {
   padding: 8px 2px 2px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+.session-sidebar-section {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
+}
+
+.session-sidebar-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--n-text-color-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.session-sidebar-section-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.session-sidebar-section-empty {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--n-border-color) 26%, transparent);
+  font-size: 11px;
+  color: var(--n-text-color-3);
 }
 
 .session-sidebar-empty {
@@ -4819,9 +5188,32 @@ onBeforeUnmount(() => {
 }
 
 .session-sidebar-item.is-active {
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
-  background: color-mix(in srgb, var(--n-primary-color) 8%, var(--app-surface-color, #fff));
-  box-shadow: 0 6px 16px rgba(59, 130, 246, 0.12);
+  border-color: color-mix(
+    in srgb,
+    var(--session-sidebar-accent, var(--n-primary-color)) 44%,
+    var(--n-border-color)
+  );
+  background: linear-gradient(
+    135deg,
+    color-mix(
+        in srgb,
+        var(--session-sidebar-accent, var(--n-primary-color)) 14%,
+        var(--app-surface-color, #fff)
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--session-sidebar-accent, var(--n-primary-color)) 6%,
+        var(--app-surface-color, #fff)
+      )
+      100%
+  );
+  box-shadow: 0 6px 16px
+    color-mix(in srgb, var(--session-sidebar-accent, var(--n-primary-color)) 20%, transparent);
+}
+
+.session-sidebar-item.is-archived {
+  border-style: dashed;
 }
 
 .session-sidebar-main {
@@ -4882,6 +5274,20 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 
+.session-archived-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #94a3b8 16%, transparent);
+  color: color-mix(in srgb, #334155 78%, var(--n-text-color-2));
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .project-index-badge.session-project-badge {
   width: 18px;
   height: 18px;
@@ -4926,7 +5332,15 @@ onBeforeUnmount(() => {
 }
 
 .session-sidebar-approval {
-  background: color-mix(in srgb, #f79009 10%, var(--app-surface-color, #fff));
+  border-color: rgba(247, 144, 9, 0.44);
+  background: rgba(247, 144, 9, 0.14);
+}
+
+.session-sidebar-item.session-sidebar-approval.is-active,
+.session-sidebar-item.session-sidebar-approval.is-active:hover {
+  border-color: rgba(247, 144, 9, 0.6);
+  background: rgba(247, 144, 9, 0.22);
+  box-shadow: none;
 }
 
 .session-sidebar-completion {
@@ -4939,6 +5353,32 @@ onBeforeUnmount(() => {
 
 .session-sidebar-error {
   background: color-mix(in srgb, #f04438 8%, var(--app-surface-color, #fff));
+}
+
+.session-sidebar-load-more {
+  width: 100%;
+  border: 1px dashed color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 5%, transparent);
+  color: var(--n-primary-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.session-sidebar-load-more:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--n-primary-color) 9%, transparent);
+  border-color: color-mix(in srgb, var(--n-primary-color) 38%, var(--n-border-color));
+}
+
+.session-sidebar-load-more:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .terminal-resizer {
@@ -5718,21 +6158,21 @@ onBeforeUnmount(() => {
 
 .live-card.phase-waiting_approval,
 .live-card.phase-waiting_input {
-  border-color: var(--web-session-approval-border);
+  border-color: color-mix(in srgb, var(--web-session-approval-border) 72%, var(--n-border-color));
   background:
     linear-gradient(
       135deg,
-      color-mix(in srgb, var(--web-session-approval-border) 22%, transparent) 0%,
-      color-mix(in srgb, var(--web-session-approval-border) 8%, transparent) 50%,
-      transparent 100%
+      color-mix(in srgb, var(--web-session-approval-bg) 18%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-approval-bg) 9%, var(--app-surface-color, #fff)) 54%,
+      var(--app-surface-color, #fff) 100%
     ),
     var(--app-surface-color, #fff);
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--web-session-approval-border) 28%, transparent);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--web-session-approval-border) 14%, transparent);
 }
 
 .live-card.phase-waiting_approval::before,
 .live-card.phase-waiting_input::before {
-  opacity: 0.48;
+  opacity: 0.26;
   animation: liveSweep 3.2s ease-in-out infinite;
 }
 

@@ -411,6 +411,7 @@ func (m *Manager) runCodexAppServerSession(
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
 				turnCompleted = true
+				finalStatus := m.completedRunStatus(context.Background(), session, run)
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 					ID:        utils.NewID(),
 					Seq:       0,
@@ -419,10 +420,11 @@ func (m *Manager) runCodexAppServerSession(
 					Timestamp: time.Now(),
 					Payload: map[string]any{
 						"ok": true,
+						"st": string(finalStatus),
 					},
 				})
 				_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-					"status":     string(StatusDone),
+					"status":     string(finalStatus),
 					"updated_at": time.Now(),
 				})
 				_ = client.closeStdin()
@@ -724,6 +726,10 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			},
 		})
 	default:
+		toolSucceeded := codexToolSucceeded(item)
+		if toolSucceeded && codexToolIsPlan(item) {
+			run.markCompletedPlanTool()
+		}
 		toolID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -735,7 +741,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			Payload: map[string]any{
 				"tid":  toolID,
 				"out":  truncateString(codexToolResult(item), 4000),
-				"ok":   codexToolSucceeded(item),
+				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
 			},
 		})

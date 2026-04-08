@@ -267,8 +267,10 @@ export interface WebSessionSummary {
   permissionLevel: 'default' | 'elevated' | 'yolo';
   cwd: string;
   nativeSessionId?: string | null;
-  status: 'idle' | 'running' | 'done' | 'err' | 'aborting';
+  status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
   hasUnread: boolean;
+  archivedAt?: string | null;
+  activityAt: string;
   lastMessageAt?: string | null;
   createdAt: string;
   updatedAt: string;

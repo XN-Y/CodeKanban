@@ -23,6 +23,9 @@ type WireSession = {
   nsid?: string | null;
   st: SessionStatus;
   unr: boolean;
+  aa?: number | null;
+  act?: number | null;
+  ca?: number | null;
   lu: number;
   lma?: number | null;
   usa?: {
@@ -211,6 +214,14 @@ type HistoryMeta = {
   hasMore: boolean;
   beforeCursor: string;
   total: number;
+  loading: boolean;
+};
+
+type ArchivedListMeta = {
+  scopeKey: string;
+  total: number;
+  offset: number;
+  hasMore: boolean;
   loading: boolean;
 };
 
@@ -552,8 +563,31 @@ function buildUserInputAnswerEntries(
   return result;
 }
 
+function normalizeProjectScope(projectIds: string[]) {
+  const ids = Array.from(
+    new Set(projectIds.map(projectId => String(projectId || '').trim()).filter(Boolean))
+  ).sort((left, right) => left.localeCompare(right));
+  return {
+    ids,
+    key: ids.join('::'),
+  };
+}
+
+function defaultArchivedListMeta(): ArchivedListMeta {
+  return {
+    scopeKey: '',
+    total: 0,
+    offset: 0,
+    hasMore: false,
+    loading: false,
+  };
+}
+
 export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
+  const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
+  const archivedSessionIds = ref<string[]>([]);
+  const archivedListMeta = ref<ArchivedListMeta>(defaultArchivedListMeta());
   const eventsBySession = ref<Record<string, WireEvent[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
@@ -587,11 +621,30 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Object.values(sessionsByProject.value).forEach(items => {
       items.forEach(item => ids.add(item.id));
     });
+    archivedSessionIds.value.forEach(sessionId => ids.add(sessionId));
     return ids;
   });
 
   function getSessions(projectId: string) {
     return sessionsByProject.value[projectId] ?? [];
+  }
+
+  function getArchivedSessions(projectIds: string[]) {
+    const scope = normalizeProjectScope(projectIds);
+    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+      return [];
+    }
+    return archivedSessionIds.value
+      .map(sessionId => archivedSessionsById.value[sessionId])
+      .filter((session): session is WebSessionSummary => Boolean(session));
+  }
+
+  function getArchivedMeta(projectIds: string[]): ArchivedListMeta {
+    const scope = normalizeProjectScope(projectIds);
+    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+      return defaultArchivedListMeta();
+    }
+    return archivedListMeta.value;
   }
 
   function getActiveSessionId(projectId: string) {
@@ -613,6 +666,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (matched) {
         return matched;
       }
+    }
+    const archived = archivedSessionsById.value[sessionId];
+    if (archived) {
+      return archived;
     }
     return null;
   }
@@ -862,6 +919,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function normalizeSession(session: WireSession): WebSessionSummary {
+    const archivedAt =
+      typeof session.aa === 'number' && Number.isFinite(session.aa)
+        ? new Date(session.aa).toISOString()
+        : null;
+    const activityAt =
+      typeof session.act === 'number' && Number.isFinite(session.act)
+        ? new Date(session.act).toISOString()
+        : new Date(session.lu).toISOString();
+    const createdAt =
+      typeof session.ca === 'number' && Number.isFinite(session.ca)
+        ? new Date(session.ca).toISOString()
+        : new Date(session.lu).toISOString();
     return {
       id: session.id,
       projectId: session.pid,
@@ -877,8 +946,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       nativeSessionId: session.nsid ?? null,
       status: session.st,
       hasUnread: session.unr,
+      archivedAt,
+      activityAt,
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
-      createdAt: new Date(session.lu).toISOString(),
+      createdAt,
       updatedAt: new Date(session.lu).toISOString(),
       usage: {
         inputTokens: session.usa?.in ?? 0,
@@ -889,25 +960,78 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
-  function upsertSession(summary: WebSessionSummary) {
-    const current = sessionsByProject.value[summary.projectId] ?? [];
-    const next = [...current];
-    const index = next.findIndex(item => item.id === summary.id);
-    if (index >= 0) {
-      next.splice(index, 1, {
-        ...next[index],
-        ...summary,
-      });
-    } else {
-      next.unshift(summary);
+  function compareArchivedSessions(left: WebSessionSummary, right: WebSessionSummary) {
+    const leftActivity = Date.parse(left.activityAt || left.updatedAt || left.createdAt);
+    const rightActivity = Date.parse(right.activityAt || right.updatedAt || right.createdAt);
+    if (
+      Number.isFinite(leftActivity) &&
+      Number.isFinite(rightActivity) &&
+      leftActivity !== rightActivity
+    ) {
+      return rightActivity - leftActivity;
     }
-    sessionsByProject.value = {
-      ...sessionsByProject.value,
-      [summary.projectId]: sortSessions(next),
-    };
+    return right.id.localeCompare(left.id);
   }
 
-  function removeSession(projectId: string, sessionId: string) {
+  function isArchivedScopeProject(projectId: string) {
+    const scopeKey = archivedListMeta.value.scopeKey;
+    if (!scopeKey || !projectId) {
+      return false;
+    }
+    return scopeKey.split('::').includes(projectId);
+  }
+
+  function sortArchivedSessionIds(ids: string[]) {
+    return [...ids].sort((leftId, rightId) => {
+      const left = archivedSessionsById.value[leftId];
+      const right = archivedSessionsById.value[rightId];
+      if (!left && !right) {
+        return leftId.localeCompare(rightId);
+      }
+      if (!left) {
+        return 1;
+      }
+      if (!right) {
+        return -1;
+      }
+      return compareArchivedSessions(left, right);
+    });
+  }
+
+  function upsertArchivedSession(
+    summary: WebSessionSummary,
+    options?: { includeInList?: boolean }
+  ) {
+    const previous = archivedSessionsById.value[summary.id];
+    archivedSessionsById.value = {
+      ...archivedSessionsById.value,
+      [summary.id]: {
+        ...previous,
+        ...summary,
+      },
+    };
+
+    const includeInList = options?.includeInList ?? isArchivedScopeProject(summary.projectId);
+    if (!includeInList) {
+      return;
+    }
+
+    const nextIds = archivedSessionIds.value.includes(summary.id)
+      ? archivedSessionIds.value
+      : [...archivedSessionIds.value, summary.id];
+    archivedSessionIds.value = sortArchivedSessionIds(nextIds);
+  }
+
+  function removeArchivedSessionRecord(sessionId: string, options?: { clearSummary?: boolean }) {
+    archivedSessionIds.value = archivedSessionIds.value.filter(id => id !== sessionId);
+    if (options?.clearSummary !== false) {
+      const next = { ...archivedSessionsById.value };
+      delete next[sessionId];
+      archivedSessionsById.value = next;
+    }
+  }
+
+  function removeCurrentSessionRecord(projectId: string, sessionId: string) {
     const current = sessionsByProject.value[projectId] ?? [];
     const removed = current.find(item => item.id === sessionId) ?? null;
     const next = current.filter(item => item.id !== sessionId);
@@ -924,6 +1048,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
       persistActiveSessions(activeSessionIdByProject.value);
     }
+    return removed;
+  }
+
+  function clearSessionRuntimeState(sessionId: string, projectId?: string) {
     const nextEvents = { ...eventsBySession.value };
     delete nextEvents[sessionId];
     eventsBySession.value = nextEvents;
@@ -941,14 +1069,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       window.clearTimeout(timer);
       pendingFlushTimers.delete(sessionId);
     }
-    if (removed) {
-      emitter.emit('ai:closed', {
-        sessionId: removed.id,
-        sessionTitle: removed.title,
-        projectId: removed.projectId,
-        assistant: getAssistantDescriptor(removed),
-      } satisfies WebSessionAIEvent);
-    }
     const waiters = snapshotWaitersBySession.get(sessionId);
     if (waiters?.length) {
       snapshotWaitersBySession.delete(sessionId);
@@ -959,7 +1079,54 @@ export const useWebSessionStore = defineStore('web-session', () => {
         waiter.reject(new Error(`Session removed before snapshot refresh completed: ${sessionId}`));
       });
     }
-    clearDraft(projectId, sessionId);
+    if (projectId) {
+      clearDraft(projectId, sessionId);
+    }
+  }
+
+  function upsertCurrentSession(summary: WebSessionSummary) {
+    const current = sessionsByProject.value[summary.projectId] ?? [];
+    const next = [...current];
+    const index = next.findIndex(item => item.id === summary.id);
+    if (index >= 0) {
+      next.splice(index, 1, {
+        ...next[index],
+        ...summary,
+      });
+    } else {
+      next.unshift(summary);
+    }
+    sessionsByProject.value = {
+      ...sessionsByProject.value,
+      [summary.projectId]: sortSessions(next),
+    };
+  }
+
+  function upsertSession(summary: WebSessionSummary) {
+    if (summary.archivedAt) {
+      removeCurrentSessionRecord(summary.projectId, summary.id);
+      upsertArchivedSession(summary);
+      return;
+    }
+    removeArchivedSessionRecord(summary.id);
+    upsertCurrentSession(summary);
+  }
+
+  function removeSession(projectId: string, sessionId: string) {
+    const removed =
+      removeCurrentSessionRecord(projectId, sessionId) ??
+      archivedSessionsById.value[sessionId] ??
+      null;
+    removeArchivedSessionRecord(sessionId);
+    clearSessionRuntimeState(sessionId, projectId);
+    if (removed) {
+      emitter.emit('ai:closed', {
+        sessionId: removed.id,
+        sessionTitle: removed.title,
+        projectId: removed.projectId,
+        assistant: getAssistantDescriptor(removed),
+      } satisfies WebSessionAIEvent);
+    }
   }
 
   function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
@@ -1096,6 +1263,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     });
     if (changed) {
       sessionsByProject.value = nextSessions;
+      return;
+    }
+
+    const archived = archivedSessionsById.value[sessionId];
+    if (archived) {
+      archivedSessionsById.value = {
+        ...archivedSessionsById.value,
+        [sessionId]: updater(archived),
+      };
+      archivedSessionIds.value = sortArchivedSessionIds(archivedSessionIds.value);
     }
   }
 
@@ -1125,6 +1302,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     const nextState = getLiveState(sessionId);
     const nextApproval = getPendingApproval(sessionId);
+    const approvalForNotification =
+      nextApproval ??
+      (nextState.phase === 'waiting_approval'
+        ? {
+            id: `status:${sessionId}:${nextState.updatedAt}`,
+            prompt: '',
+            requestedAt: nextState.updatedAt,
+            stale: false,
+          }
+        : null);
     const baseEvent: WebSessionAIEvent = {
       sessionId,
       sessionTitle: session.title,
@@ -1137,14 +1324,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (
-      nextApproval &&
+      approvalForNotification &&
       (!previousApproval ||
-        previousApproval.id !== nextApproval.id ||
-        previousApproval.requestedAt !== nextApproval.requestedAt)
+        previousApproval.id !== approvalForNotification.id ||
+        previousApproval.requestedAt !== approvalForNotification.requestedAt ||
+        previousState.phase !== 'waiting_approval')
     ) {
       emitter.emit('ai:approval-needed', {
         ...baseEvent,
-        approval: nextApproval,
+        approval: approvalForNotification,
       } satisfies WebSessionApprovalEvent);
     }
 
@@ -1223,7 +1411,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
         if (frame.e?.tp === 'run_st') {
           next.status = 'running';
         } else if (frame.e?.tp === 'run_done') {
-          next.status = 'done';
+          next.status =
+            frame.e?.p && typeof frame.e.p.st === 'string'
+              ? (frame.e.p.st as WebSessionSummary['status'])
+              : 'done';
         } else if (frame.e?.tp === 'run_fail') {
           next.status = 'err';
         } else if (frame.e?.tp === 'run_abort') {
@@ -1359,6 +1550,71 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return sessions;
   }
 
+  function invalidateArchivedSessions() {
+    archivedSessionIds.value = [];
+    archivedListMeta.value = defaultArchivedListMeta();
+  }
+
+  async function loadArchivedSessions(
+    projectIds: string[],
+    options?: {
+      reset?: boolean;
+      limit?: number;
+    }
+  ) {
+    const scope = normalizeProjectScope(projectIds);
+    if (!scope.key) {
+      invalidateArchivedSessions();
+      return [];
+    }
+
+    const limit = Math.max(1, options?.limit ?? 20);
+    const reset = options?.reset === true || archivedListMeta.value.scopeKey !== scope.key;
+    const previousMeta = getArchivedMeta(scope.ids);
+    const offset = reset ? 0 : previousMeta.offset;
+
+    archivedListMeta.value = {
+      scopeKey: scope.key,
+      total: reset ? 0 : previousMeta.total,
+      offset,
+      hasMore: reset ? false : previousMeta.hasMore,
+      loading: true,
+    };
+
+    try {
+      const result = await webSessionApi.queryArchived({
+        projectIds: scope.ids,
+        offset,
+        limit,
+      });
+      result.items.forEach(item => {
+        upsertArchivedSession(item, { includeInList: false });
+      });
+      archivedSessionIds.value = sortArchivedSessionIds(
+        reset
+          ? result.items.map(item => item.id)
+          : Array.from(new Set([...archivedSessionIds.value, ...result.items.map(item => item.id)]))
+      );
+      archivedListMeta.value = {
+        scopeKey: scope.key,
+        total: result.total,
+        offset: result.nextOffset,
+        hasMore: result.hasMore,
+        loading: false,
+      };
+      return getArchivedSessions(scope.ids);
+    } catch (error) {
+      archivedListMeta.value = {
+        scopeKey: scope.key,
+        total: reset ? 0 : previousMeta.total,
+        offset,
+        hasMore: reset ? false : previousMeta.hasMore,
+        loading: false,
+      };
+      throw error;
+    }
+  }
+
   async function ensureSessionConnected(projectId: string, sessionId: string) {
     if (!projectId || !sessionId) {
       return;
@@ -1391,8 +1647,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
     rememberActiveSession(projectId, sessionId);
   }
 
+  async function archiveSession(projectId: string, sessionId: string) {
+    const summary = await webSessionApi.archive(projectId, sessionId);
+    removeCurrentSessionRecord(projectId, sessionId);
+    upsertArchivedSession(summary, { includeInList: false });
+    return summary;
+  }
+
+  async function unarchiveSession(projectId: string, sessionId: string) {
+    const summary = await webSessionApi.unarchive(projectId, sessionId);
+    removeArchivedSessionRecord(sessionId);
+    upsertCurrentSession(summary);
+    return summary;
+  }
+
   async function deleteSession(projectId: string, sessionId: string) {
-    await sendCommand('del', sessionId, {});
+    await webSessionApi.delete(projectId, sessionId);
     removeSession(projectId, sessionId);
   }
 
@@ -1403,6 +1673,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     mode?: 'redirect' | 'queue'
   ) {
     const session = findSessionById(sessionId);
+    if (session?.archivedAt) {
+      throw new Error('session is archived');
+    }
     if (session?.status === 'running' && mode) {
       enqueuePendingInput(sessionId, text, attachmentIds, mode);
       return;
@@ -2016,6 +2289,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
     }
 
+    if (session?.status === 'waiting_approval') {
+      return {
+        phase: 'waiting_approval',
+        running: false,
+        updatedAt,
+      };
+    }
+
     if (userInput && !userInput.stale && session?.status === 'running') {
       return {
         phase: 'waiting_input',
@@ -2113,6 +2394,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     lastError,
     getDraft,
     getSessions,
+    getArchivedSessions,
+    getArchivedMeta,
     getActiveSessionId,
     hasStoredActiveSession,
     getActiveSession,
@@ -2123,11 +2406,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getBlocks,
     getLatestEventSeq,
     loadSessions,
+    loadArchivedSessions,
+    invalidateArchivedSessions,
     setActiveSession,
     ensureSessionConnected,
     refreshSessionSnapshot,
     createSession: createSessionViaHttp,
     renameSession,
+    archiveSession,
+    unarchiveSession,
     deleteSession,
     sendMessage,
     abortSession,

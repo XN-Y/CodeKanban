@@ -26,9 +26,11 @@ type WebSessionTable struct {
 	LegacyPermissionMode string `gorm:"column:permission_mode;type:text" json:"-"`
 	Cwd                  string `gorm:"type:text;not null" json:"cwd"`
 
-	NativeSessionID *string `gorm:"type:text" json:"nativeSessionId"`
-	Status          string  `gorm:"type:text;not null;index" json:"status"`
-	HasUnread       bool    `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
+	NativeSessionID *string    `gorm:"type:text" json:"nativeSessionId"`
+	Status          string     `gorm:"type:text;not null;index" json:"status"`
+	HasUnread       bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
+	ArchivedAt      *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
+	ActivityAt      time.Time  `gorm:"type:datetime;index" json:"activityAt"`
 
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`

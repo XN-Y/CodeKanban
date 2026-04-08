@@ -85,6 +85,7 @@ type activeRun struct {
 	pendingServerReq   *pendingServerRequest
 	app                *codexAppServerClient
 	assistantDeltaSeen map[string]bool
+	completedPlanTool  bool
 	commandGroupID     string
 	commandGroupKind   string
 	commandGroupFirst  int64
@@ -135,6 +136,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
 	}
+	if err := manager.backfillSessionActivityAt(context.Background()); err != nil {
+		return nil, err
+	}
 	if err := manager.recoverInterruptedSessions(context.Background()); err != nil {
 		return nil, err
 	}
@@ -179,6 +183,77 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	return items, nil
 }
 
+func (m *Manager) ListArchivedSessions(
+	ctx context.Context,
+	projectIDs []string,
+	limit int,
+	offset int,
+) (ArchivedQueryResult, error) {
+	db := model.GetDB()
+	if db == nil {
+		return ArchivedQueryResult{}, model.ErrDBNotInitialized
+	}
+
+	normalizedProjectIDs := make([]string, 0, len(projectIDs))
+	seen := make(map[string]struct{}, len(projectIDs))
+	for _, projectID := range projectIDs {
+		trimmed := strings.TrimSpace(projectID)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalizedProjectIDs = append(normalizedProjectIDs, trimmed)
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	query := db.WithContext(ctx).
+		Model(&tables.WebSessionTable{}).
+		Where("archived_at IS NOT NULL")
+	if len(normalizedProjectIDs) > 0 {
+		query = query.Where("project_id IN ?", normalizedProjectIDs)
+	}
+
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return ArchivedQueryResult{}, err
+	}
+
+	var records []tables.WebSessionTable
+	if err := query.
+		Order("activity_at DESC").
+		Order("id DESC").
+		Offset(offset).
+		Limit(limit).
+		Find(&records).Error; err != nil {
+		return ArchivedQueryResult{}, err
+	}
+
+	items := make([]SessionSummary, 0, len(records))
+	for _, record := range records {
+		items = append(items, mapSessionRecord(record))
+	}
+
+	nextOffset := offset + len(items)
+	return ArchivedQueryResult{
+		Items:      items,
+		Total:      int(total),
+		HasMore:    int64(nextOffset) < total,
+		NextOffset: nextOffset,
+	}, nil
+}
+
 func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (SessionSummary, error) {
 	project, worktreeID, cwd, err := m.resolveContext(ctx, params.ProjectID, params.WorktreeID)
 	if err != nil {
@@ -210,6 +285,8 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		Cwd:                    cwd,
 		Status:                 string(StatusIdle),
 		HasUnread:              false,
+		ArchivedAt:             nil,
+		ActivityAt:             time.Now(),
 		LastEventSeq:           0,
 		TotalInputTokens:       0,
 		TotalCachedInputTokens: 0,
@@ -372,6 +449,9 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 		if err := tx.First(&moving, "id = ?", sessionID).Error; err != nil {
 			return err
 		}
+		if moving.ArchivedAt != nil {
+			return fmt.Errorf("archived sessions cannot be reordered")
+		}
 
 		ordered, err := m.listSessionRecordsWithDB(tx, moving.ProjectID)
 		if err != nil {
@@ -423,12 +503,101 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 	return summary, nil
 }
 
+func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if record.ArchivedAt != nil {
+		return mapSessionRecord(record), nil
+	}
+
+	if err := m.stopRunIfActive(sessionID, 5*time.Second); err != nil {
+		return SessionSummary{}, err
+	}
+
+	now := time.Now()
+	updates := map[string]any{
+		"archived_at": now,
+		"has_unread":  false,
+		"updated_at":  now,
+	}
+
+	current, currentErr := m.GetSession(ctx, sessionID)
+	if currentErr == nil {
+		record = current
+	}
+	if record.Status == string(StatusRunning) || record.Status == string(StatusAborting) {
+		updates["status"] = string(StatusIdle)
+	}
+
+	if err := m.updateRuntimeState(ctx, sessionID, updates); err != nil {
+		return SessionSummary{}, err
+	}
+	archived, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return mapSessionRecord(archived), nil
+}
+
+func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if record.ArchivedAt == nil {
+		return mapSessionRecord(record), nil
+	}
+
+	orderIndex, err := m.getNextSessionOrderIndex(ctx, record.ProjectID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+
+	now := time.Now()
+	if err := m.updateRuntimeState(ctx, sessionID, map[string]any{
+		"archived_at": nil,
+		"order_index": orderIndex,
+		"updated_at":  now,
+	}); err != nil {
+		return SessionSummary{}, err
+	}
+
+	current, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	return mapSessionRecord(current), nil
+}
+
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	_ = m.AbortSession(sessionID)
 	if err := model.GetDB().WithContext(ctx).Delete(&tables.WebSessionTable{}, "id = ?", sessionID).Error; err != nil {
 		return err
 	}
 	return m.store.deleteSessionFiles(sessionID)
+}
+
+func (m *Manager) stopRunIfActive(sessionID string, timeout time.Duration) error {
+	m.mu.RLock()
+	run, ok := m.runs[sessionID]
+	m.mu.RUnlock()
+	if !ok || run == nil {
+		return nil
+	}
+	if err := m.AbortSession(sessionID); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	select {
+	case <-run.done:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("timed out waiting for session to stop")
+	}
 }
 
 func (m *Manager) AbortSession(sessionID string) error {
@@ -1110,6 +1279,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			},
 		})
 	}
+	finalStatus := m.completedRunStatus(context.Background(), session, run)
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
@@ -1118,10 +1288,11 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		Timestamp: time.Now(),
 		Payload: map[string]any{
 			"ok": true,
+			"st": string(finalStatus),
 		},
 	})
 	_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-		"status":     string(StatusDone),
+		"status":     string(finalStatus),
 		"updated_at": time.Now(),
 	})
 }
@@ -1419,6 +1590,10 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		if toolID == "" {
 			toolID = utils.NewID()
 		}
+		toolSucceeded := codexToolSucceeded(item)
+		if toolSucceeded && codexToolIsPlan(item) {
+			run.markCompletedPlanTool()
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1429,7 +1604,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 			Payload: map[string]any{
 				"tid":  toolID,
 				"out":  truncateString(codexToolResult(item), 4000),
-				"ok":   true,
+				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
 			},
 		})
@@ -1486,6 +1661,7 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 
 	update := map[string]any{
 		"last_event_seq": seq,
+		"activity_at":    event.Timestamp,
 		"updated_at":     time.Now(),
 	}
 	if event.Type != "msg_u" && event.Type != "hist_ch" {
@@ -1622,6 +1798,18 @@ func (m *Manager) updateRuntimeState(ctx context.Context, sessionID string, upda
 		Updates(updates).Error
 }
 
+func (m *Manager) completedRunStatus(ctx context.Context, session tables.WebSessionTable, run *activeRun) Status {
+	current := session
+	record, err := m.GetSession(ctx, session.ID)
+	if err == nil {
+		current = record
+	}
+	if effectiveWorkflowMode(current) == WorkflowModePlan && run.completedPlanToolSeen() {
+		return StatusWaitingApproval
+	}
+	return StatusDone
+}
+
 func (m *Manager) updateFields(ctx context.Context, sessionID string, updates map[string]any) (SessionSummary, error) {
 	if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
 		Where("id = ?", sessionID).
@@ -1644,7 +1832,7 @@ func (m *Manager) getNextSessionOrderIndex(ctx context.Context, projectID string
 	var maxOrder float64
 	if err := db.WithContext(ctx).
 		Model(&tables.WebSessionTable{}).
-		Where("project_id = ?", projectID).
+		Where("project_id = ? AND archived_at IS NULL", projectID).
 		Select("COALESCE(MAX(order_index), 0)").
 		Scan(&maxOrder).Error; err != nil {
 		return 0, err
@@ -1654,6 +1842,7 @@ func (m *Manager) getNextSessionOrderIndex(ctx context.Context, projectID string
 
 func (m *Manager) listSessionRecordsWithDB(db *gorm.DB, projectID string) ([]tables.WebSessionTable, error) {
 	query := db.Model(&tables.WebSessionTable{}).
+		Where("archived_at IS NULL").
 		Order("order_index ASC").
 		Order("updated_at DESC")
 	if projectID != "" {
@@ -1664,6 +1853,37 @@ func (m *Manager) listSessionRecordsWithDB(db *gorm.DB, projectID string) ([]tab
 		return nil, err
 	}
 	return records, nil
+}
+
+func (m *Manager) backfillSessionActivityAt(ctx context.Context) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Select("id", "created_at", "updated_at", "last_message_at", "activity_at").
+		Find(&records).Error; err != nil {
+		return err
+	}
+
+	for _, record := range records {
+		if !record.ActivityAt.IsZero() {
+			continue
+		}
+		activityAt := chooseSessionActivityAt(record)
+		if err := db.WithContext(ctx).
+			Model(&tables.WebSessionTable{}).
+			Where("id = ?", record.ID).
+			Updates(map[string]any{
+				"activity_at": activityAt,
+				"updated_at":  time.Now(),
+			}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveSessionInsertIndex(
@@ -2010,6 +2230,10 @@ func (c *client) send(frame wireFrame) error {
 }
 
 func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
+	activityAt := record.ActivityAt
+	if activityAt.IsZero() {
+		activityAt = chooseSessionActivityAt(record)
+	}
 	return SessionSummary{
 		ID:              record.ID,
 		ProjectID:       record.ProjectID,
@@ -2025,6 +2249,8 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		NativeSessionID: record.NativeSessionID,
 		Status:          Status(record.Status),
 		HasUnread:       record.HasUnread,
+		ArchivedAt:      record.ArchivedAt,
+		ActivityAt:      activityAt,
 		LastMessageAt:   record.LastMessageAt,
 		CreatedAt:       record.CreatedAt,
 		UpdatedAt:       record.UpdatedAt,
@@ -2035,6 +2261,19 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			Cost:              record.TotalCost,
 		},
 	}
+}
+
+func chooseSessionActivityAt(record tables.WebSessionTable) time.Time {
+	if record.LastMessageAt != nil && !record.LastMessageAt.IsZero() {
+		return *record.LastMessageAt
+	}
+	if !record.UpdatedAt.IsZero() {
+		return record.UpdatedAt
+	}
+	if !record.CreatedAt.IsZero() {
+		return record.CreatedAt
+	}
+	return time.Now()
 }
 
 func attachmentPayloads(items []Attachment) []map[string]any {
@@ -2408,6 +2647,18 @@ func (r *activeRun) clearPendingServerRequest() {
 	r.pendingServerReq = nil
 }
 
+func (r *activeRun) markCompletedPlanTool() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.completedPlanTool = true
+}
+
+func (r *activeRun) completedPlanToolSeen() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.completedPlanTool
+}
+
 func (r *activeRun) markAssistantDeltaSeen(messageID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -2616,6 +2867,26 @@ func normalizeCodexItemType(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
+}
+
+func normalizeToolChoiceText(value string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(value))), " ")
+}
+
+func codexToolIsPlan(item map[string]any) bool {
+	meta := codexToolMeta(item)
+	candidates := []string{
+		codexToolName(item),
+		stringValue(item["type"]),
+		stringValue(meta["kind"]),
+		stringValue(meta["title"]),
+	}
+	for _, candidate := range candidates {
+		if normalizeToolChoiceText(candidate) == "plan" {
+			return true
+		}
+	}
+	return false
 }
 
 func extractReasoningText(item map[string]any) string {

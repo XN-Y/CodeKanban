@@ -52,6 +52,9 @@ type wireSess struct {
 	NativeSessionID *string   `json:"nsid,omitempty"`
 	Status          string    `json:"st"`
 	Unread          bool      `json:"unr"`
+	ArchivedAt      *int64    `json:"aa,omitempty"`
+	ActivityAt      int64     `json:"act"`
+	CreatedAt       int64     `json:"ca"`
 	LastUpdated     int64     `json:"lu"`
 	LastMessageAt   *int64    `json:"lma,omitempty"`
 	Usage           wireUsage `json:"usa"`
@@ -144,6 +147,11 @@ func mapWireSession(session SessionSummary) *wireSess {
 		value := session.LastMessageAt.UnixMilli()
 		lastMessageAt = &value
 	}
+	var archivedAt *int64
+	if session.ArchivedAt != nil {
+		value := session.ArchivedAt.UnixMilli()
+		archivedAt = &value
+	}
 	return &wireSess{
 		ID:              session.ID,
 		ProjectID:       session.ProjectID,
@@ -159,6 +167,9 @@ func mapWireSession(session SessionSummary) *wireSess {
 		NativeSessionID: session.NativeSessionID,
 		Status:          string(session.Status),
 		Unread:          session.HasUnread,
+		ArchivedAt:      archivedAt,
+		ActivityAt:      session.ActivityAt.UnixMilli(),
+		CreatedAt:       session.CreatedAt.UnixMilli(),
 		LastUpdated:     session.UpdatedAt.UnixMilli(),
 		LastMessageAt:   lastMessageAt,
 		Usage: wireUsage{

@@ -116,6 +116,160 @@ func TestManagerMoveSessionRenormalizesProjectOrder(t *testing.T) {
 	}
 }
 
+func TestManagerArchiveSessionKeepsHistoryAndMovesSessionOutOfCurrentList(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	dataDir := t.TempDir()
+	session := seedWebSession(t, project.ID, "Archive Me", 1000)
+
+	manager, err := NewManager(Config{DataDir: dataDir}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	if err := manager.store.appendEvent(session.ID, Event{
+		ID:        "evt_history",
+		Seq:       1,
+		Type:      "note",
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"txt": "keep this history",
+		},
+	}); err != nil {
+		t.Fatalf("appendEvent returned error: %v", err)
+	}
+
+	archived, err := manager.ArchiveSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("ArchiveSession returned error: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatalf("expected archivedAt to be set")
+	}
+
+	current, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(current) != 0 {
+		t.Fatalf("expected archived session to be removed from current list, got %d items", len(current))
+	}
+
+	archivedResult, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 20, 0)
+	if err != nil {
+		t.Fatalf("ListArchivedSessions returned error: %v", err)
+	}
+	if archivedResult.Total != 1 || len(archivedResult.Items) != 1 {
+		t.Fatalf("expected exactly one archived session, got total=%d items=%d", archivedResult.Total, len(archivedResult.Items))
+	}
+	if archivedResult.Items[0].ID != session.ID {
+		t.Fatalf("expected archived session %s, got %s", session.ID, archivedResult.Items[0].ID)
+	}
+	if _, err := os.Stat(manager.store.historyPath(session.ID)); err != nil {
+		t.Fatalf("expected archived history file to remain on disk: %v", err)
+	}
+}
+
+func TestManagerUnarchiveSessionRestoresSessionToCurrentListEnd(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	first := seedWebSession(t, project.ID, "First", 1000)
+	second := seedWebSession(t, project.ID, "Second", 2000)
+	archivedAt := time.Now().Add(-time.Hour)
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", first.ID).
+		Updates(map[string]any{
+			"archived_at": archivedAt,
+			"updated_at":  time.Now(),
+		}).Error; err != nil {
+		t.Fatalf("failed to archive seed session: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	restored, err := manager.UnarchiveSession(context.Background(), first.ID)
+	if err != nil {
+		t.Fatalf("UnarchiveSession returned error: %v", err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatalf("expected archivedAt to be cleared")
+	}
+	if restored.OrderIndex <= second.OrderIndex {
+		t.Fatalf("expected restored session to move to the end, got orderIndex %.2f", restored.OrderIndex)
+	}
+
+	current, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(current) != 2 {
+		t.Fatalf("expected 2 current sessions, got %d", len(current))
+	}
+	if current[0].ID != second.ID || current[1].ID != first.ID {
+		t.Fatalf("unexpected current session order after unarchive: %#v", current)
+	}
+}
+
+func TestManagerListArchivedSessionsPaginatesByActivityDescending(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	now := time.Now()
+	sessionA := seedWebSession(t, project.ID, "A", 1000)
+	sessionB := seedWebSession(t, project.ID, "B", 2000)
+	sessionC := seedWebSession(t, project.ID, "C", 3000)
+	for id, activityAt := range map[string]time.Time{
+		sessionA.ID: now.Add(-3 * time.Hour),
+		sessionB.ID: now.Add(-1 * time.Hour),
+		sessionC.ID: now.Add(-2 * time.Hour),
+	} {
+		if err := model.GetDB().Model(&tables.WebSessionTable{}).
+			Where("id = ?", id).
+			Updates(map[string]any{
+				"archived_at": now,
+				"activity_at": activityAt,
+				"updated_at":  now,
+			}).Error; err != nil {
+			t.Fatalf("failed to update archived seed %s: %v", id, err)
+		}
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	pageOne, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 2, 0)
+	if err != nil {
+		t.Fatalf("ListArchivedSessions page one returned error: %v", err)
+	}
+	if !pageOne.HasMore || pageOne.NextOffset != 2 {
+		t.Fatalf("expected first page to have more results, got %+v", pageOne)
+	}
+	if len(pageOne.Items) != 2 || pageOne.Items[0].ID != sessionB.ID || pageOne.Items[1].ID != sessionC.ID {
+		t.Fatalf("unexpected first archived page order: %#v", pageOne.Items)
+	}
+
+	pageTwo, err := manager.ListArchivedSessions(context.Background(), []string{project.ID}, 2, pageOne.NextOffset)
+	if err != nil {
+		t.Fatalf("ListArchivedSessions page two returned error: %v", err)
+	}
+	if pageTwo.HasMore {
+		t.Fatalf("expected second page to be final, got %+v", pageTwo)
+	}
+	if len(pageTwo.Items) != 1 || pageTwo.Items[0].ID != sessionA.ID {
+		t.Fatalf("unexpected second archived page order: %#v", pageTwo.Items)
+	}
+}
+
 func TestDetectApprovalPrompt(t *testing.T) {
 	t.Run("codex confirm prompt", func(t *testing.T) {
 		prompt, ok := detectApprovalPrompt([]string{
@@ -571,6 +725,147 @@ func TestRespondToApprovalCodexAppServer(t *testing.T) {
 	}
 	if !historyHasEvent(history.Events, "approval_res") {
 		t.Fatalf("expected approval_res event, got %#v", history.Events)
+	}
+}
+
+func TestCodexPlanCompletionSetsWaitingApprovalStatus(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "plan"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect and plan", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusWaitingApproval) {
+		t.Fatalf("expected session status %q, got %q", StatusWaitingApproval, record.Status)
+	}
+
+	history, err := manager.History(context.Background(), created.ID, 200, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if !historyHasToolKind(history.Events, "plan") {
+		t.Fatalf("expected plan tool history, got %#v", history.Events)
+	}
+}
+
+func TestCodexPlanCompletionUsesDoneStatusOutsidePlanWorkflow(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "plan"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModeDefault,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "plan and continue", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q, got %q", StatusDone, record.Status)
+	}
+}
+
+func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "plan"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:    project.ID,
+		Agent:        AgentCodex,
+		WorkflowMode: WorkflowModePlan,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "plan first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusWaitingApproval) {
+		t.Fatalf("expected first completion status %q, got %q", StatusWaitingApproval, record.Status)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "implement now", nil); err != nil {
+		t.Fatalf("second SendMessage returned error: %v", err)
+	}
+
+	record, err = manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error after second send: %v", err)
+	}
+	if record.Status != string(StatusRunning) {
+		t.Fatalf("expected second send to move status to %q, got %q", StatusRunning, record.Status)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err = manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error after second completion: %v", err)
+	}
+	if record.Status != string(StatusWaitingApproval) {
+		t.Fatalf("expected second completion status %q, got %q", StatusWaitingApproval, record.Status)
 	}
 }
 
@@ -1179,6 +1474,7 @@ func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *
 		LegacyPermissionMode: "default",
 		Cwd:                  t.TempDir(),
 		Status:               string(StatusIdle),
+		ActivityAt:           time.Now(),
 	}
 	session.Init()
 	if err := model.GetDB().Create(session).Error; err != nil {
@@ -1240,8 +1536,30 @@ function emitReasoning() {
   });
 }
 
+function emitPlan() {
+  send({
+    method: 'item/started',
+    params: {
+      item: { type: 'plan', id: 'plan_test', text: '## Plan\n- Review the repo\n- Make the change' },
+      threadId,
+      turnId,
+    },
+  });
+  send({
+    method: 'item/completed',
+    params: {
+      item: { type: 'plan', id: 'plan_test', text: '## Plan\n- Review the repo\n- Make the change' },
+      threadId,
+      turnId,
+    },
+  });
+}
+
 function finishTurn(text) {
   emitReasoning();
+  if (mode === 'plan') {
+    emitPlan();
+  }
   send({
     method: 'item/started',
     params: {
@@ -1325,7 +1643,7 @@ rl.on('line', line => {
       },
     });
 
-    if (mode === 'basic' || mode === 'resume_only') {
+    if (mode === 'basic' || mode === 'resume_only' || mode === 'plan') {
       finishTurn('done');
       return;
     }
@@ -1394,7 +1712,10 @@ func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 	for time.Now().Before(deadline) {
 		if !manager.hasActiveRun(sessionID) {
 			record, err := manager.GetSession(context.Background(), sessionID)
-			if err == nil && (record.Status == string(StatusDone) || record.Status == string(StatusError) || record.Status == string(StatusIdle)) {
+			if err == nil && (record.Status == string(StatusDone) ||
+				record.Status == string(StatusWaitingApproval) ||
+				record.Status == string(StatusError) ||
+				record.Status == string(StatusIdle)) {
 				return
 			}
 		}

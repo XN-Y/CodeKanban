@@ -5,6 +5,13 @@ type ItemResponse<T> = {
   item?: T;
 };
 
+type ArchivedQueryResult = {
+  items: WebSessionSummary[];
+  total: number;
+  hasMore: boolean;
+  nextOffset: number;
+};
+
 export const webSessionApi = {
   async list(projectId: string): Promise<WebSessionSummary[]> {
     const body =
@@ -42,6 +49,55 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to create web session');
+    }
+    return body.item;
+  },
+
+  async archive(projectId: string, sessionId: string): Promise<WebSessionSummary> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionSummary>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/archive`)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to archive web session');
+    }
+    return body.item;
+  },
+
+  async unarchive(projectId: string, sessionId: string): Promise<WebSessionSummary> {
+    const body =
+      (await http
+        .Post<
+          ItemResponse<WebSessionSummary>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/unarchive`)
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to unarchive web session');
+    }
+    return body.item;
+  },
+
+  async delete(projectId: string, sessionId: string): Promise<void> {
+    await http.Delete(`/projects/${projectId}/web-sessions/${sessionId}`).send();
+  },
+
+  async queryArchived(data: {
+    projectIds: string[];
+    offset?: number;
+    limit?: number;
+  }): Promise<ArchivedQueryResult> {
+    const body =
+      (await http
+        .Post<ItemResponse<ArchivedQueryResult>>('/web-sessions/archived/query', {
+          projectIds: data.projectIds,
+          offset: data.offset ?? 0,
+          limit: data.limit ?? 20,
+        })
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to query archived web sessions');
     }
     return body.item;
   },

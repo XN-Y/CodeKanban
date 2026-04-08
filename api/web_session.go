@@ -138,6 +138,54 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/archive", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.SessionSummary], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.ArchiveSession(ctx, input.SessionID)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-archive"
+		op.Summary = "归档会话"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/unarchive", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+		},
+	) (*h.ItemResponse[websession.SessionSummary], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.UnarchiveSession(ctx, input.SessionID)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-unarchive"
+		op.Summary = "取消归档会话"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions/{sessionId}/rename", func(
 		ctx context.Context,
 		input *struct {
@@ -208,6 +256,34 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-delete"
 		op.Summary = "删除会话"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/web-sessions/archived/query", func(
+		ctx context.Context,
+		input *struct {
+			Body struct {
+				ProjectIDs []string `json:"projectIds"`
+				Offset     int      `json:"offset"`
+				Limit      int      `json:"limit"`
+			}
+		},
+	) (*h.ItemResponse[websession.ArchivedQueryResult], error) {
+		item, err := c.manager.ListArchivedSessions(
+			ctx,
+			input.Body.ProjectIDs,
+			input.Body.Limit,
+			input.Body.Offset,
+		)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to query archived sessions", err)
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-archived-query"
+		op.Summary = "查询归档会话"
 		op.Tags = []string{webSessionTag}
 	})
 
