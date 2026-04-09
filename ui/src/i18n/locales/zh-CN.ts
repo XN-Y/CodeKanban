@@ -25,6 +25,7 @@ export default {
     noRecentProjects: '暂无最近项目',
     yes: '是',
     no: '否',
+    default: '默认',
     saveSuccess: '保存成功',
     saveFailed: '保存失败',
     loadFailed: '加载失败',

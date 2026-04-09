@@ -2946,7 +2946,7 @@ const modelOptions = computed(() => {
 const reasoningEffortOptions = computed(() => {
   const options = [
     { label: t('common.default'), value: 'default' },
-    { label: 'None', value: 'none' },
+    { label: 'Off', value: 'none' },
     { label: 'Low', value: 'low' },
     { label: 'Medium', value: 'medium' },
     { label: 'High', value: 'high' },

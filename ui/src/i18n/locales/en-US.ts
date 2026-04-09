@@ -25,6 +25,7 @@ export default {
     noRecentProjects: 'No recent projects',
     yes: 'Yes',
     no: 'No',
+    default: 'Default',
     saveSuccess: 'Saved successfully',
     saveFailed: 'Failed to save',
     loadFailed: 'Failed to load',
