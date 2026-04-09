@@ -258,6 +258,127 @@
         </n-form>
       </n-card>
 
+      <n-card :title="t('settings.securityTitle')" size="huge">
+        <n-space vertical size="large">
+          <n-alert
+            :type="authStore.enabled ? 'warning' : 'info'"
+            :bordered="false"
+            :show-icon="false"
+          >
+            {{
+              authStore.enabled
+                ? t('settings.securityEnabledHint')
+                : t('settings.securityDisabledHint')
+            }}
+          </n-alert>
+
+          <template v-if="!authStore.enabled">
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityNewPassword')">
+                <n-input
+                  v-model:value="enablePassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityConfirmPassword')">
+                <n-input
+                  v-model:value="enablePasswordConfirm"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="primary"
+                    :loading="authSaving"
+                    :disabled="!enablePassword.trim() || !enablePasswordConfirm.trim()"
+                    @click="handleEnablePasswordProtection"
+                  >
+                    {{ t('settings.securityEnableAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityAlgorithmHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+          </template>
+
+          <template v-else>
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityCurrentPassword')">
+                <n-input
+                  v-model:value="currentPassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityNewPassword')">
+                <n-input
+                  v-model:value="newPassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityConfirmPassword')">
+                <n-input
+                  v-model:value="newPasswordConfirm"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="primary"
+                    :loading="authSaving"
+                    :disabled="
+                      !currentPassword.trim() || !newPassword.trim() || !newPasswordConfirm.trim()
+                    "
+                    @click="handleChangePasswordProtection"
+                  >
+                    {{ t('settings.securityChangeAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityRotateHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+
+            <n-divider style="margin: 0" />
+
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityDisablePassword')">
+                <n-input
+                  v-model:value="disablePassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="error"
+                    ghost
+                    :loading="authSaving"
+                    :disabled="!disablePassword.trim()"
+                    @click="handleDisablePasswordProtection"
+                  >
+                    {{ t('settings.securityDisableAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityDisableHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+          </template>
+        </n-space>
+      </n-card>
+
       <n-card :title="t('settings.terminalQuickActions')" size="huge">
         <n-form label-placement="left" label-width="160">
           <n-form-item :label="t('settings.terminalQuickActionsList')">
@@ -780,6 +901,7 @@ import {
 } from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import { useLocale } from '@/composables/useLocale';
+import { useAuthStore } from '@/stores/auth';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   useSettingsStore,
@@ -839,6 +961,7 @@ const { t, locale } = useLocale();
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
+const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const {
   theme,
@@ -865,6 +988,13 @@ const {
   inactiveTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
+const authSaving = ref(false);
+const enablePassword = ref('');
+const enablePasswordConfirm = ref('');
+const currentPassword = ref('');
+const newPassword = ref('');
+const newPasswordConfirm = ref('');
+const disablePassword = ref('');
 
 // 使用 composable 获取主题和终端配色选项
 const presetOptions = useThemeOptions();
@@ -1267,6 +1397,84 @@ async function saveShellConfig(shell: string) {
   } catch (error) {
     console.error('Failed to save shell config:', error);
     message.error(t('common.saveFailed'));
+  }
+}
+
+function resetAuthFormFields() {
+  enablePassword.value = '';
+  enablePasswordConfirm.value = '';
+  currentPassword.value = '';
+  newPassword.value = '';
+  newPasswordConfirm.value = '';
+  disablePassword.value = '';
+}
+
+async function handleEnablePasswordProtection() {
+  if (!enablePassword.value.trim() || !enablePasswordConfirm.value.trim()) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+  if (enablePassword.value !== enablePasswordConfirm.value) {
+    message.error(t('auth.passwordMismatch'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.enablePasswordProtection(enablePassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityEnableSuccess'));
+  } catch (error) {
+    console.error('Failed to enable password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
+  }
+}
+
+async function handleChangePasswordProtection() {
+  if (
+    !currentPassword.value.trim() ||
+    !newPassword.value.trim() ||
+    !newPasswordConfirm.value.trim()
+  ) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+  if (newPassword.value !== newPasswordConfirm.value) {
+    message.error(t('auth.passwordMismatch'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.changePasswordProtection(currentPassword.value, newPassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityChangeSuccess'));
+  } catch (error) {
+    console.error('Failed to change password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
+  }
+}
+
+async function handleDisablePasswordProtection() {
+  if (!disablePassword.value.trim()) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.disablePasswordProtection(disablePassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityDisableSuccess'));
+  } catch (error) {
+    console.error('Failed to disable password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
   }
 }
 

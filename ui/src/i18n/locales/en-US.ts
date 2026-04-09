@@ -807,6 +807,20 @@ export default {
     closeConfirmTitle: 'Confirm Close',
     closeConfirmContent: 'This tab contains unsaved content. Are you sure you want to close it?',
   },
+  auth: {
+    loginEyebrow: 'Password Protected',
+    loginTitle: 'Enter password to continue',
+    loginSubtitle:
+      'This instance has password protection enabled. Sign in before accessing projects and operations.',
+    passwordLabel: 'Password',
+    passwordPlaceholder: 'Enter access password',
+    loginAction: 'Sign in',
+    loginHashHint:
+      'The password is preprocessed in the browser with PBKDF2-HMAC-SHA512 before submission.',
+    loginFailed: 'Login failed',
+    passwordRequired: 'Please enter a password',
+    passwordMismatch: 'The two password entries do not match',
+  },
   settings: {
     title: 'General Settings',
     general: 'General',
@@ -832,6 +846,30 @@ export default {
     resetTheme: 'Reset Default Theme',
     themeSettings: 'Theme Settings',
     projectAndTerminal: 'Project & Terminal',
+    securityTitle: 'Password Protection',
+    securityEnabledHint:
+      'Password protection is enabled. Changing the password immediately invalidates other active sessions.',
+    securityDisabledHint:
+      'Password protection is off by default. Once enabled, every business API and realtime connection requires a valid session token.',
+    securityNewPassword: 'New Password',
+    securityConfirmPassword: 'Confirm Password',
+    securityPasswordPlaceholder: 'Enter a new password',
+    securityConfirmPasswordPlaceholder: 'Re-enter the new password',
+    securityEnableAction: 'Enable Password Protection',
+    securityAlgorithmHint:
+      'The browser preprocesses the password with PBKDF2-HMAC-SHA512, then the backend stores it with a low-memory Argon2id profile.',
+    securityCurrentPassword: 'Current Password',
+    securityCurrentPasswordPlaceholder: 'Enter the current password',
+    securityChangeAction: 'Change Password',
+    securityRotateHint:
+      'After changing the password, this page receives a fresh session and every other page or device must sign in again.',
+    securityDisablePassword: 'Disable Protection',
+    securityDisableAction: 'Disable Password Protection',
+    securityDisableHint:
+      'Disabling protection restores anonymous access and clears active authentication sessions.',
+    securityEnableSuccess: 'Password protection enabled',
+    securityChangeSuccess: 'Password updated',
+    securityDisableSuccess: 'Password protection disabled',
     worktreeSettings: 'Worktree Settings',
     worktreeGlobalBaseDir: 'Global Worktree Directory',
     worktreeGlobalBaseDirPlaceholder:

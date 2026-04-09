@@ -33,11 +33,6 @@ export const alovaInstance = createAlova({
   statesHook: VueHook,
   beforeRequest: method => {
     method.config.credentials = 'include';
-
-    const token = localStorage.getItem('token');
-    if (token) {
-      method.config.headers['Authorization'] = token;
-    }
   },
   responded: async (response, method) => {
     if (!response.ok) {
@@ -48,6 +43,17 @@ export const alovaInstance = createAlova({
         data = JSON.parse(responseText);
       } catch {
         data = responseText;
+      }
+
+      const requestURL = String((method as any).url || '');
+      if (response.status === 401 && !requestURL.includes('/api/v1/auth/')) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('codekanban:unauthorized', {
+              detail: { url: requestURL },
+            })
+          );
+        }
       }
 
       throw new ApiError(response.status, response.statusText, data);

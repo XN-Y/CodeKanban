@@ -70,6 +70,10 @@ func run(forceMigrate bool, bind string, port int) {
 	checker.CheckAsync()
 
 	cfg := utils.ReadConfig()
+	if err := utils.EnsureAuthConfig(cfg); err != nil {
+		fmt.Printf("Failed to initialize auth config: %v\n", err)
+		os.Exit(1)
+	}
 	if forceMigrate {
 		cfg.AutoMigrate = true
 	}

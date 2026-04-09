@@ -5,7 +5,6 @@ import './styles/variables.css';
 import './styles/fixes.css';
 
 import { createApp } from 'vue';
-import { createPinia } from 'pinia';
 
 import dayjs from 'dayjs';
 import 'dayjs/locale/zh-cn';
@@ -15,6 +14,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import App from './App.vue';
 import router from './router';
 import i18n from './i18n';
+import { pinia } from './stores/pinia';
 
 // 引入字体: 通用字体 / 等宽字体
 import 'vfonts/Lato.css';
@@ -32,7 +32,7 @@ document.head.appendChild(meta);
 
 const app = createApp(App);
 
-app.use(createPinia());
+app.use(pinia);
 app.use(router);
 app.use(i18n);
 

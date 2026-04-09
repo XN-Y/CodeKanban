@@ -23,6 +23,36 @@ type AttachmentConfig struct {
 	Token     string `json:"token" yaml:"token"`
 }
 
+type AuthConfig struct {
+	FrontendSalt string `json:"frontendSalt" yaml:"frontendSalt"`
+	PasswordHash string `json:"passwordHash" yaml:"passwordHash"`
+	TokenSecret  string `json:"tokenSecret" yaml:"tokenSecret"`
+	SessionTTL   string `json:"sessionTTL" yaml:"sessionTTL"`
+
+	sessionDuration time.Duration
+}
+
+// SessionDuration parses the configured auth session TTL and falls back to 30 days on errors.
+func (c *AuthConfig) SessionDuration() time.Duration {
+	if c == nil {
+		return 0
+	}
+	if c.sessionDuration != 0 {
+		return c.sessionDuration
+	}
+	if c.SessionTTL == "" {
+		c.sessionDuration = 30 * 24 * time.Hour
+		return c.sessionDuration
+	}
+	dur, err := time.ParseDuration(c.SessionTTL)
+	if err != nil {
+		c.sessionDuration = 30 * 24 * time.Hour
+		return c.sessionDuration
+	}
+	c.sessionDuration = dur
+	return c.sessionDuration
+}
+
 type TerminalShellConfig struct {
 	Windows string `json:"windows" yaml:"windows"`
 	Linux   string `json:"linux" yaml:"linux"`
@@ -126,6 +156,7 @@ type AppConfig struct {
 	DSN                    string           `json:"dbUrl" yaml:"dbUrl"`
 	PrintConfig            bool             `json:"printConfig" yaml:"printConfig"`
 	DisableAutoOpenBrowser bool             `json:"disableAutoOpenBrowser" yaml:"disableAutoOpenBrowser"`
+	Auth                   AuthConfig       `json:"auth" yaml:"auth"`
 	Terminal               TerminalConfig   `json:"terminal" yaml:"terminal"`
 	Developer              DeveloperConfig  `json:"developer" yaml:"developer"`
 	Worktree               WorktreeConfig   `json:"worktree" yaml:"worktree"`
@@ -186,6 +217,9 @@ func ReadConfig() *AppConfig {
 		DSN:                    fmt.Sprintf("%s/data.db", dataDir),
 		PrintConfig:            false,
 		DisableAutoOpenBrowser: false,
+		Auth: AuthConfig{
+			SessionTTL: "720h",
+		},
 		Terminal: TerminalConfig{
 			Shell: TerminalShellConfig{
 				Windows: "pwsh.exe -NoLogo",
@@ -243,6 +277,7 @@ func ReadConfig() *AppConfig {
 	}
 
 	// 规范化派生值，避免重复计算
+	_ = config.Auth.SessionDuration()
 	_ = config.Terminal.IdleDuration()
 
 	if config.PrintConfig {

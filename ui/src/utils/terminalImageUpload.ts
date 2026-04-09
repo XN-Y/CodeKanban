@@ -99,11 +99,6 @@ export async function uploadTerminalImage(options: {
     xhr.withCredentials = true;
     xhr.responseType = 'json';
 
-    const token = window.localStorage.getItem('token');
-    if (token) {
-      xhr.setRequestHeader('Authorization', token);
-    }
-
     xhr.upload.onprogress = event => {
       if (!onProgress) {
         return;

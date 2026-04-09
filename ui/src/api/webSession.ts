@@ -39,9 +39,9 @@ export type WebSessionSnapshot = {
 export const webSessionApi = {
   async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
     const config = extractItem<WebSessionCodexRuntimeConfig>(
-      await http.Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config').send(
-        true
-      )
+      await http
+        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config')
+        .send(true)
     );
     if (!config) {
       throw new Error('failed to load web session runtime config');
@@ -170,12 +170,13 @@ export const webSessionApi = {
   ): Promise<WebSessionSnapshot> {
     const body =
       (await http
-        .Post<
-          ItemResponse<WebSessionSnapshot>
-        >(`/projects/${projectId}/web-sessions/${sessionId}/sync`, {
-          ...(mode ? { mode } : {}),
-          clearExisting,
-        })
+        .Post<ItemResponse<WebSessionSnapshot>>(
+          `/projects/${projectId}/web-sessions/${sessionId}/sync`,
+          {
+            ...(mode ? { mode } : {}),
+            clearExisting,
+          }
+        )
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to sync web session');
@@ -225,11 +226,6 @@ export const webSessionApi = {
       xhr.open('POST', uploadUrl, true);
       xhr.withCredentials = true;
       xhr.responseType = 'json';
-
-      const token = window.localStorage.getItem('token');
-      if (token) {
-        xhr.setRequestHeader('Authorization', token);
-      }
 
       xhr.upload.onprogress = event => {
         if (!options?.onProgress) {
