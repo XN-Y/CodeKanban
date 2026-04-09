@@ -22,6 +22,7 @@ configs/
 data/
 pegtest/
 temp/
+tmp/
 
 dist/
 config.yaml
