@@ -137,18 +137,13 @@
                 </div>
 
                 <div
-                  v-if="showTimelineSyncLoading"
-                  class="timeline-loading-shell"
-                  aria-hidden="true"
+                  v-if="
+                    visibleBlocks.length === 0 &&
+                    !historyMeta.loading &&
+                    currentRealSession?.syncState !== 'syncing'
+                  "
+                  class="timeline-intro"
                 >
-                  <div
-                    v-for="row in timelineLoadingRows"
-                    :key="row"
-                    class="timeline-loading-card"
-                  ></div>
-                </div>
-
-                <div v-else-if="visibleBlocks.length === 0" class="timeline-intro">
                   <span class="timeline-intro-badge">
                     {{ currentSession.agent === 'codex' ? 'Codex' : 'Claude' }}
                   </span>
@@ -1831,13 +1826,6 @@ const historyMeta = computed(() =>
     ? webSessionStore.getHistoryMeta(currentRealSession.value.id)
     : { hasMore: false, beforeCursor: '', total: 0, loading: false }
 );
-const showTimelineSyncLoading = computed(
-  () =>
-    Boolean(currentRealSession.value) &&
-    visibleBlocks.value.length === 0 &&
-    (historyMeta.value.loading || currentRealSession.value?.syncState === 'syncing')
-);
-const timelineLoadingRows = [1, 2, 3, 4, 5];
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
@@ -6396,37 +6384,6 @@ onBeforeUnmount(() => {
   padding: 4px 0 16px;
   font-size: 12px;
   color: var(--n-text-color-3);
-}
-
-.timeline-loading-shell {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  max-width: 940px;
-}
-
-.timeline-loading-card {
-  height: 52px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, transparent);
-  background: linear-gradient(
-    90deg,
-    color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 0%,
-    color-mix(in srgb, var(--app-surface-color, #fff) 76%, #e3eaf5) 48%,
-    color-mix(in srgb, var(--app-surface-color, #fff) 92%, #eef2f7) 100%
-  );
-  background-size: 220% 100%;
-  animation: web-session-sync-loading 1.2s ease-in-out infinite;
-  box-shadow: 0 18px 48px rgba(15, 23, 42, 0.06);
-}
-
-@keyframes web-session-sync-loading {
-  0% {
-    background-position: 100% 0;
-  }
-  100% {
-    background-position: -100% 0;
-  }
 }
 
 .timeline-intro {

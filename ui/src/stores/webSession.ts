@@ -7,6 +7,14 @@ import type {
   WebSessionContextWindowSource,
   WebSessionSummary,
 } from '@/types/models';
+import {
+  buildWebSessionSnapshotVersion,
+  compareWebSessionSnapshotVersion,
+  selectLatestWebSessionSnapshotVersion,
+  shouldApplyIncomingWebSessionSnapshot,
+  type WebSessionSnapshotVersion,
+  type WebSessionSnapshotVersionInput,
+} from '@/stores/webSessionSnapshotVersion';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
@@ -511,6 +519,17 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function parseHistoryTimeValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function parseToolCommandGroup(value: unknown) {
   const record = asRecord(value);
   if (!record) {
@@ -760,6 +779,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pendingFlushTimers = new Map<string, number>();
   const flushingSessions = new Set<string>();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
+  const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   let draftAttachmentUploadSeed = 0;
 
   const allSessionIds = computed(() => {
@@ -882,6 +902,55 @@ export const useWebSessionStore = defineStore('web-session', () => {
         loading,
       },
     };
+  }
+
+  function currentSnapshotVersionInput(sessionId: string): WebSessionSnapshotVersionInput | null {
+    const session = findSessionById(sessionId);
+    if (!session) {
+      return null;
+    }
+    return {
+      session,
+      historyTotal: getHistoryMeta(sessionId).total,
+    };
+  }
+
+  function rememberAppliedSnapshotVersion(
+    sessionId: string,
+    snapshot: WebSessionSnapshotVersionInput
+  ) {
+    const nextVersion = buildWebSessionSnapshotVersion(snapshot);
+    const currentVersion = appliedSnapshotVersionBySession.get(sessionId) ?? null;
+    if (!currentVersion || compareWebSessionSnapshotVersion(nextVersion, currentVersion) >= 0) {
+      appliedSnapshotVersionBySession.set(sessionId, nextVersion);
+    }
+  }
+
+  function applySessionSnapshot(
+    sessionId: string,
+    summary: WebSessionSummary,
+    items: WebSessionBlock[],
+    history: {
+      hasMore: boolean;
+      beforeCursor?: string;
+      total: number;
+    }
+  ) {
+    upsertSession(summary);
+    resetSessionEvents(sessionId, items);
+    historyBySession.value = {
+      ...historyBySession.value,
+      [sessionId]: {
+        hasMore: Boolean(history.hasMore),
+        beforeCursor: String(history.beforeCursor ?? ''),
+        total: Number(history.total ?? 0),
+        loading: false,
+      },
+    };
+    rememberAppliedSnapshotVersion(sessionId, {
+      session: summary,
+      historyTotal: history.total,
+    });
   }
 
   function rememberActiveSession(projectId: string, sessionId: string) {
@@ -1292,82 +1361,126 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
-  function normalizeHistoryItem(item: WireHistoryItem): WebSessionBlock {
+  function normalizeHistoryItem(item: WireHistoryItem | Record<string, unknown>): WebSessionBlock {
+    const record = asRecord(item) ?? {};
+    const rawTimestamp = parseHistoryTimeValue(record.ts2 ?? record.timestamp);
+    const rawObservedAt = parseHistoryTimeValue(record.obs ?? record.observedAt);
+    const rawAttachments = Array.isArray(record.atts)
+      ? record.atts
+      : Array.isArray(record.attachments)
+        ? record.attachments
+        : [];
+    const rawTool = asRecord(record.tl ?? record.tool);
+    const rawDetail = asRecord(record.dt ?? record.detail);
+    const rawPayload = asRecord(record.pl ?? record.payload);
+    const kind = String(record.kd ?? record.kind ?? '').trim();
+    const itemType = String(record.tp ?? record.itemType ?? '').trim();
+    const detailType = String(rawDetail?.type ?? '').trim();
+
     return {
-      key: `${item.id}:${item.oi}`,
-      id: item.id,
-      sourceTurnId: item.stid ?? null,
-      sourceItemId: item.siid ?? null,
-      orderIndex: Number(item.oi ?? 0),
-      kind: item.kd,
-      itemType: item.tp,
-      text: typeof item.txt === 'string' ? item.txt : '',
-      timestamp:
-        typeof item.ts2 === 'number' && Number.isFinite(item.ts2)
-          ? item.ts2
-          : typeof item.obs === 'number' && Number.isFinite(item.obs)
-            ? item.obs
-            : 0,
-      observedAt:
-        typeof item.obs === 'number' && Number.isFinite(item.obs) ? item.obs : (item.ts2 ?? null),
-      attachments: Array.isArray(item.atts)
-        ? item.atts.map(attachment => ({
+      key: `${String(record.id ?? '')}:${Number(record.oi ?? record.orderIndex ?? 0)}`,
+      id: String(record.id ?? ''),
+      sourceTurnId:
+        typeof record.stid === 'string'
+          ? record.stid
+          : typeof record.sourceTurnId === 'string'
+            ? record.sourceTurnId
+            : null,
+      sourceItemId:
+        typeof record.siid === 'string'
+          ? record.siid
+          : typeof record.sourceItemId === 'string'
+            ? record.sourceItemId
+            : null,
+      orderIndex: Number(record.oi ?? record.orderIndex ?? 0),
+      kind:
+        kind === 'user' || kind === 'assistant' || kind === 'system' || kind === 'tool'
+          ? kind
+          : 'system',
+      itemType,
+      text:
+        typeof record.txt === 'string'
+          ? record.txt
+          : typeof record.text === 'string'
+            ? record.text
+            : '',
+      timestamp: rawTimestamp ?? rawObservedAt ?? 0,
+      observedAt: rawObservedAt ?? rawTimestamp ?? null,
+      attachments: rawAttachments
+        .map(attachment => asRecord(attachment))
+        .filter((attachment): attachment is Record<string, unknown> => Boolean(attachment))
+        .map(attachment => ({
             id: String(attachment.id ?? ''),
             name: String(attachment.name ?? ''),
             mime: typeof attachment.mime === 'string' ? attachment.mime : undefined,
-            size: typeof attachment.sz === 'number' ? attachment.sz : undefined,
+            size:
+              typeof attachment.sz === 'number'
+                ? attachment.sz
+                : typeof attachment.size === 'number'
+                  ? attachment.size
+                  : undefined,
             path: typeof attachment.path === 'string' ? attachment.path : undefined,
           }))
-        : [],
-      tool: item.tl
+        .filter(attachment => Boolean(attachment.id || attachment.name)),
+      tool: rawTool
         ? {
-            id: item.tl.id,
-            name: item.tl.name,
-            kind: item.tl.kind,
-            input: item.tl.in,
-            output: item.tl.out,
+            id: String(rawTool.id ?? ''),
+            name: String(rawTool.name ?? ''),
+            kind: typeof rawTool.kind === 'string' ? rawTool.kind : undefined,
+            input: rawTool.in ?? rawTool.input,
+            output:
+              typeof rawTool.out === 'string'
+                ? rawTool.out
+                : typeof rawTool.output === 'string'
+                  ? rawTool.output
+                  : undefined,
             status:
-              item.tl.st === 'error' || item.tl.st === 'running' || item.tl.st === 'done'
-                ? item.tl.st
-                : item.tl.st === 'completed'
+              rawTool.st === 'error' || rawTool.st === 'running' || rawTool.st === 'done'
+                ? rawTool.st
+                : rawTool.status === 'error' ||
+                    rawTool.status === 'running' ||
+                    rawTool.status === 'done'
+                  ? rawTool.status
+                  : rawTool.st === 'completed' || rawTool.status === 'completed'
                   ? 'done'
                   : 'running',
             startedAt:
-              typeof item.ts2 === 'number' && Number.isFinite(item.ts2)
-                ? item.ts2
-                : typeof item.obs === 'number' && Number.isFinite(item.obs)
-                  ? item.obs
+              rawTimestamp != null
+                ? rawTimestamp
+                : rawObservedAt != null
+                  ? rawObservedAt
                   : undefined,
-            meta: item.tl.meta,
-            commandGroup: item.tl.cg
-              ? {
-                  id: item.tl.cg.id,
-                  count: Math.max(1, Number(item.tl.cg.count ?? 1) || 1),
-                  firstSeq:
-                    typeof item.tl.cg.firstSeq === 'number' ? item.tl.cg.firstSeq : undefined,
-                  lastSeq: typeof item.tl.cg.lastSeq === 'number' ? item.tl.cg.lastSeq : undefined,
-                  latestToolId:
-                    typeof item.tl.cg.latestToolId === 'string'
-                      ? item.tl.cg.latestToolId
-                      : undefined,
-                  compacted: item.tl.cg.compacted === true,
-                }
-              : undefined,
+            meta: asRecord(rawTool.meta),
+            commandGroup: parseToolCommandGroup(rawTool.cg ?? rawTool.commandGroup),
           }
         : undefined,
       level:
-        item.lvl === 'warn' || item.lvl === 'error' || item.lvl === 'info' ? item.lvl : undefined,
-      done: item.dn === true,
-      detail: item.dt
+        record.lvl === 'warn' || record.lvl === 'error' || record.lvl === 'info'
+          ? record.lvl
+          : record.level === 'warn' || record.level === 'error' || record.level === 'info'
+            ? record.level
+            : undefined,
+      done: record.dn === true || record.done === true,
+      detail: rawDetail
         ? {
-            type: item.dt.type,
-            prompt: item.dt.prompt,
-            questions: Array.isArray(item.dt.questions) ? item.dt.questions : undefined,
-            answers: Array.isArray(item.dt.answers) ? item.dt.answers : undefined,
-            action: item.dt.action,
+            type:
+              detailType === 'approval_request' ||
+              detailType === 'approval_response' ||
+              detailType === 'user_input_request' ||
+              detailType === 'user_input_response'
+                ? detailType
+                : 'approval_request',
+            prompt: typeof rawDetail.prompt === 'string' ? rawDetail.prompt : undefined,
+            questions: Array.isArray(rawDetail.questions)
+              ? (rawDetail.questions as WebSessionUserInputQuestion[])
+              : undefined,
+            answers: Array.isArray(rawDetail.answers)
+              ? (rawDetail.answers as WebSessionHistoryAnswerEntry[])
+              : undefined,
+            action: typeof rawDetail.action === 'string' ? rawDetail.action : undefined,
           }
         : undefined,
-      payload: item.pl,
+      payload: rawPayload,
     };
   }
 
@@ -1469,6 +1582,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextHistory = { ...historyBySession.value };
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
+    appliedSnapshotVersionBySession.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
@@ -2014,20 +2128,43 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     if (frame.k === 'snap' && frame.sid && frame.s) {
       const summary = normalizeSession(frame.s);
-      upsertSession(summary);
-      resetSessionEvents(
-        frame.sid,
-        Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : []
+      const historyTotal = Number(frame.h?.tot ?? frame.h?.its?.length ?? 0);
+      const snapshotInput = currentSnapshotVersionInput(frame.sid);
+      const appliedVersion = appliedSnapshotVersionBySession.get(frame.sid) ?? null;
+      const currentVersion = selectLatestWebSessionSnapshotVersion(
+        appliedVersion,
+        snapshotInput ? buildWebSessionSnapshotVersion(snapshotInput) : null
       );
-      historyBySession.value = {
-        ...historyBySession.value,
-        [frame.sid]: {
+      const incomingSnapshot = {
+        session: summary,
+        historyTotal,
+      };
+      if (
+        !shouldApplyIncomingWebSessionSnapshot({
+          appliedVersion,
+          currentSnapshot: snapshotInput,
+          incomingSnapshot,
+        })
+      ) {
+        if (import.meta.env.DEV) {
+          console.debug('[Web Session] Dropped stale snapshot frame', {
+            sessionId: frame.sid,
+            currentVersion,
+            incomingVersion: buildWebSessionSnapshotVersion(incomingSnapshot),
+          });
+        }
+        return;
+      }
+      applySessionSnapshot(
+        frame.sid,
+        summary,
+        Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : [],
+        {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
-          total: frame.h?.tot ?? frame.h?.its?.length ?? 0,
-          loading: false,
-        },
-      };
+          total: historyTotal,
+        }
+      );
       resolveSnapshotWaiters(frame.sid, frame);
       return;
     }
@@ -2319,23 +2456,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
     try {
       const snapshot = await webSessionApi.sync(projectId, sessionId, mode, clearExisting);
       if (snapshot?.session) {
-        upsertSession(snapshot.session);
+        applySessionSnapshot(
+          sessionId,
+          snapshot.session,
+          Array.isArray(snapshot?.history?.items)
+            ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+            : [],
+          {
+            hasMore: Boolean(snapshot?.history?.hasMore),
+            beforeCursor: String(snapshot?.history?.beforeCursor ?? ''),
+            total: Number(snapshot?.history?.total ?? 0),
+          }
+        );
       }
-      resetSessionEvents(
-        sessionId,
-        Array.isArray(snapshot?.history?.items)
-          ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
-          : []
-      );
-      historyBySession.value = {
-        ...historyBySession.value,
-        [sessionId]: {
-          hasMore: Boolean(snapshot?.history?.hasMore),
-          beforeCursor: String(snapshot?.history?.beforeCursor ?? ''),
-          total: Number(snapshot?.history?.total ?? 0),
-          loading: false,
-        },
-      };
       rememberActiveSession(projectId, sessionId);
       return snapshot;
     } catch (error) {

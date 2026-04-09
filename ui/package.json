@@ -10,6 +10,7 @@
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
+    "test": "vitest run",
     "type-check": "vue-tsc --build",
     "lint:oxlint": "oxlint . --fix -D correctness --ignore-path .gitignore",
     "lint:eslint": "eslint . --fix",
@@ -67,6 +68,7 @@
     "vfonts": "^0.0.3",
     "vite": "npm:rolldown-vite@latest",
     "vite-plugin-vue-devtools": "^8.0.0",
+    "vitest": "^4.1.4",
     "vue-tsc": "^3.0.4"
   }
 }
