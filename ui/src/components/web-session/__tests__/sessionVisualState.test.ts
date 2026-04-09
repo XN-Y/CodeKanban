@@ -40,12 +40,12 @@ describe('sessionVisualState', () => {
     expect(getWebSessionSidebarTone(input)).toBe('approval');
   });
 
-  it('keeps waiting_plan_approval in the approval tone', () => {
+  it('maps waiting_plan_approval to the plan approval tone', () => {
     const input = makeInput({ phase: 'waiting_plan_approval' });
 
-    expect(getWebSessionPillTone(input)).toBe('approval');
-    expect(getWebSessionTabTone(input)).toBe('approval');
-    expect(getWebSessionSidebarTone(input)).toBe('approval');
+    expect(getWebSessionPillTone(input)).toBe('plan_approval');
+    expect(getWebSessionTabTone(input)).toBe('plan_approval');
+    expect(getWebSessionSidebarTone(input)).toBe('plan_approval');
   });
 
   it('treats waiting_approval as approval tone', () => {

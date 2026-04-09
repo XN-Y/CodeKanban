@@ -4,6 +4,7 @@ import type { WebSessionSummary } from '@/types/models';
 export type WebSessionDisplayAssistantState =
   | 'working'
   | 'waiting_approval'
+  | 'waiting_plan_approval'
   | 'waiting_input'
   | 'unknown';
 
@@ -44,8 +45,9 @@ function mapPhaseToAssistantState(
     case 'retrying':
       return 'working';
     case 'waiting_approval':
-    case 'waiting_plan_approval':
       return 'waiting_approval';
+    case 'waiting_plan_approval':
+      return 'waiting_plan_approval';
     case 'waiting_input':
     case 'done':
     case 'idle':
@@ -64,8 +66,9 @@ function mapAssistantStateToDisplayState(
     case 'working':
       return 'working';
     case 'waiting_approval':
-    case 'waiting_plan_approval':
       return 'waiting_approval';
+    case 'waiting_plan_approval':
+      return 'waiting_plan_approval';
     case 'waiting_input':
       return 'waiting_input';
     default:
@@ -100,7 +103,9 @@ export function resolveWebSessionDisplayState(
       mapAssistantStateToDisplayState(input.assistantState) ??
       mapStatusToAssistantState(input.status));
 
-  const hasUnviewedApproval = input.hasUnread && assistantStateClass === 'waiting_approval';
+  const hasUnviewedApproval =
+    input.hasUnread &&
+    (assistantStateClass === 'waiting_approval' || assistantStateClass === 'waiting_plan_approval');
   const hasUnviewedCompletion =
     input.hasUnread &&
     !hasUnviewedApproval &&
@@ -117,6 +122,7 @@ export function resolveWebSessionDisplayState(
       statusEmoji = '🤔';
       break;
     case 'waiting_approval':
+    case 'waiting_plan_approval':
       statusLabelKey = 'terminal.aiStatusWaitingApproval';
       statusEmoji = '✋';
       break;

@@ -49,16 +49,18 @@ describe('webSessionSessionState', () => {
     expect(state.statusEmoji).toBe('🤔');
   });
 
-  it('maps plan approval to the approval label', () => {
+  it('maps plan approval to a distinct pill state while keeping the approval label', () => {
     const state = resolveWebSessionDisplayState(
       makeInput({
         livePhase: 'waiting_plan_approval',
+        hasUnread: true,
       })
     );
 
-    expect(state.assistantStateClass).toBe('waiting_approval');
+    expect(state.assistantStateClass).toBe('waiting_plan_approval');
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingApproval');
-    expect(state.hasUnviewedApproval).toBe(false);
+    expect(state.pillStateClass).toBe('waiting_plan_approval');
+    expect(state.hasUnviewedApproval).toBe(true);
   });
 
   it('treats draft sessions as waiting for input without status dots', () => {

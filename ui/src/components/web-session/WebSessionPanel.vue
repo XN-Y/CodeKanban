@@ -3061,6 +3061,17 @@ const approvalColors = computed(() => {
     glow: isDarkTheme ? 'rgba(251, 146, 60, 0.24)' : 'rgba(249, 115, 22, 0.16)',
   };
 });
+const planApprovalColors = computed(() => {
+  const theme = activeTheme.value;
+  const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
+  return {
+    bg: isDarkTheme ? 'rgba(34, 211, 238, 0.18)' : 'rgba(6, 182, 212, 0.14)',
+    border: isDarkTheme ? 'rgba(34, 211, 238, 0.4)' : 'rgba(6, 182, 212, 0.3)',
+    accent: isDarkTheme ? '#22d3ee' : '#0891b2',
+    accentStrong: isDarkTheme ? '#06b6d4' : '#0e7490',
+    glow: isDarkTheme ? 'rgba(34, 211, 238, 0.24)' : 'rgba(6, 182, 212, 0.16)',
+  };
+});
 const webSessionStyleVars = computed(
   () =>
     ({
@@ -3069,6 +3080,11 @@ const webSessionStyleVars = computed(
       '--web-session-approval-accent': approvalColors.value.accent,
       '--web-session-approval-accent-strong': approvalColors.value.accentStrong,
       '--web-session-approval-glow': approvalColors.value.glow,
+      '--web-session-plan-approval-bg': planApprovalColors.value.bg,
+      '--web-session-plan-approval-border': planApprovalColors.value.border,
+      '--web-session-plan-approval-accent': planApprovalColors.value.accent,
+      '--web-session-plan-approval-accent-strong': planApprovalColors.value.accentStrong,
+      '--web-session-plan-approval-glow': planApprovalColors.value.glow,
     }) as CSSProperties
 );
 const tabTitleStyle = computed(() => ({
@@ -6236,7 +6252,14 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
     classes.push('is-archiving');
   }
 
-  if (usesSessionApprovalTone(session)) {
+  if (usesSessionPlanApprovalTone(session)) {
+    classes.push('has-unviewed-plan-approval');
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
+  } else if (usesSessionApprovalTone(session)) {
     classes.push('has-unviewed-approval');
     if (isActive && hideHeaderBorder) {
       props.style = {
@@ -6339,7 +6362,9 @@ function getSidebarSessionAccentColor(item: CrossProjectSessionItem) {
     case 'working':
       return '#8b5cf6';
     case 'approval':
-      return '#f79009';
+      return approvalColors.value.accent;
+    case 'plan_approval':
+      return planApprovalColors.value.accent;
     case 'completion':
       return '#10b981';
     case 'idle':
@@ -6359,6 +6384,8 @@ function getSidebarSessionClasses(item: CrossProjectSessionItem): string[] {
       return ['session-sidebar-working'];
     case 'approval':
       return ['session-sidebar-approval'];
+    case 'plan_approval':
+      return ['session-sidebar-plan-approval'];
     case 'completion':
       return ['session-sidebar-completion'];
     case 'idle':
@@ -6389,14 +6416,21 @@ function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
   return getSessionDisplayState(session).statusDotClass ?? session.status;
 }
 
-function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
+function getSessionTabTone(session: (typeof sessions.value)[number]) {
   const visualInput = getSessionVisualInput(session);
-  return visualInput ? getWebSessionTabTone(visualInput) === 'approval' : false;
+  return visualInput ? getWebSessionTabTone(visualInput) : 'default';
+}
+
+function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
+  return getSessionTabTone(session) === 'approval';
+}
+
+function usesSessionPlanApprovalTone(session: (typeof sessions.value)[number]) {
+  return getSessionTabTone(session) === 'plan_approval';
 }
 
 function usesSessionCompletionTone(session: (typeof sessions.value)[number]) {
-  const visualInput = getSessionVisualInput(session);
-  return visualInput ? getWebSessionTabTone(visualInput) === 'completion' : false;
+  return getSessionTabTone(session) === 'completion';
 }
 
 function handleTabContextMenu(event: MouseEvent, session: (typeof sessions.value)[number]) {
@@ -7026,6 +7060,8 @@ onBeforeUnmount(() => {
 .web-session-panel {
   --web-session-approval-bg: rgba(247, 144, 9, 0.25);
   --web-session-approval-border: rgba(247, 144, 9, 0.5);
+  --web-session-plan-approval-bg: rgba(6, 182, 212, 0.14);
+  --web-session-plan-approval-border: rgba(6, 182, 212, 0.3);
   box-sizing: border-box;
   height: 100%;
   padding-bottom: var(--workspace-mobile-websession-inset, 0px);
@@ -7286,6 +7322,11 @@ onBeforeUnmount(() => {
   color: #f79009;
 }
 
+.ai-status-pill.state-waiting_plan_approval {
+  background-color: rgba(34, 211, 238, 0.14);
+  color: #0891b2;
+}
+
 .ai-status-pill.state-completion {
   background-color: rgba(255, 255, 255, 0.84);
   color: #475467;
@@ -7340,6 +7381,44 @@ onBeforeUnmount(() => {
   :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
   background-color: rgba(16, 185, 129, 0.22) !important;
   border-color: rgba(16, 185, 129, 0.54) !important;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
+  background-color: var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) !important;
+  border-color: var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) !important;
+}
+
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
+  background-color: color-mix(
+    in srgb,
+    var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) 78%,
+    var(--app-surface-color, #fff) 22%
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) 88%,
+    transparent 12%
+  ) !important;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-plan-approval) {
+  background-color: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) !important;
+  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) !important;
+}
+
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-plan-approval.n-tabs-tab--active) {
+  background-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 78%,
+    var(--app-surface-color, #fff) 22%
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 88%,
+    transparent 12%
+  ) !important;
 }
 
 .header-actions {
@@ -7615,6 +7694,12 @@ onBeforeUnmount(() => {
   color: #f79009;
 }
 
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_plan_approval) {
+  background: rgba(34, 211, 238, 0.14);
+  color: #0891b2;
+  border-color: rgba(6, 182, 212, 0.18);
+}
+
 :global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-completion) {
   background: rgba(16, 185, 129, 0.12);
   color: #059669;
@@ -7881,7 +7966,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   width: 18px;
   height: 2px;
-  background: #0ea5e9;
+  background: var(--session-sidebar-accent, #0ea5e9);
   transform: rotate(54deg);
   transform-origin: center center;
   pointer-events: none;
@@ -7895,7 +7980,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   width: 18px;
   height: 2px;
-  background: #0ea5e9;
+  background: var(--session-sidebar-accent, #0ea5e9);
   transform: rotate(-54deg);
   transform-origin: center center;
   pointer-events: none;
@@ -8070,6 +8155,40 @@ onBeforeUnmount(() => {
   border-color: rgba(247, 144, 9, 0.6);
   background: rgba(247, 144, 9, 0.22);
   box-shadow: none;
+}
+
+.session-sidebar-plan-approval {
+  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3));
+  background: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14));
+}
+
+.session-sidebar-item.session-sidebar-plan-approval.is-active,
+.session-sidebar-item.session-sidebar-plan-approval.is-active:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-accent-strong, #0e7490) 14%,
+    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 86%
+  );
+  border-left-color: var(--web-session-plan-approval-accent, #0891b2);
+  background: linear-gradient(
+    135deg,
+    color-mix(
+        in srgb,
+        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 92%,
+        var(--app-surface-color, #fff) 8%
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 76%,
+        var(--app-surface-color, #fff) 24%
+      )
+      100%
+  );
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 16%, transparent),
+    0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 14%, transparent);
 }
 
 .session-sidebar-completion {
@@ -8993,7 +9112,6 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_approval,
-.live-card.phase-waiting_plan_approval,
 .live-card.phase-waiting_input {
   border-color: color-mix(in srgb, var(--web-session-approval-border) 82%, var(--n-border-color));
   background:
@@ -9013,8 +9131,35 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_approval::before,
-.live-card.phase-waiting_plan_approval::before,
 .live-card.phase-waiting_input::before {
+  opacity: 0.26;
+  animation: liveSweep 3.2s ease-in-out infinite;
+}
+
+.live-card.phase-waiting_plan_approval {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-border) 82%,
+    var(--n-border-color)
+  );
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-plan-approval-accent) 12%, transparent) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 11%, var(--app-surface-color, #fff))
+        54%,
+      var(--app-surface-color, #fff) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-glow) 70%, transparent);
+}
+
+.live-card.phase-waiting_plan_approval::before {
   opacity: 0.26;
   animation: liveSweep 3.2s ease-in-out infinite;
 }
@@ -9148,7 +9293,6 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_input .live-orb,
-.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
   background: linear-gradient(
@@ -9158,16 +9302,30 @@ onBeforeUnmount(() => {
   );
 }
 
+.live-card.phase-waiting_plan_approval .live-orb {
+  background: linear-gradient(
+    135deg,
+    var(--web-session-plan-approval-accent) 0%,
+    var(--web-session-plan-approval-accent-strong) 100%
+  );
+}
+
 .live-card.phase-waiting_input .live-orb,
-.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-approval-glow) 82%, transparent);
 }
 
-.live-card.phase-waiting_plan_approval .live-orb::after,
+.live-card.phase-waiting_plan_approval .live-orb {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-plan-approval-glow) 82%, transparent);
+}
+
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
   background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
+}
+
+.live-card.phase-waiting_plan_approval .live-orb::after {
+  background: color-mix(in srgb, var(--web-session-plan-approval-accent) 28%, transparent);
 }
 
 .live-card.phase-retrying .live-orb {

@@ -4,11 +4,17 @@ import type { WebSessionSummary } from '@/types/models';
 type SessionPhase = WebSessionLiveState['phase'];
 type SessionStatus = WebSessionSummary['status'];
 
-export type WebSessionPillTone = 'working' | 'approval' | 'completion' | 'unknown';
-export type WebSessionTabTone = 'approval' | 'completion' | 'default';
+export type WebSessionPillTone =
+  | 'working'
+  | 'approval'
+  | 'plan_approval'
+  | 'completion'
+  | 'unknown';
+export type WebSessionTabTone = 'approval' | 'plan_approval' | 'completion' | 'default';
 export type WebSessionSidebarTone =
   | 'working'
   | 'approval'
+  | 'plan_approval'
   | 'completion'
   | 'idle'
   | 'error'
@@ -20,16 +26,17 @@ type SessionVisualInput = {
   status?: SessionStatus | '' | null;
 };
 
-const APPROVAL_PHASES = new Set<SessionPhase>([
-  'waiting_approval',
-  'waiting_input',
-  'waiting_plan_approval',
-]);
+const APPROVAL_PHASES = new Set<SessionPhase>(['waiting_approval', 'waiting_input']);
+const PLAN_APPROVAL_PHASES = new Set<SessionPhase>(['waiting_plan_approval']);
 
 const WORKING_PHASES = new Set<SessionPhase>(['starting', 'thinking', 'tool', 'retrying']);
 
 function isApprovalPhase(phase: SessionPhase) {
   return APPROVAL_PHASES.has(phase);
+}
+
+function isPlanApprovalPhase(phase: SessionPhase) {
+  return PLAN_APPROVAL_PHASES.has(phase);
 }
 
 function isWorkingPhase(phase: SessionPhase) {
@@ -40,6 +47,9 @@ export function getWebSessionPillTone({
   phase,
   hasUnread,
 }: SessionVisualInput): WebSessionPillTone {
+  if (isPlanApprovalPhase(phase)) {
+    return 'plan_approval';
+  }
   if (isApprovalPhase(phase)) {
     return 'approval';
   }
@@ -53,6 +63,9 @@ export function getWebSessionPillTone({
 }
 
 export function getWebSessionTabTone({ phase, hasUnread }: SessionVisualInput): WebSessionTabTone {
+  if (isPlanApprovalPhase(phase)) {
+    return 'plan_approval';
+  }
   if (isApprovalPhase(phase)) {
     return 'approval';
   }
@@ -67,6 +80,9 @@ export function getWebSessionSidebarTone({
   hasUnread,
   status,
 }: SessionVisualInput): WebSessionSidebarTone {
+  if (isPlanApprovalPhase(phase)) {
+    return 'plan_approval';
+  }
   if (isApprovalPhase(phase)) {
     return 'approval';
   }
