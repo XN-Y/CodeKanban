@@ -64,6 +64,14 @@ type WireSession = {
     cin?: number;
     out?: number;
   };
+  cea?: {
+    in?: number;
+    cin?: number;
+    out?: number;
+    usd?: number;
+  };
+  cem?: 'cumulative_total' | 'since_compaction';
+  lcca?: number | null;
   cost?: number;
   cwt?: number | null;
   cws?: WebSessionContextWindowSource;
@@ -1338,6 +1346,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
         outputTokens: session.usa?.out ?? 0,
         cost: session.cost ?? 0,
       },
+      contextEstimate: {
+        inputTokens: session.cea?.in ?? session.usa?.in ?? 0,
+        cachedInputTokens: session.cea?.cin ?? session.usa?.cin ?? 0,
+        outputTokens: session.cea?.out ?? session.usa?.out ?? 0,
+        usedTokens:
+          session.cea?.usd ??
+          Math.max(
+            0,
+            Number(session.cea?.in ?? session.usa?.in ?? 0) +
+              Number(session.cea?.cin ?? session.usa?.cin ?? 0) +
+              Number(session.cea?.out ?? session.usa?.out ?? 0)
+          ),
+      },
+      contextEstimateMode:
+        session.cem === 'since_compaction' ? 'since_compaction' : 'cumulative_total',
+      lastContextCompactionAt: session.lcca ? new Date(session.lcca).toISOString() : null,
       contextWindowTokens:
         typeof session.cwt === 'number' && Number.isFinite(session.cwt) ? session.cwt : null,
       contextWindowSource:

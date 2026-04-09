@@ -16,7 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"code-kanban/model"
 	"code-kanban/model/tables"
 	"code-kanban/utils"
 	"code-kanban/utils/process"
@@ -841,6 +840,16 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 		if toolSucceeded && codexToolIsPlan(item) {
 			run.markCompletedPlanTool()
 		}
+		if toolSucceeded && itemType == "context_compaction" {
+			record, err := m.GetSession(context.Background(), session.ID)
+			if err == nil {
+				_ = m.updateRuntimeState(
+					context.Background(),
+					session.ID,
+					contextEstimateBaselineResetUpdate(record, time.Now()),
+				)
+			}
+		}
 		toolID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -851,6 +860,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
+				"kind": itemType,
 				"out":  codexToolOutput(item),
 				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
@@ -870,6 +880,7 @@ func (m *Manager) handleCodexAppServerUsage(
 	in := int64(numberValue(total["inputTokens"]))
 	cin := int64(numberValue(total["cachedInputTokens"]))
 	out := int64(numberValue(total["outputTokens"]))
+	_ = m.updateRuntimeState(context.Background(), session.ID, contextEstimateTotalsUpdate(in, cin, out))
 
 	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
@@ -883,15 +894,6 @@ func (m *Manager) handleCodexAppServerUsage(
 			"out": out,
 		},
 	})
-	_ = model.GetDB().WithContext(context.Background()).
-		Model(&tables.WebSessionTable{}).
-		Where("id = ?", session.ID).
-		Updates(map[string]any{
-			"total_input_tokens":        in,
-			"total_cached_input_tokens": cin,
-			"total_output_tokens":       out,
-			"updated_at":                time.Now(),
-		}).Error
 }
 
 func (m *Manager) handleCodexAppServerUserInputRequest(

@@ -255,6 +255,15 @@ export interface WebSessionUsage {
   cost: number;
 }
 
+export interface WebSessionContextEstimate {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  usedTokens: number;
+}
+
+export type WebSessionContextEstimateMode = 'cumulative_total' | 'since_compaction';
+
 export type WebSessionContextWindowSource = 'config' | 'default' | 'unavailable';
 
 export interface WebSessionCodexRuntimeConfig {
@@ -302,6 +311,9 @@ export interface WebSessionSummary {
   createdAt: string;
   updatedAt: string;
   usage: WebSessionUsage;
+  contextEstimate: WebSessionContextEstimate;
+  contextEstimateMode: WebSessionContextEstimateMode;
+  lastContextCompactionAt?: string | null;
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
 }

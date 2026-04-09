@@ -47,10 +47,14 @@ type WebSessionTable struct {
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
 
-	TotalInputTokens       int64   `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
-	TotalCachedInputTokens int64   `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
-	TotalOutputTokens      int64   `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
-	TotalCost              float64 `gorm:"type:real;not null;default:0" json:"totalCost"`
+	TotalInputTokens                 int64      `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
+	TotalCachedInputTokens           int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
+	TotalOutputTokens                int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
+	TotalCost                        float64    `gorm:"type:real;not null;default:0" json:"totalCost"`
+	ContextBaselineInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastContextCompactionAt          *time.Time `gorm:"type:datetime" json:"-"`
 
 	LastError *string `gorm:"type:text" json:"lastError"`
 	SyncError *string `gorm:"type:text" json:"syncError"`

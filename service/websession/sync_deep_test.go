@@ -105,6 +105,61 @@ func TestParseCodexDeepHistoryCapturesPlanFromCompletedEvent(t *testing.T) {
 	}
 }
 
+func TestMapThreadReadItemMapsContextCompactionToToolHistory(t *testing.T) {
+	manager := &Manager{}
+
+	item, err := manager.mapThreadReadItem(map[string]any{
+		"id":        "compact_1",
+		"type":      "contextCompaction",
+		"status":    "completed",
+		"summary":   []any{"Compacted prior messages."},
+		"createdAt": "2026-04-09T01:00:00Z",
+	}, 1)
+	if err != nil {
+		t.Fatalf("mapThreadReadItem returned error: %v", err)
+	}
+	if item.Kind != "tool" || item.Tool == nil {
+		t.Fatalf("expected tool history item, got %#v", item)
+	}
+	if item.Tool.Kind != "context_compaction" {
+		t.Fatalf("expected context_compaction kind, got %q", item.Tool.Kind)
+	}
+	if item.Tool.Name != "Context Compaction" {
+		t.Fatalf("expected context compaction display name, got %q", item.Tool.Name)
+	}
+	if !strings.Contains(item.Tool.Output, "Compacted prior messages") {
+		t.Fatalf("expected compaction output, got %q", item.Tool.Output)
+	}
+}
+
+func TestParseCodexDeepHistoryMapsContextCompaction(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"response_item","payload":{"type":"contextCompaction","id":"compact_1","status":"completed","summary":["Compacted earlier turns into a shorter summary."]}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(items))
+	}
+	if items[0].Tool == nil || items[0].Tool.Kind != "context_compaction" {
+		t.Fatalf("expected context_compaction tool item, got %#v", items[0])
+	}
+	if !strings.Contains(items[0].Tool.Output, "Compacted earlier turns") {
+		t.Fatalf("expected compaction summary text, got %q", items[0].Tool.Output)
+	}
+}
+
 func TestParseCodexDeepHistoryCapturesMessageItemsAndDedupesUserEvent(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

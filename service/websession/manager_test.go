@@ -1989,6 +1989,112 @@ func TestHandleCodexEventPreservesFullPlanOutput(t *testing.T) {
 	}
 }
 
+func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Cumulative Context Estimate", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_usage_only",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeCumulativeTotal {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeCumulativeTotal, summary.ContextEstimateMode)
+	}
+	if summary.ContextEstimate.UsedTokens != 160 {
+		t.Fatalf("expected usedTokens 160, got %d", summary.ContextEstimate.UsedTokens)
+	}
+	if summary.ContextEstimate.InputTokens != 120 || summary.ContextEstimate.CachedInputTokens != 30 || summary.ContextEstimate.OutputTokens != 10 {
+		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+}
+
+func TestHandleCodexAppServerContextCompactionResetsContextEstimateBaseline(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Context Compaction", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_context_compaction",
+		assistantMessageID: "msg_context_compaction",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+	)
+	manager.handleCodexAppServerItemCompleted(
+		*session,
+		run,
+		[]byte(`{"item":{"type":"contextCompaction","id":"compact_test","status":"completed","summary":["Compacted previous messages into a summary."]}}`),
+	)
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":150,"cachedInputTokens":35,"outputTokens":12}}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeSinceCompaction {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeSinceCompaction, summary.ContextEstimateMode)
+	}
+	if summary.LastContextCompactionAt == nil {
+		t.Fatal("expected lastContextCompactionAt to be recorded")
+	}
+	if summary.ContextEstimate.InputTokens != 30 || summary.ContextEstimate.CachedInputTokens != 5 || summary.ContextEstimate.OutputTokens != 2 {
+		t.Fatalf("unexpected context estimate after compaction: %#v", summary.ContextEstimate)
+	}
+	if summary.ContextEstimate.UsedTokens != 37 {
+		t.Fatalf("expected usedTokens 37 after compaction, got %d", summary.ContextEstimate.UsedTokens)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(snapshot.History.Items))
+	}
+	item := snapshot.History.Items[0]
+	if item.Tool == nil || item.Tool.Kind != "context_compaction" {
+		t.Fatalf("expected context_compaction tool item, got %#v", item)
+	}
+	if !strings.Contains(item.Tool.Output, "Compacted previous messages") {
+		t.Fatalf("expected compaction output to be preserved, got %q", item.Tool.Output)
+	}
+}
+
 func initTestDB(t *testing.T) func() {
 	t.Helper()
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"

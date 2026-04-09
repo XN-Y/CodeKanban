@@ -1837,6 +1837,16 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		if toolSucceeded && codexToolIsPlan(item) {
 			run.markCompletedPlanTool()
 		}
+		if toolSucceeded && normalizeCodexItemType(stringValue(item["type"])) == "context_compaction" {
+			record, err := m.GetSession(context.Background(), session.ID)
+			if err == nil {
+				_ = m.updateRuntimeState(
+					context.Background(),
+					session.ID,
+					contextEstimateBaselineResetUpdate(record, time.Now()),
+				)
+			}
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1846,6 +1856,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
+				"kind": normalizeCodexItemType(stringValue(item["type"])),
 				"out":  codexToolOutput(item),
 				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
@@ -1856,6 +1867,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		in := int64(numberValue(usage["input_tokens"]))
 		cin := int64(numberValue(usage["cached_input_tokens"]))
 		out := int64(numberValue(usage["output_tokens"]))
+		_ = m.updateRuntimeState(context.Background(), session.ID, contextEstimateIncrementUpdate(in, cin, out))
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1868,15 +1880,6 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 				"out": out,
 			},
 		})
-		_ = model.GetDB().WithContext(context.Background()).
-			Model(&tables.WebSessionTable{}).
-			Where("id = ?", session.ID).
-			Updates(map[string]any{
-				"total_input_tokens":        gorm.Expr("total_input_tokens + ?", in),
-				"total_cached_input_tokens": gorm.Expr("total_cached_input_tokens + ?", cin),
-				"total_output_tokens":       gorm.Expr("total_output_tokens + ?", out),
-				"updated_at":                time.Now(),
-			}).Error
 	case "turn.failed":
 		errorMap, _ := raw["error"].(map[string]any)
 		run.lastError = stringValue(errorMap["message"])
@@ -2528,6 +2531,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	}
 	assistantState := effectiveAssistantState(record)
 	assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState)
+	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
 		ID:                      record.ID,
 		ProjectID:               record.ProjectID,
@@ -2567,6 +2571,66 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			OutputTokens:      record.TotalOutputTokens,
 			Cost:              record.TotalCost,
 		},
+		ContextEstimate:         contextEstimate,
+		ContextEstimateMode:     contextEstimateMode,
+		LastContextCompactionAt: record.LastContextCompactionAt,
+	}
+}
+
+func buildContextEstimate(record tables.WebSessionTable) (ContextEstimate, ContextEstimateMode) {
+	mode := ContextEstimateModeCumulativeTotal
+	inputTokens := record.TotalInputTokens
+	cachedInputTokens := record.TotalCachedInputTokens
+	outputTokens := record.TotalOutputTokens
+	if record.LastContextCompactionAt != nil {
+		mode = ContextEstimateModeSinceCompaction
+		inputTokens = maxInt64(0, record.TotalInputTokens-record.ContextBaselineInputTokens)
+		cachedInputTokens = maxInt64(0, record.TotalCachedInputTokens-record.ContextBaselineCachedInputTokens)
+		outputTokens = maxInt64(0, record.TotalOutputTokens-record.ContextBaselineOutputTokens)
+	}
+	return ContextEstimate{
+		InputTokens:       inputTokens,
+		CachedInputTokens: cachedInputTokens,
+		OutputTokens:      outputTokens,
+		UsedTokens:        maxInt64(0, inputTokens+cachedInputTokens+outputTokens),
+	}, mode
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func contextEstimateTotalsUpdate(in, cin, out int64) map[string]any {
+	return map[string]any{
+		"total_input_tokens":        in,
+		"total_cached_input_tokens": cin,
+		"total_output_tokens":       out,
+		"updated_at":                time.Now(),
+	}
+}
+
+func contextEstimateIncrementUpdate(in, cin, out int64) map[string]any {
+	return map[string]any{
+		"total_input_tokens":        gorm.Expr("total_input_tokens + ?", in),
+		"total_cached_input_tokens": gorm.Expr("total_cached_input_tokens + ?", cin),
+		"total_output_tokens":       gorm.Expr("total_output_tokens + ?", out),
+		"updated_at":                time.Now(),
+	}
+}
+
+func contextEstimateBaselineResetUpdate(record tables.WebSessionTable, timestamp time.Time) map[string]any {
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	return map[string]any{
+		"context_baseline_input_tokens":        record.TotalInputTokens,
+		"context_baseline_cached_input_tokens": record.TotalCachedInputTokens,
+		"context_baseline_output_tokens":       record.TotalOutputTokens,
+		"last_context_compaction_at":           timestamp,
+		"updated_at":                           time.Now(),
 	}
 }
 
@@ -3092,6 +3156,8 @@ func codexToolName(item map[string]any) string {
 	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return "CommandExecution"
+	case "context_compaction":
+		return "Context Compaction"
 	case "mcp_tool_call":
 		return "McpToolCall"
 	case "file_change":
@@ -3109,6 +3175,8 @@ func codexToolInput(item map[string]any) any {
 	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return map[string]any{"command": stringValue(item["command"])}
+	case "context_compaction":
+		return nil
 	case "web_search":
 		return map[string]any{
 			"query":  item["query"],
@@ -3121,25 +3189,33 @@ func codexToolInput(item map[string]any) any {
 }
 
 func codexToolMeta(item map[string]any) map[string]any {
+	kind := normalizeCodexItemType(stringValue(item["type"]))
+	subtitle := firstNonEmpty(
+		stringValue(item["command"]),
+		stringValue(item["tool_name"]),
+		stringValue(item["path"]),
+		stringValue(item["query"]),
+		stringValue(item["text"]),
+	)
+	if kind == "context_compaction" {
+		subtitle = contextCompactionSubtitle(item)
+	}
 	return map[string]any{
-		"kind":  normalizeCodexItemType(stringValue(item["type"])),
-		"title": codexToolName(item),
-		"subtitle": firstNonEmpty(
-			stringValue(item["command"]),
-			stringValue(item["tool_name"]),
-			stringValue(item["path"]),
-			stringValue(item["query"]),
-			stringValue(item["text"]),
-		),
+		"kind":     kind,
+		"title":    codexToolName(item),
+		"subtitle": subtitle,
 	}
 }
 
 func codexToolResult(item map[string]any) string {
-	if normalizeCodexItemType(stringValue(item["type"])) == "reasoning" {
+	switch normalizeCodexItemType(stringValue(item["type"])) {
+	case "reasoning":
 		if text := extractReasoningText(item); text != "" {
 			return text
 		}
 		return ""
+	case "context_compaction":
+		return extractContextCompactionText(item)
 	}
 	if output := stringValue(item["aggregated_output"]); output != "" {
 		return output
@@ -3204,6 +3280,8 @@ func normalizeCodexItemType(value string) string {
 	switch strings.TrimSpace(value) {
 	case "commandExecution":
 		return "command_execution"
+	case "contextCompaction":
+		return "context_compaction"
 	case "mcpToolCall":
 		return "mcp_tool_call"
 	case "fileChange":
@@ -3217,6 +3295,35 @@ func normalizeCodexItemType(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
+}
+
+func extractContextCompactionText(item map[string]any) string {
+	sections := make([]string, 0, 3)
+	if summary := strings.TrimSpace(strings.Join(collectReasoningFragments(item["summary"]), "")); summary != "" {
+		sections = append(sections, summary)
+	}
+	if text := strings.TrimSpace(stringValue(item["text"])); text != "" {
+		sections = append(sections, text)
+	}
+	if content := strings.TrimSpace(strings.Join(collectReasoningFragments(item["content"]), "")); content != "" {
+		sections = append(sections, content)
+	}
+	if output := strings.TrimSpace(strings.Join(collectReasoningFragments(item["output"]), "")); output != "" {
+		sections = append(sections, output)
+	}
+	if len(sections) > 0 {
+		return strings.TrimSpace(strings.Join(sections, "\n\n"))
+	}
+	encoded, _ := json.Marshal(item)
+	return string(encoded)
+}
+
+func contextCompactionSubtitle(item map[string]any) string {
+	text := strings.TrimSpace(extractContextCompactionText(item))
+	if text == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
 }
 
 func normalizeToolChoiceText(value string) string {

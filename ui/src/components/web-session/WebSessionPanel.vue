@@ -307,7 +307,7 @@
                       </button>
                     </div>
 
-                    <div v-else class="tool-card timeline-tool-card">
+                    <div v-else class="tool-card timeline-tool-card" :class="toolCardClass(item.tool)">
                       <button
                         type="button"
                         class="tool-header"
@@ -2257,19 +2257,34 @@ const contextUsageIndicator = computed(() => {
     };
   }
 
-  const inputTokens = Number(session.usage.inputTokens || 0);
-  const cachedInputTokens = Number(session.usage.cachedInputTokens || 0);
-  const outputTokens = Number(session.usage.outputTokens || 0);
-  const usedTokens = Math.max(0, inputTokens + cachedInputTokens + outputTokens);
+  const estimateInputTokens = Number(session.contextEstimate.inputTokens || 0);
+  const estimateCachedInputTokens = Number(session.contextEstimate.cachedInputTokens || 0);
+  const estimateOutputTokens = Number(session.contextEstimate.outputTokens || 0);
+  const usedTokens = Math.max(0, Number(session.contextEstimate.usedTokens || 0));
+  const totalInputTokens = Number(session.usage.inputTokens || 0);
+  const totalCachedInputTokens = Number(session.usage.cachedInputTokens || 0);
+  const totalOutputTokens = Number(session.usage.outputTokens || 0);
+  const totalUsedTokens = Math.max(
+    0,
+    totalInputTokens + totalCachedInputTokens + totalOutputTokens
+  );
   const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
   const remainingPercent =
     compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
-  const usagePercent =
-    compactLimitTokens > 0 ? Math.round((usedTokens / compactLimitTokens) * 100) : 0;
   const sourceLabel =
     source === 'config'
       ? t('webSession.contextUsageSourceConfig')
       : t('webSession.contextUsageSourceDefault');
+  const estimateMode =
+    session.contextEstimateMode === 'since_compaction' ? 'since_compaction' : 'cumulative_total';
+  const estimateModeLabel =
+    estimateMode === 'since_compaction'
+      ? t('webSession.contextUsageModeSinceCompaction')
+      : t('webSession.contextUsageModeCumulativeTotal');
+  const estimateNote =
+    estimateMode === 'since_compaction'
+      ? t('webSession.contextUsageNoteSinceCompaction')
+      : t('webSession.contextUsageNoteCumulativeTotal');
 
   return {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
@@ -2281,7 +2296,7 @@ const contextUsageIndicator = computed(() => {
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),
-      t('webSession.contextUsageUsed', {
+      t('webSession.contextUsageEstimatedUsed', {
         count: tokenNumberFormatter.format(usedTokens),
       }),
       t('webSession.contextUsageWindow', {
@@ -2293,14 +2308,23 @@ const contextUsageIndicator = computed(() => {
       t('webSession.contextUsageSource', {
         source: sourceLabel,
       }),
-      t('webSession.contextUsageBreakdown', {
-        input: tokenNumberFormatter.format(inputTokens),
-        cached: tokenNumberFormatter.format(cachedInputTokens),
-        output: tokenNumberFormatter.format(outputTokens),
+      t('webSession.contextUsageMode', {
+        mode: estimateModeLabel,
       }),
-      t('webSession.contextUsageNote', {
-        percent: usagePercent,
+      t('webSession.contextUsageEstimatedBreakdown', {
+        input: tokenNumberFormatter.format(estimateInputTokens),
+        cached: tokenNumberFormatter.format(estimateCachedInputTokens),
+        output: tokenNumberFormatter.format(estimateOutputTokens),
       }),
+      t('webSession.contextUsageTotalUsed', {
+        count: tokenNumberFormatter.format(totalUsedTokens),
+      }),
+      t('webSession.contextUsageTotalBreakdown', {
+        input: tokenNumberFormatter.format(totalInputTokens),
+        cached: tokenNumberFormatter.format(totalCachedInputTokens),
+        output: tokenNumberFormatter.format(totalOutputTokens),
+      }),
+      estimateNote,
     ],
   };
 });
@@ -3027,6 +3051,14 @@ function normalizeDraftSession(
       outputTokens: 0,
       cost: 0,
     },
+    contextEstimate: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 0,
+    },
+    contextEstimateMode: 'cumulative_total',
+    lastContextCompactionAt: null,
     contextWindowTokens: agent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
     contextWindowSource: agent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
@@ -3405,6 +3437,14 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       outputTokens: 0,
       cost: 0,
     },
+    contextEstimate: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 0,
+    },
+    contextEstimateMode: 'cumulative_total',
+    lastContextCompactionAt: null,
     contextWindowTokens: nextAgent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
     contextWindowSource: nextAgent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
@@ -4239,6 +4279,9 @@ function normalizeToolKindValue(value: string | undefined) {
   if (normalized === 'commandExecution') {
     return 'command_execution';
   }
+  if (normalized === 'contextCompaction') {
+    return 'context_compaction';
+  }
   if (normalized === 'mcpToolCall') {
     return 'mcp_tool_call';
   }
@@ -4249,6 +4292,10 @@ function normalizeToolKindValue(value: string | undefined) {
     return 'web_search';
   }
   return normalized;
+}
+
+function isContextCompactionToolKind(value: string | undefined) {
+  return normalizeToolKindValue(value) === 'context_compaction';
 }
 
 function isCompactToolKind(value: string | undefined) {
@@ -4282,6 +4329,14 @@ function isCompactTool(
 
 function getCompactToolKind(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
   return normalizeToolKindValue(tool.kind || String(tool.meta?.kind ?? ''));
+}
+
+function toolCardClass(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
+  return {
+    'is-context-compaction-tool': isContextCompactionToolKind(
+      tool.kind || String(tool.meta?.kind ?? '')
+    ),
+  };
 }
 
 function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
@@ -4341,6 +4396,17 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
   }
 
   return subtitle;
+}
+
+function contextCompactionPreview(tool: {
+  output?: string;
+  meta?: Record<string, unknown>;
+}) {
+  const preview = String(tool.output ?? tool.meta?.subtitle ?? '').replace(/\s+/g, ' ').trim();
+  if (preview) {
+    return preview.slice(0, 120);
+  }
+  return t('webSession.contextCompactionFallbackPreview');
 }
 
 function getCompactToolDisplaySummary(tool: NonNullable<WebSessionBlock['tool']>) {
@@ -4615,6 +4681,9 @@ function toolKindLabel(tool: { name: string; kind?: string }) {
   if (kind === 'mcp_tool_call') {
     return t('webSession.toolMcpToolCall');
   }
+  if (kind === 'context_compaction') {
+    return t('webSession.toolContextCompaction');
+  }
   if (kind === 'tool_use') {
     return t('webSession.toolKindTool');
   }
@@ -4631,6 +4700,9 @@ function formatToolPreview(tool: {
   meta?: Record<string, unknown>;
   commandGroup?: { count: number };
 }) {
+  if (isContextCompactionToolKind(tool.kind || String(tool.meta?.kind ?? ''))) {
+    return contextCompactionPreview(tool);
+  }
   if (isCompactTool(tool as NonNullable<WebSessionBlock['tool']>)) {
     return getCompactToolSummary(tool as NonNullable<WebSessionBlock['tool']>);
   }
@@ -8210,6 +8282,24 @@ onBeforeUnmount(() => {
   inset: 0 0 auto;
   height: 4px;
   background: linear-gradient(90deg, #14b8a6 0%, #0ea5e9 55%, #38bdf8 100%);
+}
+
+.tool-card.is-context-compaction-tool {
+  border-color: rgba(37, 99, 235, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(239, 246, 255, 0.98) 0%,
+      rgba(219, 234, 254, 0.92) 48%,
+      rgba(255, 255, 255, 0.98) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 16px 32px rgba(30, 64, 175, 0.08);
+}
+
+.tool-card.is-context-compaction-tool .tool-kind {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
 }
 
 .timeline-tool-card {

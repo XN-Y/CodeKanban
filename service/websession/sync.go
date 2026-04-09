@@ -158,6 +158,21 @@ func (m *Manager) mapThreadReadItem(
 			},
 		}
 		return result, nil
+	case "contextCompaction", "context_compaction":
+		result.Kind = "tool"
+		result.Tool = &HistoryTool{
+			ID:     firstNonEmpty(sourceItemID, fmt.Sprintf("context_compaction_%d", orderIndex)),
+			Name:   "Context Compaction",
+			Kind:   "context_compaction",
+			Output: extractContextCompactionText(item),
+			Status: syncedToolStatus(firstNonEmpty(stringValue(item["status"]), "completed")),
+			Meta: map[string]any{
+				"title":    "Context Compaction",
+				"kind":     "context_compaction",
+				"subtitle": contextCompactionSubtitle(item),
+			},
+		}
+		return result, nil
 	case "commandExecution":
 		command := stringValue(item["command"])
 		cwd := stringValue(item["cwd"])

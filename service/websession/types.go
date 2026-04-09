@@ -70,6 +70,20 @@ type Usage struct {
 	Cost              float64 `json:"cost"`
 }
 
+type ContextEstimate struct {
+	InputTokens       int64 `json:"inputTokens"`
+	CachedInputTokens int64 `json:"cachedInputTokens"`
+	OutputTokens      int64 `json:"outputTokens"`
+	UsedTokens        int64 `json:"usedTokens"`
+}
+
+type ContextEstimateMode string
+
+const (
+	ContextEstimateModeCumulativeTotal ContextEstimateMode = "cumulative_total"
+	ContextEstimateModeSinceCompaction ContextEstimateMode = "since_compaction"
+)
+
 type ContextWindowSource string
 
 const (
@@ -129,6 +143,9 @@ type SessionSummary struct {
 	CreatedAt               time.Time           `json:"createdAt"`
 	UpdatedAt               time.Time           `json:"updatedAt"`
 	Usage                   Usage               `json:"usage"`
+	ContextEstimate         ContextEstimate     `json:"contextEstimate"`
+	ContextEstimateMode     ContextEstimateMode `json:"contextEstimateMode"`
+	LastContextCompactionAt *time.Time          `json:"lastContextCompactionAt,omitempty"`
 	ContextWindowTokens     *int64              `json:"contextWindowTokens,omitempty"`
 	ContextWindowSource     ContextWindowSource `json:"contextWindowSource"`
 }

@@ -714,13 +714,23 @@ export default {
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
     contextUsageRemainingEstimate: 'Estimated remaining: {count} tokens',
-    contextUsageUsed: 'Used: {count} tokens',
+    contextUsageEstimatedUsed: 'Estimated used: {count} tokens',
     contextUsageSource: 'Source: {source}',
     contextUsageSourceConfig: 'local Codex config',
     contextUsageSourceDefault: 'default 400000',
-    contextUsageBreakdown: 'Breakdown: input {input} / cached {cached} / output {output}',
-    contextUsageNote:
-      'Note: the badge percentage is estimated from cumulative usage total vs. the compact limit; current cumulative usage is about {percent}%, not the true current context occupancy.',
+    contextUsageMode: 'Mode: {mode}',
+    contextUsageModeSinceCompaction: 'estimated since the latest context compaction',
+    contextUsageModeCumulativeTotal:
+      'cumulative usage total (no context compaction observed yet)',
+    contextUsageEstimatedBreakdown:
+      'Estimated breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageTotalUsed: 'Cumulative total used: {count} tokens',
+    contextUsageTotalBreakdown:
+      'Cumulative breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageNoteSinceCompaction:
+      'Note: the percentage is estimated from net token growth since the latest context compaction vs. the compact limit, not the true current context occupancy.',
+    contextUsageNoteCumulativeTotal:
+      'Note: no context compaction has been observed yet, so this percentage is estimated from cumulative usage total vs. the compact limit, not the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
       'This estimate is currently available only for Codex web sessions. Claude sessions do not expose a comparable context-window value here yet.',
@@ -749,9 +759,11 @@ export default {
     toolKindDefault: 'Tool',
     toolKindTool: 'Step',
     toolCommandExecution: 'Command',
+    toolContextCompaction: 'Context Compaction',
     toolFileChange: 'File Change',
     toolMcpToolCall: 'MCP Call',
     toolWebSearch: 'Web Search',
+    contextCompactionFallbackPreview: 'Context compacted',
     compactToolDetailTitle: 'Tool Details',
     compactToolDetailTitleWithCount: '{kind} Details · {count}',
     compactToolDetailCount: '{kind} ran {count} time(s)',
