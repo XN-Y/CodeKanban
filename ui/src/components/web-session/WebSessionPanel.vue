@@ -1360,6 +1360,8 @@ const MIN_SESSION_MAIN_WIDTH = 420;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
+const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
+const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const PROJECT_INDEX_COLORS = [
@@ -1502,6 +1504,8 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
   ACTIVE_DRAFT_SESSION_STORAGE_KEY,
   {}
 );
+const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
+const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -1543,6 +1547,7 @@ const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
+const isProjectSessionInitializing = ref(false);
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
 const pendingHistoryAnchor = ref<{
   sessionId: string;
@@ -1574,7 +1579,10 @@ const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
 const draftSessions = ref<DraftSessionTab[]>([]);
 const activeDraftSessionId = ref('');
+const activeArchivedPreviewId = ref('');
 const archivedPreviewSession = ref<ArchivedPreviewSessionTab | null>(null);
+const tabOrderIds = ref<string[]>([]);
+const tabMruIds = ref<string[]>([]);
 
 const realSessions = computed<SessionTab[]>(() =>
   webSessionStore.getSessions(props.projectId).map(session => ({
@@ -1582,16 +1590,46 @@ const realSessions = computed<SessionTab[]>(() =>
     isDraft: false as const,
   }))
 );
-const sessions = computed<SessionTab[]>(() => [
+const allVisibleSessions = computed<SessionTab[]>(() => [
   ...realSessions.value,
-  ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
   ...draftSessions.value,
+  ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
 ]);
+const visibleSessionById = computed(() => {
+  const map = new Map<string, SessionTab>();
+  allVisibleSessions.value.forEach(session => {
+    map.set(session.id, session);
+  });
+  return map;
+});
+const sessions = computed<SessionTab[]>(() => {
+  const ordered: SessionTab[] = [];
+  const seen = new Set<string>();
+  tabOrderIds.value.forEach(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    if (!session || seen.has(session.id)) {
+      return;
+    }
+    ordered.push(session);
+    seen.add(session.id);
+  });
+  allVisibleSessions.value.forEach(session => {
+    if (seen.has(session.id)) {
+      return;
+    }
+    ordered.push(session);
+    seen.add(session.id);
+  });
+  return ordered;
+});
 const currentSession = computed<SessionTab | null>(() => {
   if (activeDraftSessionId.value) {
     return draftSessions.value.find(session => session.id === activeDraftSessionId.value) ?? null;
   }
-  if (archivedPreviewSession.value) {
+  if (
+    activeArchivedPreviewId.value &&
+    archivedPreviewSession.value?.id === activeArchivedPreviewId.value
+  ) {
     return archivedPreviewSession.value;
   }
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
@@ -2433,10 +2471,9 @@ const activeSessionHasWorkflowPlanBadge = computed(() =>
 );
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
 const mobileSessionCategory = ref<'current' | 'archived'>('current');
-const mobileCurrentSessions = computed<SessionTab[]>(() => [
-  ...realSessions.value,
-  ...draftSessions.value,
-]);
+const mobileCurrentSessions = computed<SessionTab[]>(() =>
+  sessions.value.filter(session => !isArchivedPreviewSession(session))
+);
 const mobileArchivedSessions = computed<SessionTab[]>(() => {
   const items = crossProjectArchivedSessions.value
     .filter(item => item.projectId === props.projectId)
@@ -3006,6 +3043,232 @@ function loadPersistedDraftSessions(projectId: string) {
     });
 }
 
+function normalizeSessionIdList(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return value
+    .map(item => String(item || '').trim())
+    .filter(sessionId => {
+      if (!sessionId || seen.has(sessionId)) {
+        return false;
+      }
+      seen.add(sessionId);
+      return true;
+    });
+}
+
+function loadPersistedTabOrderIds(projectId: string) {
+  return normalizeSessionIdList(persistedTabOrderByProject.value[projectId]);
+}
+
+function loadPersistedTabMruIds(projectId: string) {
+  return normalizeSessionIdList(persistedTabMruByProject.value[projectId]);
+}
+
+function getVisibleTabIds() {
+  const ids = [
+    ...realSessions.value.map(session => session.id),
+    ...draftSessions.value.map(session => session.id),
+  ];
+  if (archivedPreviewSession.value?.id) {
+    ids.push(archivedPreviewSession.value.id);
+  }
+  return ids;
+}
+
+function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
+  const visibleSet = new Set(visibleIds);
+  const ids = [
+    ...realSessions.value.map(session => session.id).filter(sessionId => visibleSet.has(sessionId)),
+    ...draftSessions.value
+      .map(session => session.id)
+      .filter(sessionId => visibleSet.has(sessionId)),
+  ];
+  const archivedId = archivedPreviewSession.value?.id ?? '';
+  if (archivedId && visibleSet.has(archivedId)) {
+    ids.push(archivedId);
+  }
+  return ids;
+}
+
+function normalizeTabOrderIds(orderIds: string[], visibleIds = getVisibleTabIds()) {
+  const defaultIds = getDefaultTabOrderIds(visibleIds);
+  const visibleSet = new Set(defaultIds);
+  const next: string[] = [];
+
+  normalizeSessionIdList(orderIds).forEach(sessionId => {
+    if (!visibleSet.has(sessionId) || next.includes(sessionId)) {
+      return;
+    }
+    next.push(sessionId);
+  });
+
+  defaultIds.forEach(sessionId => {
+    if (!next.includes(sessionId)) {
+      next.push(sessionId);
+    }
+  });
+
+  return next;
+}
+
+function normalizeTabMruIds(
+  mruIds: string[],
+  visibleIds = getVisibleTabIds(),
+  orderIds = normalizeTabOrderIds(tabOrderIds.value, visibleIds)
+) {
+  const visibleSet = new Set(visibleIds);
+  const next: string[] = [];
+
+  normalizeSessionIdList(mruIds).forEach(sessionId => {
+    if (!visibleSet.has(sessionId) || next.includes(sessionId)) {
+      return;
+    }
+    next.push(sessionId);
+  });
+
+  orderIds.forEach(sessionId => {
+    if (visibleSet.has(sessionId) && !next.includes(sessionId)) {
+      next.push(sessionId);
+    }
+  });
+
+  return next;
+}
+
+function persistTabNavigationState(
+  projectId: string,
+  nextOrderIds = tabOrderIds.value,
+  nextMruIds = tabMruIds.value,
+  visibleIds = getVisibleTabIds()
+) {
+  if (!projectId) {
+    return;
+  }
+
+  const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  const persistableIds = normalizedOrderIds.filter(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    return session && !isArchivedPreviewSession(session);
+  });
+  const persistableMruIds = normalizedMruIds.filter(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    return session && !isArchivedPreviewSession(session);
+  });
+
+  persistedTabOrderByProject.value = persistableIds.length
+    ? {
+        ...persistedTabOrderByProject.value,
+        [projectId]: persistableIds,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedTabOrderByProject.value).filter(([key]) => key !== projectId)
+      );
+
+  persistedTabMruByProject.value = persistableMruIds.length
+    ? {
+        ...persistedTabMruByProject.value,
+        [projectId]: persistableMruIds,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedTabMruByProject.value).filter(([key]) => key !== projectId)
+      );
+}
+
+function replaceTabNavigationState(
+  nextOrderIds: string[],
+  nextMruIds: string[],
+  projectId = props.projectId,
+  visibleIds = getVisibleTabIds()
+) {
+  const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  tabOrderIds.value = normalizedOrderIds;
+  tabMruIds.value = normalizedMruIds;
+  persistTabNavigationState(projectId, normalizedOrderIds, normalizedMruIds, visibleIds);
+}
+
+function syncTabNavigationState(
+  projectId = props.projectId,
+  options?: { orderIds?: string[]; mruIds?: string[]; visibleIds?: string[] }
+) {
+  const visibleIds = options?.visibleIds ?? getVisibleTabIds();
+  replaceTabNavigationState(
+    options?.orderIds ?? tabOrderIds.value,
+    options?.mruIds ?? tabMruIds.value,
+    projectId,
+    visibleIds
+  );
+}
+
+function rememberTabVisit(sessionId: string, projectId = props.projectId) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+  const visibleIds = getVisibleTabIds();
+  if (!visibleIds.includes(normalizedSessionId)) {
+    return;
+  }
+  replaceTabNavigationState(
+    tabOrderIds.value,
+    [normalizedSessionId, ...tabMruIds.value.filter(id => id !== normalizedSessionId)],
+    projectId,
+    visibleIds
+  );
+}
+
+function insertTabAfter(
+  sessionId: string,
+  afterId = activeSessionId.value,
+  projectId = props.projectId
+) {
+  const visibleIds = getVisibleTabIds();
+  if (!visibleIds.includes(sessionId)) {
+    return;
+  }
+  const nextOrderIds = normalizeTabOrderIds(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    visibleIds.filter(id => id !== sessionId)
+  );
+  const anchorIndex = afterId ? nextOrderIds.indexOf(afterId) : -1;
+  const insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : nextOrderIds.length;
+  nextOrderIds.splice(insertIndex, 0, sessionId);
+  replaceTabNavigationState(
+    nextOrderIds,
+    [sessionId, ...tabMruIds.value.filter(id => id !== sessionId)],
+    projectId,
+    visibleIds
+  );
+}
+
+function removeTabFromNavigationState(
+  sessionId: string,
+  projectId = props.projectId,
+  visibleIds = getVisibleTabIds().filter(id => id !== sessionId)
+) {
+  replaceTabNavigationState(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    tabMruIds.value.filter(id => id !== sessionId),
+    projectId,
+    visibleIds
+  );
+}
+
+function replaceTabIdInNavigationState(
+  fromId: string,
+  toId: string,
+  projectId = props.projectId,
+  visibleIds = Array.from(new Set([...getVisibleTabIds().filter(id => id !== fromId), toId]))
+) {
+  const nextOrderIds = tabOrderIds.value.map(sessionId => (sessionId === fromId ? toId : sessionId));
+  const nextMruIds = tabMruIds.value.map(sessionId => (sessionId === fromId ? toId : sessionId));
+  replaceTabNavigationState(nextOrderIds, nextMruIds, projectId, visibleIds);
+}
+
 function persistDraftSessionState(
   projectId: string,
   nextDrafts = draftSessions.value,
@@ -3047,6 +3310,9 @@ function replaceDraftSessionState(
 ) {
   draftSessions.value = nextDrafts;
   activeDraftSessionId.value = nextActiveDraftId;
+  if (nextActiveDraftId) {
+    activeArchivedPreviewId.value = '';
+  }
   persistDraftSessionState(projectId, nextDrafts, nextActiveDraftId);
 }
 
@@ -3084,6 +3350,7 @@ function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSess
 }
 
 function createDraftSession(forceAgent?: 'claude' | 'codex') {
+  const anchorId = activeSessionId.value;
   const source = currentSession.value;
   const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
   const context = resolveDraftContext(
@@ -3134,6 +3401,7 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     isDraft: true,
   };
   replaceDraftSessionState([...draftSessions.value, draft], draft.id);
+  insertTabAfter(draft.id, anchorId);
   webSessionStore.setActiveSession(props.projectId, '');
   return draft;
 }
@@ -3149,7 +3417,14 @@ function ensureDefaultDraftSession() {
   createDraftSession();
 }
 
-function clearArchivedPreviewSession() {
+function clearArchivedPreviewSession(options?: { preserveTabId?: boolean }) {
+  const archivedPreviewId = archivedPreviewSession.value?.id ?? '';
+  if (archivedPreviewId && !options?.preserveTabId) {
+    removeTabFromNavigationState(archivedPreviewId);
+  }
+  if (activeArchivedPreviewId.value === archivedPreviewId) {
+    activeArchivedPreviewId.value = '';
+  }
   archivedPreviewSession.value = null;
 }
 
@@ -3167,72 +3442,127 @@ function syncArchivedPreviewSessionSummary(sessionId: string) {
   };
 }
 
+function resolveNextTabAfterClose(sessionId: string) {
+  const nextVisibleIds = getVisibleTabIds().filter(id => id !== sessionId);
+  const nextOrderIds = normalizeTabOrderIds(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    nextVisibleIds
+  );
+  const nextMruIds = normalizeTabMruIds(
+    tabMruIds.value.filter(id => id !== sessionId),
+    nextVisibleIds,
+    nextOrderIds
+  );
+  if (nextMruIds[0]) {
+    return nextMruIds[0];
+  }
+  const currentOrderIds = normalizeTabOrderIds(tabOrderIds.value, getVisibleTabIds());
+  const closedIndex = currentOrderIds.indexOf(sessionId);
+  if (closedIndex < 0) {
+    return nextOrderIds[0] ?? '';
+  }
+  return nextOrderIds[closedIndex] ?? nextOrderIds[closedIndex - 1] ?? nextOrderIds[0] ?? '';
+}
+
+async function activateTabById(sessionId: string, options?: { connectReal?: boolean }) {
+  const session = visibleSessionById.value.get(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  if (isDraftSession(session)) {
+    replaceDraftSessionState(draftSessions.value, session.id);
+    activeArchivedPreviewId.value = '';
+    webSessionStore.setActiveSession(props.projectId, '');
+  } else if (isArchivedPreviewSession(session)) {
+    replaceDraftSessionState(draftSessions.value, '');
+    activeArchivedPreviewId.value = session.id;
+  } else {
+    replaceDraftSessionState(draftSessions.value, '');
+    activeArchivedPreviewId.value = '';
+    if (options?.connectReal === false) {
+      webSessionStore.setActiveSession(props.projectId, session.id);
+    } else {
+      await connectVisibleRealSession(props.projectId, session.id);
+    }
+  }
+
+  rememberTabVisit(session.id);
+  return true;
+}
+
 async function openArchivedPreviewSession(session: WebSessionSummary) {
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
+  const anchorId = activeSessionId.value;
+  const previousPreviewId = archivedPreviewSession.value?.id ?? '';
+  if (previousPreviewId && previousPreviewId !== session.id) {
+    clearArchivedPreviewSession();
+  }
   archivedPreviewSession.value = {
     ...session,
     isArchivedPreview: true,
   };
+  replaceDraftSessionState(draftSessions.value, '');
+  activeArchivedPreviewId.value = session.id;
+  if (previousPreviewId !== session.id) {
+    insertTabAfter(session.id, anchorId);
+  } else {
+    syncTabNavigationState();
+  }
   await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
     rememberActive: false,
   });
   syncArchivedPreviewSessionSummary(session.id);
+  rememberTabVisit(session.id);
 }
 
 async function connectVisibleRealSession(projectId: string, sessionId: string) {
   if (!projectId || !sessionId) {
     return;
   }
+  activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
   await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
     rememberActive: true,
   });
 }
 
-function activateRealSession(sessionId: string, connect = true) {
-  const targetSession = realSessions.value.find(session => session.id === sessionId);
-  if (!targetSession) {
-    return false;
-  }
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
-  if (connect) {
-    void connectVisibleRealSession(props.projectId, targetSession.id).catch(error => {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    });
-  } else {
-    webSessionStore.setActiveSession(props.projectId, targetSession.id);
-  }
-  return true;
-}
-
-function removeDraftSession(
-  sessionId: string,
-  options?: { nextRealSessionId?: string; preserveDraftState?: boolean }
-) {
-  const nextDrafts = draftSessions.value.filter(session => session.id !== sessionId);
+function removeDraftSessionRecord(sessionId: string, options?: { preserveDraftState?: boolean }) {
   const removedActive = activeDraftSessionId.value === sessionId;
-  const nextActiveDraftId = removedActive
-    ? (nextDrafts[nextDrafts.length - 1]?.id ?? '')
-    : activeDraftSessionId.value;
-  replaceDraftSessionState(nextDrafts, nextActiveDraftId);
+  const nextActiveDraftId = removedActive ? '' : activeDraftSessionId.value;
+  replaceDraftSessionState(
+    draftSessions.value.filter(session => session.id !== sessionId),
+    nextActiveDraftId
+  );
   if (!options?.preserveDraftState) {
     webSessionStore.clearDraft(props.projectId, sessionId);
   }
-  if (!removedActive) {
-    return;
-  }
-  const nextActiveDraft = nextDrafts[nextDrafts.length - 1] ?? null;
-  if (!nextActiveDraft) {
-    if (options?.nextRealSessionId && activateRealSession(options.nextRealSessionId, false)) {
-      return;
-    }
-    const nextRealSessionId = realSessions.value[0]?.id;
-    if (nextRealSessionId && activateRealSession(nextRealSessionId)) {
+}
+
+async function closeTabById(
+  sessionId: string,
+  closer: () => Promise<void> | void,
+  options?: { syncNavigationOnly?: boolean }
+) {
+  const wasActive = activeSessionId.value === sessionId;
+  const fallbackTabId = wasActive ? resolveNextTabAfterClose(sessionId) : '';
+
+  await closer();
+
+  syncTabNavigationState();
+
+  if (wasActive) {
+    if (fallbackTabId && (await activateTabById(fallbackTabId))) {
       return;
     }
     ensureDefaultDraftSession();
+    if (activeSessionId.value) {
+      rememberTabVisit(activeSessionId.value);
+    }
+    return;
+  }
+
+  if (options?.syncNavigationOnly) {
+    syncTabNavigationState();
   }
 }
 
@@ -4409,42 +4739,60 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
-  clearArchivedPreviewSession();
-  const restoredDrafts = loadPersistedDraftSessions(projectId);
-  const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
-  const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
-    ? storedActiveDraftId
-    : '';
-  replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
-  const loadedSessions = await webSessionStore.loadSessions(projectId);
-  await webSessionStore.openEventStream();
-  if (activeDraftId) {
-    webSessionStore.setActiveSession(projectId, '');
-    return;
-  }
-  const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
-  const targetSessionId = webSessionStore.hasStoredActiveSession(projectId)
-    ? rememberedSessionId
-    : loadedSessions[0]?.id;
-  if (targetSessionId) {
-    try {
-      await connectVisibleRealSession(projectId, targetSessionId);
-    } catch (error) {
-      console.warn('[Web Session] Failed to initialize current session', {
-        projectId,
-        sessionId: targetSessionId,
-        error,
-      });
+  isProjectSessionInitializing.value = true;
+  try {
+    clearArchivedPreviewSession();
+    activeArchivedPreviewId.value = '';
+    tabOrderIds.value = loadPersistedTabOrderIds(projectId);
+    tabMruIds.value = loadPersistedTabMruIds(projectId);
+    const restoredDrafts = loadPersistedDraftSessions(projectId);
+    const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
+    const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
+      ? storedActiveDraftId
+      : '';
+    replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
+    const loadedSessions = await webSessionStore.loadSessions(projectId);
+    syncTabNavigationState(projectId, {
+      orderIds: tabOrderIds.value,
+      mruIds: tabMruIds.value,
+    });
+    await webSessionStore.openEventStream();
+    if (activeDraftId) {
+      await activateTabById(activeDraftId, { connectReal: false });
+      return;
     }
-    return;
+    const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
+    const targetSessionId =
+      loadedSessions.find(session => session.id === rememberedSessionId)?.id ??
+      loadedSessions[0]?.id;
+    if (targetSessionId) {
+      try {
+        await activateTabById(targetSessionId);
+      } catch (error) {
+        console.warn('[Web Session] Failed to initialize current session', {
+          projectId,
+          sessionId: targetSessionId,
+          error,
+        });
+      }
+      return;
+    }
+    if (restoredDrafts.length > 0) {
+      const fallbackDraftId =
+        tabMruIds.value.find(sessionId =>
+          restoredDrafts.some(session => session.id === sessionId)
+        ) ??
+        restoredDrafts[restoredDrafts.length - 1]?.id ??
+        '';
+      if (fallbackDraftId) {
+        await activateTabById(fallbackDraftId, { connectReal: false });
+      }
+      return;
+    }
+    ensureDefaultDraftSession();
+  } finally {
+    isProjectSessionInitializing.value = false;
   }
-  if (restoredDrafts.length > 0) {
-    const fallbackDraftId = restoredDrafts[restoredDrafts.length - 1]?.id ?? '';
-    replaceDraftSessionState(restoredDrafts, fallbackDraftId, projectId);
-    webSessionStore.setActiveSession(projectId, '');
-    return;
-  }
-  ensureDefaultDraftSession();
 }
 
 async function handleSessionSelect(sessionId: string) {
@@ -4452,22 +4800,17 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   showMobileTabSelector.value = false;
-  if (archivedPreviewSession.value?.id === sessionId) {
+  if (sessionId === activeSessionId.value) {
+    rememberTabVisit(sessionId);
     scrollToBottom(true);
     return;
   }
-  const draft = draftSessions.value.find(session => session.id === sessionId);
-  if (draft) {
-    clearArchivedPreviewSession();
-    replaceDraftSessionState(draftSessions.value, draft.id);
-    webSessionStore.setActiveSession(props.projectId, '');
+  try {
+    await activateTabById(sessionId);
     scrollToBottom(true);
-    return;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
   }
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
-  await connectVisibleRealSession(props.projectId, sessionId);
-  scrollToBottom(true);
 }
 
 async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
@@ -4480,7 +4823,6 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       scrollToBottom(true);
       return;
     }
-    clearArchivedPreviewSession();
     if (item.projectId !== props.projectId) {
       webSessionStore.setActiveSession(item.projectId, sessionId);
       projectStore.addRecentProject(item.projectId);
@@ -4490,8 +4832,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       });
       return;
     }
-    await connectVisibleRealSession(item.projectId, sessionId);
-    replaceDraftSessionState(draftSessions.value, '');
+    await activateTabById(sessionId);
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -4503,6 +4844,12 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
     return;
   }
   try {
+    if (archivedPreviewSession.value?.id === item.session.id) {
+      activeArchivedPreviewId.value = item.session.id;
+      rememberTabVisit(item.session.id);
+      scrollToBottom(true);
+      return;
+    }
     await openArchivedPreviewSession(item.session);
     scrollToBottom(true);
   } catch (error) {
@@ -4592,8 +4939,8 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
     });
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(props.projectId, source.id, session.id);
-      removeDraftSession(source.id, {
-        nextRealSessionId: session.id,
+      replaceTabIdInNavigationState(source.id, session.id);
+      removeDraftSessionRecord(source.id, {
         preserveDraftState: true,
       });
     }
@@ -4603,7 +4950,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
-    clearArchivedPreviewSession();
+    await activateTabById(session.id, { connectReal: false });
     scrollToBottom(true);
     return session;
   } catch (error) {
@@ -4613,7 +4960,6 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
-  clearArchivedPreviewSession();
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
@@ -4697,11 +5043,15 @@ function handleArchiveSession(sessionId: string) {
   }
 
   if (isDraftSession(session)) {
-    removeDraftSession(sessionId);
+    void closeTabById(sessionId, () => {
+      removeDraftSessionRecord(sessionId);
+    });
     return;
   }
   if (isArchivedPreviewSession(session)) {
-    clearArchivedPreviewSession();
+    void closeTabById(sessionId, () => {
+      clearArchivedPreviewSession();
+    });
     return;
   }
 
@@ -4730,19 +5080,10 @@ async function performArchiveSession(session: WebSessionSummary): Promise<boolea
   }
   beginSessionArchive(session.id);
   try {
-    await webSessionStore.archiveSession(session.projectId, session.id);
+    await closeTabById(session.id, async () => {
+      await webSessionStore.archiveSession(session.projectId, session.id);
+    });
     await refreshArchivedSidebar();
-    const nextSession = webSessionStore.getActiveSession(props.projectId);
-    if (nextSession?.id) {
-      await connectVisibleRealSession(props.projectId, nextSession.id);
-    } else if (draftSessions.value.length > 0) {
-      replaceDraftSessionState(
-        draftSessions.value,
-        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
-      );
-    } else {
-      ensureDefaultDraftSession();
-    }
     return true;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -4758,22 +5099,19 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     return false;
   }
   try {
-    await webSessionStore.deleteSession(session.projectId, sessionId);
-    if (isArchivedPreviewSession(session)) {
-      clearArchivedPreviewSession();
-    } else if (!isDraftSession(session)) {
+    await closeTabById(sessionId, async () => {
+      if (isArchivedPreviewSession(session)) {
+        clearArchivedPreviewSession();
+        return;
+      }
+      if (isDraftSession(session)) {
+        removeDraftSessionRecord(sessionId);
+        return;
+      }
+      await webSessionStore.deleteSession(session.projectId, sessionId);
+    });
+    if (!isDraftSession(session) && !isArchivedPreviewSession(session)) {
       await refreshArchivedSidebar();
-    }
-    const nextSession = webSessionStore.getActiveSession(props.projectId);
-    if (nextSession?.id) {
-      await connectVisibleRealSession(props.projectId, nextSession.id);
-    } else if (draftSessions.value.length > 0) {
-      replaceDraftSessionState(
-        draftSessions.value,
-        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
-      );
-    } else {
-      ensureDefaultDraftSession();
     }
     return true;
   } catch (error) {
@@ -5045,9 +5383,9 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 
   const restored = await webSessionStore.unarchiveSession(session.projectId, session.id);
   await refreshArchivedSidebar();
-  clearArchivedPreviewSession();
+  clearArchivedPreviewSession({ preserveTabId: true });
   if (restored.projectId === props.projectId) {
-    await connectVisibleRealSession(restored.projectId, restored.id);
+    await activateTabById(restored.id);
   } else {
     webSessionStore.setActiveSession(restored.projectId, restored.id);
   }
@@ -5836,6 +6174,8 @@ function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   if (mobileOption.section === 'archived') {
     showMobileTabSelector.value = false;
     if (archivedPreviewSession.value?.id === mobileOption.session.id) {
+      activeArchivedPreviewId.value = mobileOption.session.id;
+      rememberTabVisit(mobileOption.session.id);
       scrollToBottom(true);
       return;
     }
@@ -5903,26 +6243,20 @@ function setupTabSorting() {
     return;
   }
   const container = tabsContainerRef.value;
-  if (
-    !container ||
-    sessions.value.length <= 1 ||
-    draftSessions.value.length > 0 ||
-    archivedPreviewSession.value
-  ) {
+  if (!container || sessions.value.length <= 1) {
     destroyTabSorting();
     return;
   }
-  const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
+  const wrapper = container.querySelector(
+    '.n-tabs-wrapper, .n-tabs-nav-scroll-content, .n-tabs-nav-scroll-content__wrapper'
+  ) as HTMLElement | null;
   if (!wrapper) {
     destroyTabSorting();
     return;
   }
   if (tabDragSortable.value) {
     if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option(
-        'disabled',
-        sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
-      );
+      tabDragSortable.value.option('disabled', sessions.value.length <= 1);
       return;
     }
     destroyTabSorting();
@@ -5930,19 +6264,16 @@ function setupTabSorting() {
   tabDragSortable.value = Sortable.create(wrapper, {
     animation: 150,
     direction: 'horizontal',
-    draggable: '.n-tabs-tab-wrapper',
+    draggable: '.n-tabs-tab-wrapper, .n-tabs-tab',
     handle: '.n-tabs-tab',
-    filter: '.n-tabs-tab__close',
+    filter: '.n-tabs-tab__close, .n-tabs-tab__close-button, .n-base-close',
     preventOnFilter: false,
     ghostClass: 'web-session-tab-ghost',
     chosenClass: 'web-session-tab-chosen',
     dragClass: 'web-session-tab-dragging',
     onEnd: handleTabDragEnd,
   });
-  tabDragSortable.value.option(
-    'disabled',
-    sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
-  );
+  tabDragSortable.value.option('disabled', sessions.value.length <= 1);
 }
 
 function destroyTabSorting() {
@@ -5953,17 +6284,41 @@ function destroyTabSorting() {
 }
 
 function handleTabDragEnd(event: SortableEvent) {
-  if (draftSessions.value.length > 0 || archivedPreviewSession.value) {
-    return;
-  }
   const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
   const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
   if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
     return;
   }
-  void webSessionStore.moveSession(props.projectId, fromIndex, toIndex).catch(error => {
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  });
+  const previousOrderIds = [...tabOrderIds.value];
+  const previousMruIds = [...tabMruIds.value];
+  const reorderedSessions = [...sessions.value];
+  const [movingSession] = reorderedSessions.splice(fromIndex, 1);
+  if (!movingSession) {
+    return;
+  }
+  reorderedSessions.splice(toIndex, 0, movingSession);
+  replaceTabNavigationState(
+    reorderedSessions.map(session => session.id),
+    previousMruIds
+  );
+  if (isDraftSession(movingSession) || isArchivedPreviewSession(movingSession)) {
+    nextTick(() => {
+      updateActiveTabIndicator();
+    });
+    return;
+  }
+  const reorderedRealSessions = reorderedSessions.filter(
+    session => !isDraftSession(session) && !isArchivedPreviewSession(session)
+  );
+  const realIndex = reorderedRealSessions.findIndex(session => session.id === movingSession.id);
+  const previousRealSessionId = reorderedRealSessions[realIndex - 1]?.id ?? '';
+  const nextRealSessionId = reorderedRealSessions[realIndex + 1]?.id ?? '';
+  void webSessionStore
+    .moveSession(props.projectId, movingSession.id, previousRealSessionId, nextRealSessionId)
+    .catch(error => {
+      replaceTabNavigationState(previousOrderIds, previousMruIds);
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    });
   nextTick(() => {
     updateActiveTabIndicator();
   });
@@ -5988,6 +6343,31 @@ watch(
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => allVisibleSessions.value.map(session => session.id).join('|'),
+  () => {
+    if (isProjectSessionInitializing.value) {
+      return;
+    }
+    syncTabNavigationState();
+  }
+);
+
+watch(
+  () => activeSessionId.value,
+  sessionId => {
+    if (
+      !sessionId ||
+      isProjectSessionInitializing.value ||
+      !visibleSessionById.value.has(sessionId) ||
+      tabMruIds.value[0] === sessionId
+    ) {
+      return;
+    }
+    rememberTabVisit(sessionId);
+  }
 );
 
 watch(

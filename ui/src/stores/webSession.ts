@@ -1546,10 +1546,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
     const currentActive = activeSessionIdByProject.value[projectId];
     if (currentActive === sessionId) {
-      const nextActive = next[0]?.id ?? '';
       activeSessionIdByProject.value = {
         ...activeSessionIdByProject.value,
-        [projectId]: nextActive,
+        [projectId]: '',
       };
       persistActiveSessions(activeSessionIdByProject.value);
     }
@@ -2689,26 +2688,39 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_ag', sessionId, { ag: agent });
   }
 
-  async function moveSession(projectId: string, fromIndex: number, toIndex: number) {
+  async function moveSession(
+    projectId: string,
+    sessionId: string,
+    previousSessionId = '',
+    nextSessionId = ''
+  ) {
     const current = getSessions(projectId);
     if (
       !projectId ||
-      fromIndex < 0 ||
-      toIndex < 0 ||
-      fromIndex >= current.length ||
-      toIndex >= current.length ||
-      fromIndex === toIndex
+      !sessionId ||
+      (previousSessionId && previousSessionId === sessionId) ||
+      (nextSessionId && nextSessionId === sessionId)
     ) {
       return;
     }
 
     const original = [...current];
-    const reordered = [...current];
-    const [moving] = reordered.splice(fromIndex, 1);
+    const reordered = current.filter(session => session.id !== sessionId);
+    const moving = current.find(session => session.id === sessionId);
     if (!moving) {
       return;
     }
-    reordered.splice(toIndex, 0, moving);
+
+    let insertIndex = reordered.length;
+    if (previousSessionId) {
+      const previousIndex = reordered.findIndex(session => session.id === previousSessionId);
+      insertIndex = previousIndex >= 0 ? previousIndex + 1 : reordered.length;
+    } else if (nextSessionId) {
+      const nextIndex = reordered.findIndex(session => session.id === nextSessionId);
+      insertIndex = nextIndex >= 0 ? nextIndex : 0;
+    }
+
+    reordered.splice(insertIndex, 0, moving);
     const reorderedWithOrder = reordered.map((session, index) => ({
       ...session,
       orderIndex: (index + 1) * 1000,
@@ -2718,12 +2730,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       [projectId]: reorderedWithOrder,
     };
 
-    const prevSessionId = reorderedWithOrder[toIndex - 1]?.id ?? '';
-    const nextSessionId = reorderedWithOrder[toIndex + 1]?.id ?? '';
-
     try {
       await sendCommand('move', moving.id, {
-        prv: prevSessionId,
+        prv: previousSessionId,
         nxt: nextSessionId,
       });
     } catch (error) {
