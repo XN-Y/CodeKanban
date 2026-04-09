@@ -209,6 +209,16 @@
                     class="timeline-tool-shell plan-tool-shell"
                   >
                     <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
+                      <button
+                        v-if="shouldShowPlanRawToggle(item)"
+                        type="button"
+                        class="timeline-display-toggle"
+                        :class="{ 'is-active': isBlockRawMode(item, 'plan') }"
+                        :title="t('terminal.rawMode')"
+                        @click.stop="toggleBlockRawMode(item, 'plan')"
+                      >
+                        raw
+                      </button>
                       <div class="tool-body plan-tool-body">
                         <div class="plan-tool-header">
                           <span class="plan-tool-badge">{{ t('webSession.planCardBadge') }}</span>
@@ -216,11 +226,17 @@
                             t('webSession.planCardCaption')
                           }}</span>
                         </div>
-                        <div
-                          v-if="item.tool.output"
-                          class="plan-tool-content chat-markdown"
-                          v-html="renderMarkdown(item.tool.output)"
-                        ></div>
+                        <div v-if="item.tool.output" class="plan-tool-content">
+                          <pre
+                            v-if="isBlockRawMode(item, 'plan')"
+                            class="timeline-raw-text plan-tool-content--raw"
+                          ><code>{{ item.tool.output }}</code></pre>
+                          <div
+                            v-else
+                            class="chat-markdown"
+                            v-html="renderMarkdown(item.tool.output)"
+                          ></div>
+                        </div>
                         <div v-if="showPlanActions(item.tool.id)" class="plan-tool-actions">
                           <div class="plan-tool-action-row">
                             <n-button
@@ -424,8 +440,22 @@
                       item.itemType ? `type-${item.itemType}` : undefined,
                     ]"
                   >
+                    <button
+                      v-if="shouldShowMessageRawToggle(item)"
+                      type="button"
+                      class="timeline-display-toggle"
+                      :class="{ 'is-active': isBlockRawMode(item, 'message') }"
+                      :title="t('terminal.rawMode')"
+                      @click.stop="toggleBlockRawMode(item, 'message')"
+                    >
+                      raw
+                    </button>
+                    <pre
+                      v-if="shouldShowMessageRawToggle(item) && isBlockRawMode(item, 'message')"
+                      class="item-text item-text--raw timeline-raw-text"
+                    ><code>{{ item.text }}</code></pre>
                     <div
-                      v-if="item.text"
+                      v-else-if="item.text"
                       class="item-text chat-markdown"
                       v-html="renderMarkdown(item.text)"
                     ></div>
@@ -1423,6 +1453,8 @@ type LiveTimeTooltipItem = {
   value: string;
 };
 
+type TimelineRawSurface = 'message' | 'plan';
+
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -1489,6 +1521,7 @@ const loadingCommandExecutionDetail = ref(false);
 const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
 const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
+const rawTimelineBlocks = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
@@ -1771,6 +1804,30 @@ function isPlanTool(tool?: {
     typeof meta.title === 'string' ? meta.title : '',
   ];
   return candidates.some(value => normalizeChoiceText(value) === 'plan');
+}
+function shouldShowMessageRawToggle(block: WebSessionBlock) {
+  if (block.kind !== 'user' && block.kind !== 'assistant') {
+    return false;
+  }
+  return Boolean(block.text?.trim());
+}
+function shouldShowPlanRawToggle(block: WebSessionBlock) {
+  return Boolean(
+    block.kind === 'tool' && block.tool && isPlanTool(block.tool) && block.tool.output?.trim()
+  );
+}
+function getTimelineRawModeKey(block: WebSessionBlock, surface: TimelineRawSurface) {
+  return `${currentSession.value?.id ?? 'unknown'}:${surface}:${block.key}`;
+}
+function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
+  return !!rawTimelineBlocks.value[getTimelineRawModeKey(block, surface)];
+}
+function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const key = getTimelineRawModeKey(block, surface);
+  rawTimelineBlocks.value = {
+    ...rawTimelineBlocks.value,
+    [key]: !rawTimelineBlocks.value[key],
+  };
 }
 function isExecutePlanOption(option: WebSessionUserInputOption) {
   const text = normalizeChoiceText(`${option.label} ${option.description}`);
@@ -5950,6 +6007,7 @@ watch(
     stopWebSessionCatchUp('session-change');
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
+    rawTimelineBlocks.value = {};
     syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
       showMobileTabSelector.value = false;
@@ -7383,6 +7441,7 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   background: var(--app-surface-color, #fff);
   padding: 15px 16px;
+  position: relative;
 }
 
 .timeline-item.kind-user .item-bubble {
@@ -7423,6 +7482,57 @@ onBeforeUnmount(() => {
 
 .item-text {
   min-width: 0;
+}
+
+.item-text--raw {
+  padding: 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--n-primary-color) 6%, transparent);
+}
+
+.timeline-display-toggle {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--n-text-color-2);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.timeline-display-toggle:hover {
+  color: var(--n-primary-color);
+  opacity: 1;
+}
+
+.timeline-display-toggle.is-active {
+  color: var(--n-primary-color);
+}
+
+.timeline-raw-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.timeline-raw-text code {
+  font-family: inherit;
 }
 
 .attachment-row {
@@ -7884,6 +7994,10 @@ onBeforeUnmount(() => {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.7),
     0 10px 24px rgba(14, 116, 144, 0.06);
+}
+
+.plan-tool-content--raw {
+  padding: 0;
 }
 
 .plan-tool-actions {
@@ -9059,6 +9173,12 @@ onBeforeUnmount(() => {
   .plan-tool-action-secondary {
     width: 100%;
     min-width: 0;
+  }
+
+  .timeline-display-toggle {
+    top: 8px;
+    right: 8px;
+    font-size: 9px;
   }
 }
 
