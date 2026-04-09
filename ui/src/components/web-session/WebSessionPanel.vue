@@ -2127,7 +2127,7 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
   {
     label: t('common.edit'),
     key: 'rename',
-    disabled: !contextMenuSession.value,
+    disabled: !contextMenuSession.value || isDraftSession(contextMenuSession.value),
   },
   {
     label: t('webSession.syncFromTerminal'),
@@ -3850,7 +3850,6 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
       workflowMode: source?.workflowMode || draftWorkflowMode.value,
       permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
-      title: isDraftSession(source) ? source.title : undefined,
     });
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(props.projectId, source.id, session.id);
@@ -3893,7 +3892,7 @@ function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
 
 async function handleRenameSession(sessionId: string) {
   const session = sessions.value.find(item => item.id === sessionId);
-  if (!session) {
+  if (!session || isDraftSession(session)) {
     return;
   }
 
@@ -3922,15 +3921,6 @@ async function handleRenameSession(sessionId: string) {
         return false;
       }
       if (nextTitle === session.title) {
-        return true;
-      }
-      if (isDraftSession(session)) {
-        updateDraftSession(session.id, current => ({
-          ...current,
-          title: nextTitle,
-          updatedAt: new Date().toISOString(),
-        }));
-        message.success(t('webSession.renameSuccess'));
         return true;
       }
       try {

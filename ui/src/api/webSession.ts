@@ -36,12 +36,15 @@ type WebSessionSnapshot = {
 
 export const webSessionApi = {
   async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
-    return extractItem<ItemResponse<WebSessionCodexRuntimeConfig>>(
-      await http
-        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config')
-        .send(true),
-      'failed to load web session runtime config'
+    const config = extractItem<WebSessionCodexRuntimeConfig>(
+      await http.Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config').send(
+        true
+      )
     );
+    if (!config) {
+      throw new Error('failed to load web session runtime config');
+    }
+    return config;
   },
 
   async list(projectId: string): Promise<WebSessionSummary[]> {
