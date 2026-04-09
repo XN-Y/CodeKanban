@@ -19,19 +19,40 @@
                 </n-icon>
               </button>
               <n-dropdown
-                trigger="manual"
+                trigger="click"
                 placement="bottom-start"
+                width="trigger"
                 :show="showMobileTabSelector"
+                :value="activeSessionId"
                 :options="mobileTabOptions"
+                :menu-props="mobileTabDropdownMenuProps"
+                :node-props="getMobileTabOptionNodeProps"
+                :render-label="renderMobileTabOptionLabel"
                 @select="handleMobileTabSelect"
-                @clickoutside="showMobileTabSelector = false"
+                @update:show="handleMobileTabShowUpdate"
               >
                 <button
                   type="button"
                   class="mobile-tab-trigger"
-                  @click="showMobileTabSelector = !showMobileTabSelector"
+                  :title="currentSession ? getSessionStatusTooltip(currentSession) : undefined"
                 >
-                  <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
+                  <span class="mobile-tab-trigger-main">
+                    <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
+                    <span
+                      v-if="activeSessionStatusLabel"
+                      class="ai-status-pill mobile-tab-trigger-status"
+                      :class="`state-${activeSessionPillStateClass}`"
+                    >
+                      <span class="mobile-tab-trigger-status-text">
+                        {{ activeSessionStatusLabel }}
+                      </span>
+                    </span>
+                    <span
+                      v-if="activeSessionHasWorkflowPlanBadge"
+                      class="mobile-tab-trigger-plan-badge"
+                      aria-hidden="true"
+                    ></span>
+                  </span>
                   <n-icon class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
                     <ChevronDownOutline />
                   </n-icon>
@@ -110,7 +131,28 @@
             />
 
             <div class="header-actions">
+              <n-dropdown
+                v-if="isMobile"
+                class="mobile-header-action-menu"
+                trigger="click"
+                placement="bottom-end"
+                :options="mobileActionMenuOptions"
+                @select="handleMobileActionMenuSelect"
+              >
+                <n-button
+                  secondary
+                  size="small"
+                  class="new-session-button"
+                  :title="t('common.more')"
+                  :aria-label="t('common.more')"
+                >
+                  <template #icon>
+                    <n-icon><EllipsisHorizontalOutline /></n-icon>
+                  </template>
+                </n-button>
+              </n-dropdown>
               <n-button
+                v-else
                 secondary
                 size="small"
                 class="new-session-button"
@@ -1203,6 +1245,7 @@ import {
   ChevronBackOutline,
   ChevronDownOutline,
   ChevronForwardOutline,
+  EllipsisHorizontalOutline,
   ImageOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
@@ -1245,7 +1288,6 @@ import TransferProgressDialog from '@/components/common/TransferProgressDialog.v
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import {
-  getWebSessionPillTone,
   getWebSessionSidebarTone,
   getWebSessionTabTone,
 } from '@/components/web-session/sessionVisualState';
@@ -1256,6 +1298,10 @@ import {
   transferWebSessionSubmit,
   type WebSessionSubmitState,
 } from '@/components/web-session/webSessionSubmitState';
+import {
+  resolveWebSessionDisplayState,
+  type WebSessionDisplayState,
+} from '@/components/web-session/webSessionSessionState';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -1314,6 +1360,24 @@ type SessionTab =
   | (WebSessionSummary & { isDraft?: false; isArchivedPreview?: false })
   | DraftSessionTab
   | ArchivedPreviewSessionTab;
+
+type MobileTabOption = DropdownOption & {
+  key: string;
+  label: string;
+  section: 'current' | 'archived';
+  session: SessionTab;
+  displayState: WebSessionDisplayState;
+  tooltip: string;
+};
+
+type MobileTabRenderOption = {
+  type: 'render';
+  key: string;
+  render: () => ReturnType<typeof h>;
+  props?: HTMLAttributes;
+};
+
+type MobileTabDropdownOption = DropdownOption | MobileTabRenderOption;
 
 type InlinePlanChoiceOption = {
   label: string;
@@ -2283,13 +2347,79 @@ const activeSessionId = computed(() => currentSession.value?.id ?? '');
 const emptyStateTitle = computed(() => t('webSession.draftTitle'));
 const emptyStateDescription = computed(() => t('webSession.draftDescription'));
 const activeSessionTitle = computed(() => currentSession.value?.title ?? emptyStateTitle.value);
+const activeSessionStatusLabel = computed(() =>
+  currentSession.value ? getSessionStatusLabel(currentSession.value) : ''
+);
+const activeSessionPillStateClass = computed(() =>
+  currentSession.value ? getSessionPillStateClass(currentSession.value) : 'unknown'
+);
+const activeSessionHasWorkflowPlanBadge = computed(() =>
+  shouldShowSessionWorkflowPlanBadge(currentSession.value)
+);
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
+const mobileSessionCategory = ref<'current' | 'archived'>('current');
+const mobileCurrentSessions = computed<SessionTab[]>(() => [
+  ...realSessions.value,
+  ...draftSessions.value,
+]);
+const mobileArchivedSessions = computed<SessionTab[]>(() => {
+  const items = crossProjectArchivedSessions.value
+    .filter(item => item.projectId === props.projectId)
+    .map(item => item.session as SessionTab);
+  if (
+    archivedPreviewSession.value &&
+    !items.some(session => session.id === archivedPreviewSession.value?.id)
+  ) {
+    return [archivedPreviewSession.value, ...items];
+  }
+  return items;
+});
+const mobileVisibleSessions = computed<SessionTab[]>(() =>
+  mobileSessionCategory.value === 'archived'
+    ? mobileArchivedSessions.value
+    : mobileCurrentSessions.value
+);
+const mobileProjectBadgeById = computed(() => {
+  const ids = new Set(sidebarProjectIdsToLoad.value.filter(Boolean));
+  const ordered: string[] = [];
+  projectStore.projects.forEach(project => {
+    if (project.id && ids.has(project.id) && !ordered.includes(project.id)) {
+      ordered.push(project.id);
+    }
+  });
+  projectStore.recentProjects.forEach(project => {
+    if (project.id && ids.has(project.id) && !ordered.includes(project.id)) {
+      ordered.push(project.id);
+    }
+  });
+  sidebarProjectIdsToLoad.value.forEach(projectId => {
+    if (projectId && !ordered.includes(projectId)) {
+      ordered.push(projectId);
+    }
+  });
+  return new Map(
+    ordered.map((projectId, index) => [
+      projectId,
+      {
+        index: index + 1,
+        color: PROJECT_INDEX_COLORS[index % PROJECT_INDEX_COLORS.length],
+      },
+    ])
+  );
+});
+const mobileNavigationSessions = computed<SessionTab[]>(() =>
+  isArchivedPreviewSession(currentSession.value)
+    ? mobileArchivedSessions.value
+    : mobileCurrentSessions.value
+);
 const currentSessionIndex = computed(() =>
-  sessions.value.findIndex(session => session.id === activeSessionId.value)
+  mobileNavigationSessions.value.findIndex(session => session.id === activeSessionId.value)
 );
 const hasPrevSession = computed(() => currentSessionIndex.value > 0);
 const hasNextSession = computed(
-  () => currentSessionIndex.value >= 0 && currentSessionIndex.value < sessions.value.length - 1
+  () =>
+    currentSessionIndex.value >= 0 &&
+    currentSessionIndex.value < mobileNavigationSessions.value.length - 1
 );
 
 watch(
@@ -2312,54 +2442,309 @@ watch(
   { immediate: true }
 );
 
-const mobileTabOptions = computed<DropdownOption[]>(() =>
-  sessions.value.map(session => ({
-    label: session.title,
-    key: session.id,
-  }))
+const mobileTabOptions = computed<MobileTabDropdownOption[]>(
+  () =>
+    [
+      {
+        type: 'render' as const,
+        key: `mobile-session-switcher:${mobileSessionCategory.value}`,
+        render: renderMobileTabCategoryHeader,
+        props: {
+          class: 'mobile-tab-category-header-render',
+        },
+      },
+      ...(mobileVisibleSessions.value.length > 0
+        ? mobileVisibleSessions.value.map(session => {
+            const displayState = getSessionDisplayState(session);
+            const option: MobileTabOption = {
+              label: session.title,
+              key: session.id,
+              section: mobileSessionCategory.value,
+              session,
+              displayState,
+              tooltip: getSessionStatusTooltip(session),
+            };
+            return option;
+          })
+        : [
+            {
+              type: 'render' as const,
+              key: `mobile-session-empty:${mobileSessionCategory.value}`,
+              render: renderMobileTabEmptyState,
+              props: {
+                class: 'mobile-tab-empty-render',
+              },
+            },
+          ]),
+    ] satisfies MobileTabDropdownOption[]
 );
-const contextMenuOptions = computed<DropdownOption[]>(() => [
-  {
-    label: t('webSession.newSession'),
-    key: 'new',
-  },
-  {
-    label: t('common.edit'),
-    key: 'rename',
-    disabled: !contextMenuSession.value || isDraftSession(contextMenuSession.value),
-  },
-  {
-    label: t('webSession.syncFromTerminal'),
-    key: 'sync',
-    disabled:
-      !contextMenuSession.value ||
-      isDraftSession(contextMenuSession.value) ||
-      contextMenuSession.value.agent !== 'codex' ||
-      !contextMenuSession.value.nativeSessionId,
-  },
-  {
-    label: t('webSession.deepSyncFromTerminal'),
-    key: 'deep-sync',
-    disabled:
-      !contextMenuSession.value ||
-      isDraftSession(contextMenuSession.value) ||
-      contextMenuSession.value.agent !== 'codex' ||
-      !contextMenuSession.value.nativeSessionId,
-  },
-  {
-    label: t('webSession.archiveAction'),
-    key: 'archive',
-    disabled:
-      !contextMenuSession.value ||
-      isDraftSession(contextMenuSession.value) ||
-      isArchivedPreviewSession(contextMenuSession.value),
-  },
-  {
-    label: t('common.delete'),
-    key: 'delete',
-    disabled: !contextMenuSession.value,
-  },
-]);
+
+function mobileTabDropdownMenuProps() {
+  return {
+    class: 'web-session-mobile-dropdown',
+  };
+}
+
+function getMobileTabOptionNodeProps(option: DropdownOption): HTMLAttributes {
+  const mobileOption = option as MobileTabOption;
+  const classes = ['web-session-mobile-option'];
+  if (mobileOption.key === activeSessionId.value) {
+    classes.push('is-selected');
+  }
+  if (mobileOption.displayState.hasUnviewedApproval) {
+    classes.push('is-approval');
+  } else if (mobileOption.displayState.hasUnviewedCompletion) {
+    classes.push('is-completion');
+  }
+  return {
+    class: classes.join(' '),
+    title: mobileOption.tooltip,
+  };
+}
+
+function renderMobileTabCategoryHeader() {
+  return h('div', { class: 'mobile-tab-category-header' }, [
+    renderMobileTabCategoryButton('current'),
+    renderMobileTabCategoryButton('archived'),
+  ]);
+}
+
+function renderMobileTabCategoryButton(section: 'current' | 'archived') {
+  const active = mobileSessionCategory.value === section;
+  const count =
+    section === 'current'
+      ? mobileCurrentSessions.value.length
+      : mobileArchivedSessions.value.length;
+  const label =
+    section === 'current' ? t('webSession.currentSessions') : t('webSession.archivedSessions');
+
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: ['mobile-tab-category-button', active && 'is-active'],
+      onClick: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void setMobileSessionCategory(section);
+      },
+      onMousedown: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+      },
+    },
+    [
+      h('span', { class: 'mobile-tab-category-button-label' }, label),
+      h('span', { class: 'mobile-tab-category-button-count' }, String(count)),
+    ]
+  );
+}
+
+function renderMobileTabEmptyState() {
+  return h(
+    'div',
+    { class: 'mobile-tab-empty-state' },
+    mobileSessionCategory.value === 'archived'
+      ? t('webSession.archivedSessionsEmpty')
+      : t('webSession.currentSessionsEmpty')
+  );
+}
+
+function renderMobileTabOptionLabel(option: DropdownOption) {
+  const mobileOption = option as MobileTabOption;
+  const { displayState } = mobileOption;
+  const projectBadge = getMobileTabOptionProjectBadge(mobileOption.session);
+
+  return h('div', { class: 'mobile-tab-option-body' }, [
+    h('span', { class: 'mobile-tab-option-agent-shell', title: mobileOption.tooltip }, [
+      h(
+        'span',
+        {
+          class: [
+            'mobile-tab-option-agent-badge',
+            getMobileTabOptionAgentBadgeStateClass(mobileOption.session, displayState),
+          ],
+        },
+        [
+          h('span', {
+            class: ['ai-status-icon', 'mobile-tab-option-agent-icon'],
+            innerHTML: getSessionAssistantIcon(mobileOption.session),
+          }),
+        ]
+      ),
+      displayState.showStatusDot && displayState.statusDotClass
+        ? h('span', {
+            class: ['status-dot', 'mobile-tab-option-badge-dot', displayState.statusDotClass],
+          })
+        : null,
+      shouldShowSessionWorkflowPlanBadge(mobileOption.session)
+        ? h('span', {
+            class: 'mobile-tab-option-plan-badge',
+            'aria-hidden': 'true',
+          })
+        : null,
+    ]),
+    h(
+      'span',
+      { class: 'mobile-tab-option-title', title: mobileOption.tooltip },
+      mobileOption.session.title
+    ),
+    projectBadge
+      ? h(
+          'span',
+          {
+            class: 'mobile-tab-option-project-badge',
+            style: {
+              '--badge-color': projectBadge.color,
+            },
+            title: getProjectName(mobileOption.session.projectId || props.projectId),
+          },
+          String(projectBadge.index)
+        )
+      : null,
+  ]);
+}
+
+function getMobileTabOptionAgentBadgeStateClass(
+  session: SessionTab,
+  displayState: WebSessionDisplayState
+) {
+  if (!isDraftSession(session) && session.status === 'err') {
+    return 'state-error';
+  }
+  return `state-${displayState.pillStateClass}`;
+}
+
+function getMobileTabOptionProjectBadge(session: SessionTab) {
+  const projectId = session.projectId || props.projectId;
+  if (!projectId) {
+    return null;
+  }
+  return mobileProjectBadgeById.value.get(projectId) ?? null;
+}
+
+async function setMobileSessionCategory(section: 'current' | 'archived') {
+  mobileSessionCategory.value = section;
+  if (
+    section === 'archived' &&
+    mobileArchivedSessions.value.length === 0 &&
+    archivedSidebarMeta.value.hasMore
+  ) {
+    try {
+      await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
+        limit: 20,
+      });
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  }
+}
+
+function syncMobileSessionCategoryToCurrentSession() {
+  mobileSessionCategory.value = isArchivedPreviewSession(currentSession.value)
+    ? 'archived'
+    : 'current';
+}
+
+function handleMobileTabShowUpdate(show: boolean) {
+  if (show) {
+    syncMobileSessionCategoryToCurrentSession();
+    if (mobileSessionCategory.value === 'archived') {
+      void setMobileSessionCategory('archived');
+    }
+  }
+  showMobileTabSelector.value = show;
+}
+
+function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
+  return [
+    {
+      label: t('webSession.newSession'),
+      key: 'new',
+    },
+    {
+      label: t('common.edit'),
+      key: 'rename',
+      disabled: !session || isDraftSession(session),
+    },
+    {
+      label: t('webSession.syncFromTerminal'),
+      key: 'sync',
+      disabled:
+        !session ||
+        isDraftSession(session) ||
+        session.agent !== 'codex' ||
+        !session.nativeSessionId,
+    },
+    {
+      label: t('webSession.deepSyncFromTerminal'),
+      key: 'deep-sync',
+      disabled:
+        !session ||
+        isDraftSession(session) ||
+        session.agent !== 'codex' ||
+        !session.nativeSessionId,
+    },
+    {
+      label: t('webSession.archiveAction'),
+      key: 'archive',
+      disabled: !session || isDraftSession(session) || isArchivedPreviewSession(session),
+    },
+    {
+      label: t('common.delete'),
+      key: 'delete',
+      disabled: !session,
+    },
+  ];
+}
+
+const contextMenuOptions = computed<DropdownOption[]>(() =>
+  buildSessionActionOptions(contextMenuSession.value)
+);
+
+const mobileActionMenuOptions = computed<DropdownOption[]>(() =>
+  buildSessionActionOptions(currentSession.value)
+);
+
+async function handleSessionActionSelect(action: string, session: SessionTab | null) {
+  if (action === 'new') {
+    handleStartDraftSession();
+    return;
+  }
+  if (!session) {
+    return;
+  }
+  if (action === 'rename') {
+    await handleRenameSession(session.id);
+    return;
+  }
+  if (action === 'sync') {
+    confirmSyncSession(session, 'fast');
+    return;
+  }
+  if (action === 'deep-sync') {
+    confirmSyncSession(session, 'deep');
+    return;
+  }
+  if (action === 'archive') {
+    handleArchiveSession(session.id);
+    return;
+  }
+  if (action === 'delete') {
+    dialog.warning({
+      title: t('common.delete'),
+      content: t('webSession.deleteConfirm', { title: session.title }),
+      positiveText: t('common.delete'),
+      negativeText: t('common.cancel'),
+      onPositiveClick: async () => performDeleteSession(session.id),
+    });
+  }
+}
+
+async function handleMobileActionMenuSelect(key: string | number) {
+  await handleSessionActionSelect(String(key), currentSession.value);
+}
+
 const tabsThemeOverrides = computed(() => {
   const theme = activeTheme.value;
   const preset = getPresetById(currentPresetId.value);
@@ -5129,24 +5514,19 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
   return props;
 }
 
+function getSessionDisplayState(session: SessionTab): WebSessionDisplayState {
+  return resolveWebSessionDisplayState({
+    isDraft: isDraftSession(session),
+    hasUnread: hasSessionUnread(session),
+    status: session.status,
+    syncState: session.syncState,
+    livePhase: isDraftSession(session) ? null : webSessionStore.getLiveState(session.id).phase,
+    assistantState: session.assistantState,
+  });
+}
+
 function getSessionLabelState(session: (typeof sessions.value)[number]) {
-  if (isDraftSession(session)) {
-    return 'waiting_input';
-  }
-  switch (webSessionStore.getLiveState(session.id).phase) {
-    case 'starting':
-    case 'thinking':
-    case 'tool':
-    case 'retrying':
-      return 'working';
-    case 'waiting_approval':
-    case 'waiting_plan_approval':
-      return 'waiting_approval';
-    case 'waiting_input':
-      return 'waiting_input';
-    default:
-      return 'unknown';
-  }
+  return getSessionDisplayState(session).assistantStateClass;
 }
 
 function getSessionVisualInput(session: (typeof sessions.value)[number]) {
@@ -5161,37 +5541,16 @@ function getSessionVisualInput(session: (typeof sessions.value)[number]) {
 }
 
 function getSessionStatusLabel(session: (typeof sessions.value)[number]) {
-  switch (getSessionLabelState(session)) {
-    case 'working':
-      return t('terminal.aiStatusWorking');
-    case 'waiting_approval':
-      return t('terminal.aiStatusWaitingApproval');
-    case 'waiting_input':
-      return t('terminal.aiStatusWaitingInput');
-    default:
-      return '';
-  }
+  const labelKey = getSessionDisplayState(session).statusLabelKey;
+  return labelKey ? t(labelKey) : '';
 }
 
 function getSessionPillStateClass(session: (typeof sessions.value)[number]) {
-  if (isDraftSession(session)) {
-    return 'waiting_input';
-  }
-  const visualInput = getSessionVisualInput(session);
-  return visualInput ? getWebSessionPillTone(visualInput) : 'unknown';
+  return getSessionDisplayState(session).pillStateClass;
 }
 
 function getSessionStatusEmoji(session: (typeof sessions.value)[number]) {
-  switch (getSessionLabelState(session)) {
-    case 'working':
-      return '🤔';
-    case 'waiting_approval':
-      return '✋';
-    case 'waiting_input':
-      return '✓';
-    default:
-      return '';
-  }
+  return getSessionDisplayState(session).statusEmoji;
 }
 
 function getSessionAssistantIcon(session: (typeof sessions.value)[number]) {
@@ -5271,17 +5630,11 @@ function getSessionPillSizeClass() {
 }
 
 function shouldShowSessionStatusDot(session: (typeof sessions.value)[number]) {
-  if (isDraftSession(session)) {
-    return false;
-  }
-  return session.status === 'err' || session.syncState === 'stale';
+  return getSessionDisplayState(session).showStatusDot;
 }
 
 function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
-  if (session.syncState === 'stale') {
-    return 'stale';
-  }
-  return session.status;
+  return getSessionDisplayState(session).statusDotClass ?? session.status;
 }
 
 function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
@@ -5303,41 +5656,9 @@ function handleTabContextMenu(event: MouseEvent, session: (typeof sessions.value
 }
 
 async function handleContextMenuSelect(key: string | number) {
-  const action = String(key);
   const session = contextMenuSession.value;
   contextMenuSession.value = null;
-  if (action === 'new') {
-    handleStartDraftSession();
-    return;
-  }
-  if (!session) {
-    return;
-  }
-  if (action === 'rename') {
-    await handleRenameSession(session.id);
-    return;
-  }
-  if (action === 'sync') {
-    confirmSyncSession(session, 'fast');
-    return;
-  }
-  if (action === 'deep-sync') {
-    confirmSyncSession(session, 'deep');
-    return;
-  }
-  if (action === 'archive') {
-    handleArchiveSession(session.id);
-    return;
-  }
-  if (action === 'delete') {
-    dialog.warning({
-      title: t('common.delete'),
-      content: t('webSession.deleteConfirm', { title: session.title }),
-      positiveText: t('common.delete'),
-      negativeText: t('common.cancel'),
-      onPositiveClick: async () => performDeleteSession(session.id),
-    });
-  }
+  await handleSessionActionSelect(String(key), session);
 }
 
 function syncModeLabel(mode: 'fast' | 'deep') {
@@ -5399,16 +5720,49 @@ async function handleSyncSession(
   }
 }
 
-function handleMobileTabSelect(key: string | number) {
-  void handleSessionSelect(String(key));
+function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
+  const mobileOption = option as MobileTabOption;
+  if (!mobileOption?.session) {
+    return;
+  }
+  if (mobileOption.section === 'archived') {
+    showMobileTabSelector.value = false;
+    if (archivedPreviewSession.value?.id === mobileOption.session.id) {
+      scrollToBottom(true);
+      return;
+    }
+    void openArchivedPreviewSession(mobileOption.session).then(
+      () => {
+        scrollToBottom(true);
+      },
+      error => {
+        clearArchivedPreviewSession();
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      }
+    );
+    return;
+  }
+  void handleSessionSelect(String(mobileOption.session.id));
 }
 
 function goToPrevSession() {
   if (!hasPrevSession.value) {
     return;
   }
-  const session = sessions.value[currentSessionIndex.value - 1];
+  const session = mobileNavigationSessions.value[currentSessionIndex.value - 1];
   if (session) {
+    if (session.archivedAt) {
+      void openArchivedPreviewSession(session).then(
+        () => {
+          scrollToBottom(true);
+        },
+        error => {
+          clearArchivedPreviewSession();
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        }
+      );
+      return;
+    }
     void handleSessionSelect(session.id);
   }
 }
@@ -5417,8 +5771,20 @@ function goToNextSession() {
   if (!hasNextSession.value) {
     return;
   }
-  const session = sessions.value[currentSessionIndex.value + 1];
+  const session = mobileNavigationSessions.value[currentSessionIndex.value + 1];
   if (session) {
+    if (session.archivedAt) {
+      void openArchivedPreviewSession(session).then(
+        () => {
+          scrollToBottom(true);
+        },
+        error => {
+          clearArchivedPreviewSession();
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        }
+      );
+      return;
+    }
     void handleSessionSelect(session.id);
   }
 }
@@ -5584,6 +5950,7 @@ watch(
     stopWebSessionCatchUp('session-change');
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
+    syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
       showMobileTabSelector.value = false;
       return;
@@ -6121,7 +6488,13 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-shrink: 0;
   padding-right: 4px;
+  padding-bottom: 4px;
   margin-left: auto;
+}
+
+.mobile-header-action-menu {
+  display: flex;
+  align-items: center;
 }
 
 .new-session-button {
@@ -6176,11 +6549,65 @@ onBeforeUnmount(() => {
   padding: 0 12px;
 }
 
+.mobile-tab-trigger-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
 .mobile-tab-title {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.mobile-tab-trigger-status {
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 92px;
+  padding: 0 6px;
+  height: 18px;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mobile-tab-trigger-status-text {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.mobile-tab-trigger-plan-badge {
+  position: relative;
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+}
+
+.mobile-tab-trigger-plan-badge::before,
+.mobile-tab-trigger-plan-badge::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: -1px;
+  width: 14px;
+  height: 2px;
+  background: #0ea5e9;
+  border-radius: 999px;
+  transform-origin: center center;
+}
+
+.mobile-tab-trigger-plan-badge::before {
+  transform: rotate(54deg);
+}
+
+.mobile-tab-trigger-plan-badge::after {
+  transform: rotate(-54deg);
 }
 
 .mobile-tab-arrow {
@@ -6189,6 +6616,271 @@ onBeforeUnmount(() => {
 
 .mobile-tab-arrow.is-open {
   transform: rotate(180deg);
+}
+
+:global(.web-session-mobile-dropdown) {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(100vw - 24px);
+  max-height: min(72vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+:global(.web-session-mobile-dropdown .n-dropdown-option-body) {
+  min-height: var(--n-option-height);
+  height: auto;
+  line-height: normal;
+  align-items: center;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+:global(.web-session-mobile-dropdown .n-dropdown-option-body__label) {
+  min-width: 0;
+  width: 100%;
+  white-space: normal;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-header-render) {
+  position: sticky;
+  top: -4px;
+  z-index: 2;
+  padding: 0 6px;
+  background: var(--n-color, var(--app-surface-color, #fff));
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-header) {
+  display: flex;
+  gap: 0;
+  padding: 2px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  background: #f3f4f6;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-button) {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--app-text-color, var(--n-text-color));
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-button.is-active) {
+  background: var(--app-surface-color, #fff);
+  color: var(--n-primary-color);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-button-label) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-category-button-count) {
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(148, 163, 184, 0.16);
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-empty-render) {
+  padding: 8px 2px 2px;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-empty-state) {
+  padding: 12px 10px;
+  border-radius: 10px;
+  color: var(--n-text-color-3);
+  background: color-mix(in srgb, var(--n-border-color) 10%, transparent);
+  font-size: 12px;
+  text-align: center;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-body) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-width: 0;
+  width: 100%;
+  padding: 0 8px;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-shell) {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge) {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-working) {
+  background: #eadffc;
+  color: #7c3aed;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_approval) {
+  background: #fed7aa;
+  color: #f79009;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-completion) {
+  background: rgba(16, 185, 129, 0.12);
+  color: #059669;
+  border-color: rgba(16, 185, 129, 0.18);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_input) {
+  background: #eceef2;
+  color: #667085;
+  border-color: rgba(71, 84, 103, 0.08);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-unknown) {
+  background: #f1f5f9;
+  color: #94a3b8;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-error) {
+  background: rgba(240, 68, 56, 0.14);
+  color: #f04438;
+  border-color: rgba(240, 68, 56, 0.18);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-icon) {
+  line-height: 1;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-icon svg) {
+  display: block;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-badge-dot) {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--app-surface-color, #fff);
+  box-sizing: content-box;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge) {
+  position: absolute;
+  left: -3px;
+  bottom: -1px;
+  width: 12px;
+  height: 12px;
+  pointer-events: none;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::before),
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::after) {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: -1px;
+  width: 14px;
+  height: 2px;
+  background: #0ea5e9;
+  border-radius: 999px;
+  transform-origin: center center;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::before) {
+  transform: rotate(54deg);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::after) {
+  transform: rotate(-54deg);
+}
+
+:global(
+  .web-session-mobile-dropdown
+    .web-session-mobile-option.is-selected
+    > .n-dropdown-option-body::before
+) {
+  background: color-mix(in srgb, var(--n-primary-color) 14%, var(--app-surface-color, #fff));
+}
+
+:global(
+  .web-session-mobile-dropdown .web-session-mobile-option.is-selected > .n-dropdown-option-body
+) {
+  background: color-mix(in srgb, var(--n-primary-color) 10%, var(--app-surface-color, #fff));
+}
+
+:global(
+  .web-session-mobile-dropdown .web-session-mobile-option.is-selected .mobile-tab-option-title
+) {
+  color: color-mix(in srgb, var(--n-primary-color) 72%, #111827);
+}
+
+:global(
+  .web-session-mobile-dropdown
+    .web-session-mobile-option.is-selected
+    .mobile-tab-option-project-badge
+) {
+  background: color-mix(in srgb, var(--n-primary-color) 78%, #3b82f6);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-title) {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.35;
+  color: var(--app-text-color, var(--n-text-color));
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-option-project-badge) {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--badge-color, #3b82f6);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .agent-select {
