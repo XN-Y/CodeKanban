@@ -2,21 +2,19 @@
   <div class="project-workspace" :class="{ 'is-mobile': isMobileLayout }">
     <!-- 桌面端布局 -->
     <template v-if="!isMobileLayout">
-      <div class="workspace-desktop-shell">
+      <n-layout has-sider class="workspace-desktop-shell">
         <!-- 左侧最近项目侧边栏 -->
-        <div
+        <n-layout-sider
+          bordered
           class="project-sidebar"
-          :style="{
-            width: `${effectiveLeftSidebarWidth}px`,
-            flex: `0 0 ${effectiveLeftSidebarWidth}px`,
-          }"
+          :width="effectiveLeftSidebarWidth"
         >
           <RecentProjects
             :current-project-id="currentProjectId"
             @edit-current="openProjectEditDialog"
             @toggle-terminal="toggleTerminalPanel"
           />
-        </div>
+        </n-layout-sider>
         <div
           class="project-sidebar-resizer"
           :class="{ 'is-dragging': isProjectSidebarResizing }"
@@ -47,7 +45,7 @@
             </div>
           </n-layout-content>
         </n-layout>
-      </div>
+      </n-layout>
     </template>
 
     <!-- 移动端布局 -->
@@ -470,10 +468,9 @@ function setMobileView(view: MobileView) {
 }
 
 .project-sidebar {
+  height: 100%;
   min-height: 0;
   overflow: hidden;
-  border-right: 1px solid var(--n-border-color, #e0e0e0);
-  background: var(--app-surface-color, #ffffff);
 }
 
 .project-sidebar-resizer {
