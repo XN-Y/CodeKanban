@@ -945,6 +945,9 @@
                   :class="[
                     'session-sidebar-row',
                     ...getSidebarSessionClasses(item),
+                    {
+                      'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
+                    },
                     { 'is-active': item.isCurrent },
                   ]"
                   :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
@@ -1025,6 +1028,9 @@
                     'session-sidebar-row',
                     'is-archived',
                     ...getSidebarSessionClasses(item),
+                    {
+                      'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
+                    },
                     { 'is-active': item.isCurrent },
                   ]"
                   :style="{ '--session-sidebar-accent': getSidebarSessionAccentColor(item) }"
@@ -5067,6 +5073,12 @@ function cleanupTabScrollListener() {
   }
 }
 
+function shouldShowSessionWorkflowPlanBadge(
+  session: Pick<WebSessionSummary, 'workflowMode'> | null | undefined
+) {
+  return session?.workflowMode === 'plan';
+}
+
 function createTabProps(session: (typeof sessions.value)[number]): HTMLAttributes {
   const isActive = activeSessionId.value === session.id;
   const theme = activeTheme.value;
@@ -5105,6 +5117,9 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
 
   if (classes.length > 0) {
     props.class = classes.join(' ');
+  }
+  if (shouldShowSessionWorkflowPlanBadge(session)) {
+    props.class = [props.class, 'has-workflow-plan-badge'].filter(Boolean).join(' ');
   }
   return props;
 }
@@ -5897,6 +5912,39 @@ onBeforeUnmount(() => {
     color 0.2s ease;
 }
 
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-workflow-plan-badge) {
+  position: relative;
+  overflow: visible;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-workflow-plan-badge)::before {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: -1px;
+  z-index: 2;
+  width: 14px;
+  height: 2px;
+  background: #0ea5e9;
+  transform: rotate(54deg);
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-workflow-plan-badge)::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: -1px;
+  z-index: 2;
+  width: 14px;
+  height: 2px;
+  background: #0ea5e9;
+  transform: rotate(-54deg);
+  transform-origin: center center;
+  pointer-events: none;
+}
+
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.n-tabs-tab--active) {
   background-color: var(--kanban-terminal-tab-active-bg, #e8e8e8) !important;
   color: var(--n-tab-text-color-active);
@@ -6254,6 +6302,39 @@ onBeforeUnmount(() => {
     background-color 0.18s ease,
     transform 0.18s ease,
     box-shadow 0.18s ease;
+}
+
+.session-sidebar-item.has-workflow-plan-badge {
+  position: relative;
+  overflow: visible;
+}
+
+.session-sidebar-item.has-workflow-plan-badge::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: -6px;
+  z-index: 2;
+  width: 18px;
+  height: 2px;
+  background: #0ea5e9;
+  transform: rotate(54deg);
+  transform-origin: center center;
+  pointer-events: none;
+}
+
+.session-sidebar-item.has-workflow-plan-badge::after {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: -6px;
+  z-index: 2;
+  width: 18px;
+  height: 2px;
+  background: #0ea5e9;
+  transform: rotate(-54deg);
+  transform-origin: center center;
+  pointer-events: none;
 }
 
 .session-sidebar-item:hover {
