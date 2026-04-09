@@ -1245,6 +1245,11 @@ import TransferProgressDialog from '@/components/common/TransferProgressDialog.v
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import {
+  getWebSessionPillTone,
+  getWebSessionSidebarTone,
+  getWebSessionTabTone,
+} from '@/components/web-session/sessionVisualState';
+import {
   beginWebSessionSubmit,
   endWebSessionSubmit,
   isWebSessionSubmitting,
@@ -5089,14 +5094,14 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
   };
   const classes: string[] = [];
 
-  if (hasSessionUnviewedApproval(session)) {
+  if (usesSessionApprovalTone(session)) {
     classes.push('has-unviewed-approval');
     if (isActive && hideHeaderBorder) {
       props.style = {
         borderBottom: 'none',
       };
     }
-  } else if (hasSessionUnviewedCompletion(session)) {
+  } else if (usesSessionCompletionTone(session)) {
     classes.push('has-unviewed-completion');
     if (isActive && hideHeaderBorder) {
       props.style = {
@@ -5124,31 +5129,39 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
   return props;
 }
 
-function getSessionAssistantStateClass(session: (typeof sessions.value)[number]) {
+function getSessionLabelState(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return 'waiting_input';
   }
-  const live = webSessionStore.getLiveState(session.id);
-  switch (live.phase) {
+  switch (webSessionStore.getLiveState(session.id).phase) {
     case 'starting':
     case 'thinking':
     case 'tool':
+    case 'retrying':
       return 'working';
     case 'waiting_approval':
     case 'waiting_plan_approval':
       return 'waiting_approval';
     case 'waiting_input':
       return 'waiting_input';
-    case 'done':
-    case 'idle':
-      return 'waiting_input';
     default:
       return 'unknown';
   }
 }
 
+function getSessionVisualInput(session: (typeof sessions.value)[number]) {
+  if (isDraftSession(session)) {
+    return null;
+  }
+  return {
+    phase: webSessionStore.getLiveState(session.id).phase,
+    hasUnread: hasSessionUnread(session),
+    status: session.status,
+  } as const;
+}
+
 function getSessionStatusLabel(session: (typeof sessions.value)[number]) {
-  switch (getSessionAssistantStateClass(session)) {
+  switch (getSessionLabelState(session)) {
     case 'working':
       return t('terminal.aiStatusWorking');
     case 'waiting_approval':
@@ -5161,14 +5174,15 @@ function getSessionStatusLabel(session: (typeof sessions.value)[number]) {
 }
 
 function getSessionPillStateClass(session: (typeof sessions.value)[number]) {
-  if (hasSessionUnviewedCompletion(session)) {
-    return 'completion';
+  if (isDraftSession(session)) {
+    return 'waiting_input';
   }
-  return getSessionAssistantStateClass(session);
+  const visualInput = getSessionVisualInput(session);
+  return visualInput ? getWebSessionPillTone(visualInput) : 'unknown';
 }
 
 function getSessionStatusEmoji(session: (typeof sessions.value)[number]) {
-  switch (getSessionAssistantStateClass(session)) {
+  switch (getSessionLabelState(session)) {
     case 'working':
       return '🤔';
     case 'waiting_approval':
@@ -5208,41 +5222,39 @@ function getSidebarSessionSubtitle(item: CrossProjectSessionItem) {
 }
 
 function getSidebarSessionAccentColor(item: CrossProjectSessionItem) {
-  const assistantState = getSessionAssistantStateClass(item.session);
-  if (hasSessionUnread(item.session) && assistantState === 'waiting_input') {
-    return '#10b981';
-  }
-  switch (assistantState) {
+  const visualInput = getSessionVisualInput(item.session);
+  const tone = visualInput ? getWebSessionSidebarTone(visualInput) : 'default';
+  switch (tone) {
     case 'working':
       return '#8b5cf6';
-    case 'waiting_approval':
+    case 'approval':
       return '#f79009';
-    case 'waiting_input':
+    case 'completion':
+      return '#10b981';
+    case 'idle':
       return '#9ca3af';
+    case 'error':
+      return '#f04438';
     default:
-      if (item.session.status === 'err') {
-        return '#f04438';
-      }
       return 'rgba(15, 23, 42, 0.08)';
   }
 }
 
 function getSidebarSessionClasses(item: CrossProjectSessionItem): string[] {
-  const assistantState = getSessionAssistantStateClass(item.session);
-  if (hasSessionUnread(item.session) && assistantState === 'waiting_input') {
-    return ['session-sidebar-completion'];
-  }
-  switch (assistantState) {
+  const visualInput = getSessionVisualInput(item.session);
+  const tone = visualInput ? getWebSessionSidebarTone(visualInput) : 'default';
+  switch (tone) {
     case 'working':
       return ['session-sidebar-working'];
-    case 'waiting_approval':
+    case 'approval':
       return ['session-sidebar-approval'];
-    case 'waiting_input':
+    case 'completion':
+      return ['session-sidebar-completion'];
+    case 'idle':
       return ['session-sidebar-idle'];
+    case 'error':
+      return ['session-sidebar-error'];
     default:
-      if (item.session.status === 'err') {
-        return ['session-sidebar-error'];
-      }
       return [];
   }
 }
@@ -5272,15 +5284,14 @@ function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
   return session.status;
 }
 
-function hasSessionUnviewedApproval(session: (typeof sessions.value)[number]) {
-  return hasSessionUnread(session) && getSessionAssistantStateClass(session) === 'waiting_approval';
+function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
+  const visualInput = getSessionVisualInput(session);
+  return visualInput ? getWebSessionTabTone(visualInput) === 'approval' : false;
 }
 
-function hasSessionUnviewedCompletion(session: (typeof sessions.value)[number]) {
-  if (!hasSessionUnread(session) || hasSessionUnviewedApproval(session)) {
-    return false;
-  }
-  return getSessionAssistantStateClass(session) === 'waiting_input' && session.status !== 'err';
+function usesSessionCompletionTone(session: (typeof sessions.value)[number]) {
+  const visualInput = getSessionVisualInput(session);
+  return visualInput ? getWebSessionTabTone(visualInput) === 'completion' : false;
 }
 
 function handleTabContextMenu(event: MouseEvent, session: (typeof sessions.value)[number]) {
@@ -5618,7 +5629,7 @@ watch(
     sessions.value
       .map(
         session =>
-          `${session.id}:${session.orderIndex}:${session.status}:${session.hasUnread}:${getSessionAssistantStateClass(session)}`
+          `${session.id}:${session.orderIndex}:${session.status}:${session.hasUnread}:${getSessionLabelState(session)}:${getSessionPillStateClass(session)}`
       )
       .join('|'),
   () => {
@@ -6042,6 +6053,7 @@ onBeforeUnmount(() => {
   color: #7c3aed;
 }
 
+.ai-status-pill.state-approval,
 .ai-status-pill.state-waiting_approval {
   background-color: #fed7aa;
   color: #f79009;
