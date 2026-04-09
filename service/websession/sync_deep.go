@@ -160,7 +160,7 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 	}
 
 	appendIfNotDuplicate := func(item HistoryItem) {
-		if len(items) > 0 {
+		if item.Tool == nil && len(items) > 0 {
 			last := items[len(items)-1]
 			if last.Kind == item.Kind && last.ItemType == item.ItemType && last.Text == item.Text {
 				return
@@ -281,8 +281,53 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 			Level:      "warn",
 			Payload:    cloneMap(payload),
 		}}
+	case "item_completed":
+		item := decodeRawObject(payload["item"])
+		plan := deepSyncPlanHistoryItem(item, stringValue(payload["turn_id"]), ts, cloneMap(payload))
+		if plan == nil {
+			return nil
+		}
+		return []HistoryItem{*plan}
 	default:
 		return nil
+	}
+}
+
+func deepSyncPlanHistoryItem(
+	item map[string]any,
+	turnID string,
+	ts time.Time,
+	payload map[string]any,
+) *HistoryItem {
+	if !strings.EqualFold(strings.TrimSpace(stringValue(item["type"])), "plan") {
+		return nil
+	}
+
+	planID := strings.TrimSpace(stringValue(item["id"]))
+	if planID == "" {
+		planID = utils.NewID()
+	}
+
+	return &HistoryItem{
+		ID:           planID,
+		SourceTurnID: nilIfEmptyHistory(turnID),
+		SourceItemID: nilIfEmptyHistory(planID),
+		Kind:         "tool",
+		ItemType:     "plan",
+		Timestamp:    ptr(ts),
+		ObservedAt:   ptr(ts),
+		Payload:      payload,
+		Tool: &HistoryTool{
+			ID:     planID,
+			Name:   "Plan",
+			Kind:   "plan",
+			Output: stringValue(item["text"]),
+			Status: "done",
+			Meta: map[string]any{
+				"title": "Plan",
+				"kind":  "plan",
+			},
+		},
 	}
 }
 
@@ -359,6 +404,12 @@ func (m *Manager) applyCodexResponseItem(
 				},
 			},
 		})
+	case "plan":
+		plan := deepSyncPlanHistoryItem(payload, "", ts, cloneMap(payload))
+		if plan == nil {
+			return
+		}
+		appendItem(*plan)
 	case "function_call":
 		callID := strings.TrimSpace(stringValue(payload["call_id"]))
 		if callID == "" {

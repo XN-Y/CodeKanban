@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,45 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 	if items[3].Kind != "assistant" || items[3].Text != "I found the sync entrypoints." {
 		t.Fatalf("unexpected last item: %#v", items[3])
+	}
+}
+
+func TestParseCodexDeepHistoryCapturesPlanFromCompletedEvent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	planText := testLongPlanText()
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"event_msg","payload":{"type":"user_message","message":"plan this change","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:01Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"thread-1","turn_id":"turn-1","item":{"type":"Plan","id":"plan_test","text":` + strconv.Quote(planText) + `}}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 history items, got %d", len(items))
+	}
+	if items[1].Tool == nil {
+		t.Fatalf("expected plan tool item, got %#v", items[1])
+	}
+	if items[1].Tool.Kind != "plan" {
+		t.Fatalf("expected plan kind, got %q", items[1].Tool.Kind)
+	}
+	if items[1].Tool.Output != planText {
+		t.Fatalf("expected full plan text to be preserved, got length %d want %d", len(items[1].Tool.Output), len(planText))
+	}
+	if items[1].SourceTurnID == nil || *items[1].SourceTurnID != "turn-1" {
+		t.Fatalf("expected source turn id turn-1, got %#v", items[1].SourceTurnID)
+	}
+	if items[1].SourceItemID == nil || *items[1].SourceItemID != "plan_test" {
+		t.Fatalf("expected source item id plan_test, got %#v", items[1].SourceItemID)
 	}
 }
 
@@ -175,6 +215,81 @@ func TestSyncSessionFromLogSourceReplacesCacheAndMarksDeepSync(t *testing.T) {
 	}
 	if snapshot.History.Items[1].Tool == nil || snapshot.History.Items[1].Tool.Kind != "command_execution" {
 		t.Fatalf("expected cached command_execution tool, got %#v", snapshot.History.Items[1])
+	}
+}
+
+func TestSyncSessionFromLogSourceCachesPlanToolFromCompletedEvent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Deep Sync Plan Session", 1000)
+
+	nativeSessionID := "session-deep-sync-plan"
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"native_session_id": nativeSessionID,
+			"cwd":               project.Path,
+		}).Error; err != nil {
+		t.Fatalf("failed to update web session: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	planText := testLongPlanText()
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T02:00:00Z","type":"session_meta","payload":{"id":"session-deep-sync-plan","timestamp":"2026-04-09T02:00:00Z","cwd":"` + filepath.ToSlash(project.Path) + `"}}`,
+		`{"timestamp":"2026-04-09T02:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"run deep sync","images":[]}}`,
+		`{"timestamp":"2026-04-09T02:00:02Z","type":"event_msg","payload":{"type":"item_completed","thread_id":"session-deep-sync-plan","turn_id":"turn-plan","item":{"type":"Plan","id":"plan_test","text":` + strconv.Quote(planText) + `}}}`,
+	})
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("Stat returned error: %v", err)
+	}
+
+	now := time.Now()
+	aiRecord := tables.AISessionTable{
+		SessionID:             nativeSessionID,
+		Type:                  tables.AISessionTypeCodex,
+		ProjectPath:           project.Path,
+		FilePath:              filePath,
+		Model:                 "gpt-5.4",
+		Title:                 "run deep sync",
+		SessionStartedAt:      time.Date(2026, 4, 9, 2, 0, 0, 0, time.UTC),
+		LastMessageAt:         ptr(time.Date(2026, 4, 9, 2, 0, 2, 0, time.UTC)),
+		MessageCount:          1,
+		AssistantMessageCount: 0,
+		FileModTime:           info.ModTime(),
+		FileSize:              info.Size(),
+	}
+	aiRecord.Init()
+	aiRecord.CreatedAt = now
+	aiRecord.UpdatedAt = now
+	if err := model.GetDB().Create(&aiRecord).Error; err != nil {
+		t.Fatalf("failed to seed ai session record: %v", err)
+	}
+
+	refreshedSession, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+
+	snapshot, err := manager.syncSessionFromLogSource(context.Background(), refreshedSession, true, false)
+	if err != nil {
+		t.Fatalf("syncSessionFromLogSource returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 2 {
+		t.Fatalf("expected 2 history items, got %d", len(snapshot.History.Items))
+	}
+	if snapshot.History.Items[1].Tool == nil || snapshot.History.Items[1].Tool.Kind != "plan" {
+		t.Fatalf("expected cached plan tool, got %#v", snapshot.History.Items[1])
+	}
+	if snapshot.History.Items[1].Tool.Output != planText {
+		t.Fatalf("expected full plan text to be preserved, got length %d want %d", len(snapshot.History.Items[1].Tool.Output), len(planText))
 	}
 }
 
