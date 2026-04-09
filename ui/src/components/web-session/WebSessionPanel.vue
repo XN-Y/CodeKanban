@@ -879,6 +879,7 @@
                   v-else
                   type="primary"
                   class="composer-send-btn"
+                  :loading="isSubmittingMessage"
                   :disabled="!canSend"
                   @click="handleSubmit"
                 >
@@ -1903,12 +1904,17 @@ const pendingInputs = computed(() =>
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
+const isSubmittingMessage = ref(false);
 const isRunActive = computed(() => liveState.value.running);
 const hasDraftContent = computed(
   () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
 );
 const canSend = computed(
-  () => !isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
+  () =>
+    !isRunActive.value &&
+    !isSubmittingMessage.value &&
+    hasDraftContent.value &&
+    !isDraftAttachmentUploading.value
 );
 const canStageDuringRun = computed(
   () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
@@ -4444,9 +4450,15 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 }
 
 async function handleSubmit() {
-  if (isRunActive.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
+  if (
+    isSubmittingMessage.value ||
+    isRunActive.value ||
+    isDraftAttachmentUploading.value ||
+    !hasDraftContent.value
+  ) {
     return;
   }
+  isSubmittingMessage.value = true;
   try {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
@@ -4479,6 +4491,8 @@ async function handleSubmit() {
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    isSubmittingMessage.value = false;
   }
 }
 
@@ -7859,7 +7873,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 4px 10px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border: none;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, transparent);
   color: var(--n-text-color-2);
   font-size: 11px;
@@ -7869,24 +7883,17 @@ onBeforeUnmount(() => {
   cursor: help;
 }
 
-.composer-context-pill.state-idle {
-  border-color: color-mix(in srgb, var(--n-primary-color) 22%, var(--n-border-color));
-}
-
 .composer-context-pill.state-active {
-  border-color: rgba(245, 158, 11, 0.28);
   background: rgba(245, 158, 11, 0.08);
   color: #b45309;
 }
 
 .composer-context-pill.state-warning {
-  border-color: rgba(239, 68, 68, 0.32);
   background: rgba(239, 68, 68, 0.08);
   color: #b91c1c;
 }
 
 .composer-context-pill.state-unavailable {
-  border-style: dashed;
   opacity: 0.8;
 }
 
