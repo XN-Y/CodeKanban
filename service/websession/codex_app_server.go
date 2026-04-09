@@ -753,7 +753,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
-				"out":  truncateString(codexToolResult(item), 4000),
+				"out":  codexToolOutput(item),
 				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
 			},
