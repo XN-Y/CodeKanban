@@ -378,7 +378,10 @@
                   <div
                     v-else
                     class="item-bubble"
-                    :class="item.level ? `level-${item.level}` : undefined"
+                    :class="[
+                      item.level ? `level-${item.level}` : undefined,
+                      item.itemType ? `type-${item.itemType}` : undefined,
+                    ]"
                   >
                     <div
                       v-if="item.text"
@@ -6503,6 +6506,16 @@ onBeforeUnmount(() => {
 .item-bubble.level-error {
   border-color: color-mix(in srgb, var(--n-error-color) 35%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-error-color) 7%, rgba(255, 255, 255, 0.9));
+}
+
+.item-bubble.type-run_fail {
+  border-color: color-mix(in srgb, var(--n-error-color) 52%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-error-color) 11%, rgba(255, 255, 255, 0.9));
+}
+
+.item-bubble.type-note.level-error {
+  border-color: color-mix(in srgb, var(--n-warning-color) 48%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-warning-color) 14%, rgba(255, 255, 255, 0.92));
 }
 
 .item-bubble.level-warn {
