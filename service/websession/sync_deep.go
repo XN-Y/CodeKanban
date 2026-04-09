@@ -14,22 +14,24 @@ import (
 	"code-kanban/utils/ai_assistant2/log_watcher"
 )
 
+type codexLogSource struct {
+	FilePath         string
+	SessionStartedAt time.Time
+	LastMessageAt    *time.Time
+}
+
 func (m *Manager) syncSessionFromLogSource(
 	ctx context.Context,
 	session tables.WebSessionTable,
 	force bool,
 	clearExisting bool,
 ) (SessionSnapshot, error) {
-	if m.aiSessionSvc == nil {
-		return SessionSnapshot{}, fmt.Errorf("ai session service is not configured")
-	}
-
-	record, err := m.aiSessionSvc.ResolveCodexSessionBySessionID(ctx, strings.TrimSpace(*session.NativeSessionID))
+	source, err := m.resolveCodexLogSource(ctx, session)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
 
-	items, err := m.parseCodexDeepHistory(record.FilePath)
+	items, err := m.parseCodexDeepHistory(source.FilePath)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
@@ -45,16 +47,19 @@ func (m *Manager) syncSessionFromLogSource(
 	}
 
 	var sourceCreatedAt *time.Time
-	if !record.SessionStartedAt.IsZero() {
-		value := record.SessionStartedAt
+	if !source.SessionStartedAt.IsZero() {
+		value := source.SessionStartedAt
+		sourceCreatedAt = &value
+	} else if session.SourceCreatedAt != nil {
+		value := *session.SourceCreatedAt
 		sourceCreatedAt = &value
 	}
 	var sourceUpdatedAt *time.Time
-	if info, statErr := os.Stat(record.FilePath); statErr == nil {
+	if info, statErr := os.Stat(source.FilePath); statErr == nil {
 		value := info.ModTime()
 		sourceUpdatedAt = &value
-	} else if record.LastMessageAt != nil {
-		value := *record.LastMessageAt
+	} else if source.LastMessageAt != nil {
+		value := *source.LastMessageAt
 		sourceUpdatedAt = &value
 	}
 
@@ -85,7 +90,47 @@ func (m *Manager) syncSessionFromLogSource(
 	if err := m.replaceSessionHistoryCache(ctx, session, nil, itemRows, updates); err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
+	refreshed, err := m.GetSession(ctx, session.ID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
+}
+
+func (m *Manager) resolveCodexLogSource(
+	ctx context.Context,
+	session tables.WebSessionTable,
+) (codexLogSource, error) {
+	if session.ThreadPath != nil {
+		path := strings.TrimSpace(*session.ThreadPath)
+		if path != "" {
+			if info, err := os.Stat(path); err == nil && !info.IsDir() {
+				source := codexLogSource{
+					FilePath: path,
+				}
+				if session.SourceCreatedAt != nil {
+					source.SessionStartedAt = *session.SourceCreatedAt
+				}
+				if session.LastMessageAt != nil {
+					value := *session.LastMessageAt
+					source.LastMessageAt = &value
+				}
+				return source, nil
+			}
+		}
+	}
+	if m.aiSessionSvc == nil {
+		return codexLogSource{}, fmt.Errorf("ai session service is not configured")
+	}
+	record, err := m.aiSessionSvc.ResolveCodexSessionBySessionID(ctx, strings.TrimSpace(*session.NativeSessionID))
+	if err != nil {
+		return codexLogSource{}, err
+	}
+	return codexLogSource{
+		FilePath:         record.FilePath,
+		SessionStartedAt: record.SessionStartedAt,
+		LastMessageAt:    record.LastMessageAt,
+	}, nil
 }
 
 func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) {
@@ -114,6 +159,16 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 		return len(items) - 1
 	}
 
+	appendIfNotDuplicate := func(item HistoryItem) {
+		if len(items) > 0 {
+			last := items[len(items)-1]
+			if last.Kind == item.Kind && last.ItemType == item.ItemType && last.Text == item.Text {
+				return
+			}
+		}
+		appendItem(item)
+	}
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.TrimSpace(line) == "" {
@@ -133,7 +188,7 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 				continue
 			}
 			for _, item := range m.codexHistoryItemsFromEventMessage(payload, ts) {
-				appendItem(item)
+				appendIfNotDuplicate(item)
 			}
 		case "response_item":
 			payload, ok := entry.Payload.(map[string]any)
@@ -241,6 +296,45 @@ func (m *Manager) applyCodexResponseItem(
 ) {
 	responseType := strings.TrimSpace(stringValue(payload["type"]))
 	switch responseType {
+	case "message":
+		role := strings.TrimSpace(stringValue(payload["role"]))
+		content := decodeRawArray(payload["content"])
+		textParts := make([]string, 0, len(content))
+		for _, block := range content {
+			blockType := strings.TrimSpace(stringValue(block["type"]))
+			switch blockType {
+			case "input_text", "output_text", "text":
+				if text := strings.TrimSpace(stringValue(block["text"])); text != "" {
+					textParts = append(textParts, text)
+				}
+			}
+		}
+		text := strings.TrimSpace(strings.Join(textParts, "\n"))
+		if text == "" {
+			return
+		}
+		item := HistoryItem{
+			ID:         utils.NewID(),
+			ItemType:   "message",
+			Text:       text,
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Payload:    cloneMap(payload),
+			Done:       true,
+		}
+		switch role {
+		case "assistant":
+			item.Kind = "assistant"
+			item.ItemType = "agent_message"
+		case "developer", "system":
+			item.Kind = "system"
+			item.ItemType = "system_message"
+			item.Level = "info"
+		default:
+			item.Kind = "user"
+			item.ItemType = "user_message"
+		}
+		appendItem(item)
 	case "reasoning":
 		text := codexReasoningSummary(payload)
 		if text == "" {

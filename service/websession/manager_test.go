@@ -3,6 +3,7 @@ package websession
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +16,27 @@ import (
 
 	"go.uber.org/zap"
 )
+
+type captureWSConn struct {
+	frames []wireFrame
+}
+
+func (c *captureWSConn) ReadMessage() (messageType int, p []byte, err error) {
+	return 0, nil, io.EOF
+}
+
+func (c *captureWSConn) WriteJSON(v any) error {
+	frame, ok := v.(wireFrame)
+	if !ok {
+		return fmt.Errorf("unexpected frame type %T", v)
+	}
+	c.frames = append(c.frames, frame)
+	return nil
+}
+
+func (c *captureWSConn) Close() error {
+	return nil
+}
 
 func attachmentExtensionFromMime(mimeType string) string {
 	switch strings.ToLower(strings.TrimSpace(mimeType)) {
@@ -87,6 +109,41 @@ func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
 	}
 	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
 		t.Fatalf("expected codex sessions to default to %q, got %q", SessionBackendCodexAppServer, effectiveSessionBackend(record))
+	}
+}
+
+func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	commandConn := &captureWSConn{}
+	eventConn := &captureWSConn{}
+	commandClient := manager.RegisterCommandClient(commandConn)
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(commandClient)
+	defer manager.UnregisterClient(eventClient)
+
+	manager.broadcast(newSessionFrame("session-1", SessionSummary{
+		ID:        "session-1",
+		ProjectID: "project-1",
+		Title:     "Session 1",
+		Agent:     AgentCodex,
+		Status:    StatusRunning,
+	}))
+
+	if len(commandConn.frames) != 0 {
+		t.Fatalf("expected command client to receive no broadcast frames, got %d", len(commandConn.frames))
+	}
+	if len(eventConn.frames) != 1 {
+		t.Fatalf("expected event client to receive exactly one broadcast frame, got %d", len(eventConn.frames))
+	}
+	if eventConn.frames[0].Kind != "evt" || eventConn.frames[0].Operation != "session" {
+		t.Fatalf("expected session event frame, got kind=%q op=%q", eventConn.frames[0].Kind, eventConn.frames[0].Operation)
 	}
 }
 

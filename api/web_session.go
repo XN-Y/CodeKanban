@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 
 	"code-kanban/api/h"
@@ -19,8 +20,9 @@ import (
 )
 
 const (
-	webSessionTag    = "web-session-会话"
-	webSessionWSPath = "/api/v1/web-sessions/ws"
+	webSessionTag         = "web-session-会话"
+	webSessionCommandPath = "/api/v1/web-sessions/ws"
+	webSessionEventsPath  = "/api/v1/web-sessions/events"
 )
 
 type webSessionController struct {
@@ -73,6 +75,68 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-list"
 		op.Summary = "获取会话列表"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/snapshot", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			SessionID string `path:"sessionId"`
+			Limit     int    `query:"limit" default:"80"`
+		},
+	) (*h.ItemResponse[websession.SessionSnapshot], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		item, err := c.manager.SnapshotWithAutoSync(ctx, input.SessionID, input.Limit)
+		if err != nil {
+			if errors.Is(err, websession.ErrSessionHistoryUnavailable) {
+				return nil, huma.Error404NotFound("session history not found")
+			}
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-snapshot"
+		op.Summary = "获取会话快照"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/projects/{projectId}/web-sessions/{sessionId}/history", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID    string `path:"projectId"`
+			SessionID    string `path:"sessionId"`
+			BeforeCursor string `query:"beforeCursor"`
+			Limit        int    `query:"limit" default:"80"`
+		},
+	) (*h.ItemResponse[websession.HistoryWindow], error) {
+		record, err := c.manager.GetSession(ctx, input.SessionID)
+		if err != nil || record.ProjectID != input.ProjectID {
+			return nil, huma.Error404NotFound("session not found")
+		}
+		var beforeSeq *int64
+		if strings.TrimSpace(input.BeforeCursor) != "" {
+			value, parseErr := strconv.ParseInt(strings.TrimSpace(input.BeforeCursor), 10, 64)
+			if parseErr != nil {
+				return nil, huma.Error400BadRequest("invalid history cursor")
+			}
+			beforeSeq = &value
+		}
+		item, err := c.manager.History(ctx, input.SessionID, input.Limit, beforeSeq)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-history"
+		op.Summary = "获取会话历史分页"
 		op.Tags = []string{webSessionTag}
 	})
 
@@ -413,16 +477,23 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 }
 
 func (c *webSessionController) registerWebsocket(app *fiber.App) {
-	handler := fasthttpadaptor.NewFastHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c.serveWebsocket(w, r)
+	commandHandler := fasthttpadaptor.NewFastHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.serveCommandWebsocket(w, r)
 	}))
-	app.Get(webSessionWSPath, func(ctx *fiber.Ctx) error {
-		handler(ctx.Context())
+	eventHandler := fasthttpadaptor.NewFastHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.serveEventWebsocket(w, r)
+	}))
+	app.Get(webSessionCommandPath, func(ctx *fiber.Ctx) error {
+		commandHandler(ctx.Context())
+		return nil
+	})
+	app.Get(webSessionEventsPath, func(ctx *fiber.Ctx) error {
+		eventHandler(ctx.Context())
 		return nil
 	})
 }
 
-func (c *webSessionController) serveWebsocket(w http.ResponseWriter, r *http.Request) {
+func (c *webSessionController) serveCommandWebsocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := c.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		c.logger.Debug("failed to upgrade web session ws", zap.Error(err))
@@ -430,7 +501,7 @@ func (c *webSessionController) serveWebsocket(w http.ResponseWriter, r *http.Req
 	}
 	defer conn.Close()
 
-	client := c.manager.RegisterClient(conn)
+	client := c.manager.RegisterCommandClient(conn)
 	defer c.manager.UnregisterClient(client)
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -447,6 +518,28 @@ func (c *webSessionController) serveWebsocket(w http.ResponseWriter, r *http.Req
 		}
 		if err := c.manager.HandleCommand(ctx, client, payload); err != nil {
 			c.logger.Debug("failed to handle web session command", zap.Error(err))
+		}
+	}
+}
+
+func (c *webSessionController) serveEventWebsocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := c.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		c.logger.Debug("failed to upgrade web session event ws", zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	client := c.manager.RegisterEventClient(conn)
+	defer c.manager.UnregisterClient(client)
+
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) &&
+				!errors.Is(err, context.Canceled) {
+				c.logger.Debug("web session event ws read failed", zap.Error(err))
+			}
+			return
 		}
 	}
 }

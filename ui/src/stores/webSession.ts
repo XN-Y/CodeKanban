@@ -324,16 +324,18 @@ type ArchivedListMeta = {
   loading: boolean;
 };
 
-type SessionSnapshotWaiter = {
-  id: string;
-  resolve: (frame: WireFrame) => void;
-  reject: (reason?: unknown) => void;
-  timer: number | null;
+type SyncSessionOptions = {
+  rememberActive?: boolean;
+};
+
+type LoadSessionSnapshotOptions = {
+  rememberActive?: boolean;
 };
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
-const WS_PATH = '/api/v1/web-sessions/ws';
+const COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
+const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
@@ -780,9 +782,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const connectionState = ref<'idle' | 'connecting' | 'open' | 'closed'>('idle');
   const lastError = ref<string | null>(null);
 
-  let socket: WebSocket | null = null;
-  let connectPromise: Promise<void> | null = null;
-  let reconnectTimer: number | null = null;
+  let eventSocket: WebSocket | null = null;
+  let eventConnectPromise: Promise<void> | null = null;
+  let eventReconnectTimer: number | null = null;
+  let commandSocket: WebSocket | null = null;
+  let commandConnectPromise: Promise<void> | null = null;
   const pending = new Map<
     string,
     {
@@ -790,12 +794,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reject: (reason?: unknown) => void;
     }
   >();
-  const snapshotWaitersBySession = new Map<string, SessionSnapshotWaiter[]>();
   const redirectAbortSessions = new Set<string>();
   const pendingFlushTimers = new Map<string, number>();
   const flushingSessions = new Set<string>();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
+  const completedTransitionVersionBySession = new Map<string, number>();
   let draftAttachmentUploadSeed = 0;
 
   const allSessionIds = computed(() => {
@@ -967,6 +971,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
       session: summary,
       historyTotal: history.total,
     });
+    if (summary.status === 'done') {
+      completedTransitionVersionBySession.set(
+        sessionId,
+        Math.max(
+          Date.parse(summary.updatedAt || '') || 0,
+          Date.parse(summary.lastMessageAt || '') || 0
+        )
+      );
+    }
   }
 
   function rememberActiveSession(projectId: string, sessionId: string) {
@@ -1242,78 +1255,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       updatedAt: Date.now(),
     };
     commitProjectDrafts(normalizedProjectId, nextProjectDrafts);
-  }
-
-  function removeSnapshotWaiter(sessionId: string, waiterId: string) {
-    const current = snapshotWaitersBySession.get(sessionId);
-    if (!current?.length) {
-      return;
-    }
-    const next = current.filter(waiter => waiter.id !== waiterId);
-    if (next.length > 0) {
-      snapshotWaitersBySession.set(sessionId, next);
-    } else {
-      snapshotWaitersBySession.delete(sessionId);
-    }
-  }
-
-  function resolveSnapshotWaiters(sessionId: string, frame: WireFrame) {
-    const waiters = snapshotWaitersBySession.get(sessionId);
-    if (!waiters?.length) {
-      return;
-    }
-    snapshotWaitersBySession.delete(sessionId);
-    waiters.forEach(waiter => {
-      if (waiter.timer != null) {
-        window.clearTimeout(waiter.timer);
-      }
-      waiter.resolve(frame);
-    });
-  }
-
-  function waitForNextSessionSnapshot(sessionId: string, timeoutMs = 4000) {
-    const waiterId = `snap_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    let active = true;
-    let rejectWaiter: ((reason?: unknown) => void) | null = null;
-
-    const promise = new Promise<WireFrame>((resolve, reject) => {
-      rejectWaiter = reason => {
-        active = false;
-        reject(reason);
-      };
-      const waiter: SessionSnapshotWaiter = {
-        id: waiterId,
-        resolve: frame => {
-          active = false;
-          resolve(frame);
-        },
-        reject: reason => rejectWaiter?.(reason),
-        timer:
-          timeoutMs > 0
-            ? window.setTimeout(() => {
-                removeSnapshotWaiter(sessionId, waiterId);
-                waiter.reject(new Error(`Timed out waiting for session snapshot: ${sessionId}`));
-              }, timeoutMs)
-            : null,
-      };
-      const current = snapshotWaitersBySession.get(sessionId) ?? [];
-      snapshotWaitersBySession.set(sessionId, [...current, waiter]);
-    });
-
-    return {
-      promise,
-      cancel(reason?: unknown) {
-        if (!active) {
-          return;
-        }
-        removeSnapshotWaiter(sessionId, waiterId);
-        if (reason instanceof Error) {
-          rejectWaiter?.(reason);
-          return;
-        }
-        rejectWaiter?.(new Error(String(reason ?? `Cancelled snapshot wait for ${sessionId}`)));
-      },
-    };
   }
 
   function normalizeSession(session: WireSession): WebSessionSummary {
@@ -1597,22 +1538,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
+    completedTransitionVersionBySession.delete(sessionId);
     redirectAbortSessions.delete(sessionId);
     flushingSessions.delete(sessionId);
     const timer = pendingFlushTimers.get(sessionId);
     if (timer != null) {
       window.clearTimeout(timer);
       pendingFlushTimers.delete(sessionId);
-    }
-    const waiters = snapshotWaitersBySession.get(sessionId);
-    if (waiters?.length) {
-      snapshotWaitersBySession.delete(sessionId);
-      waiters.forEach(waiter => {
-        if (waiter.timer != null) {
-          window.clearTimeout(waiter.timer);
-        }
-        waiter.reject(new Error(`Session removed before snapshot refresh completed: ${sessionId}`));
-      });
     }
     if (projectId) {
       clearDraft(projectId, sessionId);
@@ -2108,7 +2040,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (nextState.phase === 'done' && previousState.phase !== 'done') {
-      emitter.emit('ai:completed', baseEvent);
+      const completionVersion = Math.max(
+        nextState.updatedAt,
+        Date.parse(session.updatedAt || '') || 0,
+        Date.parse(session.lastMessageAt || '') || 0
+      );
+      const lastCompletionVersion = completedTransitionVersionBySession.get(sessionId) ?? -1;
+      if (completionVersion > lastCompletionVersion) {
+        completedTransitionVersionBySession.set(sessionId, completionVersion);
+        emitter.emit('ai:completed', baseEvent);
+      }
     }
 
     if (
@@ -2164,6 +2105,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             incomingVersion: buildWebSessionSnapshotVersion(incomingSnapshot),
           });
         }
+        setHistoryLoading(frame.sid, false);
         return;
       }
       applySessionSnapshot(
@@ -2176,7 +2118,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
           total: historyTotal,
         }
       );
-      resolveSnapshotWaiters(frame.sid, frame);
       return;
     }
 
@@ -2230,22 +2171,30 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
-  function openSocket(): Promise<void> {
-    if (socket && socket.readyState === WebSocket.OPEN) {
+  function rejectPendingCommands(reason: Error) {
+    pending.forEach(entry => {
+      entry.reject(reason);
+    });
+    pending.clear();
+  }
+
+  function openEventStream(): Promise<void> {
+    if (eventSocket && eventSocket.readyState === WebSocket.OPEN) {
       connectionState.value = 'open';
       return Promise.resolve();
     }
-    if (connectPromise) {
-      return connectPromise;
+    if (eventConnectPromise) {
+      return eventConnectPromise;
     }
     connectionState.value = 'connecting';
-    connectPromise = new Promise((resolve, reject) => {
-      const ws = new WebSocket(resolveWsUrl(WS_PATH));
+    eventConnectPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const ws = new WebSocket(resolveWsUrl(EVENTS_WS_PATH));
       ws.onopen = () => {
-        socket = ws;
+        settled = true;
+        eventSocket = ws;
         connectionState.value = 'open';
-        connectPromise = null;
-        reconnectActiveSessions();
+        eventConnectPromise = null;
         resolve();
       };
       ws.onmessage = event => {
@@ -2253,38 +2202,85 @@ export const useWebSessionStore = defineStore('web-session', () => {
           const frame = JSON.parse(event.data) as WireFrame;
           applyFrame(frame);
         } catch (error) {
-          console.error('[Web Session] Failed to parse websocket frame', error);
+          console.error('[Web Session] Failed to parse event websocket frame', error);
         }
       };
       ws.onerror = event => {
-        console.error('[Web Session] websocket error', event);
+        console.error('[Web Session] event websocket error', event);
       };
       ws.onclose = () => {
-        socket = null;
+        eventSocket = null;
         connectionState.value = 'closed';
-        connectPromise = null;
-        if (reconnectTimer != null) {
-          window.clearTimeout(reconnectTimer);
+        eventConnectPromise = null;
+        if (!settled) {
+          reject(new Error('websocket event stream closed before opening'));
+          return;
         }
-        reconnectTimer = window.setTimeout(() => {
-          reconnectTimer = null;
+        if (eventReconnectTimer != null) {
+          window.clearTimeout(eventReconnectTimer);
+        }
+        eventReconnectTimer = window.setTimeout(() => {
+          eventReconnectTimer = null;
           if (allSessionIds.value.size > 0) {
-            void openSocket();
+            void openEventStream();
           }
         }, 1200);
       };
     });
-    return connectPromise.catch(error => {
-      connectPromise = null;
+    return eventConnectPromise.catch(error => {
+      eventConnectPromise = null;
       connectionState.value = 'closed';
       throw error;
     });
   }
 
+  function openCommandSocket(): Promise<void> {
+    if (commandSocket && commandSocket.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    if (commandConnectPromise) {
+      return commandConnectPromise;
+    }
+    commandConnectPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const ws = new WebSocket(resolveWsUrl(COMMAND_WS_PATH));
+      ws.onopen = () => {
+        settled = true;
+        commandSocket = ws;
+        commandConnectPromise = null;
+        resolve();
+      };
+      ws.onmessage = event => {
+        try {
+          const frame = JSON.parse(event.data) as WireFrame;
+          applyFrame(frame);
+        } catch (error) {
+          console.error('[Web Session] Failed to parse command websocket frame', error);
+        }
+      };
+      ws.onerror = event => {
+        console.error('[Web Session] command websocket error', event);
+      };
+      ws.onclose = () => {
+        commandSocket = null;
+        commandConnectPromise = null;
+        if (!settled) {
+          reject(new Error('websocket command channel closed before opening'));
+          return;
+        }
+        rejectPendingCommands(new Error('websocket command channel closed'));
+      };
+    });
+    return commandConnectPromise.catch(error => {
+      commandConnectPromise = null;
+      throw error;
+    });
+  }
+
   async function sendCommand(op: string, sessionId: string, payload: Record<string, unknown> = {}) {
-    await openSocket();
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      throw new Error('websocket is not connected');
+    await openCommandSocket();
+    if (!commandSocket || commandSocket.readyState !== WebSocket.OPEN) {
+      throw new Error('websocket command channel is not connected');
     }
     const requestId = `ws_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const frame = {
@@ -2298,19 +2294,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const promise = new Promise<WireFrame>((resolve, reject) => {
       pending.set(requestId, { resolve, reject });
     });
-    socket.send(JSON.stringify(frame));
+    commandSocket.send(JSON.stringify(frame));
     return promise;
-  }
-
-  function reconnectActiveSessions() {
-    Object.entries(activeSessionIdByProject.value).forEach(([projectId, sessionId]) => {
-      if (!projectId || !sessionId) {
-        return;
-      }
-      void sendCommand('connect', sessionId, {}).catch(error => {
-        console.warn('[Web Session] Failed to reconnect session', sessionId, error);
-      });
-    });
   }
 
   async function loadSessions(projectId: string, force = false) {
@@ -2400,34 +2385,39 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   }
 
-  async function ensureSessionConnected(projectId: string, sessionId: string) {
+  async function loadSessionSnapshot(
+    projectId: string,
+    sessionId: string,
+    options?: LoadSessionSnapshotOptions
+  ) {
     if (!projectId || !sessionId) {
-      return;
-    }
-    rememberActiveSession(projectId, sessionId);
-    await sendCommand('connect', sessionId, {});
-  }
-
-  async function refreshSessionSnapshot(sessionId: string, timeoutMs = 4000) {
-    if (!sessionId) {
       return null;
     }
-    const current = findSessionById(sessionId);
-    if ((eventsBySession.value[sessionId] ?? []).length === 0 || current?.syncState === 'syncing') {
-      setHistoryLoading(sessionId, true);
-    }
-    const waiter = waitForNextSessionSnapshot(sessionId, timeoutMs);
+    setHistoryLoading(sessionId, true);
     try {
-      await sendCommand('connect', sessionId, {});
-      return await waiter.promise;
+      const snapshot = await webSessionApi.snapshot(projectId, sessionId);
+      if (snapshot?.session) {
+        applySessionSnapshot(
+          sessionId,
+          snapshot.session,
+          Array.isArray(snapshot.history?.items)
+            ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+            : [],
+          {
+            hasMore: Boolean(snapshot.history?.hasMore),
+            beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
+            total: Number(snapshot.history?.total ?? 0),
+          }
+        );
+      } else {
+        setHistoryLoading(sessionId, false);
+      }
+      if (options?.rememberActive !== false) {
+        rememberActiveSession(projectId, sessionId);
+      }
+      return snapshot;
     } catch (error) {
       setHistoryLoading(sessionId, false);
-      try {
-        waiter.cancel(error);
-      } catch {
-        // waiter cancel rethrows for a single-path caller API; swallow here and
-        // preserve the original failure below.
-      }
       throw error;
     }
   }
@@ -2455,8 +2445,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     projectId: string,
     sessionId: string,
     mode?: 'fast' | 'deep',
-    clearExisting = false
+    clearExisting = false,
+    options?: SyncSessionOptions
   ) {
+    const session = findSessionById(sessionId);
+    const rememberActive = options?.rememberActive ?? !session?.archivedAt;
     updateSessionStatus(sessionId, current => ({
       ...current,
       syncState: 'syncing',
@@ -2480,7 +2473,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
           }
         );
       }
-      rememberActiveSession(projectId, sessionId);
+      if (rememberActive) {
+        rememberActiveSession(projectId, sessionId);
+      }
       return snapshot;
     } catch (error) {
       setHistoryLoading(sessionId, false);
@@ -2541,6 +2536,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (meta.loading || !meta.hasMore || !meta.beforeCursor) {
       return;
     }
+    const session = findSessionById(sessionId);
+    if (!session) {
+      return;
+    }
     historyBySession.value = {
       ...historyBySession.value,
       [sessionId]: {
@@ -2549,10 +2548,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
       },
     };
     try {
-      await sendCommand('hist', sessionId, {
-        bc: meta.beforeCursor,
-        lim: limit,
+      const history = await webSessionApi.history(session.projectId, sessionId, {
+        beforeCursor: meta.beforeCursor,
+        limit,
       });
+      const historicalItems = Array.isArray(history.items)
+        ? history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+        : [];
+      mergeEvents(sessionId, historicalItems);
+      historyBySession.value = {
+        ...historyBySession.value,
+        [sessionId]: {
+          ...getHistoryMeta(sessionId),
+          hasMore: Boolean(history.hasMore),
+          beforeCursor: String(history.beforeCursor ?? ''),
+          total: Number(history.total ?? getHistoryMeta(sessionId).total),
+          loading: false,
+        },
+      };
     } catch (error) {
       historyBySession.value = {
         ...historyBySession.value,
@@ -2698,11 +2711,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       projectId,
       sessionId: session.id,
     });
-    try {
-      await ensureSessionConnected(projectId, session.id);
-    } catch (error) {
-      console.warn('[Web Session] Failed to connect new session after creation', error);
-    }
     return session;
   }
 
@@ -2727,8 +2735,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     loadArchivedSessions,
     invalidateArchivedSessions,
     setActiveSession,
-    ensureSessionConnected,
-    refreshSessionSnapshot,
+    loadSessionSnapshot,
     createSession: createSessionViaHttp,
     renameSession,
     archiveSession,
@@ -2756,7 +2763,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     removePendingInput,
     clearDraft,
     moveDraft,
-    openSocket,
+    openEventStream,
     emitter,
   };
 });

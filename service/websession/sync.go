@@ -447,6 +447,15 @@ func (m *Manager) syncSessionFromSource(
 		snapshot, err = m.syncSessionFromLogSource(ctx, session, force, clearExisting)
 	default:
 		snapshot, err = m.syncSessionFromThreadSource(ctx, session, force, clearExisting)
+		if err != nil || snapshot.History.Total == 0 {
+			fallbackSnapshot, fallbackErr := m.syncSessionFromLogSource(ctx, session, force, clearExisting)
+			if fallbackErr == nil {
+				snapshot = fallbackSnapshot
+				err = nil
+			} else if err == nil {
+				err = fallbackErr
+			}
+		}
 	}
 	if err != nil {
 		_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
@@ -489,7 +498,11 @@ func (m *Manager) syncSessionFromThreadSource(
 		if err := m.updateRuntimeState(ctx, session.ID, metadataUpdates); err != nil {
 			return SessionSnapshot{}, err
 		}
-		return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
+		refreshed, err := m.GetSession(ctx, session.ID)
+		if err != nil {
+			return SessionSnapshot{}, err
+		}
+		return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
 	}
 
 	turnRows := make([]tables.WebSessionTurnTable, 0, len(remote.Turns))
@@ -538,6 +551,9 @@ func (m *Manager) syncSessionFromThreadSource(
 		applyHistoryItemToRow(&row, session.ID, historyItem)
 		itemRows = append(itemRows, row)
 	}
+	if len(itemRows) == 0 {
+		return m.syncSessionFromLogSource(ctx, session, force, clearExisting)
+	}
 
 	updates := cloneMap(metadataUpdates)
 	updates["last_sync_mode"] = string(SyncModeFast)
@@ -550,7 +566,11 @@ func (m *Manager) syncSessionFromThreadSource(
 	if err := m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates); err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
+	refreshed, err := m.GetSession(ctx, session.ID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	return m.loadSnapshotLocal(ctx, refreshed, DefaultHistoryWindow, false)
 }
 
 func (m *Manager) SyncSession(ctx context.Context, sessionID string) (SessionSnapshot, error) {

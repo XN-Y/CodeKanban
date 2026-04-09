@@ -24,14 +24,16 @@ type ArchivedQueryResult = {
   nextOffset: number;
 };
 
-type WebSessionSnapshot = {
+export type WebSessionHistoryWindow = {
+  items: unknown[];
+  hasMore: boolean;
+  beforeCursor?: string;
+  total: number;
+};
+
+export type WebSessionSnapshot = {
   session: WebSessionSummary;
-  history: {
-    items: unknown[];
-    hasMore: boolean;
-    beforeCursor?: string;
-    total: number;
-  };
+  history: WebSessionHistoryWindow;
 };
 
 export const webSessionApi = {
@@ -109,6 +111,47 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to unarchive web session');
+    }
+    return body.item;
+  },
+
+  async snapshot(projectId: string, sessionId: string, limit = 80): Promise<WebSessionSnapshot> {
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionSnapshot>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/snapshot?limit=${limit}`)
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load web session snapshot');
+    }
+    return body.item;
+  },
+
+  async history(
+    projectId: string,
+    sessionId: string,
+    options?: {
+      beforeCursor?: string;
+      limit?: number;
+    }
+  ): Promise<WebSessionHistoryWindow> {
+    const params = new URLSearchParams();
+    if (options?.beforeCursor) {
+      params.set('beforeCursor', options.beforeCursor);
+    }
+    if (typeof options?.limit === 'number' && Number.isFinite(options.limit)) {
+      params.set('limit', String(Math.max(1, Math.trunc(options.limit))));
+    }
+    const suffix = params.toString();
+    const body =
+      (await http
+        .Get<
+          ItemResponse<WebSessionHistoryWindow>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/history${suffix ? `?${suffix}` : ''}`)
+        .send(true)) ?? {};
+    if (!body.item) {
+      throw new Error('failed to load web session history');
     }
     return body.item;
   },

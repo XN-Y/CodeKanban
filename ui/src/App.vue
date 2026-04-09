@@ -10,7 +10,6 @@ import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
-import { useWebSessionStore } from '@/stores/webSession';
 import { useResponsive } from '@/composables/useResponsive';
 import { formatAiStatusTitle, useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
@@ -21,7 +20,6 @@ import { APP_NAME } from '@/constants/app';
 const settingsStore = useSettingsStore();
 const projectStore = useProjectStore();
 const reminderStore = useTerminalReminderStore();
-const webSessionStore = useWebSessionStore();
 const {
   activeTheme: theme,
   followSystemTheme,
@@ -32,11 +30,7 @@ const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
 const route = useRoute();
-const projectIdsForStatusSync = computed(() => projectStore.projects.map(project => project.id));
 const browserTabTitle = computed(() => formatAiStatusTitle(totalSummary.value, APP_NAME));
-
-const webSessionLoadPromises = new Map<string, Promise<void>>();
-const runningSessionSnapshotIds = new Set<string>();
 
 const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
@@ -264,58 +258,6 @@ watch(
   { immediate: true }
 );
 
-async function preloadProjectWebSessionStatus(projectId: string) {
-  if (!projectId) {
-    return;
-  }
-
-  const existingTask = webSessionLoadPromises.get(projectId);
-  if (existingTask) {
-    return existingTask;
-  }
-
-  const task = (async () => {
-    try {
-      const sessions = await webSessionStore.loadSessions(projectId);
-      await Promise.allSettled(
-        sessions
-          .filter(session => session.status === 'running')
-          .map(async session => {
-            if (
-              runningSessionSnapshotIds.has(session.id) &&
-              webSessionStore.getLatestEventSeq(session.id) > 0
-            ) {
-              return;
-            }
-            runningSessionSnapshotIds.add(session.id);
-            try {
-              await webSessionStore.refreshSessionSnapshot(session.id);
-            } catch (error) {
-              runningSessionSnapshotIds.delete(session.id);
-              console.warn('[App] Failed to sync running web session status', session.id, error);
-            }
-          })
-      );
-    } catch (error) {
-      console.error('[App] Failed to preload web session summaries', projectId, error);
-    } finally {
-      webSessionLoadPromises.delete(projectId);
-    }
-  })();
-
-  webSessionLoadPromises.set(projectId, task);
-  return task;
-}
-
-watch(
-  projectIdsForStatusSync,
-  projectIds => {
-    projectIds.forEach(projectId => {
-      void preloadProjectWebSessionStatus(projectId);
-    });
-  },
-  { immediate: true }
-);
 </script>
 
 <template>

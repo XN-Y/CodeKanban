@@ -61,9 +61,19 @@ type Manager struct {
 	codexContextWindow codexContextWindowResolver
 }
 
+type clientKind string
+
+const (
+	clientKindCommand clientKind = "command"
+	clientKindEvent   clientKind = "event"
+)
+
+var ErrSessionHistoryUnavailable = errors.New("session history not found")
+
 type client struct {
 	conn    wsConn
 	logger  *zap.Logger
+	kind    clientKind
 	writeMu sync.Mutex
 }
 
@@ -223,15 +233,24 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	return manager, nil
 }
 
-func (m *Manager) RegisterClient(conn wsConn) *client {
+func (m *Manager) registerClient(conn wsConn, kind clientKind) *client {
 	client := &client{
 		conn:   conn,
 		logger: m.logger.Named("client"),
+		kind:   kind,
 	}
 	m.mu.Lock()
 	m.clients[client] = struct{}{}
 	m.mu.Unlock()
 	return client
+}
+
+func (m *Manager) RegisterCommandClient(conn wsConn) *client {
+	return m.registerClient(conn, clientKindCommand)
+}
+
+func (m *Manager) RegisterEventClient(conn wsConn) *client {
+	return m.registerClient(conn, clientKindEvent)
 }
 
 func (m *Manager) UnregisterClient(client *client) {
@@ -409,23 +428,58 @@ func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebS
 }
 
 func (m *Manager) Snapshot(ctx context.Context, sessionID string, limit int) (SessionSnapshot, error) {
-	return m.loadSnapshot(ctx, sessionID, limit, true)
-}
-
-func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int, clearUnread bool) (SessionSnapshot, error) {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	return m.loadSnapshotLocal(ctx, record, limit, true)
+}
+
+func (m *Manager) SnapshotWithAutoSync(ctx context.Context, sessionID string, limit int) (SessionSnapshot, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	snapshot, err := m.loadSnapshotLocal(ctx, record, limit, true)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	if !shouldAutoSyncSnapshot(record, snapshot.History.Total) {
+		return snapshot, nil
+	}
+	snapshot, err = m.syncSessionFromSource(ctx, sessionID, m.defaultCodexSyncMode(), true, false)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	if snapshot.History.Total == 0 {
+		return SessionSnapshot{}, ErrSessionHistoryUnavailable
+	}
+	return snapshot, nil
+}
+
+func shouldAutoSyncSnapshot(record tables.WebSessionTable, historyTotal int) bool {
+	if historyTotal > 0 {
+		return false
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+		return false
+	}
+	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
+		return false
+	}
+	return true
+}
+
+func (m *Manager) loadSnapshotLocal(
+	ctx context.Context,
+	record tables.WebSessionTable,
+	limit int,
+	clearUnread bool,
+) (SessionSnapshot, error) {
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
 	}
-	if err := m.syncSessionIfCacheMissing(ctx, record); err == nil {
-		if refreshed, refreshErr := m.GetSession(ctx, sessionID); refreshErr == nil {
-			record = refreshed
-		}
-	}
-	history, err := m.loadHistoryWindow(ctx, sessionID, limit, nil)
+	history, err := m.loadHistoryWindow(ctx, record.ID, limit, nil)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
@@ -434,9 +488,9 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 	if clearUnread && record.HasUnread {
 		record.HasUnread = false
 		if err := model.GetDB().WithContext(ctx).Model(&tables.WebSessionTable{}).
-			Where("id = ?", sessionID).
+			Where("id = ?", record.ID).
 			Update("has_unread", false).Error; err != nil {
-			m.logger.Warn("failed to clear unread flag", zap.String("sessionId", sessionID), zap.Error(err))
+			m.logger.Warn("failed to clear unread flag", zap.String("sessionId", record.ID), zap.Error(err))
 		}
 	}
 
@@ -451,18 +505,11 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
+	if _, err := m.GetSession(ctx, sessionID); err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
 		limit = DefaultHistoryWindow
-	}
-	if err := m.syncSessionIfCacheMissing(ctx, record); err != nil {
-		m.logger.Debug("failed to auto-sync session cache before history load",
-			zap.String("sessionId", sessionID),
-			zap.Error(err),
-		)
 	}
 	window, err := m.loadHistoryWindow(ctx, sessionID, limit, beforeSeq)
 	if err != nil {
@@ -2385,7 +2432,9 @@ func (m *Manager) broadcast(frame wireFrame) {
 	m.mu.RLock()
 	clients := make([]*client, 0, len(m.clients))
 	for client := range m.clients {
-		clients = append(clients, client)
+		if client.kind == clientKindEvent {
+			clients = append(clients, client)
+		}
 	}
 	m.mu.RUnlock()
 
@@ -2397,7 +2446,11 @@ func (m *Manager) broadcast(frame wireFrame) {
 }
 
 func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error {
-	snap, err := m.loadSnapshot(ctx, sessionID, DefaultHistoryWindow, false)
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	snap, err := m.loadSnapshotLocal(ctx, record, DefaultHistoryWindow, false)
 	if err != nil {
 		return err
 	}

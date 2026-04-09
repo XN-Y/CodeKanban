@@ -231,10 +231,7 @@
                             class="command-tool-command"
                             :title="getCompactToolSummary(item.tool)"
                           >
-                            {{
-                              getCompactToolSummary(item.tool) ||
-                              t('webSession.compactToolNoSummary')
-                            }}
+                            {{ getCompactToolDisplaySummary(item.tool) }}
                           </span>
                         </span>
                         <span class="tool-state-badge" :class="`state-${item.tool.status}`">
@@ -272,6 +269,13 @@
                         <div v-if="item.tool.output" class="tool-section">
                           <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
                           <pre class="tool-code">{{ item.tool.output }}</pre>
+                        </div>
+                        <div
+                          v-else-if="shouldShowToolPendingPlaceholder(item.tool)"
+                          class="tool-section"
+                        >
+                          <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
+                          <pre class="tool-code">{{ t('common.loading') }}</pre>
                         </div>
                       </div>
                     </div>
@@ -1564,7 +1568,8 @@ function beginWebSessionCatchUp(reason: string) {
 }
 
 async function refreshWebSessionCatchUp(reason: string) {
-  const sessionId = currentRealSession.value?.id;
+  const session = currentRealSession.value;
+  const sessionId = session?.id;
   if (!sessionId) {
     stopWebSessionCatchUp(`${reason}-no-session`);
     return;
@@ -1574,10 +1579,13 @@ async function refreshWebSessionCatchUp(reason: string) {
   const token = ++webSessionCatchUpToken;
 
   try {
-    if (props.projectId) {
-      await webSessionStore.loadSessions(props.projectId, true);
+    if (session?.projectId && !session.archivedAt) {
+      await webSessionStore.loadSessions(session.projectId, true);
     }
-    await webSessionStore.refreshSessionSnapshot(sessionId);
+    await webSessionStore.loadSessionSnapshot(session.projectId, sessionId, {
+      rememberActive: !isArchivedPreviewSession(currentSession.value),
+    });
+    syncArchivedPreviewSessionSummary(sessionId);
   } catch (error) {
     console.warn('[Web Session Catch-Up] Failed to refresh session snapshot', {
       sessionId,
@@ -1649,6 +1657,23 @@ function hasReasoningContent(block: WebSessionBlock) {
   }
   return Boolean(block.tool?.output?.trim());
 }
+
+function shouldShowToolPendingPlaceholder(tool: NonNullable<WebSessionBlock['tool']>) {
+  if (tool.status !== 'running') {
+    return false;
+  }
+  if (isCompactTool(tool)) {
+    return !getCompactToolSummary(tool).trim();
+  }
+  const hasOutput = typeof tool.output === 'string' && tool.output.trim().length > 0;
+  if (hasOutput) {
+    return false;
+  }
+  if (tool.input == null) {
+    return true;
+  }
+  return stringifyValue(tool.input).trim().length === 0;
+}
 function normalizeChoiceText(value: string) {
   return String(value || '')
     .trim()
@@ -1713,7 +1738,7 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
     return true;
   }
   if (isReasoningBlock(block)) {
-    return hasReasoningContent(block);
+    return hasReasoningContent(block) || shouldShowToolPendingPlaceholder(block.tool);
   }
   const activeToolGroupId = liveState.value.tool?.groupId || '';
   const activeToolId = liveState.value.tool?.id || '';
@@ -1724,7 +1749,7 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
     ((activeToolGroupId && blockGroupId === activeToolGroupId) ||
       (activeToolId && block.tool.id === activeToolId))
   ) {
-    return false;
+    return shouldShowToolPendingPlaceholder(block.tool);
   }
   return true;
 }
@@ -2282,7 +2307,6 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     disabled:
       !contextMenuSession.value ||
       isDraftSession(contextMenuSession.value) ||
-      isArchivedPreviewSession(contextMenuSession.value) ||
       contextMenuSession.value.agent !== 'codex' ||
       !contextMenuSession.value.nativeSessionId,
   },
@@ -2292,7 +2316,6 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
     disabled:
       !contextMenuSession.value ||
       isDraftSession(contextMenuSession.value) ||
-      isArchivedPreviewSession(contextMenuSession.value) ||
       contextMenuSession.value.agent !== 'codex' ||
       !contextMenuSession.value.nativeSessionId,
   },
@@ -2639,6 +2662,20 @@ function clearArchivedPreviewSession() {
   archivedPreviewSession.value = null;
 }
 
+function syncArchivedPreviewSessionSummary(sessionId: string) {
+  if (!archivedPreviewSession.value || archivedPreviewSession.value.id !== sessionId) {
+    return;
+  }
+  const latest =
+    webSessionStore
+      .getArchivedSessions(sidebarProjectIdsToLoad.value)
+      .find(item => item.id === sessionId) ?? archivedPreviewSession.value;
+  archivedPreviewSession.value = {
+    ...latest,
+    isArchivedPreview: true,
+  };
+}
+
 async function openArchivedPreviewSession(session: WebSessionSummary) {
   clearArchivedPreviewSession();
   replaceDraftSessionState(draftSessions.value, '');
@@ -2646,7 +2683,20 @@ async function openArchivedPreviewSession(session: WebSessionSummary) {
     ...session,
     isArchivedPreview: true,
   };
-  await webSessionStore.refreshSessionSnapshot(session.id);
+  await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+    rememberActive: false,
+  });
+  syncArchivedPreviewSessionSummary(session.id);
+}
+
+async function connectVisibleRealSession(projectId: string, sessionId: string) {
+  if (!projectId || !sessionId) {
+    return;
+  }
+  webSessionStore.setActiveSession(projectId, sessionId);
+  await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
+    rememberActive: true,
+  });
 }
 
 function activateRealSession(sessionId: string, connect = true) {
@@ -2657,7 +2707,9 @@ function activateRealSession(sessionId: string, connect = true) {
   clearArchivedPreviewSession();
   replaceDraftSessionState(draftSessions.value, '');
   if (connect) {
-    void webSessionStore.ensureSessionConnected(props.projectId, targetSession.id);
+    void connectVisibleRealSession(props.projectId, targetSession.id).catch(error => {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    });
   } else {
     webSessionStore.setActiveSession(props.projectId, targetSession.id);
   }
@@ -3461,6 +3513,17 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
   return subtitle;
 }
 
+function getCompactToolDisplaySummary(tool: NonNullable<WebSessionBlock['tool']>) {
+  const summary = getCompactToolSummary(tool).trim();
+  if (summary) {
+    return summary;
+  }
+  if (shouldShowToolPendingPlaceholder(tool)) {
+    return t('common.loading');
+  }
+  return t('webSession.compactToolNoSummary');
+}
+
 function getCompactToolCount(tool: NonNullable<WebSessionBlock['tool']>) {
   return Math.max(1, Number(tool.commandGroup?.count ?? 1) || 1);
 }
@@ -3733,10 +3796,17 @@ function formatToolPreview(tool: {
     typeof tool.output === 'string' && tool.output.trim()
       ? tool.output
       : stringifyValue(tool.input);
-  return String(source ?? '')
+  const preview = String(source ?? '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 120);
+  if (preview) {
+    return preview;
+  }
+  if (shouldShowToolPendingPlaceholder(tool as NonNullable<WebSessionBlock['tool']>)) {
+    return t('common.loading');
+  }
+  return '';
 }
 
 function toolStateLabel(tool: { status: 'running' | 'done' | 'error' }) {
@@ -3844,7 +3914,7 @@ async function initializeProjectSessions(projectId: string) {
     : '';
   replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
   const loadedSessions = await webSessionStore.loadSessions(projectId);
-  await webSessionStore.openSocket();
+  await webSessionStore.openEventStream();
   if (activeDraftId) {
     webSessionStore.setActiveSession(projectId, '');
     return;
@@ -3854,7 +3924,15 @@ async function initializeProjectSessions(projectId: string) {
     ? rememberedSessionId
     : loadedSessions[0]?.id;
   if (targetSessionId) {
-    await webSessionStore.ensureSessionConnected(projectId, targetSessionId);
+    try {
+      await connectVisibleRealSession(projectId, targetSessionId);
+    } catch (error) {
+      console.warn('[Web Session] Failed to initialize current session', {
+        projectId,
+        sessionId: targetSessionId,
+        error,
+      });
+    }
     return;
   }
   if (restoredDrafts.length > 0) {
@@ -3885,7 +3963,7 @@ async function handleSessionSelect(sessionId: string) {
   }
   clearArchivedPreviewSession();
   replaceDraftSessionState(draftSessions.value, '');
-  await webSessionStore.ensureSessionConnected(props.projectId, sessionId);
+  await connectVisibleRealSession(props.projectId, sessionId);
   scrollToBottom(true);
 }
 
@@ -3900,8 +3978,8 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       return;
     }
     clearArchivedPreviewSession();
-    await webSessionStore.ensureSessionConnected(item.projectId, sessionId);
     if (item.projectId !== props.projectId) {
+      webSessionStore.setActiveSession(item.projectId, sessionId);
       projectStore.addRecentProject(item.projectId);
       await router.push({
         name: 'project',
@@ -3909,6 +3987,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       });
       return;
     }
+    await connectVisibleRealSession(item.projectId, sessionId);
     replaceDraftSessionState(draftSessions.value, '');
     scrollToBottom(true);
   } catch (error) {
@@ -4145,7 +4224,7 @@ async function performArchiveSession(session: WebSessionSummary): Promise<boolea
     await refreshArchivedSidebar();
     const nextSession = webSessionStore.getActiveSession(props.projectId);
     if (nextSession?.id) {
-      await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
+      await connectVisibleRealSession(props.projectId, nextSession.id);
     } else if (draftSessions.value.length > 0) {
       replaceDraftSessionState(
         draftSessions.value,
@@ -4175,7 +4254,7 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     }
     const nextSession = webSessionStore.getActiveSession(props.projectId);
     if (nextSession?.id) {
-      await webSessionStore.ensureSessionConnected(props.projectId, nextSession.id);
+      await connectVisibleRealSession(props.projectId, nextSession.id);
     } else if (draftSessions.value.length > 0) {
       replaceDraftSessionState(
         draftSessions.value,
@@ -4455,7 +4534,11 @@ async function prepareSessionForSend(session: WebSessionSummary) {
   const restored = await webSessionStore.unarchiveSession(session.projectId, session.id);
   await refreshArchivedSidebar();
   clearArchivedPreviewSession();
-  await webSessionStore.ensureSessionConnected(restored.projectId, restored.id);
+  if (restored.projectId === props.projectId) {
+    await connectVisibleRealSession(restored.projectId, restored.id);
+  } else {
+    webSessionStore.setActiveSession(restored.projectId, restored.id);
+  }
 
   return {
     session: restored,
@@ -5262,7 +5345,10 @@ async function handleSyncSession(
     return;
   }
   try {
-    await webSessionStore.syncSession(session.projectId, sessionId, mode, clearExisting);
+    await webSessionStore.syncSession(session.projectId, sessionId, mode, clearExisting, {
+      rememberActive: !isArchivedPreviewSession(session),
+    });
+    syncArchivedPreviewSessionSummary(sessionId);
     message.success(
       mode === 'deep' ? t('webSession.deepSyncSuccess') : t('webSession.syncSuccess')
     );

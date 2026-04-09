@@ -65,6 +65,40 @@ func TestParseCodexDeepHistoryCapturesToolsAndTimestamps(t *testing.T) {
 	}
 }
 
+func TestParseCodexDeepHistoryCapturesMessageItemsAndDedupesUserEvent(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T01:00:00Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer prompt"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}}`,
+		`{"timestamp":"2026-04-09T01:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"hello","images":[]}}`,
+		`{"timestamp":"2026-04-09T01:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"world"}]}}`,
+	})
+
+	items, err := manager.parseCodexDeepHistory(filePath)
+	if err != nil {
+		t.Fatalf("parseCodexDeepHistory returned error: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 history items, got %d", len(items))
+	}
+	if items[0].Kind != "system" || items[0].Text != "developer prompt" {
+		t.Fatalf("unexpected first item: %#v", items[0])
+	}
+	if items[1].Kind != "user" || items[1].Text != "hello" {
+		t.Fatalf("unexpected second item: %#v", items[1])
+	}
+	if items[2].Kind != "assistant" || items[2].Text != "world" {
+		t.Fatalf("unexpected third item: %#v", items[2])
+	}
+}
+
 func TestSyncSessionFromLogSourceReplacesCacheAndMarksDeepSync(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -141,6 +175,79 @@ func TestSyncSessionFromLogSourceReplacesCacheAndMarksDeepSync(t *testing.T) {
 	}
 	if snapshot.History.Items[1].Tool == nil || snapshot.History.Items[1].Tool.Kind != "command_execution" {
 		t.Fatalf("expected cached command_execution tool, got %#v", snapshot.History.Items[1])
+	}
+}
+
+func TestSnapshotWithAutoSyncFallsBackToLogSourceWhenFastSyncCannotReadThread(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Fallback Session", 1000)
+
+	nativeSessionID := "session-fast-fallback"
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T03:00:00Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"developer prompt"}]}}`,
+		`{"timestamp":"2026-04-09T03:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello fallback"}]}}`,
+		`{"timestamp":"2026-04-09T03:00:02Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"fallback works"}]}}`,
+	})
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("Stat returned error: %v", err)
+	}
+	now := time.Now()
+	aiRecord := tables.AISessionTable{
+		SessionID:             nativeSessionID,
+		Type:                  tables.AISessionTypeCodex,
+		ProjectPath:           project.Path,
+		FilePath:              filePath,
+		Model:                 "gpt-5.4",
+		Title:                 "hello fallback",
+		SessionStartedAt:      time.Date(2026, 4, 9, 3, 0, 0, 0, time.UTC),
+		LastMessageAt:         ptr(time.Date(2026, 4, 9, 3, 0, 2, 0, time.UTC)),
+		MessageCount:          2,
+		AssistantMessageCount: 1,
+		FileModTime:           info.ModTime(),
+		FileSize:              info.Size(),
+	}
+	aiRecord.Init()
+	aiRecord.CreatedAt = now
+	aiRecord.UpdatedAt = now
+	if err := model.GetDB().Create(&aiRecord).Error; err != nil {
+		t.Fatalf("failed to seed ai session record: %v", err)
+	}
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"native_session_id": nativeSessionID,
+			"cwd":               project.Path,
+		}).Error; err != nil {
+		t.Fatalf("failed to update web session: %v", err)
+	}
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	snapshot, err := manager.SnapshotWithAutoSync(context.Background(), session.ID, 80)
+	if err != nil {
+		t.Fatalf("SnapshotWithAutoSync returned error: %v", err)
+	}
+	if snapshot.Session.LastSyncMode != SyncModeDeep {
+		t.Fatalf("expected fallback sync mode deep, got %q", snapshot.Session.LastSyncMode)
+	}
+	if snapshot.History.Total != 3 {
+		t.Fatalf("expected 3 history items after fallback sync, got %d", snapshot.History.Total)
+	}
+	if len(snapshot.History.Items) != 3 {
+		t.Fatalf("expected 3 loaded history items, got %d", len(snapshot.History.Items))
+	}
+	if snapshot.History.Items[2].Kind != "assistant" || snapshot.History.Items[2].Text != "fallback works" {
+		t.Fatalf("unexpected assistant item: %#v", snapshot.History.Items[2])
 	}
 }
 
