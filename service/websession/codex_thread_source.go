@@ -35,9 +35,11 @@ func (m *Manager) withCodexQueryClient(
 	}
 	defer func() {
 		_ = client.closeStdin()
-		if client.cmd != nil && client.cmd.Process != nil {
-			_ = client.cmd.Process.Kill()
-			_, _ = client.cmd.Process.Wait()
+		if client.cmd != nil {
+			killCmdTree(client.cmd)
+			if client.cmd.Process != nil {
+				_, _ = client.cmd.Process.Wait()
+			}
 		}
 		_ = stderr
 	}()

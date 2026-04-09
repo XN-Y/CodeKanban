@@ -17,6 +17,7 @@ import (
 	"code-kanban/model"
 	"code-kanban/model/tables"
 	"code-kanban/utils"
+	"code-kanban/utils/process"
 )
 
 type codexAppServerIncoming struct {
@@ -310,6 +311,19 @@ func (c *codexAppServerClient) setCloseErr(err error) {
 	}
 }
 
+func killCmdTree(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := int32(cmd.Process.Pid)
+	if pid <= 0 {
+		return
+	}
+	if err := process.KillProcessTree(pid); err != nil {
+		_ = cmd.Process.Kill()
+	}
+}
+
 func appServerIDKey(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -392,9 +406,7 @@ func (m *Manager) runCodexAppServerSession(
 			if !cancelled {
 				cancelled = true
 				_ = client.closeStdin()
-				if client.cmd != nil && client.cmd.Process != nil {
-					_ = client.cmd.Process.Kill()
-				}
+				killCmdTree(client.cmd)
 			}
 		case message, ok := <-incoming:
 			if !ok {
@@ -404,9 +416,7 @@ func (m *Manager) runCodexAppServerSession(
 			outcome, err := m.handleCodexAppServerMessage(session, run, client, message)
 			if err != nil {
 				run.lastError = err.Error()
-				if client.cmd != nil && client.cmd.Process != nil {
-					_ = client.cmd.Process.Kill()
-				}
+				killCmdTree(client.cmd)
 				continue
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
@@ -492,9 +502,7 @@ func (m *Manager) waitAndFailCodexAppServer(
 	cause error,
 ) {
 	_ = client.closeStdin()
-	if client.cmd != nil && client.cmd.Process != nil {
-		_ = client.cmd.Process.Kill()
-	}
+	killCmdTree(client.cmd)
 	<-waitCh
 	<-stderrDone
 

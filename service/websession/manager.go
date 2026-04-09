@@ -744,9 +744,7 @@ func (m *Manager) AbortSession(sessionID string) error {
 	if run.cancel != nil {
 		run.cancel()
 	}
-	if run.cmd != nil && run.cmd.Process != nil {
-		_ = run.cmd.Process.Kill()
-	}
+	killCmdTree(run.cmd)
 	return nil
 }
 
