@@ -1234,6 +1234,13 @@ import { webSessionApi } from '@/api/webSession';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
+import {
+  beginWebSessionSubmit,
+  endWebSessionSubmit,
+  isWebSessionSubmitting,
+  transferWebSessionSubmit,
+  type WebSessionSubmitState,
+} from '@/components/web-session/webSessionSubmitState';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -1405,6 +1412,7 @@ const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
+const submitStateBySessionId = ref<WebSessionSubmitState>({});
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
@@ -1892,7 +1900,9 @@ const pendingInputs = computed(() =>
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
-const isSubmittingMessage = ref(false);
+const isSubmittingMessage = computed(() =>
+  isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
+);
 const isRunActive = computed(() => liveState.value.running);
 const hasDraftContent = computed(
   () => composerText.value.trim().length > 0 || draftAttachments.value.length > 0
@@ -2097,6 +2107,22 @@ function clearComposerTransferError() {
   }
   composerTransferErrorMessage.value = '';
   composerTransferErrorDetail.value = '';
+}
+
+function beginSessionSubmit(ownerId: string) {
+  submitStateBySessionId.value = beginWebSessionSubmit(submitStateBySessionId.value, ownerId);
+}
+
+function endSessionSubmit(ownerId: string) {
+  submitStateBySessionId.value = endWebSessionSubmit(submitStateBySessionId.value, ownerId);
+}
+
+function transferSessionSubmit(fromOwnerId: string, toOwnerId: string) {
+  submitStateBySessionId.value = transferWebSessionSubmit(
+    submitStateBySessionId.value,
+    fromOwnerId,
+    toOwnerId
+  );
 }
 
 function showComposerTransferError(detail?: string) {
@@ -4438,7 +4464,9 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 }
 
 async function handleSubmit() {
+  const initialSubmitOwnerId = currentDraftSessionId.value;
   if (
+    !initialSubmitOwnerId ||
     isSubmittingMessage.value ||
     isRunActive.value ||
     isDraftAttachmentUploading.value ||
@@ -4446,12 +4474,17 @@ async function handleSubmit() {
   ) {
     return;
   }
-  isSubmittingMessage.value = true;
+  let submitOwnerId = initialSubmitOwnerId;
+  beginSessionSubmit(submitOwnerId);
   try {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
       const created = await handleCreateSession();
       session = created ?? webSessionStore.getActiveSession(props.projectId);
+      if (created?.id && created.id !== submitOwnerId) {
+        transferSessionSubmit(submitOwnerId, created.id);
+        submitOwnerId = created.id;
+      }
     }
     if (!session) {
       return;
@@ -4461,6 +4494,10 @@ async function handleSubmit() {
     const attachments = [...draftAttachments.value];
     const prepared = await prepareSessionForSend(session);
     session = prepared.session;
+    if (session.id !== submitOwnerId) {
+      transferSessionSubmit(submitOwnerId, session.id);
+      submitOwnerId = session.id;
+    }
     await webSessionStore.sendMessage(
       session.id,
       draftText,
@@ -4480,7 +4517,7 @@ async function handleSubmit() {
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   } finally {
-    isSubmittingMessage.value = false;
+    endSessionSubmit(submitOwnerId);
   }
 }
 
@@ -5208,7 +5245,8 @@ function confirmSyncSession(session: WebSessionSummary, mode: 'fast' | 'deep') {
           )
         ),
       ]),
-    positiveText: mode === 'deep' ? t('webSession.deepSyncFromTerminal') : t('webSession.syncFromTerminal'),
+    positiveText:
+      mode === 'deep' ? t('webSession.deepSyncFromTerminal') : t('webSession.syncFromTerminal'),
     negativeText: t('common.cancel'),
     onPositiveClick: async () => handleSyncSession(session.id, mode, clearExisting.value),
   });
@@ -5225,7 +5263,9 @@ async function handleSyncSession(
   }
   try {
     await webSessionStore.syncSession(session.projectId, sessionId, mode, clearExisting);
-    message.success(mode === 'deep' ? t('webSession.deepSyncSuccess') : t('webSession.syncSuccess'));
+    message.success(
+      mode === 'deep' ? t('webSession.deepSyncSuccess') : t('webSession.syncSuccess')
+    );
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('webSession.syncFailed'));
   }
