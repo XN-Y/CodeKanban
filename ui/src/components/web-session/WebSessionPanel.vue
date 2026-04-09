@@ -441,7 +441,7 @@
                         'show-jump-hint': showJumpToBottom,
                       },
                     ]"
-                    :aria-label="t('webSession.jumpToBottom')"
+                    :aria-label="liveCardAriaLabel"
                     @click="handleLiveCardClick"
                   >
                     <div class="live-card-main">
@@ -1357,6 +1357,7 @@ const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
+const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
@@ -2079,6 +2080,15 @@ const liveStateSecondaryText = computed(() => {
 });
 const liveStateWorking = computed(() =>
   ['starting', 'thinking', 'tool'].includes(liveState.value.phase)
+);
+const shouldAutoContinueOnLiveCardClick = computed(
+  () =>
+    liveState.value.phase === 'error' &&
+    Boolean(currentRealSession.value) &&
+    !liveCardContinuePending.value
+);
+const liveCardAriaLabel = computed(() =>
+  shouldAutoContinueOnLiveCardClick.value ? 'continue' : t('webSession.jumpToBottom')
 );
 const activeSessionId = computed(() => currentSession.value?.id ?? '');
 const emptyStateTitle = computed(() => t('webSession.draftTitle'));
@@ -4632,7 +4642,28 @@ function scrollToBottom(force = false) {
   scheduleScrollToBottom(force);
 }
 
-function handleLiveCardClick() {
+async function handleLiveCardClick() {
+  if (shouldAutoContinueOnLiveCardClick.value && currentRealSession.value) {
+    liveCardContinuePending.value = true;
+    try {
+      const prepared = await prepareSessionForSend(currentRealSession.value);
+      await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
+      if (prepared.navigateProjectId) {
+        projectStore.addRecentProject(prepared.navigateProjectId);
+        await router.push({
+          name: 'project',
+          params: { id: prepared.navigateProjectId },
+        });
+      }
+      autoFollowBottom.value = true;
+      scrollToBottom(true);
+      return;
+    } catch (error) {
+      message.error(formatSessionInteractionError(error));
+    } finally {
+      liveCardContinuePending.value = false;
+    }
+  }
   scrollToBottom(true);
 }
 
