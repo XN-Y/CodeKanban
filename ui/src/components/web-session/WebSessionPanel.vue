@@ -2168,6 +2168,14 @@ const liveStateLabel = computed(() => {
       return t('webSession.liveStarting');
     case 'thinking':
       return t('webSession.liveThinking');
+    case 'retrying':
+      if (liveState.value.retry?.attempt && liveState.value.retry?.maxAttempts) {
+        return t('webSession.liveRetryingProgress', {
+          attempt: liveState.value.retry.attempt,
+          max: liveState.value.retry.maxAttempts,
+        });
+      }
+      return t('webSession.liveRetrying');
     case 'tool':
       if (isCompactToolKind(liveState.value.tool?.kind)) {
         const count = Math.max(1, Number(liveState.value.tool?.count ?? 1) || 1);
@@ -2205,6 +2213,12 @@ const liveStateDetail = computed(() => {
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
   }
+  if (liveState.value.phase === 'retrying' && liveState.value.retry?.message) {
+    const message = liveState.value.retry.message.trim();
+    if (message && message !== liveStateLabel.value) {
+      return message;
+    }
+  }
   if (liveState.value.phase === 'tool' && liveState.value.tool?.summary) {
     return liveState.value.tool.summary;
   }
@@ -2225,6 +2239,8 @@ const liveStateSecondaryText = computed(() => {
       return t('webSession.liveStartingDetail');
     case 'thinking':
       return t('webSession.liveThinkingDetail');
+    case 'retrying':
+      return t('webSession.liveRetryingDetail');
     case 'tool':
       return compactToolLabel(liveState.value.tool);
     case 'waiting_approval':
@@ -2241,7 +2257,7 @@ const liveStateSecondaryText = computed(() => {
   }
 });
 const liveStateWorking = computed(() =>
-  ['starting', 'thinking', 'tool'].includes(liveState.value.phase)
+  ['starting', 'thinking', 'retrying', 'tool'].includes(liveState.value.phase)
 );
 const shouldAutoContinueOnLiveCardClick = computed(
   () =>
@@ -7224,6 +7240,29 @@ onBeforeUnmount(() => {
   animation: liveTrack 1.45s linear infinite;
 }
 
+.live-card.phase-retrying {
+  border-color: rgba(245, 158, 11, 0.3);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(245, 158, 11, 0.13) 0%,
+      rgba(245, 158, 11, 0.04) 52%,
+      transparent 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.08);
+}
+
+.live-card.phase-retrying::before {
+  opacity: 0.72;
+  animation: liveSweep 2.2s linear infinite;
+}
+
+.live-card.phase-retrying::after {
+  opacity: 1;
+  animation: liveTrack 1.65s linear infinite;
+}
+
 .live-card.phase-waiting_approval,
 .live-card.phase-waiting_plan_approval,
 .live-card.phase-waiting_input {
@@ -7400,6 +7439,15 @@ onBeforeUnmount(() => {
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
   background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
+}
+
+.live-card.phase-retrying .live-orb {
+  background: #f59e0b;
+  box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.14);
+}
+
+.live-card.phase-retrying .live-orb::after {
+  background: rgba(245, 158, 11, 0.2);
 }
 
 .live-card.phase-done .live-orb {

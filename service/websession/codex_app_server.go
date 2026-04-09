@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -145,6 +147,21 @@ const (
 	codexTurnOutcomeCompleted
 	codexTurnOutcomeFailed
 )
+
+const (
+	codexTransportRetryingCode       = "transport_retrying"
+	codexTransportRetryExhaustedCode = "transport_retry_exhausted"
+	codexRuntimeErrorCode            = "runtime_error"
+	codexRetryNoteLevel              = "warn"
+)
+
+var codexReconnectProgressPattern = regexp.MustCompile(`(?i)reconnecting\.\.\.\s*(\d+)\s*/\s*(\d+)`)
+
+type codexTransportRetryInfo struct {
+	Message     string
+	Attempt     int
+	MaxAttempts int
+}
 
 func startCodexAppServer(ctx context.Context, codexPath, cwd string) (*codexAppServerClient, io.Reader, error) {
 	cmd := exec.CommandContext(ctx, codexPath, "app-server", "--listen", "stdio://")
@@ -416,7 +433,9 @@ func (m *Manager) runCodexAppServerSession(
 			outcome, err := m.handleCodexAppServerMessage(session, run, client, message)
 			if err != nil {
 				run.lastError = err.Error()
-				killCmdTree(client.cmd)
+				if outcome == codexTurnOutcomeFailed {
+					killCmdTree(client.cmd)
+				}
 				continue
 			}
 			if outcome == codexTurnOutcomeCompleted && !turnCompleted {
@@ -489,7 +508,11 @@ func (m *Manager) runCodexAppServerSession(
 	if message == "" {
 		message = client.readErr().Error()
 	}
-	m.handleRunFailure(session.ID, session, run, fmt.Errorf("%s", message))
+	code := strings.TrimSpace(run.lastErrorCode)
+	if code == "" && run.transportRetrySeen && isLikelyCodexTransportFailureMessage(message) {
+		code = codexTransportRetryExhaustedCode
+	}
+	m.handleRunFailureWithCode(session.ID, session, run, code, fmt.Errorf("%s", message))
 }
 
 func (m *Manager) waitAndFailCodexAppServer(
@@ -513,7 +536,7 @@ func (m *Manager) waitAndFailCodexAppServer(
 	if message == "" {
 		message = "codex app-server setup failed"
 	}
-	m.handleRunFailure(session.ID, session, run, fmt.Errorf("%s", message))
+	m.handleRunFailureWithCode(session.ID, session, run, codexRuntimeErrorCode, fmt.Errorf("%s", message))
 }
 
 func (m *Manager) startOrResumeCodexThread(
@@ -593,6 +616,17 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeNone, nil
 	case "error":
 		run.lastError = parseCodexTurnError(message.Params)
+		if retryInfo, ok := classifyCodexTransportRetryMessage(run.lastError); ok {
+			run.transportRetrySeen = true
+			m.appendRunNote(session.ID, session, run, codexRetryNoteLevel, retryInfo.Message, retryInfo.payload())
+			run.lastError = ""
+			run.lastErrorCode = ""
+			return codexTurnOutcomeNone, nil
+		}
+		run.lastErrorCode = codexRuntimeErrorCode
+		if run.transportRetrySeen {
+			run.lastErrorCode = codexTransportRetryExhaustedCode
+		}
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "turn/completed":
 		status, errMessage := parseCodexTurnCompletion(message.Params)
@@ -601,6 +635,11 @@ func (m *Manager) handleCodexAppServerMessage(
 		}
 		if errMessage != "" {
 			run.lastError = errMessage
+		}
+		if run.transportRetrySeen {
+			run.lastErrorCode = codexTransportRetryExhaustedCode
+		} else {
+			run.lastErrorCode = codexRuntimeErrorCode
 		}
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "item/tool/requestUserInput":
@@ -621,6 +660,57 @@ func (m *Manager) handleCodexAppServerMessage(
 	default:
 		return codexTurnOutcomeNone, nil
 	}
+}
+
+func classifyCodexTransportRetryMessage(message string) (codexTransportRetryInfo, bool) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return codexTransportRetryInfo{}, false
+	}
+	lower := strings.ToLower(trimmed)
+	if !codexReconnectProgressPattern.MatchString(trimmed) &&
+		!strings.Contains(lower, "retrying sampling request") &&
+		!strings.Contains(lower, "falling back from websockets to https transport") {
+		return codexTransportRetryInfo{}, false
+	}
+	info := codexTransportRetryInfo{Message: trimmed}
+	matches := codexReconnectProgressPattern.FindStringSubmatch(trimmed)
+	if len(matches) == 3 {
+		if attempt, err := strconv.Atoi(matches[1]); err == nil && attempt > 0 {
+			info.Attempt = attempt
+		}
+		if maxAttempts, err := strconv.Atoi(matches[2]); err == nil && maxAttempts > 0 {
+			info.MaxAttempts = maxAttempts
+		}
+	}
+	return info, true
+}
+
+func isLikelyCodexTransportFailureMessage(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "unexpected status 502") ||
+		strings.Contains(lower, "upstream service temporarily unavailable") ||
+		strings.Contains(lower, "bad gateway") ||
+		strings.Contains(lower, "retry limit") ||
+		strings.Contains(lower, "transport error") ||
+		strings.Contains(lower, "connection failed") ||
+		strings.Contains(lower, "websocket")
+}
+
+func (i codexTransportRetryInfo) payload() map[string]any {
+	payload := map[string]any{
+		"code": codexTransportRetryingCode,
+	}
+	if i.Attempt > 0 {
+		payload["attempt"] = i.Attempt
+	}
+	if i.MaxAttempts > 0 {
+		payload["maxAttempts"] = i.MaxAttempts
+	}
+	return payload
 }
 
 func (m *Manager) handleCodexAppServerItemStarted(

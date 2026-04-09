@@ -235,6 +235,7 @@ export interface WebSessionLiveState {
     | 'idle'
     | 'starting'
     | 'thinking'
+    | 'retrying'
     | 'tool'
     | 'waiting_approval'
     | 'waiting_plan_approval'
@@ -256,6 +257,12 @@ export interface WebSessionLiveState {
   approval?: WebSessionApprovalState | null;
   userInput?: WebSessionUserInputState | null;
   errorMessage?: string;
+  retry?: {
+    code: string;
+    message: string;
+    attempt?: number;
+    maxAttempts?: number;
+  };
 }
 
 export interface WebSessionPendingInput {
@@ -502,7 +509,7 @@ function getAssistantStateUpdatedAt(session?: WebSessionSummary | null) {
 }
 
 function isWorkingPhase(phase: WebSessionLiveState['phase']) {
-  return phase === 'starting' || phase === 'thinking' || phase === 'tool';
+  return phase === 'starting' || phase === 'thinking' || phase === 'retrying' || phase === 'tool';
 }
 
 function isProcessRestartPayload(payload?: Record<string, unknown>) {
@@ -648,6 +655,28 @@ function extractToolSummary(payload: Record<string, unknown>) {
   }
 
   return subtitle;
+}
+
+function getTransportRetryPayload(payload?: Record<string, unknown>) {
+  if (!payload || String(payload.code ?? '').trim() !== 'transport_retrying') {
+    return null;
+  }
+  const attempt =
+    typeof payload.attempt === 'number' && Number.isFinite(payload.attempt) && payload.attempt > 0
+      ? Math.trunc(payload.attempt)
+      : undefined;
+  const maxAttempts =
+    typeof payload.maxAttempts === 'number' &&
+    Number.isFinite(payload.maxAttempts) &&
+    payload.maxAttempts > 0
+      ? Math.trunc(payload.maxAttempts)
+      : undefined;
+  return {
+    code: 'transport_retrying',
+    message: String(payload.txt ?? '').trim(),
+    attempt,
+    maxAttempts,
+  };
 }
 
 function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] {
@@ -1817,12 +1846,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
     let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
     const assistantStateUpdatedAt = getAssistantStateUpdatedAt(session);
     let runStartedAt: number | undefined;
+    let retryState:
+      | {
+          code: string;
+          message: string;
+          attempt?: number;
+          maxAttempts?: number;
+          updatedAt: number;
+        }
+      | undefined;
 
     for (const block of buildBlocks(sessionId)) {
       updatedAt = block.observedAt || block.timestamp || updatedAt;
       if (block.kind === 'assistant') {
         sawAssistantOutput = true;
         assistantDone = block.done === true;
+        retryState = undefined;
         if (!firstAssistantOutputAt && block.timestamp > 0) {
           firstAssistantOutputAt = block.timestamp;
         }
@@ -1834,6 +1873,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
         firstAssistantOutputAt = undefined;
         activeTool = undefined;
         errorMessage = '';
+        retryState = undefined;
+      }
+      const retryPayload = getTransportRetryPayload(block.payload);
+      if (block.itemType === 'note' && retryPayload) {
+        retryState = {
+          ...retryPayload,
+          updatedAt: block.observedAt || block.timestamp || updatedAt,
+        };
       }
       if (block.kind === 'tool' && block.tool) {
         if (block.tool.kind === 'reasoning') {
@@ -1854,12 +1901,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
             groupId: block.tool.commandGroup?.id,
             startedAt: block.tool.startedAt ?? block.timestamp,
           };
+          retryState = undefined;
         } else if (activeTool?.id === block.tool.id) {
           activeTool = undefined;
+          retryState = undefined;
         }
       }
       if (block.itemType === 'run_fail') {
         errorMessage = block.text || 'Run failed';
+        retryState = undefined;
       }
     }
 
@@ -1895,6 +1945,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (session?.status === 'running') {
+      if (retryState) {
+        return {
+          phase: 'retrying',
+          running: true,
+          updatedAt: retryState.updatedAt,
+          startedAt: runStartedAt,
+          retry: {
+            code: retryState.code,
+            message: retryState.message,
+            attempt: retryState.attempt,
+            maxAttempts: retryState.maxAttempts,
+          },
+        };
+      }
       if (activeTool) {
         return {
           phase: 'tool',

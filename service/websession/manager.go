@@ -91,6 +91,8 @@ type activeRun struct {
 	assistantMessageID string
 	currentToolMessage string
 	lastError          string
+	lastErrorCode      string
+	transportRetrySeen bool
 	cmd                *exec.Cmd
 	cancel             context.CancelFunc
 	done               chan struct{}
@@ -1477,11 +1479,27 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 }
 
 func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTable, run *activeRun, err error) {
+	m.handleRunFailureWithCode(sessionID, session, run, "", err)
+}
+
+func (m *Manager) handleRunFailureWithCode(
+	sessionID string,
+	session tables.WebSessionTable,
+	run *activeRun,
+	code string,
+	err error,
+) {
 	message := strings.TrimSpace(err.Error())
 	if message == "" {
 		message = "runtime failed"
 	}
 	run.lastError = message
+	if strings.TrimSpace(code) == "" && run != nil {
+		code = strings.TrimSpace(run.lastErrorCode)
+	}
+	if strings.TrimSpace(code) == "" {
+		code = "runtime_error"
+	}
 	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, session, Event{
 		ID:        utils.NewID(),
@@ -1490,7 +1508,7 @@ func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTa
 		RunID:     run.runID,
 		Timestamp: now,
 		Payload: map[string]any{
-			"code": "runtime_error",
+			"code": code,
 			"msg":  message,
 		},
 	})
@@ -1504,6 +1522,37 @@ func (m *Manager) handleRunFailure(sessionID string, session tables.WebSessionTa
 		}, AssistantStateNone, now),
 	)
 	m.broadcastSessionSummary(context.Background(), sessionID)
+}
+
+func (m *Manager) appendRunNote(
+	sessionID string,
+	session tables.WebSessionTable,
+	run *activeRun,
+	level string,
+	message string,
+	payload map[string]any,
+) {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return
+	}
+	nextPayload := cloneMap(payload)
+	if nextPayload == nil {
+		nextPayload = map[string]any{}
+	}
+	nextPayload["txt"] = trimmed
+	if strings.TrimSpace(level) != "" {
+		nextPayload["lvl"] = strings.TrimSpace(level)
+	}
+	_, _ = m.appendAndBroadcast(context.Background(), sessionID, session, Event{
+		ID:        utils.NewID(),
+		Seq:       0,
+		Type:      "note",
+		RunID:     run.runID,
+		ParentID:  run.assistantMessageID,
+		Timestamp: time.Now(),
+		Payload:   nextPayload,
+	})
 }
 
 func (m *Manager) consumeRuntimeOutput(ctx context.Context, session tables.WebSessionTable, run *activeRun, stdout io.Reader) {

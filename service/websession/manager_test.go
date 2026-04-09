@@ -820,6 +820,170 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	}
 }
 
+func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "reconnect_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if historyHasEvent(rawEvents, "run_fail") {
+		t.Fatalf("expected retrying run to avoid run_fail, got %#v", rawEvents)
+	}
+	retryNoteFound := false
+	for _, event := range rawEvents {
+		if event.Type != "note" {
+			continue
+		}
+		if stringValue(event.Payload["code"]) != codexTransportRetryingCode {
+			continue
+		}
+		retryNoteFound = true
+		if got := int(numberValue(event.Payload["attempt"])); got != 1 {
+			t.Fatalf("expected retry attempt 1, got %d", got)
+		}
+		if got := int(numberValue(event.Payload["maxAttempts"])); got != 5 {
+			t.Fatalf("expected max attempts 5, got %d", got)
+		}
+		break
+	}
+	if !retryNoteFound {
+		t.Fatalf("expected transport retry note in raw events, got %#v", rawEvents)
+	}
+
+	history, err := manager.History(context.Background(), created.ID, 50, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	retryItemFound := false
+	for _, item := range history.Items {
+		if item.ItemType != "note" {
+			continue
+		}
+		if stringValue(item.Payload["code"]) != codexTransportRetryingCode {
+			continue
+		}
+		retryItemFound = true
+		break
+	}
+	if !retryItemFound {
+		t.Fatalf("expected projected retry note in history items, got %#v", history.Items)
+	}
+}
+
+func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "reconnect_then_fail"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusError) {
+		t.Fatalf("expected session status %q, got %q", StatusError, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	retryNoteCount := 0
+	var finalFailure Event
+	for _, event := range rawEvents {
+		if event.Type == "note" && stringValue(event.Payload["code"]) == codexTransportRetryingCode {
+			retryNoteCount++
+		}
+		if event.Type == "run_fail" {
+			finalFailure = event
+		}
+	}
+	if retryNoteCount < 2 {
+		t.Fatalf("expected multiple retry notes before failure, got %#v", rawEvents)
+	}
+	if finalFailure.Type != "run_fail" {
+		t.Fatalf("expected final run_fail event, got %#v", rawEvents)
+	}
+	if got := stringValue(finalFailure.Payload["code"]); got != codexTransportRetryExhaustedCode {
+		t.Fatalf("expected final failure code %q, got %q", codexTransportRetryExhaustedCode, got)
+	}
+
+	history, err := manager.History(context.Background(), created.ID, 50, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	historyRetryCount := 0
+	historyFailFound := false
+	for _, item := range history.Items {
+		if item.ItemType == "note" && stringValue(item.Payload["code"]) == codexTransportRetryingCode {
+			historyRetryCount++
+		}
+		if item.ItemType == "run_fail" && stringValue(item.Payload["code"]) == codexTransportRetryExhaustedCode {
+			historyFailFound = true
+		}
+	}
+	if historyRetryCount < 2 {
+		t.Fatalf("expected retry notes in projected history, got %#v", history.Items)
+	}
+	if !historyFailFound {
+		t.Fatalf("expected projected final run_fail item, got %#v", history.Items)
+	}
+}
+
 func TestRespondToUserInputCodexAppServer(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -1987,6 +2151,21 @@ function finishTurn(text) {
   });
 }
 
+function failTurn(message) {
+  send({
+    method: 'turn/completed',
+    params: {
+      threadId,
+      turn: {
+        id: turnId,
+        items: [],
+        status: 'failed',
+        error: { message },
+      },
+    },
+  });
+}
+
 let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on('line', line => {
@@ -2033,6 +2212,34 @@ rl.on('line', line => {
 
     if (mode === 'basic' || mode === 'resume_only' || mode === 'plan') {
       finishTurn('done');
+      return;
+    }
+
+    if (mode === 'reconnect_then_success') {
+      send({
+        method: 'error',
+        params: {
+          message: 'Reconnecting... 1/5 (unexpected status 502 Bad Gateway: Upstream service temporarily unavailable)',
+        },
+      });
+      finishTurn('done');
+      return;
+    }
+
+    if (mode === 'reconnect_then_fail') {
+      send({
+        method: 'error',
+        params: {
+          message: 'Reconnecting... 1/5 (unexpected status 502 Bad Gateway: Upstream service temporarily unavailable)',
+        },
+      });
+      send({
+        method: 'error',
+        params: {
+          message: 'Reconnecting... 2/5 (unexpected status 502 Bad Gateway: Upstream service temporarily unavailable)',
+        },
+      });
+      failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
       return;
     }
 
