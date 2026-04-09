@@ -96,6 +96,11 @@
                       ></span>
                       <span class="tab-title" :style="tabTitleStyle">{{ session.title }}</span>
                       <span
+                        v-if="isSessionArchiving(session.id)"
+                        class="tab-action-spinner"
+                        aria-hidden="true"
+                      ></span>
+                      <span
                         class="ai-status-pill"
                         :class="[
                           `state-${getSessionPillStateClass(session)}`,
@@ -243,6 +248,8 @@
                               size="small"
                               type="primary"
                               class="plan-tool-action-primary"
+                              :loading="isPlanCardImplementPending"
+                              :disabled="isPlanCardImplementPending"
                               @click="handlePlanCardImplement"
                             >
                               {{ t('webSession.planActionImplement') }}
@@ -251,6 +258,7 @@
                               size="small"
                               secondary
                               class="plan-tool-action-secondary"
+                              :disabled="isPlanCardImplementPending"
                               @click="handlePlanCardCancel"
                             >
                               {{ t('webSession.planActionCancel') }}
@@ -1019,6 +1027,7 @@
                     ...getSidebarSessionClasses(item),
                     {
                       'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
+                      'is-archiving': isSessionArchiving(item.session.id),
                     },
                     { 'is-active': item.isCurrent },
                   ]"
@@ -1043,6 +1052,11 @@
                   </div>
 
                   <div class="session-sidebar-actions">
+                    <span
+                      v-if="isSessionArchiving(item.session.id)"
+                      class="session-sidebar-spinner"
+                      aria-hidden="true"
+                    ></span>
                     <span
                       v-if="item.projectIndex"
                       class="project-index-badge session-project-badge"
@@ -1525,6 +1539,7 @@ const rawTimelineBlocks = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
+const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
@@ -2056,6 +2071,9 @@ const pendingInputs = computed(() =>
 );
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
+);
+const isPlanCardImplementPending = computed(() =>
+  isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
 );
 const isSubmittingMessage = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
@@ -2745,7 +2763,11 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     {
       label: t('webSession.archiveAction'),
       key: 'archive',
-      disabled: !session || isDraftSession(session) || isArchivedPreviewSession(session),
+      disabled:
+        !session ||
+        isDraftSession(session) ||
+        isArchivedPreviewSession(session) ||
+        isSessionArchiving(session.id),
     },
     {
       label: t('common.delete'),
@@ -4228,6 +4250,18 @@ function setPlanActionsDismissed(toolId: string, dismissed: boolean) {
   };
 }
 
+function beginSessionArchive(sessionId: string) {
+  archiveStateBySessionId.value = beginWebSessionSubmit(archiveStateBySessionId.value, sessionId);
+}
+
+function endSessionArchive(sessionId: string) {
+  archiveStateBySessionId.value = endWebSessionSubmit(archiveStateBySessionId.value, sessionId);
+}
+
+function isSessionArchiving(sessionId: string) {
+  return isWebSessionSubmitting(archiveStateBySessionId.value, sessionId);
+}
+
 function toolKindLabel(tool: { name: string; kind?: string }) {
   const kind = normalizeToolKindValue(tool.kind);
   if (!kind) {
@@ -4654,6 +4688,9 @@ async function refreshArchivedSidebar() {
 }
 
 function handleArchiveSession(sessionId: string) {
+  if (isSessionArchiving(sessionId)) {
+    return;
+  }
   const session = sessions.value.find(item => item.id === sessionId);
   if (!session) {
     return;
@@ -4688,6 +4725,10 @@ function handleArchiveSession(sessionId: string) {
 }
 
 async function performArchiveSession(session: WebSessionSummary): Promise<boolean> {
+  if (isSessionArchiving(session.id)) {
+    return false;
+  }
+  beginSessionArchive(session.id);
   try {
     await webSessionStore.archiveSession(session.projectId, session.id);
     await refreshArchivedSidebar();
@@ -4706,6 +4747,8 @@ async function performArchiveSession(session: WebSessionSummary): Promise<boolea
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
     return false;
+  } finally {
+    endSessionArchive(session.id);
   }
 }
 
@@ -5235,10 +5278,12 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
 }
 
 async function handlePlanCardImplement() {
-  if (!currentRealSession.value) {
+  const submitOwnerId = currentDraftSessionId.value;
+  if (!currentRealSession.value || !submitOwnerId || isPlanCardImplementPending.value) {
     return;
   }
 
+  beginSessionSubmit(submitOwnerId);
   try {
     const prepared = await prepareSessionForSend(currentRealSession.value);
     const targetSession = prepared.session;
@@ -5264,6 +5309,8 @@ async function handlePlanCardImplement() {
     scrollToBottom(true);
   } catch (error) {
     message.error(formatSessionInteractionError(error));
+  } finally {
+    endSessionSubmit(submitOwnerId);
   }
 }
 
@@ -5535,6 +5582,10 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
     onContextmenu: (event: MouseEvent) => handleTabContextMenu(event, session),
   };
   const classes: string[] = [];
+
+  if (isSessionArchiving(session.id)) {
+    classes.push('is-archiving');
+  }
 
   if (usesSessionApprovalTone(session)) {
     classes.push('has-unviewed-approval');
@@ -6386,6 +6437,14 @@ onBeforeUnmount(() => {
   color: var(--n-tab-text-color-active);
 }
 
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.is-archiving) {
+  cursor: wait;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.is-archiving .n-tabs-tab__close) {
+  display: none;
+}
+
 .tab-label {
   display: inline-flex;
   align-items: center;
@@ -6399,6 +6458,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-action-spinner,
+.session-sidebar-spinner {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.75px solid color-mix(in srgb, var(--n-primary-color) 24%, transparent);
+  border-top-color: var(--n-primary-color);
+  animation: web-session-action-spin 0.72s linear infinite;
 }
 
 .status-dot {
@@ -7133,6 +7203,10 @@ onBeforeUnmount(() => {
   border-style: dashed;
 }
 
+.session-sidebar-item.is-archiving {
+  cursor: wait;
+}
+
 .session-sidebar-main {
   flex: 1;
   min-width: 0;
@@ -7189,6 +7263,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+@keyframes web-session-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-archived-pill {
