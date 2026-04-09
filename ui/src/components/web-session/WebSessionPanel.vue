@@ -164,7 +164,7 @@
 
                   <div
                     v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
-                    class="timeline-tool-shell"
+                    class="timeline-tool-shell plan-tool-shell"
                   >
                     <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
                       <div class="tool-body plan-tool-body">
@@ -8313,6 +8313,48 @@ onBeforeUnmount(() => {
   .composer-path {
     width: 100%;
     text-align: left;
+  }
+}
+
+@media (max-width: 767px) {
+  .timeline-tool-shell.plan-tool-shell {
+    width: 100%;
+  }
+
+  .plan-tool-body {
+    padding: 14px 14px 16px;
+    gap: 14px;
+  }
+
+  .plan-tool-header {
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .plan-tool-caption {
+    flex: 1 0 100%;
+  }
+
+  .plan-tool-content {
+    padding: 14px 14px 16px;
+    border-radius: 14px;
+  }
+
+  .plan-tool-actions {
+    padding-top: 2px;
+  }
+
+  .plan-tool-action-row {
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .plan-tool-action-primary,
+  .plan-tool-action-secondary {
+    width: 100%;
+    min-width: 0;
   }
 }
 
