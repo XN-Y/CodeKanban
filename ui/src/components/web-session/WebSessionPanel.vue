@@ -618,7 +618,19 @@
             <n-empty :description="emptyStateDescription" />
           </div>
 
-          <div class="composer">
+          <div
+            class="composer"
+            :class="{
+              'is-drag-over': isComposerDragOver,
+              'is-mobile-expanded': isMobile && isMobileComposerExpanded,
+              'is-mobile-focused': isMobileComposerFocused,
+            }"
+            @paste.capture="handleComposerPaste"
+            @dragenter="handleComposerDragEnter"
+            @dragover="handleComposerDragOver"
+            @dragleave="handleComposerDragLeave"
+            @drop="handleComposerDrop"
+          >
             <input
               ref="fileInputRef"
               type="file"
@@ -628,226 +640,257 @@
               @change="handleFileChange"
             />
 
+            <div v-if="isMobile" class="composer-mobile-summary">
+              <button
+                type="button"
+                class="composer-mobile-toggle"
+                :aria-expanded="isMobileComposerExpanded"
+                @click="toggleMobileComposerExpanded"
+              >
+                <span class="composer-mobile-toggle-copy">
+                  <span class="composer-mobile-toggle-chips">
+                    <span
+                      v-for="token in mobileComposerSummaryTokens"
+                      :key="token.key"
+                      class="composer-mobile-toggle-chip"
+                    >
+                      {{ token.label }}
+                    </span>
+                  </span>
+                </span>
+                <n-icon
+                  class="composer-mobile-toggle-arrow"
+                  :class="{ 'is-open': isMobileComposerExpanded }"
+                >
+                  <ChevronDownOutline />
+                </n-icon>
+              </button>
+            </div>
+
             <div
-              class="composer-shell"
-              :class="{
-                'is-drag-over': isComposerDragOver,
-              }"
-              @paste.capture="handleComposerPaste"
-              @dragenter="handleComposerDragEnter"
-              @dragover="handleComposerDragOver"
-              @dragleave="handleComposerDragLeave"
-              @drop="handleComposerDrop"
+              v-if="!isMobile || isMobileComposerExpanded"
+              class="composer-config"
+              :class="{ 'is-mobile': isMobile }"
             >
-              <div class="composer-config">
-                <div class="composer-config-row">
-                  <n-select
-                    v-model:value="selectedAgent"
-                    class="composer-select agent-select"
-                    size="small"
-                    :options="agentOptions"
-                    :disabled="Boolean(currentSession?.nativeSessionId)"
-                  />
-                  <n-select
-                    v-model:value="selectedModel"
-                    class="composer-select model-select"
-                    size="small"
-                    :options="modelOptions"
-                  />
-                  <n-select
-                    v-if="selectedAgent === 'codex'"
-                    v-model:value="selectedReasoningEffort"
-                    class="composer-select reasoning-select"
-                    size="small"
-                    :options="reasoningEffortOptions"
-                  />
-                  <div class="composer-mode-row">
-                    <n-button-group class="composer-mode-switch">
-                      <n-button
-                        size="small"
-                        :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
-                        @click="setWorkflowMode('default')"
-                      >
-                        {{ t('webSession.workflowDefault') }}
-                      </n-button>
-                      <n-button
-                        size="small"
-                        :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
-                        @click="setWorkflowMode('plan')"
-                      >
-                        {{ t('webSession.workflowPlan') }}
-                      </n-button>
-                    </n-button-group>
-                    <n-select
-                      v-model:value="selectedPermissionLevel"
-                      class="composer-select permission-select"
+              <div class="composer-config-row">
+                <n-select
+                  v-model:value="selectedAgent"
+                  class="composer-select agent-select"
+                  size="small"
+                  :options="agentOptions"
+                  :disabled="Boolean(currentSession?.nativeSessionId)"
+                />
+                <n-select
+                  v-model:value="selectedModel"
+                  class="composer-select model-select"
+                  size="small"
+                  :options="modelOptions"
+                />
+                <n-select
+                  v-if="selectedAgent === 'codex'"
+                  v-model:value="selectedReasoningEffort"
+                  class="composer-select reasoning-select"
+                  size="small"
+                  :options="reasoningEffortOptions"
+                />
+                <div class="composer-mode-row">
+                  <n-button-group class="composer-mode-switch">
+                    <n-button
                       size="small"
-                      :options="permissionLevelOptions"
+                      :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
+                      @click="setWorkflowMode('default')"
+                    >
+                      {{ t('webSession.workflowDefault') }}
+                    </n-button>
+                    <n-button
+                      size="small"
+                      :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
+                      @click="setWorkflowMode('plan')"
+                    >
+                      {{ t('webSession.workflowPlan') }}
+                    </n-button>
+                  </n-button-group>
+                  <n-select
+                    v-model:value="selectedPermissionLevel"
+                    class="composer-select permission-select"
+                    size="small"
+                    :options="permissionLevelOptions"
+                  />
+                </div>
+                <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
+                  {{ currentSession.cwd }}
+                </div>
+              </div>
+            </div>
+
+            <div v-if="draftAttachments.length > 0" class="draft-attachments">
+              <span
+                v-for="(attachment, index) in draftAttachments"
+                :key="attachment.id"
+                class="draft-attachment-pill"
+              >
+                <n-popover
+                  v-if="canPreviewAttachment(attachment)"
+                  trigger="hover"
+                  placement="top-start"
+                  :delay="120"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="attachment-preview-trigger"
+                      :title="draftAttachmentDisplayName(attachment, index)"
+                      @click="openDraftAttachmentPreview(attachment, index)"
+                    >
+                      <span class="attachment-preview-trigger-text">{{
+                        draftAttachmentDisplayName(attachment, index)
+                      }}</span>
+                    </button>
+                  </template>
+                  <div class="attachment-hover-preview">
+                    <img
+                      :src="getAttachmentPreviewUrl(attachment.id)"
+                      :alt="attachment.name"
+                      class="attachment-hover-image"
+                      loading="lazy"
                     />
                   </div>
-                  <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
-                    {{ currentSession.cwd }}
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="draftAttachments.length > 0" class="draft-attachments">
-                <span
-                  v-for="(attachment, index) in draftAttachments"
-                  :key="attachment.id"
-                  class="draft-attachment-pill"
+                </n-popover>
+                <button
+                  v-else
+                  type="button"
+                  class="attachment-preview-trigger is-static"
+                  :title="draftAttachmentDisplayName(attachment, index)"
                 >
-                  <n-popover
-                    v-if="canPreviewAttachment(attachment)"
-                    trigger="hover"
-                    placement="top-start"
-                    :delay="120"
-                  >
-                    <template #trigger>
-                      <button
-                        type="button"
-                        class="attachment-preview-trigger"
-                        :title="draftAttachmentDisplayName(attachment, index)"
-                        @click="openDraftAttachmentPreview(attachment, index)"
-                      >
-                        <span class="attachment-preview-trigger-text">{{
-                          draftAttachmentDisplayName(attachment, index)
-                        }}</span>
-                      </button>
-                    </template>
-                    <div class="attachment-hover-preview">
-                      <img
-                        :src="getAttachmentPreviewUrl(attachment.id)"
-                        :alt="attachment.name"
-                        class="attachment-hover-image"
-                        loading="lazy"
-                      />
-                    </div>
-                  </n-popover>
-                  <button
-                    v-else
-                    type="button"
-                    class="attachment-preview-trigger is-static"
-                    :title="draftAttachmentDisplayName(attachment, index)"
-                  >
-                    <span class="attachment-preview-trigger-text">{{
-                      draftAttachmentDisplayName(attachment, index)
-                    }}</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="draft-attachment-remove"
-                    @click="removeAttachment(attachment.id)"
-                  >
-                    ×
-                  </button>
+                  <span class="attachment-preview-trigger-text">{{
+                    draftAttachmentDisplayName(attachment, index)
+                  }}</span>
+                </button>
+                <button
+                  type="button"
+                  class="draft-attachment-remove"
+                  @click="removeAttachment(attachment.id)"
+                >
+                  ×
+                </button>
+              </span>
+            </div>
+
+            <div v-if="pendingInputs.length > 0" class="pending-inputs">
+              <div v-for="item in pendingInputs" :key="item.id" class="pending-input-item">
+                <span class="pending-input-badge" :class="`mode-${item.mode}`">
+                  {{ pendingModeLabel(item.mode) }}
                 </span>
+                <span class="pending-input-preview">{{ pendingInputPreview(item) }}</span>
+                <button
+                  type="button"
+                  class="pending-input-remove"
+                  @click="handleRemovePendingInput(item.id)"
+                >
+                  ×
+                </button>
               </div>
+            </div>
 
-              <div v-if="pendingInputs.length > 0" class="pending-inputs">
-                <div v-for="item in pendingInputs" :key="item.id" class="pending-input-item">
-                  <span class="pending-input-badge" :class="`mode-${item.mode}`">
-                    {{ pendingModeLabel(item.mode) }}
-                  </span>
-                  <span class="pending-input-preview">{{ pendingInputPreview(item) }}</span>
-                  <button
-                    type="button"
-                    class="pending-input-remove"
-                    @click="handleRemovePendingInput(item.id)"
-                  >
-                    ×
-                  </button>
-                </div>
-              </div>
-
+            <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
               <n-input
                 ref="composerInputRef"
                 v-model:value="composerText"
                 type="textarea"
                 class="composer-input"
-                :autosize="{ minRows: 2, maxRows: 7 }"
+                :autosize="composerAutosize"
                 :placeholder="composerPlaceholder"
+                @focus="handleComposerFocus"
+                @blur="handleComposerBlur"
                 @keydown.enter.exact="handleComposerEnter"
               />
+              <button
+                v-if="isMobile"
+                type="button"
+                class="composer-icon-btn composer-icon-btn-mobile"
+                @click="openFilePicker"
+              >
+                <n-icon size="14"><ImageOutline /></n-icon>
+              </button>
+            </div>
 
-              <div class="composer-footer">
-                <div class="composer-footer-left">
-                  <button type="button" class="composer-icon-btn" @click="openFilePicker">
-                    <n-icon size="14"><ImageOutline /></n-icon>
-                  </button>
-                  <span class="composer-hint">{{ composerHint }}</span>
-                </div>
+            <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
+              <div v-if="!isMobile" class="composer-footer-left">
+                <button type="button" class="composer-icon-btn" @click="openFilePicker">
+                  <n-icon size="14"><ImageOutline /></n-icon>
+                </button>
+                <span class="composer-hint">{{ composerHint }}</span>
+              </div>
 
-                <div class="composer-footer-right">
-                  <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
-                    <template #trigger>
-                      <span
-                        class="composer-context-pill"
-                        :class="`state-${contextUsageIndicator.state}`"
-                      >
-                        {{ contextUsageIndicator.label }}
-                      </span>
-                    </template>
-                    <div class="composer-context-tooltip">
-                      <div class="composer-context-tooltip-title">
-                        {{ contextUsageIndicator.title }}
-                      </div>
-                      <div
-                        v-for="line in contextUsageIndicator.lines"
-                        :key="line"
-                        class="composer-context-tooltip-line"
-                      >
-                        {{ line }}
-                      </div>
-                    </div>
-                  </n-tooltip>
-                  <n-button
-                    v-if="isRunActive"
-                    secondary
-                    type="warning"
-                    class="composer-stop-btn"
-                    @click="handleAbortCurrent"
-                  >
-                    {{ t('webSession.stop') }}
-                  </n-button>
-                  <template v-if="isRunActive">
-                    <n-button
-                      secondary
-                      class="composer-queue-btn"
-                      :disabled="!canStageDuringRun"
-                      @click="handlePreinput('queue')"
+              <div class="composer-footer-right">
+                <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
+                  <template #trigger>
+                    <span
+                      class="composer-context-pill"
+                      :class="`state-${contextUsageIndicator.state}`"
                     >
-                      {{ t('webSession.preinputQueue') }}
-                    </n-button>
-                    <n-button
-                      type="primary"
-                      class="composer-send-btn"
-                      :disabled="!canStageDuringRun"
-                      @click="handlePreinput('redirect')"
-                    >
-                      {{ t('webSession.preinputRedirect') }}
-                    </n-button>
+                      {{ contextUsageIndicator.label }}
+                    </span>
                   </template>
+                  <div class="composer-context-tooltip">
+                    <div class="composer-context-tooltip-title">
+                      {{ contextUsageIndicator.title }}
+                    </div>
+                    <div
+                      v-for="line in contextUsageIndicator.lines"
+                      :key="line"
+                      class="composer-context-tooltip-line"
+                    >
+                      {{ line }}
+                    </div>
+                  </div>
+                </n-tooltip>
+                <n-button
+                  v-if="isRunActive"
+                  secondary
+                  type="warning"
+                  class="composer-stop-btn"
+                  @click="handleAbortCurrent"
+                >
+                  {{ t('webSession.stop') }}
+                </n-button>
+                <template v-if="isRunActive">
                   <n-button
-                    v-else
+                    secondary
+                    class="composer-queue-btn"
+                    :disabled="!canStageDuringRun"
+                    @click="handlePreinput('queue')"
+                  >
+                    {{ t('webSession.preinputQueue') }}
+                  </n-button>
+                  <n-button
                     type="primary"
                     class="composer-send-btn"
-                    :disabled="!canSend"
-                    @click="handleSubmit"
+                    :disabled="!canStageDuringRun"
+                    @click="handlePreinput('redirect')"
                   >
-                    {{ t('webSession.send') }}
+                    {{ t('webSession.preinputRedirect') }}
                   </n-button>
-                </div>
+                </template>
+                <n-button
+                  v-else
+                  type="primary"
+                  class="composer-send-btn"
+                  :disabled="!canSend"
+                  @click="handleSubmit"
+                >
+                  {{ t('webSession.send') }}
+                </n-button>
               </div>
-              <TransferProgressDialog
-                v-if="composerTransferCard"
-                :message="composerTransferCard.message"
-                :detail="composerTransferCard.detail"
-                :progress="composerTransferCard.progress"
-                :tone="composerTransferCard.tone"
-                :card-style="composerTransferDialogStyle"
-              />
             </div>
+            <TransferProgressDialog
+              v-if="composerTransferCard"
+              :message="composerTransferCard.message"
+              :detail="composerTransferCard.detail"
+              :progress="composerTransferCard.progress"
+              :tone="composerTransferCard.tone"
+              :card-style="composerTransferDialogStyle"
+            />
           </div>
         </div>
 
@@ -1231,6 +1274,10 @@ const props = withDefaults(
   }
 );
 
+const emit = defineEmits<{
+  (event: 'mobile-composer-focus-change', focused: boolean): void;
+}>();
+
 const liveStateClockMs = ref(Date.now());
 let liveStateClockTimer: number | null = null;
 
@@ -1307,7 +1354,7 @@ const settingsStore = useSettingsStore();
 const router = useRouter();
 const dialog = useDialog();
 const message = useMessage();
-const { t } = useLocale();
+const { locale, t } = useLocale();
 const { isMobile } = useResponsive();
 const {
   activeTheme,
@@ -1342,6 +1389,8 @@ const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
 const tabsContainerWidth = ref(0);
 const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
 const isComposerDragOver = ref(false);
+const isMobileComposerExpanded = ref(false);
+const isMobileComposerFocused = ref(false);
 const showAttachmentPreview = ref(false);
 const activeAttachmentPreview = ref<{
   id: string;
@@ -1861,7 +1910,16 @@ const canSend = computed(
 const canStageDuringRun = computed(
   () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
 );
-const composerPlaceholder = computed(() => t('webSession.inputPlaceholder'));
+const composerAutosize = computed(() =>
+  isMobile.value ? { minRows: 1, maxRows: 5 } : { minRows: 2, maxRows: 7 }
+);
+const composerPlaceholder = computed(() =>
+  isMobile.value
+    ? locale.value === 'zh-CN'
+      ? '输入消息'
+      : 'Type a message'
+    : t('webSession.inputPlaceholder')
+);
 const composerHint = computed(() => {
   if (isDraftAttachmentUploading.value) {
     return t('webSession.composerHintUploading');
@@ -1883,6 +1941,47 @@ const composerHint = computed(() => {
     return t('webSession.composerHintRunning');
   }
   return t('webSession.composerHintIdle');
+});
+const selectedAgentLabel = computed(
+  () =>
+    agentOptions.find(option => option.value === selectedAgent.value)?.label ?? selectedAgent.value
+);
+const selectedModelLabel = computed(
+  () => String(selectedModel.value || '').trim() || t('common.default')
+);
+const selectedReasoningEffortLabel = computed(
+  () =>
+    reasoningEffortOptions.value.find(option => option.value === selectedReasoningEffort.value)
+      ?.label ?? selectedReasoningEffort.value
+);
+const selectedWorkflowModeLabel = computed(() =>
+  selectedWorkflowMode.value === 'plan'
+    ? t('webSession.workflowPlan')
+    : t('webSession.workflowDefault')
+);
+const selectedPermissionLevelLabel = computed(() => {
+  switch (selectedPermissionLevel.value) {
+    case 'elevated':
+      return t('webSession.permissionElevated');
+    case 'yolo':
+      return t('webSession.permissionYolo');
+    default:
+      return t('webSession.permissionDefault');
+  }
+});
+const mobileComposerSummaryTokens = computed(() => {
+  const tokens = [
+    { key: 'agent', label: selectedAgentLabel.value },
+    { key: 'model', label: selectedModelLabel.value },
+  ];
+  if (selectedAgent.value === 'codex') {
+    tokens.push({ key: 'reasoning', label: selectedReasoningEffortLabel.value });
+  }
+  tokens.push(
+    { key: 'workflow', label: selectedWorkflowModeLabel.value },
+    { key: 'permission', label: selectedPermissionLevelLabel.value }
+  );
+  return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
 const contextUsageIndicator = computed(() => {
@@ -1978,6 +2077,21 @@ const contextUsageIndicator = computed(() => {
     ],
   };
 });
+
+function emitMobileComposerFocusChange(focused: boolean) {
+  if (isMobileComposerFocused.value === focused) {
+    return;
+  }
+  isMobileComposerFocused.value = focused;
+  emit('mobile-composer-focus-change', focused);
+}
+
+function toggleMobileComposerExpanded() {
+  if (!isMobile.value) {
+    return;
+  }
+  isMobileComposerExpanded.value = !isMobileComposerExpanded.value;
+}
 
 function clearComposerTransferError() {
   if (composerTransferErrorTimer != null) {
@@ -4348,6 +4462,7 @@ async function handleSubmit() {
       });
     }
     autoFollowBottom.value = true;
+    isMobileComposerExpanded.value = false;
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -4367,9 +4482,25 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
       mode
     );
     webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
+    isMobileComposerExpanded.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
+}
+
+function handleComposerFocus() {
+  if (!isMobile.value) {
+    return;
+  }
+  isMobileComposerExpanded.value = false;
+  emitMobileComposerFocusChange(true);
+}
+
+function handleComposerBlur() {
+  if (!isMobile.value) {
+    return;
+  }
+  emitMobileComposerFocusChange(false);
 }
 
 function handleComposerEnter(event: KeyboardEvent) {
@@ -5332,6 +5463,35 @@ watch(currentDraftSessionId, () => {
   clearComposerTransferError();
 });
 
+watch(
+  () => currentSession.value?.id,
+  () => {
+    if (isMobile.value) {
+      isMobileComposerExpanded.value = false;
+    }
+  }
+);
+
+watch(
+  () => isMobile.value,
+  mobile => {
+    isMobileComposerExpanded.value = false;
+    if (!mobile) {
+      emitMobileComposerFocusChange(false);
+    }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => props.isActive,
+  active => {
+    if (!active) {
+      emitMobileComposerFocusChange(false);
+    }
+  }
+);
+
 useResizeObserver(timelineListRef, () => {
   if (!currentSession.value) {
     return;
@@ -5406,6 +5566,7 @@ onBeforeUnmount(() => {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;
   }
+  emitMobileComposerFocusChange(false);
   clearComposerTransferError();
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
@@ -5425,7 +5586,9 @@ onBeforeUnmount(() => {
 .web-session-panel {
   --web-session-approval-bg: rgba(247, 144, 9, 0.25);
   --web-session-approval-border: rgba(247, 144, 9, 0.5);
+  box-sizing: border-box;
   height: 100%;
+  padding-bottom: var(--workspace-mobile-websession-inset, 0px);
   overflow: hidden;
 }
 
@@ -7410,22 +7573,83 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.composer-shell {
-  border-radius: 12px;
-  padding: 5px 6px 4px;
-  background: var(--app-surface-color, #fff);
+  position: relative;
   transition:
     background-color 0.2s ease,
     box-shadow 0.2s ease,
     transform 0.2s ease;
 }
 
-.composer-shell.is-drag-over {
+.composer.is-mobile-focused {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 20%, transparent);
+}
+
+.composer.is-drag-over {
   background: color-mix(in srgb, var(--n-primary-color) 5%, var(--app-surface-color, #fff));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 16%, transparent);
+}
+
+.composer-mobile-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.composer-mobile-toggle {
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 84%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
+  color: inherit;
+  padding: 8px 10px;
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.composer-mobile-toggle-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.composer-mobile-toggle-chips {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.composer-mobile-toggle-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.composer-mobile-toggle-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-text-color-2);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.composer-mobile-toggle-arrow {
+  flex-shrink: 0;
+  margin-top: 2px;
+  transition: transform 0.2s ease;
+}
+
+.composer-mobile-toggle-arrow.is-open {
+  transform: rotate(180deg);
 }
 
 .composer-config {
@@ -7435,6 +7659,10 @@ onBeforeUnmount(() => {
   margin-bottom: 2px;
   padding-bottom: 3px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 72%, transparent);
+}
+
+.composer-config.is-mobile {
+  margin-bottom: 6px;
 }
 
 .composer-config-row {
@@ -7489,6 +7717,19 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.composer-input-shell {
+  position: relative;
+}
+
+.composer-input-shell.is-mobile {
+  min-height: 96px;
+}
+
+.composer-input-shell.is-mobile .composer-input :deep(.n-input__textarea-el) {
+  min-height: 96px !important;
+  padding-bottom: 34px !important;
+}
+
 .composer-input {
   flex: 1;
 }
@@ -7517,6 +7758,11 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 6px;
   margin-top: 0;
+}
+
+.composer-footer.is-mobile {
+  margin-top: 4px;
+  justify-content: flex-end;
 }
 
 .composer-footer-left,
@@ -7610,6 +7856,13 @@ onBeforeUnmount(() => {
 .composer-icon-btn:hover {
   background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
   color: var(--n-primary-color);
+}
+
+.composer-icon-btn-mobile {
+  position: absolute;
+  left: 2px;
+  bottom: -44px;
+  z-index: 1;
 }
 
 .composer-hint {
@@ -7747,6 +8000,11 @@ onBeforeUnmount(() => {
     justify-content: space-between;
   }
 
+  .composer-footer-right {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
   .composer-config-row {
     flex-wrap: wrap;
   }
@@ -7808,13 +8066,28 @@ onBeforeUnmount(() => {
     padding: 8px;
   }
 
+  .composer-mobile-summary {
+    margin-bottom: 2px;
+  }
+
+  .composer-mobile-toggle {
+    padding: 8px 9px;
+  }
+
+  .composer-mobile-toggle-chip {
+    font-size: 10px;
+  }
+
+  .composer-config.is-mobile {
+    margin-bottom: 4px;
+  }
+
   .runtime-strip {
     margin-top: 14px;
   }
 
   .live-card,
-  .approval-card,
-  .composer-shell {
+  .approval-card {
     border-radius: 10px;
   }
 }

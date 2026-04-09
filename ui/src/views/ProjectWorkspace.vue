@@ -1,5 +1,14 @@
 <template>
-  <div class="project-workspace" :class="{ 'is-mobile': isMobileLayout }">
+  <div
+    class="project-workspace"
+    :class="{
+      'is-mobile': isMobileLayout,
+      'is-websession-composing':
+        isMobileLayout &&
+        mobileActiveView === 'webSession' &&
+        isMobileWebSessionComposerFocused,
+    }"
+  >
     <!-- 桌面端布局 -->
     <template v-if="!isMobileLayout">
       <n-layout has-sider class="workspace-desktop-shell">
@@ -65,6 +74,7 @@
           <WebSessionPanel
             :project-id="currentProjectId"
             :is-active="mobileActiveView === 'webSession'"
+            @mobile-composer-focus-change="handleMobileWebSessionComposerFocusChange"
           />
         </div>
 
@@ -228,6 +238,7 @@ const { windowWidth } = useResponsive();
 const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
+const isMobileWebSessionComposerFocused = ref(false);
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
@@ -369,6 +380,21 @@ const mobileActiveView = computed<MobileView>({
   },
 });
 
+watch(mobileActiveView, view => {
+  if (view !== 'webSession') {
+    isMobileWebSessionComposerFocused.value = false;
+  }
+});
+
+watch(
+  () => isMobileLayout.value,
+  mobile => {
+    if (!mobile) {
+      isMobileWebSessionComposerFocused.value = false;
+    }
+  }
+);
+
 const loadProject = (id: string) => {
   if (!id) {
     return;
@@ -449,8 +475,19 @@ function toggleTerminalPanel() {
   terminalPanelRef.value?.toggleExpanded();
 }
 
+function handleMobileWebSessionComposerFocusChange(focused: boolean) {
+  if (!isMobileLayout.value || mobileActiveView.value !== 'webSession') {
+    isMobileWebSessionComposerFocused.value = false;
+    return;
+  }
+  isMobileWebSessionComposerFocused.value = focused;
+}
+
 // 移动端视图切换
 function setMobileView(view: MobileView) {
+  if (view !== 'webSession') {
+    isMobileWebSessionComposerFocused.value = false;
+  }
   mobileActiveView.value = view;
 }
 </script>
@@ -458,6 +495,7 @@ function setMobileView(view: MobileView) {
 <style scoped>
 .project-workspace {
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
@@ -526,13 +564,25 @@ function setMobileView(view: MobileView) {
 
 /* 移动端布局 */
 .project-workspace.is-mobile {
+  --workspace-mobile-safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --workspace-mobile-bottom-nav-height: 60px;
+  --workspace-mobile-bottom-nav-space: calc(
+    var(--workspace-mobile-bottom-nav-height) + var(--workspace-mobile-safe-area-bottom)
+  );
+  --workspace-mobile-websession-inset: var(--workspace-mobile-bottom-nav-space);
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
 }
 
+.project-workspace.is-mobile.is-websession-composing {
+  --workspace-mobile-websession-inset: var(--workspace-mobile-safe-area-bottom);
+}
+
 .mobile-workspace {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -540,22 +590,34 @@ function setMobileView(view: MobileView) {
 
 .mobile-view {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
 }
 
 .mobile-kanban-view {
-  padding-bottom: 60px; /* 为底部导航留出空间 */
+  padding-bottom: var(--workspace-mobile-bottom-nav-space);
 }
 
 .mobile-projects-view {
   padding: 16px;
-  padding-bottom: 76px;
+  padding-bottom: calc(16px + var(--workspace-mobile-bottom-nav-space));
 }
 
 .mobile-notifications-view {
   padding: 16px;
-  padding-bottom: 76px;
+  padding-bottom: calc(16px + var(--workspace-mobile-bottom-nav-space));
+}
+
+.mobile-websession-view {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mobile-websession-view > * {
+  flex: 1;
+  min-height: 0;
 }
 
 /* 移动端底部导航 */
@@ -564,21 +626,34 @@ function setMobileView(view: MobileView) {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 60px;
+  box-sizing: border-box;
+  height: var(--workspace-mobile-bottom-nav-space);
+  padding-bottom: var(--workspace-mobile-safe-area-bottom);
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-around;
   background-color: var(--app-surface-color, #ffffff);
   border-top: 1px solid var(--n-border-color, #e0e0e0);
   z-index: 200;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
+}
+
+.project-workspace.is-mobile.is-websession-composing .mobile-bottom-nav {
+  opacity: 0;
+  transform: translateY(100%);
+  pointer-events: none;
 }
 
 .mobile-bottom-nav .nav-item {
+  flex: 1 1 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 4px;
+  min-height: var(--workspace-mobile-bottom-nav-height);
   padding: 8px 16px;
   border: none;
   background: transparent;
@@ -586,7 +661,7 @@ function setMobileView(view: MobileView) {
   font-size: 12px;
   cursor: pointer;
   transition: color 0.2s;
-  min-width: 64px;
+  min-width: 0;
 }
 
 .mobile-bottom-nav .nav-item.active {
