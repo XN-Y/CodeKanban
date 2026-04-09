@@ -35,6 +35,7 @@ type WebSessionTable struct {
 	AssistantStateUpdatedAt *time.Time `gorm:"type:datetime" json:"assistantStateUpdatedAt"`
 	SourceKind              string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
 	SyncState               string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`
+	LastSyncMode            string     `gorm:"type:text" json:"lastSyncMode"`
 	SourceCreatedAt         *time.Time `gorm:"type:datetime" json:"sourceCreatedAt"`
 	SourceUpdatedAt         *time.Time `gorm:"type:datetime;index" json:"sourceUpdatedAt"`
 	LastSyncedAt            *time.Time `gorm:"type:datetime" json:"lastSyncedAt"`

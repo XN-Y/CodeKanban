@@ -169,6 +169,56 @@ func TestCodexFileSearcher_FindSessionFile(t *testing.T) {
 	}
 }
 
+func TestCodexFileSearcher_FindBySessionID(t *testing.T) {
+	homeDir := t.TempDir()
+	searcher := NewCodexFileSearcherWithHomeDir(homeDir)
+	sessionID := "019d6f7b-5dd6-7d73-8dee-23b492e85de7"
+
+	olderTime := time.Date(2026, 4, 8, 10, 0, 0, 0, time.UTC)
+	newerTime := olderTime.Add(2 * time.Hour)
+
+	olderDir := filepath.Join(homeDir, ".codex", "sessions", olderTime.Format("2006"), olderTime.Format("01"), olderTime.Format("02"))
+	newerDir := filepath.Join(homeDir, ".codex", "sessions", newerTime.Format("2006"), newerTime.Format("01"), newerTime.Format("02"))
+	if err := os.MkdirAll(olderDir, 0o755); err != nil {
+		t.Fatalf("failed to create older dir: %v", err)
+	}
+	if err := os.MkdirAll(newerDir, 0o755); err != nil {
+		t.Fatalf("failed to create newer dir: %v", err)
+	}
+
+	olderPath := filepath.Join(olderDir, "rollout-"+olderTime.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl")
+	newerPath := filepath.Join(newerDir, "rollout-"+newerTime.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl")
+	if err := os.WriteFile(olderPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write older file: %v", err)
+	}
+	if err := os.WriteFile(newerPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("failed to write newer file: %v", err)
+	}
+
+	if err := os.Chtimes(olderPath, olderTime, olderTime); err != nil {
+		t.Fatalf("failed to update older file time: %v", err)
+	}
+	if err := os.Chtimes(newerPath, newerTime, newerTime); err != nil {
+		t.Fatalf("failed to update newer file time: %v", err)
+	}
+
+	found, err := searcher.FindBySessionID(sessionID)
+	if err != nil {
+		t.Fatalf("FindBySessionID failed: %v", err)
+	}
+	if found != newerPath {
+		t.Fatalf("expected newer match %q, got %q", newerPath, found)
+	}
+
+	missing, err := searcher.FindBySessionID("missing-session-id")
+	if err != nil {
+		t.Fatalf("FindBySessionID missing failed: %v", err)
+	}
+	if missing != "" {
+		t.Fatalf("expected empty result for missing session, got %q", missing)
+	}
+}
+
 func TestLogWatcher_Integration(t *testing.T) {
 	// Create temp directory and file
 	homeDir := t.TempDir()

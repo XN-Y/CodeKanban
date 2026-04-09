@@ -61,6 +61,7 @@ type wireSess struct {
 	AssistantStateUpdatedAt *int64    `json:"asu,omitempty"`
 	SourceKind              string    `json:"sk"`
 	SyncState               string    `json:"ss"`
+	LastSyncMode            string    `json:"lsm,omitempty"`
 	SourceCreatedAt         *int64    `json:"sca,omitempty"`
 	SourceUpdatedAt         *int64    `json:"sua,omitempty"`
 	LastSyncedAt            *int64    `json:"lsa,omitempty"`
@@ -290,6 +291,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		AssistantStateUpdatedAt: assistantStateUpdatedAt,
 		SourceKind:              session.SourceKind,
 		SyncState:               string(session.SyncState),
+		LastSyncMode:            string(session.LastSyncMode),
 		SourceCreatedAt:         sourceCreatedAt,
 		SourceUpdatedAt:         sourceUpdatedAt,
 		LastSyncedAt:            lastSyncedAt,

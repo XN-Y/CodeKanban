@@ -1188,7 +1188,7 @@ import {
 import { useRouter } from 'vue-router';
 import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
-import { NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
+import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
   AddOutline,
   ChevronBackOutline,
@@ -2256,6 +2256,16 @@ const contextMenuOptions = computed<DropdownOption[]>(() => [
   {
     label: t('webSession.syncFromTerminal'),
     key: 'sync',
+    disabled:
+      !contextMenuSession.value ||
+      isDraftSession(contextMenuSession.value) ||
+      isArchivedPreviewSession(contextMenuSession.value) ||
+      contextMenuSession.value.agent !== 'codex' ||
+      !contextMenuSession.value.nativeSessionId,
+  },
+  {
+    label: t('webSession.deepSyncFromTerminal'),
+    key: 'deep-sync',
     disabled:
       !contextMenuSession.value ||
       isDraftSession(contextMenuSession.value) ||
@@ -5141,7 +5151,11 @@ async function handleContextMenuSelect(key: string | number) {
     return;
   }
   if (action === 'sync') {
-    await handleSyncSession(session.id);
+    confirmSyncSession(session, 'fast');
+    return;
+  }
+  if (action === 'deep-sync') {
+    confirmSyncSession(session, 'deep');
     return;
   }
   if (action === 'archive') {
@@ -5159,14 +5173,54 @@ async function handleContextMenuSelect(key: string | number) {
   }
 }
 
-async function handleSyncSession(sessionId: string) {
+function syncModeLabel(mode: 'fast' | 'deep') {
+  return mode === 'deep'
+    ? t('settings.webSessionSyncModeDeep')
+    : t('settings.webSessionSyncModeFast');
+}
+
+function confirmSyncSession(session: WebSessionSummary, mode: 'fast' | 'deep') {
+  const clearExisting = ref(false);
+  dialog.warning({
+    title: t('webSession.syncConfirmTitle'),
+    content: () =>
+      h('div', { class: 'web-session-close-confirm' }, [
+        h('div', { class: 'web-session-close-confirm__message' }, [
+          t('webSession.syncConfirmContent', { mode: syncModeLabel(mode) }),
+        ]),
+        h(
+          'div',
+          { class: 'web-session-close-confirm__checkbox' },
+          h(
+            NCheckbox,
+            {
+              checked: clearExisting.value,
+              'onUpdate:checked': (value: boolean) => {
+                clearExisting.value = value;
+              },
+            },
+            { default: () => t('webSession.syncClearExisting') }
+          )
+        ),
+      ]),
+    positiveText: mode === 'deep' ? t('webSession.deepSyncFromTerminal') : t('webSession.syncFromTerminal'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: async () => handleSyncSession(session.id, mode, clearExisting.value),
+  });
+}
+
+async function handleSyncSession(
+  sessionId: string,
+  mode: 'fast' | 'deep' = 'fast',
+  clearExisting = false
+) {
   const session = sessions.value.find(item => item.id === sessionId);
   if (!session) {
     return;
   }
   try {
-    await webSessionStore.syncSession(session.projectId, sessionId);
-    message.success(t('webSession.syncSuccess'));
+    await webSessionStore.syncSession(session.projectId, sessionId, mode, clearExisting);
+    message.success(mode === 'deep' ? t('webSession.deepSyncSuccess') : t('webSession.syncSuccess'));
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('webSession.syncFailed'));
   }
@@ -7650,6 +7704,21 @@ onBeforeUnmount(() => {
 
 .composer-mobile-toggle-arrow.is-open {
   transform: rotate(180deg);
+}
+
+.web-session-close-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.web-session-close-confirm__message {
+  line-height: 1.5;
+}
+
+.web-session-close-confirm__checkbox {
+  display: flex;
+  align-items: center;
 }
 
 .composer-config {

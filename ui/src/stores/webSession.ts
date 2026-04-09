@@ -42,6 +42,7 @@ type WireSession = {
   asu?: number | null;
   sk: string;
   ss: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
+  lsm?: 'fast' | 'deep';
   sca?: number | null;
   sua?: number | null;
   lsa?: number | null;
@@ -1265,6 +1266,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
       syncState: session.ss ?? 'missing',
+      lastSyncMode: session.lsm === 'deep' || session.lsm === 'fast' ? session.lsm : null,
       sourceCreatedAt: session.sca ? new Date(session.sca).toISOString() : null,
       sourceUpdatedAt: session.sua ? new Date(session.sua).toISOString() : null,
       lastSyncedAt: session.lsa ? new Date(session.lsa).toISOString() : null,
@@ -2301,7 +2303,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return summary;
   }
 
-  async function syncSession(projectId: string, sessionId: string) {
+  async function syncSession(
+    projectId: string,
+    sessionId: string,
+    mode?: 'fast' | 'deep',
+    clearExisting = false
+  ) {
     updateSessionStatus(sessionId, current => ({
       ...current,
       syncState: 'syncing',
@@ -2310,7 +2317,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }));
     setHistoryLoading(sessionId, true);
     try {
-      const snapshot = await webSessionApi.sync(projectId, sessionId);
+      const snapshot = await webSessionApi.sync(projectId, sessionId, mode, clearExisting);
       if (snapshot?.session) {
         upsertSession(snapshot.session);
       }

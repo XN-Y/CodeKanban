@@ -113,12 +113,20 @@ export const webSessionApi = {
     return body.item;
   },
 
-  async sync(projectId: string, sessionId: string): Promise<WebSessionSnapshot> {
+  async sync(
+    projectId: string,
+    sessionId: string,
+    mode?: 'fast' | 'deep',
+    clearExisting = false
+  ): Promise<WebSessionSnapshot> {
     const body =
       (await http
         .Post<
           ItemResponse<WebSessionSnapshot>
-        >(`/projects/${projectId}/web-sessions/${sessionId}/sync`)
+        >(`/projects/${projectId}/web-sessions/${sessionId}/sync`, {
+          ...(mode ? { mode } : {}),
+          clearExisting,
+        })
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to sync web session');

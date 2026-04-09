@@ -40,18 +40,20 @@ const (
 )
 
 type Config struct {
-	DataDir             string
-	AttachmentSizeLimit int64
-	ClaudePath          string
-	CodexPath           string
+	DataDir              string
+	AttachmentSizeLimit  int64
+	ClaudePath           string
+	CodexPath            string
+	DefaultCodexSyncMode func() SyncMode
 }
 
 type Manager struct {
-	cfg         Config
-	logger      *zap.Logger
-	store       *store
-	projectSvc  *model.ProjectService
-	worktreeSvc *service.WorktreeService
+	cfg          Config
+	logger       *zap.Logger
+	store        *store
+	projectSvc   *model.ProjectService
+	worktreeSvc  *service.WorktreeService
+	aiSessionSvc *service.AISessionService
 
 	mu                 sync.RWMutex
 	runs               map[string]*activeRun
@@ -200,13 +202,14 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		cfg:         cfg,
-		logger:      logger.Named("web-session-manager"),
-		store:       eventStore,
-		projectSvc:  model.NewProjectService(),
-		worktreeSvc: service.NewWorktreeService(),
-		runs:        make(map[string]*activeRun),
-		clients:     make(map[*client]struct{}),
+		cfg:          cfg,
+		logger:       logger.Named("web-session-manager"),
+		store:        eventStore,
+		projectSvc:   model.NewProjectService(),
+		worktreeSvc:  service.NewWorktreeService(),
+		aiSessionSvc: service.NewAISessionService(),
+		runs:         make(map[string]*activeRun),
+		clients:      make(map[*client]struct{}),
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
@@ -367,6 +370,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		AssistantStateUpdatedAt: nil,
 		SourceKind:              string(defaultSessionBackend(normalizeAgent(params.Agent))),
 		SyncState:               string(SyncStateMissing),
+		LastSyncMode:            "",
 		SourceCreatedAt:         nil,
 		SourceUpdatedAt:         nil,
 		LastSyncedAt:            nil,
@@ -542,6 +546,7 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 		"native_session_id": nil,
 		"source_kind":       string(defaultSessionBackend(normalized)),
 		"sync_state":        SyncStateMissing,
+		"last_sync_mode":    "",
 		"source_created_at": nil,
 		"source_updated_at": nil,
 		"last_synced_at":    nil,
@@ -2445,6 +2450,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		AssistantStateUpdatedAt: assistantStateUpdatedAt,
 		SourceKind:              record.SourceKind,
 		SyncState:               normalizeSyncState(record.SyncState),
+		LastSyncMode:            recordedSyncMode(record.LastSyncMode),
 		SourceCreatedAt:         record.SourceCreatedAt,
 		SourceUpdatedAt:         record.SourceUpdatedAt,
 		LastSyncedAt:            record.LastSyncedAt,

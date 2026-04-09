@@ -36,17 +36,69 @@ func joinedNonEmpty(parts ...string) string {
 	return strings.Join(items, "\n")
 }
 
+func parseHistoryTimestamp(raw any) *time.Time {
+	switch value := raw.(type) {
+	case string:
+		text := strings.TrimSpace(value)
+		if text == "" {
+			return nil
+		}
+		if parsed, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return &parsed
+		}
+		if parsed, err := time.Parse(time.RFC3339, text); err == nil {
+			return &parsed
+		}
+	case float64:
+		if value <= 0 {
+			return nil
+		}
+		seconds := int64(value)
+		if value >= 1e12 {
+			parsed := time.UnixMilli(seconds)
+			return &parsed
+		}
+		parsed := time.Unix(seconds, 0)
+		return &parsed
+	case int64:
+		if value <= 0 {
+			return nil
+		}
+		parsed := time.UnixMilli(value)
+		return &parsed
+	case int:
+		if value <= 0 {
+			return nil
+		}
+		parsed := time.UnixMilli(int64(value))
+		return &parsed
+	}
+	return nil
+}
+
+func threadReadItemTimestamp(item map[string]any) *time.Time {
+	for _, key := range []string{"timestamp", "createdAt", "startedAt", "completedAt", "updatedAt"} {
+		if parsed := parseHistoryTimestamp(item[key]); parsed != nil {
+			return parsed
+		}
+	}
+	return nil
+}
+
 func (m *Manager) mapThreadReadItem(
 	item map[string]any,
 	orderIndex int64,
 ) (HistoryItem, error) {
 	itemType := strings.TrimSpace(stringValue(item["type"]))
 	sourceItemID := strings.TrimSpace(stringValue(item["id"]))
+	itemTimestamp := threadReadItemTimestamp(item)
 	result := HistoryItem{
 		ID:           sourceItemID,
 		SourceItemID: nilIfEmptyHistory(sourceItemID),
 		OrderIndex:   orderIndex,
 		ItemType:     itemType,
+		Timestamp:    itemTimestamp,
+		ObservedAt:   itemTimestamp,
 		Payload:      cloneMap(item),
 	}
 
@@ -349,10 +401,26 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 	return result
 }
 
+func (m *Manager) defaultCodexSyncMode() SyncMode {
+	if m.cfg.DefaultCodexSyncMode != nil {
+		return normalizeSyncMode(string(m.cfg.DefaultCodexSyncMode()))
+	}
+	return SyncModeFast
+}
+
+func (m *Manager) shouldPreserveExistingHistoryOnFastSync(session tables.WebSessionTable) bool {
+	if normalizeSyncMode(session.LastSyncMode) == SyncModeDeep {
+		return true
+	}
+	return session.LastEventSeq > 0
+}
+
 func (m *Manager) syncSessionFromSource(
 	ctx context.Context,
 	sessionID string,
+	mode SyncMode,
 	force bool,
+	clearExisting bool,
 ) (SessionSnapshot, error) {
 	session, err := m.GetSession(ctx, sessionID)
 	if err != nil {
@@ -364,6 +432,7 @@ func (m *Manager) syncSessionFromSource(
 	if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
 		return SessionSnapshot{}, fmt.Errorf("session has no native thread id")
 	}
+	mode = normalizeSyncMode(string(mode))
 
 	now := time.Now()
 	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
@@ -372,15 +441,55 @@ func (m *Manager) syncSessionFromSource(
 		"updated_at": now,
 	})
 
-	remote, err := m.readCodexThread(ctx, session, strings.TrimSpace(*session.NativeSessionID))
+	var snapshot SessionSnapshot
+	switch mode {
+	case SyncModeDeep:
+		snapshot, err = m.syncSessionFromLogSource(ctx, session, force, clearExisting)
+	default:
+		snapshot, err = m.syncSessionFromThreadSource(ctx, session, force, clearExisting)
+	}
 	if err != nil {
-		message := err.Error()
 		_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
 			"sync_state": SyncStateError,
-			"sync_error": message,
+			"sync_error": err.Error(),
 			"updated_at": time.Now(),
 		})
 		return SessionSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
+func (m *Manager) syncSessionFromThreadSource(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	force bool,
+	clearExisting bool,
+) (SessionSnapshot, error) {
+	remote, err := m.readCodexThread(ctx, session, strings.TrimSpace(*session.NativeSessionID))
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+
+	metadataUpdates := map[string]any{
+		"source_kind":       string(defaultSessionBackend(AgentCodex)),
+		"source_created_at": remote.Summary.CreatedAt,
+		"source_updated_at": remote.Summary.UpdatedAt,
+		"last_synced_at":    time.Now(),
+		"sync_state":        SyncStateFresh,
+		"sync_error":        nil,
+		"thread_path":       nilIfEmpty(remote.Summary.Path),
+		"thread_preview":    nilIfEmpty(remote.Summary.Preview),
+		"updated_at":        time.Now(),
+	}
+	if force && remote.Summary.UpdatedAt != nil {
+		metadataUpdates["activity_at"] = *remote.Summary.UpdatedAt
+	}
+
+	if !clearExisting && m.shouldPreserveExistingHistoryOnFastSync(session) {
+		if err := m.updateRuntimeState(ctx, session.ID, metadataUpdates); err != nil {
+			return SessionSnapshot{}, err
+		}
+		return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
 	}
 
 	turnRows := make([]tables.WebSessionTurnTable, 0, len(remote.Turns))
@@ -430,35 +539,31 @@ func (m *Manager) syncSessionFromSource(
 		itemRows = append(itemRows, row)
 	}
 
-	updates := map[string]any{
-		"source_kind":       string(defaultSessionBackend(AgentCodex)),
-		"source_created_at": remote.Summary.CreatedAt,
-		"source_updated_at": remote.Summary.UpdatedAt,
-		"last_synced_at":    time.Now(),
-		"sync_state":        SyncStateFresh,
-		"sync_error":        nil,
-		"thread_path":       nilIfEmpty(remote.Summary.Path),
-		"thread_preview":    nilIfEmpty(remote.Summary.Preview),
-		"turn_count":        len(turnRows),
-		"item_count":        len(itemRows),
-		"updated_at":        time.Now(),
-	}
-	if force && remote.Summary.UpdatedAt != nil {
-		updates["activity_at"] = *remote.Summary.UpdatedAt
-	}
-	if err := m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates); err != nil {
-		_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
-			"sync_state": SyncStateError,
-			"sync_error": err.Error(),
-			"updated_at": time.Now(),
-		})
+	updates := cloneMap(metadataUpdates)
+	updates["last_sync_mode"] = string(SyncModeFast)
+	updates["turn_count"] = len(turnRows)
+	updates["item_count"] = len(itemRows)
+	updates["last_event_seq"] = 0
+	if err := m.store.deleteSessionFiles(session.ID); err != nil {
 		return SessionSnapshot{}, err
 	}
-	return m.loadSnapshot(ctx, sessionID, DefaultHistoryWindow, false)
+	if err := m.replaceSessionHistoryCache(ctx, session, turnRows, itemRows, updates); err != nil {
+		return SessionSnapshot{}, err
+	}
+	return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
 }
 
 func (m *Manager) SyncSession(ctx context.Context, sessionID string) (SessionSnapshot, error) {
-	return m.syncSessionFromSource(ctx, sessionID, true)
+	return m.syncSessionFromSource(ctx, sessionID, m.defaultCodexSyncMode(), true, false)
+}
+
+func (m *Manager) SyncSessionWithMode(
+	ctx context.Context,
+	sessionID string,
+	mode SyncMode,
+	clearExisting bool,
+) (SessionSnapshot, error) {
+	return m.syncSessionFromSource(ctx, sessionID, mode, true, clearExisting)
 }
 
 func (m *Manager) refreshSessionSourceStates(
@@ -553,6 +658,6 @@ func (m *Manager) syncSessionIfCacheMissing(
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, cacheSyncReadTimeout)
 	defer cancel()
-	_, err := m.syncSessionFromSource(timeoutCtx, session.ID, false)
+	_, err := m.syncSessionFromSource(timeoutCtx, session.ID, m.defaultCodexSyncMode(), false, false)
 	return err
 }

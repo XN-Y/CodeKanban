@@ -1610,6 +1610,81 @@ func (s *AISessionService) saveCodexSession(
 	}, nil
 }
 
+// ResolveCodexSessionBySessionID locates a Codex session by native session ID
+// and refreshes the cached ai_sessions row when the backing file changed.
+func (s *AISessionService) ResolveCodexSessionBySessionID(
+	ctx context.Context,
+	sessionID string,
+) (*tables.AISessionTable, error) {
+	ctx = ensureContext(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var cached tables.AISessionTable
+	err := db.WithContext(ctx).
+		Where("session_id = ? AND type = ?", sessionID, tables.AISessionTypeCodex).
+		First(&cached).Error
+	if err == nil {
+		info, statErr := os.Stat(cached.FilePath)
+		if statErr == nil {
+			if cached.FileModTime.Equal(info.ModTime()) && cached.FileSize == info.Size() {
+				return &cached, nil
+			}
+			data, parseErr := s.parseCodexSessionFile(cached.FilePath)
+			if parseErr == nil {
+				if _, saveErr := s.saveCodexSession(ctx, db, sessionID, cached.FilePath, info, data); saveErr == nil {
+					var refreshed tables.AISessionTable
+					if reloadErr := db.WithContext(ctx).
+						Where("session_id = ? AND type = ?", sessionID, tables.AISessionTypeCodex).
+						First(&refreshed).Error; reloadErr == nil {
+						return &refreshed, nil
+					}
+				}
+			}
+		}
+	}
+
+	searcher, searchErr := log_watcher.NewCodexFileSearcher()
+	if searchErr != nil {
+		return nil, searchErr
+	}
+	filePath, searchErr := searcher.FindBySessionID(sessionID)
+	if searchErr != nil {
+		return nil, searchErr
+	}
+	if strings.TrimSpace(filePath) == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	info, statErr := os.Stat(filePath)
+	if statErr != nil {
+		return nil, statErr
+	}
+	data, parseErr := s.parseCodexSessionFile(filePath)
+	if parseErr != nil {
+		return nil, parseErr
+	}
+	if _, saveErr := s.saveCodexSession(ctx, db, sessionID, filePath, info, data); saveErr != nil {
+		return nil, saveErr
+	}
+
+	var record tables.AISessionTable
+	if loadErr := db.WithContext(ctx).
+		Where("session_id = ? AND type = ?", sessionID, tables.AISessionTypeCodex).
+		First(&record).Error; loadErr != nil {
+		return nil, loadErr
+	}
+	return &record, nil
+}
+
 // CleanupStaleSessions removes cached sessions whose files no longer exist.
 func (s *AISessionService) CleanupStaleSessions(ctx context.Context) (int64, error) {
 	ctx = ensureContext(ctx)

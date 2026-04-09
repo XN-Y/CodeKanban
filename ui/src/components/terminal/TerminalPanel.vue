@@ -812,6 +812,7 @@ const developerConfigState = reactive<DeveloperConfig>({
   renameSessionTitleEachCommand: false,
   autoCreateTaskOnStartWork: true,
   enableTerminalStateSnapshot: false,
+  webSessionCodexDefaultSyncMode: 'fast',
 });
 const developerConfigLoaded = ref(false);
 const developerConfigLoading = ref(false);
@@ -1230,6 +1231,8 @@ async function ensureDeveloperConfigLoaded() {
       developerConfigState.autoCreateTaskOnStartWork = config?.autoCreateTaskOnStartWork ?? true;
       developerConfigState.enableTerminalStateSnapshot =
         config?.enableTerminalStateSnapshot ?? false;
+      developerConfigState.webSessionCodexDefaultSyncMode =
+        config?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast';
       developerConfigLoaded.value = true;
       return true;
     } catch (error) {
@@ -1261,6 +1264,7 @@ async function toggleRenameTitleEachCommandSetting() {
         renameSessionTitleEachCommand: nextValue,
         autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
         enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
+        webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
       })
       .send();
     developerConfigState.renameSessionTitleEachCommand = nextValue;
@@ -1290,6 +1294,7 @@ async function toggleAutoCreateTaskOnStartWorkSetting() {
         renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
         autoCreateTaskOnStartWork: nextValue,
         enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
+        webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
       })
       .send();
     developerConfigState.autoCreateTaskOnStartWork = nextValue;

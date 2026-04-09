@@ -88,6 +88,13 @@ const (
 	SyncStateError   SyncState = "error"
 )
 
+type SyncMode string
+
+const (
+	SyncModeFast SyncMode = "fast"
+	SyncModeDeep SyncMode = "deep"
+)
+
 type SessionSummary struct {
 	ID                      string              `json:"id"`
 	ProjectID               string              `json:"projectId"`
@@ -110,6 +117,7 @@ type SessionSummary struct {
 	AssistantStateUpdatedAt *time.Time          `json:"assistantStateUpdatedAt,omitempty"`
 	SourceKind              string              `json:"sourceKind"`
 	SyncState               SyncState           `json:"syncState"`
+	LastSyncMode            SyncMode            `json:"lastSyncMode,omitempty"`
 	SourceCreatedAt         *time.Time          `json:"sourceCreatedAt,omitempty"`
 	SourceUpdatedAt         *time.Time          `json:"sourceUpdatedAt,omitempty"`
 	LastSyncedAt            *time.Time          `json:"lastSyncedAt,omitempty"`

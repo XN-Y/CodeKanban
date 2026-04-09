@@ -30,10 +30,11 @@ type TerminalShellConfig struct {
 }
 
 type DeveloperConfig struct {
-	EnableTerminalScrollback      bool `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
-	RenameSessionTitleEachCommand bool `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
-	AutoCreateTaskOnStartWork     bool `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
-	EnableTerminalStateSnapshot   bool `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
+	EnableTerminalScrollback       bool   `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+	RenameSessionTitleEachCommand  bool   `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
+	AutoCreateTaskOnStartWork      bool   `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
+	EnableTerminalStateSnapshot    bool   `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
+	WebSessionCodexDefaultSyncMode string `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
 }
 
 // WorktreeConfig Worktree 全局配置。
@@ -206,10 +207,11 @@ func ReadConfig() *AppConfig {
 			},
 		},
 		Developer: DeveloperConfig{
-			EnableTerminalScrollback:      false,
-			RenameSessionTitleEachCommand: false,
-			AutoCreateTaskOnStartWork:     true,
-			EnableTerminalStateSnapshot:   runtime.GOOS != "windows",
+			EnableTerminalScrollback:       false,
+			RenameSessionTitleEachCommand:  false,
+			AutoCreateTaskOnStartWork:      true,
+			EnableTerminalStateSnapshot:    runtime.GOOS != "windows",
+			WebSessionCodexDefaultSyncMode: "fast",
 		},
 		Worktree: WorktreeConfig{
 			GlobalBaseDir:        "",

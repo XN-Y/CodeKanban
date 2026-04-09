@@ -223,6 +223,7 @@ export interface DeveloperConfig {
   renameSessionTitleEachCommand: boolean;
   autoCreateTaskOnStartWork: boolean;
   enableTerminalStateSnapshot: boolean;
+  webSessionCodexDefaultSyncMode: 'fast' | 'deep';
 }
 
 export interface WorktreeConfig {
@@ -289,6 +290,7 @@ export interface WebSessionSummary {
   assistantStateUpdatedAt?: string | null;
   sourceKind: string;
   syncState: 'fresh' | 'stale' | 'missing' | 'syncing' | 'error';
+  lastSyncMode?: 'fast' | 'deep' | null;
   sourceCreatedAt?: string | null;
   sourceUpdatedAt?: string | null;
   lastSyncedAt?: string | null;

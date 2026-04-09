@@ -27,6 +27,28 @@ func normalizeSyncState(value string) SyncState {
 	}
 }
 
+func normalizeSyncMode(value string) SyncMode {
+	switch SyncMode(strings.TrimSpace(value)) {
+	case SyncModeFast:
+		return SyncModeFast
+	case SyncModeDeep:
+		return SyncModeDeep
+	default:
+		return SyncModeFast
+	}
+}
+
+func recordedSyncMode(value string) SyncMode {
+	switch SyncMode(strings.TrimSpace(value)) {
+	case SyncModeFast:
+		return SyncModeFast
+	case SyncModeDeep:
+		return SyncModeDeep
+	default:
+		return ""
+	}
+}
+
 func mustJSONText(value any) string {
 	if value == nil {
 		return ""

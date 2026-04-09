@@ -57,6 +57,57 @@ func (s *CodexFileSearcher) GetSessionDir() string {
 	return s.sessionDir
 }
 
+// FindBySessionID finds a rollout file by Codex session ID.
+func (s *CodexFileSearcher) FindBySessionID(sessionID string) (string, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return "", nil
+	}
+
+	type candidate struct {
+		path    string
+		modTime time.Time
+	}
+
+	matches := make([]candidate, 0, 4)
+	suffix := "-" + sessionID + CodexRolloutSuffix
+	err := filepath.WalkDir(s.sessionDir, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if d == nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasPrefix(name, CodexRolloutPrefix) || !strings.HasSuffix(name, suffix) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		matches = append(matches, candidate{
+			path:    path,
+			modTime: info.ModTime(),
+		})
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if len(matches) == 0 {
+		return "", nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].modTime.Equal(matches[j].modTime) {
+			return matches[i].path > matches[j].path
+		}
+		return matches[i].modTime.After(matches[j].modTime)
+	})
+	return matches[0].path, nil
+}
+
 // FindSessionFile searches for a session file created after the given time
 func (s *CodexFileSearcher) FindSessionFile(ctx context.Context, afterTime time.Time) (string, error) {
 	// Get today's date directory

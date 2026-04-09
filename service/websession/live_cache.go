@@ -498,7 +498,7 @@ func (m *Manager) maybeSyncSessionAfterRun(session tables.WebSessionTable) {
 	go func() {
 		timeoutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if _, err := m.syncSessionFromSource(timeoutCtx, session.ID, true); err != nil {
+		if _, err := m.syncSessionFromSource(timeoutCtx, session.ID, m.defaultCodexSyncMode(), true, false); err != nil {
 			if m.logger != nil {
 				m.logger.Debug("failed to refresh session cache after run",
 					zap.String("sessionId", session.ID),

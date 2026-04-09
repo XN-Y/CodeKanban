@@ -1,0 +1,575 @@
+package websession
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"code-kanban/model/tables"
+	"code-kanban/utils"
+	"code-kanban/utils/ai_assistant2/log_watcher"
+)
+
+func (m *Manager) syncSessionFromLogSource(
+	ctx context.Context,
+	session tables.WebSessionTable,
+	force bool,
+	clearExisting bool,
+) (SessionSnapshot, error) {
+	if m.aiSessionSvc == nil {
+		return SessionSnapshot{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	record, err := m.aiSessionSvc.ResolveCodexSessionBySessionID(ctx, strings.TrimSpace(*session.NativeSessionID))
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+
+	items, err := m.parseCodexDeepHistory(record.FilePath)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
+	items = compactSyncedHistoryItems(items)
+
+	itemRows := make([]tables.WebSessionItemTable, 0, len(items))
+	for _, item := range items {
+		row := tables.WebSessionItemTable{}
+		row.Init()
+		row.WebSessionID = session.ID
+		applyHistoryItemToRow(&row, session.ID, item)
+		itemRows = append(itemRows, row)
+	}
+
+	var sourceCreatedAt *time.Time
+	if !record.SessionStartedAt.IsZero() {
+		value := record.SessionStartedAt
+		sourceCreatedAt = &value
+	}
+	var sourceUpdatedAt *time.Time
+	if info, statErr := os.Stat(record.FilePath); statErr == nil {
+		value := info.ModTime()
+		sourceUpdatedAt = &value
+	} else if record.LastMessageAt != nil {
+		value := *record.LastMessageAt
+		sourceUpdatedAt = &value
+	}
+
+	updates := map[string]any{
+		"source_kind":       string(defaultSessionBackend(AgentCodex)),
+		"source_created_at": sourceCreatedAt,
+		"source_updated_at": sourceUpdatedAt,
+		"last_synced_at":    time.Now(),
+		"sync_state":        SyncStateFresh,
+		"sync_error":        nil,
+		"last_sync_mode":    string(SyncModeDeep),
+		"turn_count":        0,
+		"item_count":        len(itemRows),
+		"last_event_seq":    0,
+		"updated_at":        time.Now(),
+	}
+	if force {
+		if latest := latestHistoryItemTimestamp(items); latest != nil {
+			updates["activity_at"] = *latest
+		} else if sourceUpdatedAt != nil {
+			updates["activity_at"] = *sourceUpdatedAt
+		}
+	}
+
+	if err := m.store.deleteSessionFiles(session.ID); err != nil {
+		return SessionSnapshot{}, err
+	}
+	if err := m.replaceSessionHistoryCache(ctx, session, nil, itemRows, updates); err != nil {
+		return SessionSnapshot{}, err
+	}
+	return m.loadSnapshot(ctx, session.ID, DefaultHistoryWindow, false)
+}
+
+func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	items := make([]HistoryItem, 0, 256)
+	pendingTools := make(map[string]int)
+	pendingUserInputs := make(map[string]int)
+	var orderIndex int64
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 64*1024)
+	scanner.Buffer(buf, 2*1024*1024)
+
+	appendItem := func(item HistoryItem) int {
+		orderIndex++
+		if strings.TrimSpace(item.ID) == "" {
+			item.ID = fmt.Sprintf("deep_%d", orderIndex)
+		}
+		item.OrderIndex = orderIndex
+		items = append(items, item)
+		return len(items) - 1
+	}
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+
+		var entry log_watcher.LogEntry
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
+
+		switch entry.Type {
+		case "event_msg":
+			payload, ok := entry.Payload.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, item := range m.codexHistoryItemsFromEventMessage(payload, ts) {
+				appendItem(item)
+			}
+		case "response_item":
+			payload, ok := entry.Payload.(map[string]any)
+			if !ok {
+				continue
+			}
+			m.applyCodexResponseItem(
+				&items,
+				payload,
+				ts,
+				appendItem,
+				pendingTools,
+				pendingUserInputs,
+			)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	for index := range items {
+		items[index].OrderIndex = int64(index + 1)
+	}
+	return items, nil
+}
+
+func latestHistoryItemTimestamp(items []HistoryItem) *time.Time {
+	var latest *time.Time
+	for _, item := range items {
+		candidate := item.ObservedAt
+		if candidate == nil {
+			candidate = item.Timestamp
+		}
+		if candidate == nil {
+			continue
+		}
+		if latest == nil || candidate.After(*latest) {
+			value := *candidate
+			latest = &value
+		}
+	}
+	return latest
+}
+
+func (m *Manager) codexHistoryItemsFromEventMessage(
+	payload map[string]any,
+	ts time.Time,
+) []HistoryItem {
+	itemType := strings.TrimSpace(stringValue(payload["type"]))
+	switch itemType {
+	case "user_message":
+		text := strings.TrimSpace(stringValue(payload["message"]))
+		attachments := m.codexHistoryAttachments(payload)
+		if text == "" && len(attachments) == 0 {
+			return nil
+		}
+		return []HistoryItem{{
+			ID:          utils.NewID(),
+			Kind:        "user",
+			ItemType:    "user_message",
+			Text:        text,
+			Timestamp:   ptr(ts),
+			ObservedAt:  ptr(ts),
+			Attachments: attachments,
+			Payload:     cloneMap(payload),
+		}}
+	case "agent_message":
+		text := strings.TrimSpace(stringValue(payload["message"]))
+		if text == "" {
+			return nil
+		}
+		return []HistoryItem{{
+			ID:         utils.NewID(),
+			Kind:       "assistant",
+			ItemType:   "agent_message",
+			Text:       text,
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Done:       true,
+			Payload:    cloneMap(payload),
+		}}
+	case "turn_aborted":
+		return []HistoryItem{{
+			ID:         utils.NewID(),
+			Kind:       "system",
+			ItemType:   "run_abort",
+			Text:       firstNonEmpty(strings.TrimSpace(stringValue(payload["reason"])), "Run aborted"),
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Level:      "warn",
+			Payload:    cloneMap(payload),
+		}}
+	default:
+		return nil
+	}
+}
+
+func (m *Manager) applyCodexResponseItem(
+	items *[]HistoryItem,
+	payload map[string]any,
+	ts time.Time,
+	appendItem func(item HistoryItem) int,
+	pendingTools map[string]int,
+	pendingUserInputs map[string]int,
+) {
+	responseType := strings.TrimSpace(stringValue(payload["type"]))
+	switch responseType {
+	case "reasoning":
+		text := codexReasoningSummary(payload)
+		if text == "" {
+			return
+		}
+		appendItem(HistoryItem{
+			ID:         utils.NewID(),
+			Kind:       "tool",
+			ItemType:   "reasoning",
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Payload:    cloneMap(payload),
+			Tool: &HistoryTool{
+				ID:     utils.NewID(),
+				Name:   "Reasoning",
+				Kind:   "reasoning",
+				Output: text,
+				Status: "done",
+				Meta: map[string]any{
+					"title": "Reasoning",
+					"kind":  "reasoning",
+				},
+			},
+		})
+	case "function_call":
+		callID := strings.TrimSpace(stringValue(payload["call_id"]))
+		if callID == "" {
+			callID = utils.NewID()
+		}
+		toolName := strings.TrimSpace(stringValue(payload["name"]))
+		input := decodeDeepSyncArguments(stringValue(payload["arguments"]))
+		if toolName == "request_user_input" {
+			questions := decodeToolQuestions(decodeRawObject(input)["questions"])
+			prompt := summarizeToolQuestions(questions)
+			index := appendItem(HistoryItem{
+				ID:           callID,
+				SourceItemID: ptr(callID),
+				Kind:         "system",
+				ItemType:     "user_input_request",
+				Text:         prompt,
+				Timestamp:    ptr(ts),
+				ObservedAt:   ptr(ts),
+				Level:        "warn",
+				Detail: &HistoryDetail{
+					Type:      "user_input_request",
+					Prompt:    prompt,
+					Questions: questions,
+				},
+				Payload: cloneMap(payload),
+			})
+			pendingUserInputs[callID] = index
+			return
+		}
+
+		kind := deepSyncToolKind(toolName)
+		normalizedInput := deepSyncToolInput(toolName, input)
+		tool := &HistoryTool{
+			ID:     callID,
+			Name:   deepSyncToolDisplayName(toolName, kind),
+			Kind:   kind,
+			Input:  normalizedInput,
+			Status: "running",
+			Meta:   deepSyncToolMeta(toolName, kind, normalizedInput),
+		}
+		index := appendItem(HistoryItem{
+			ID:           callID,
+			SourceItemID: ptr(callID),
+			Kind:         "tool",
+			ItemType:     kind,
+			Timestamp:    ptr(ts),
+			ObservedAt:   ptr(ts),
+			Payload:      cloneMap(payload),
+			Tool:         tool,
+		})
+		pendingTools[callID] = index
+	case "function_call_output":
+		callID := strings.TrimSpace(stringValue(payload["call_id"]))
+		output := strings.TrimSpace(stringValue(payload["output"]))
+		if callID == "" {
+			callID = utils.NewID()
+		}
+
+		if requestIndex, ok := pendingUserInputs[callID]; ok && requestIndex >= 0 && requestIndex < len(*items) {
+			delete(pendingUserInputs, callID)
+			response := HistoryItem{
+				ID:         utils.NewID(),
+				Kind:       "system",
+				ItemType:   "user_input_response",
+				Text:       "Submitted requested input",
+				Timestamp:  ptr(ts),
+				ObservedAt: ptr(ts),
+				Level:      "info",
+				Payload:    cloneMap(payload),
+			}
+			var questions []toolRequestQuestion
+			if detail := (*items)[requestIndex].Detail; detail != nil {
+				questions = detail.Questions
+			}
+			if answers := decodeRequestUserInputAnswers(output, questions); len(answers) > 0 {
+				response.Detail = &HistoryDetail{
+					Type:    "user_input_response",
+					Answers: answers,
+				}
+			} else {
+				response.Text = firstNonEmpty(output, response.Text)
+			}
+			appendItem(response)
+			return
+		}
+
+		if toolIndex, ok := pendingTools[callID]; ok && toolIndex >= 0 && toolIndex < len(*items) {
+			item := (*items)[toolIndex]
+			item.ObservedAt = ptr(ts)
+			item.Done = true
+			item.Payload = cloneMap(payload)
+			if item.Tool == nil {
+				item.Tool = &HistoryTool{
+					ID:     callID,
+					Name:   "ToolCall",
+					Kind:   "dynamic_tool_call",
+					Status: "done",
+				}
+			}
+			item.Tool.Output = truncateToolOutput(item.Tool.Kind, output)
+			item.Tool.Status = deepSyncToolStatus(output)
+			(*items)[toolIndex] = item
+			delete(pendingTools, callID)
+			return
+		}
+
+		appendItem(HistoryItem{
+			ID:         utils.NewID(),
+			Kind:       "system",
+			ItemType:   "tool_output",
+			Text:       truncateToolOutput("dynamic_tool_call", output),
+			Timestamp:  ptr(ts),
+			ObservedAt: ptr(ts),
+			Level:      "info",
+			Payload:    cloneMap(payload),
+		})
+	}
+}
+
+func decodeDeepSyncArguments(raw string) any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var decoded any
+	if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
+		return decoded
+	}
+	return raw
+}
+
+func deepSyncToolKind(toolName string) string {
+	switch strings.TrimSpace(toolName) {
+	case "exec_command":
+		return "command_execution"
+	case "apply_patch":
+		return "file_change"
+	default:
+		return "dynamic_tool_call"
+	}
+}
+
+func deepSyncToolDisplayName(toolName string, kind string) string {
+	switch kind {
+	case "command_execution":
+		return "CommandExecution"
+	case "file_change":
+		if strings.TrimSpace(toolName) == "apply_patch" {
+			return "FileChange"
+		}
+	}
+	return firstNonEmpty(strings.TrimSpace(toolName), "DynamicToolCall")
+}
+
+func deepSyncToolInput(toolName string, input any) any {
+	record := decodeRawObject(input)
+	switch strings.TrimSpace(toolName) {
+	case "exec_command":
+		return map[string]any{
+			"command":             firstNonEmpty(stringValue(record["cmd"]), stringValue(record["command"])),
+			"cwd":                 stringValue(record["workdir"]),
+			"sandbox_permissions": record["sandbox_permissions"],
+			"justification":       record["justification"],
+		}
+	case "apply_patch":
+		if patchText, ok := input.(string); ok {
+			return map[string]any{
+				"patch": patchText,
+			}
+		}
+		return input
+	default:
+		return input
+	}
+}
+
+func deepSyncToolMeta(toolName string, kind string, input any) map[string]any {
+	record := decodeRawObject(input)
+	subtitle := ""
+	switch kind {
+	case "command_execution":
+		subtitle = firstNonEmpty(stringValue(record["cmd"]), stringValue(record["command"]), stringValue(record["workdir"]))
+	case "file_change":
+		subtitle = deepSyncFirstPatchPath(input)
+	default:
+		subtitle = firstNonEmpty(stringValue(record["header"]), stringValue(record["question"]))
+	}
+	return map[string]any{
+		"title":    deepSyncToolDisplayName(toolName, kind),
+		"kind":     kind,
+		"subtitle": subtitle,
+	}
+}
+
+func deepSyncFirstPatchPath(input any) string {
+	record := decodeRawObject(input)
+	patchText := strings.TrimSpace(stringValue(record["patch"]))
+	if patchText == "" {
+		return ""
+	}
+	for _, line := range strings.Split(patchText, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			return strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
+		case strings.HasPrefix(line, "*** Add File: "):
+			return strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
+		case strings.HasPrefix(line, "*** Delete File: "):
+			return strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File: "))
+		}
+	}
+	return ""
+}
+
+func deepSyncToolStatus(output string) string {
+	normalized := strings.ToLower(strings.TrimSpace(output))
+	if strings.HasPrefix(normalized, "aborted by user") {
+		return "error"
+	}
+	return "done"
+}
+
+func codexReasoningSummary(payload map[string]any) string {
+	parts := []string{}
+	if summary := strings.TrimSpace(strings.Join(stringArrayValues(payload["summary"]), "\n")); summary != "" {
+		parts = append(parts, summary)
+	}
+	switch content := payload["content"].(type) {
+	case string:
+		if text := strings.TrimSpace(content); text != "" {
+			parts = append(parts, text)
+		}
+	case []any:
+		lines := make([]string, 0, len(content))
+		for _, item := range content {
+			record := decodeRawObject(item)
+			if text := strings.TrimSpace(firstNonEmpty(stringValue(record["text"]), stringValue(item))); text != "" {
+				lines = append(lines, text)
+			}
+		}
+		if joined := strings.TrimSpace(strings.Join(lines, "\n")); joined != "" {
+			parts = append(parts, joined)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
+}
+
+func (m *Manager) codexHistoryAttachments(payload map[string]any) []HistoryAttachment {
+	sources := append([]string{}, extractCodexAttachmentSources(payload["local_images"])...)
+	sources = append(sources, extractCodexAttachmentSources(payload["images"])...)
+	if len(sources) == 0 {
+		return nil
+	}
+	attachments := make([]HistoryAttachment, 0, len(sources))
+	for _, source := range sources {
+		attachment, err := m.registerExternalAttachment(source)
+		if err != nil {
+			continue
+		}
+		attachments = append(attachments, attachment)
+	}
+	if len(attachments) == 0 {
+		return nil
+	}
+	return attachments
+}
+
+func extractCodexAttachmentSources(raw any) []string {
+	values := []string{}
+	switch typed := raw.(type) {
+	case []any:
+		for _, item := range typed {
+			if text := strings.TrimSpace(stringValue(item)); text != "" {
+				values = append(values, text)
+			}
+		}
+	case []string:
+		for _, item := range typed {
+			if text := strings.TrimSpace(item); text != "" {
+				values = append(values, text)
+			}
+		}
+	}
+	return values
+}
+
+func decodeRequestUserInputAnswers(raw string, questions []toolRequestQuestion) []HistoryAnswerEntry {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var decoded struct {
+		Answers map[string]struct {
+			Answers []string `json:"answers"`
+		} `json:"answers"`
+	}
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil
+	}
+	answers := make(map[string]any, len(decoded.Answers))
+	for key, value := range decoded.Answers {
+		if len(value.Answers) == 0 {
+			continue
+		}
+		answers[key] = append([]string(nil), value.Answers...)
+	}
+	return historyAnswerEntries(answers, questions)
+}

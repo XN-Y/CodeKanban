@@ -404,6 +404,16 @@
                 <span class="form-tip">{{ t('settings.autoCreateTaskOnStartWorkTip') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.webSessionCodexDefaultSyncMode')">
+              <n-space vertical size="small">
+                <n-select
+                  v-model:value="developerForm.webSessionCodexDefaultSyncMode"
+                  :options="webSessionSyncModeOptions"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">{{ t('settings.webSessionCodexDefaultSyncModeTip') }}</span>
+              </n-space>
+            </n-form-item>
             <n-form-item :label="t('settings.terminalServerStateSnapshot')">
               <n-space vertical size="small">
                 <n-switch
@@ -890,8 +900,13 @@ const developerForm = reactive<DeveloperConfig>({
   renameSessionTitleEachCommand: false,
   autoCreateTaskOnStartWork: true,
   enableTerminalStateSnapshot: false,
+  webSessionCodexDefaultSyncMode: 'fast',
 });
 const developerOriginal = ref<DeveloperConfig | null>(null);
+const webSessionSyncModeOptions = computed(() => [
+  { label: t('settings.webSessionSyncModeFast'), value: 'fast' },
+  { label: t('settings.webSessionSyncModeDeep'), value: 'deep' },
+]);
 const developerDirty = computed(() => {
   if (!developerOriginal.value) {
     return false;
@@ -902,7 +917,9 @@ const developerDirty = computed(() => {
       developerOriginal.value.renameSessionTitleEachCommand ||
     developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork ||
     developerForm.enableTerminalStateSnapshot !==
-      developerOriginal.value.enableTerminalStateSnapshot
+      developerOriginal.value.enableTerminalStateSnapshot ||
+    developerForm.webSessionCodexDefaultSyncMode !==
+      developerOriginal.value.webSessionCodexDefaultSyncMode
   );
 });
 
@@ -947,6 +964,8 @@ async function loadDeveloperConfig() {
       developerForm.renameSessionTitleEachCommand = config.renameSessionTitleEachCommand ?? false;
       developerForm.autoCreateTaskOnStartWork = config.autoCreateTaskOnStartWork ?? true;
       developerForm.enableTerminalStateSnapshot = config.enableTerminalStateSnapshot ?? false;
+      developerForm.webSessionCodexDefaultSyncMode =
+        config.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast';
       developerOriginal.value = { ...developerForm };
     } else {
       // 如果后端没有返回配置，使用默认值并标记为已加载

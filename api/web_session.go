@@ -33,6 +33,9 @@ func registerWebSessionRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppC
 	manager, err := websession.NewManager(websession.Config{
 		DataDir:             utils.GetDataDir(),
 		AttachmentSizeLimit: cfg.AttachmentSizeLimit * 1024,
+		DefaultCodexSyncMode: func() websession.SyncMode {
+			return websession.SyncMode(cfg.Developer.WebSessionCodexDefaultSyncMode)
+		},
 	}, logger)
 	if err != nil {
 		logger.Error("failed to initialize web session manager", zap.Error(err))
@@ -254,13 +257,22 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 			SessionID string `path:"sessionId"`
+			Body      struct {
+				Mode          string `json:"mode,omitempty"`
+				ClearExisting bool   `json:"clearExisting,omitempty"`
+			}
 		},
 	) (*h.ItemResponse[websession.SessionSnapshot], error) {
 		record, err := c.manager.GetSession(ctx, input.SessionID)
 		if err != nil || record.ProjectID != input.ProjectID {
 			return nil, huma.Error404NotFound("session not found")
 		}
-		item, err := c.manager.SyncSession(ctx, input.SessionID)
+		item, err := c.manager.SyncSessionWithMode(
+			ctx,
+			input.SessionID,
+			websession.SyncMode(input.Body.Mode),
+			input.Body.ClearExisting,
+		)
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
 		}
