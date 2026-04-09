@@ -70,7 +70,7 @@ function handleApproval(event: WebSessionApprovalEvent) {
     onClose: () => {
       activeNotifications.delete(sessionId);
     },
-    onLeave: () => {
+    onAfterLeave: () => {
       activeNotifications.delete(sessionId);
     },
   });

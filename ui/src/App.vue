@@ -328,7 +328,11 @@ watch(
     <n-global-style />
     <n-loading-bar-provider>
       <n-dialog-provider>
-        <n-notification-provider :scrollable="false" container-class="global-notification-host">
+        <n-notification-provider
+          :scrollable="false"
+          :max="3"
+          container-class="global-notification-host"
+        >
           <n-message-provider>
             <n-modal-provider>
               <AppInitializer />

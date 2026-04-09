@@ -95,7 +95,7 @@ function handleCompletion(event: WebSessionAIEvent) {
     onClose: () => {
       activeNotifications.delete(sessionId);
     },
-    onLeave: () => {
+    onAfterLeave: () => {
       activeNotifications.delete(sessionId);
     },
   });
