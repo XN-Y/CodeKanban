@@ -12,13 +12,12 @@ import (
 )
 
 func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachment {
-	rawItems, ok := payload["atts"].([]any)
-	if !ok {
+	rawItems := decodeRawArray(payload["atts"])
+	if len(rawItems) == 0 {
 		return nil
 	}
 	items := make([]HistoryAttachment, 0, len(rawItems))
-	for _, raw := range rawItems {
-		record := decodeRawObject(raw)
+	for _, record := range rawItems {
 		items = append(items, HistoryAttachment{
 			ID:   stringValue(record["id"]),
 			Name: stringValue(record["name"]),
@@ -26,6 +25,9 @@ func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachm
 			Size: int64(numberValue(record["sz"])),
 			Path: stringValue(record["path"]),
 		})
+	}
+	if len(items) == 0 {
+		return nil
 	}
 	return items
 }

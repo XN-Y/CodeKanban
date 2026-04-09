@@ -463,9 +463,9 @@
                       class="item-text item-text--raw timeline-raw-text"
                     ><code>{{ item.text }}</code></pre>
                     <div
-                      v-else-if="item.text"
+                      v-else-if="getDisplayBlockText(item)"
                       class="item-text chat-markdown"
-                      v-html="renderMarkdown(item.text)"
+                      v-html="renderMarkdown(getDisplayBlockText(item))"
                     ></div>
                     <div v-if="item.attachments.length > 0" class="attachment-row">
                       <span
@@ -476,7 +476,7 @@
                         <n-popover
                           v-if="canPreviewAttachment(attachment)"
                           trigger="hover"
-                          placement="top-start"
+                          placement="bottom-start"
                           :delay="120"
                         >
                           <template #trigger>
@@ -814,7 +814,7 @@
                 <n-popover
                   v-if="canPreviewAttachment(attachment)"
                   trigger="hover"
-                  placement="top-start"
+                  placement="bottom-start"
                   :delay="120"
                 >
                   <template #trigger>
@@ -1324,6 +1324,7 @@ import {
   buildImagePlaceholder,
   insertImagePlaceholdersAtCursor,
   resolveImageAttachmentDisplayName,
+  stripImagePlaceholdersFromText,
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
@@ -1863,6 +1864,12 @@ function shouldShowMessageRawToggle(block: WebSessionBlock) {
     return false;
   }
   return Boolean(block.text?.trim());
+}
+function getDisplayBlockText(block: WebSessionBlock) {
+  if (!block.text) {
+    return '';
+  }
+  return stripImagePlaceholdersFromText(block.text, block.attachments.length);
 }
 function shouldShowPlanRawToggle(block: WebSessionBlock) {
   return Boolean(
@@ -3264,7 +3271,9 @@ function replaceTabIdInNavigationState(
   projectId = props.projectId,
   visibleIds = Array.from(new Set([...getVisibleTabIds().filter(id => id !== fromId), toId]))
 ) {
-  const nextOrderIds = tabOrderIds.value.map(sessionId => (sessionId === fromId ? toId : sessionId));
+  const nextOrderIds = tabOrderIds.value.map(sessionId =>
+    sessionId === fromId ? toId : sessionId
+  );
   const nextMruIds = tabMruIds.value.map(sessionId => (sessionId === fromId ? toId : sessionId));
   replaceTabNavigationState(nextOrderIds, nextMruIds, projectId, visibleIds);
 }

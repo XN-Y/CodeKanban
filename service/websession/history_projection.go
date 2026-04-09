@@ -738,8 +738,16 @@ func extractMcpArgumentHint(value any) string {
 }
 
 func decodeRawArray(raw any) []map[string]any {
-	items, ok := raw.([]any)
-	if !ok {
+	var items []any
+	switch typed := raw.(type) {
+	case []any:
+		items = typed
+	case []map[string]any:
+		items = make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
 		return nil
 	}
 	result := make([]map[string]any, 0, len(items))

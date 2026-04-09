@@ -390,4 +390,56 @@ describe('webSession loading behavior', () => {
     expect(handleCompleted).toHaveBeenCalledTimes(1);
     store.emitter.off('ai:completed', handleCompleted);
   });
+
+  it('keeps realtime user message attachments on incoming history items', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-live-attachments',
+      status: 'running',
+      assistantState: null,
+      itemCount: 0,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: 'history-live-1',
+        oi: 1,
+        kd: 'user',
+        tp: 'user_message',
+        txt: 'hello [Image #1]',
+        ts2: Date.parse('2026-04-09T10:01:00.000Z'),
+        atts: [
+          {
+            id: 'att-live-1',
+            name: 'image.png',
+            mime: 'image/png',
+            sz: 42,
+          },
+        ],
+      },
+    });
+
+    const blocks = store.getBlocks(session.id);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.attachments).toEqual([
+      expect.objectContaining({
+        id: 'att-live-1',
+        name: 'image.png',
+        mime: 'image/png',
+        size: 42,
+      }),
+    ]);
+  });
 });
