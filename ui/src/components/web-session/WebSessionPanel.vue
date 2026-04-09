@@ -441,7 +441,7 @@
                         'show-jump-hint': showJumpToBottom,
                       },
                     ]"
-                    :title="t('webSession.jumpToBottom')"
+                    :aria-label="t('webSession.jumpToBottom')"
                     @click="handleLiveCardClick"
                   >
                     <div class="live-card-main">
@@ -462,9 +462,21 @@
                       <span v-if="showJumpToBottom" class="live-jump-hint">
                         {{ t('webSession.jumpToBottom') }}
                       </span>
-                      <span class="live-time" :title="getLiveTimeTooltip(liveState)">{{
-                        getLiveTimeText(liveState)
-                      }}</span>
+                      <n-tooltip placement="top-end" :delay="120">
+                        <template #trigger>
+                          <span class="live-time">{{ getLiveTimeText(liveState) }}</span>
+                        </template>
+                        <div class="live-time-tooltip">
+                          <div
+                            v-for="item in getLiveTimeTooltipItems(liveState)"
+                            :key="item.key"
+                            class="live-time-tooltip-row"
+                          >
+                            <span class="live-time-tooltip-label">{{ item.label }}</span>
+                            <span class="live-time-tooltip-value">{{ item.value }}</span>
+                          </div>
+                        </div>
+                      </n-tooltip>
                     </div>
                   </button>
 
@@ -767,6 +779,28 @@
                 </div>
 
                 <div class="composer-footer-right">
+                  <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
+                    <template #trigger>
+                      <span
+                        class="composer-context-pill"
+                        :class="`state-${contextUsageIndicator.state}`"
+                      >
+                        {{ contextUsageIndicator.label }}
+                      </span>
+                    </template>
+                    <div class="composer-context-tooltip">
+                      <div class="composer-context-tooltip-title">
+                        {{ contextUsageIndicator.title }}
+                      </div>
+                      <div
+                        v-for="line in contextUsageIndicator.lines"
+                        :key="line"
+                        class="composer-context-tooltip-line"
+                      >
+                        {{ line }}
+                      </div>
+                    </div>
+                  </n-tooltip>
                   <n-button
                     v-if="isRunActive"
                     secondary
@@ -997,7 +1031,6 @@
           </aside>
         </div>
       </div>
-
     </div>
 
     <n-modal
@@ -1135,7 +1168,11 @@ import {
   type WebSessionUserInputOption,
   type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
-import type { WebSessionSummary } from '@/types/models';
+import type {
+  WebSessionCodexRuntimeConfig,
+  WebSessionContextWindowSource,
+  WebSessionSummary,
+} from '@/types/models';
 import {
   calculateCardTabIndicatorStyle,
   hiddenCardTabIndicatorStyle,
@@ -1151,6 +1188,7 @@ import {
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
+import { webSessionApi } from '@/api/webSession';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
@@ -1169,6 +1207,7 @@ const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const LIVE_TIME_TICK_MS = 1000;
+const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -1246,6 +1285,12 @@ type CommandExecutionDetail = {
   items: CommandExecutionDetailItem[];
 };
 
+type LiveTimeTooltipItem = {
+  key: string;
+  label: string;
+  value: string;
+};
+
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -1303,6 +1348,8 @@ const activeAttachmentPreview = ref<{
   name: string;
   url: string;
 } | null>(null);
+const codexRuntimeConfig = ref<WebSessionCodexRuntimeConfig | null>(null);
+const codexRuntimeConfigReady = ref(false);
 const showCommandExecutionDetail = ref(false);
 const loadingCommandExecutionDetail = ref(false);
 const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
@@ -1836,6 +1883,100 @@ const composerHint = computed(() => {
   }
   return t('webSession.composerHintIdle');
 });
+const tokenNumberFormatter = new Intl.NumberFormat();
+const contextUsageIndicator = computed(() => {
+  const session = currentSession.value;
+  if (!session) {
+    return null;
+  }
+
+  if (session.agent === 'codex' && isDraftSession(session) && !codexRuntimeConfigReady.value) {
+    return null;
+  }
+
+  const runtimeConfig = codexRuntimeConfig.value;
+  const sessionSource =
+    session.contextWindowSource === 'config' ||
+    session.contextWindowSource === 'default' ||
+    session.contextWindowSource === 'unavailable'
+      ? session.contextWindowSource
+      : session.agent === 'codex'
+        ? ('default' as WebSessionContextWindowSource)
+        : ('unavailable' as WebSessionContextWindowSource);
+  const source = runtimeConfig?.source ?? sessionSource;
+
+  const contextWindowTokens =
+    typeof runtimeConfig?.contextWindowTokens === 'number' &&
+    Number.isFinite(runtimeConfig.contextWindowTokens)
+      ? Math.max(0, runtimeConfig.contextWindowTokens)
+      : typeof session.contextWindowTokens === 'number' &&
+          Number.isFinite(session.contextWindowTokens)
+        ? Math.max(0, session.contextWindowTokens)
+        : session.agent === 'codex' && isDraftSession(session)
+          ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS
+          : null;
+  const compactLimitTokens =
+    typeof runtimeConfig?.compactLimitTokens === 'number' &&
+    Number.isFinite(runtimeConfig.compactLimitTokens)
+      ? Math.max(0, runtimeConfig.compactLimitTokens)
+      : contextWindowTokens;
+
+  if (session.agent !== 'codex' || !contextWindowTokens || !compactLimitTokens) {
+    return {
+      state: 'unavailable',
+      label: t('webSession.contextUsageLabelUnavailable'),
+      title: t('webSession.contextUsageUnavailableTitle'),
+      lines: [t('webSession.contextUsageUnavailableDescription')],
+    };
+  }
+
+  const inputTokens = Number(session.usage.inputTokens || 0);
+  const cachedInputTokens = Number(session.usage.cachedInputTokens || 0);
+  const outputTokens = Number(session.usage.outputTokens || 0);
+  const usedTokens = Math.max(0, inputTokens + cachedInputTokens + outputTokens);
+  const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
+  const remainingPercent =
+    compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
+  const usagePercent =
+    compactLimitTokens > 0 ? Math.round((usedTokens / compactLimitTokens) * 100) : 0;
+  const sourceLabel =
+    source === 'config'
+      ? t('webSession.contextUsageSourceConfig')
+      : t('webSession.contextUsageSourceDefault');
+
+  return {
+    state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
+    label: t('webSession.contextUsageLabel', {
+      percent: remainingPercent,
+    }),
+    title: t('webSession.contextUsageTitle'),
+    lines: [
+      t('webSession.contextUsageRemainingEstimate', {
+        count: tokenNumberFormatter.format(remainingEstimateTokens),
+      }),
+      t('webSession.contextUsageUsed', {
+        count: tokenNumberFormatter.format(usedTokens),
+      }),
+      t('webSession.contextUsageWindow', {
+        count: tokenNumberFormatter.format(contextWindowTokens),
+      }),
+      t('webSession.contextUsageCompactLimit', {
+        count: tokenNumberFormatter.format(compactLimitTokens),
+      }),
+      t('webSession.contextUsageSource', {
+        source: sourceLabel,
+      }),
+      t('webSession.contextUsageBreakdown', {
+        input: tokenNumberFormatter.format(inputTokens),
+        cached: tokenNumberFormatter.format(cachedInputTokens),
+        output: tokenNumberFormatter.format(outputTokens),
+      }),
+      t('webSession.contextUsageNote', {
+        percent: usagePercent,
+      }),
+    ],
+  };
+});
 
 function clearComposerTransferError() {
   if (composerTransferErrorTimer != null) {
@@ -2171,6 +2312,8 @@ function normalizeDraftSession(
       outputTokens: 0,
       cost: 0,
     },
+    contextWindowTokens: agent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
+    contextWindowSource: agent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
   };
 }
@@ -2315,6 +2458,8 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       outputTokens: 0,
       cost: 0,
     },
+    contextWindowTokens: nextAgent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
+    contextWindowSource: nextAgent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
   };
   replaceDraftSessionState([...draftSessions.value, draft], draft.id);
@@ -2904,27 +3049,131 @@ function formatElapsedDuration(startedAt: number, endedAt: number) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-function getLiveTimeText(state: WebSessionLiveState) {
+function isValidTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function getLiveStateEndedAt(state: WebSessionLiveState) {
+  return state.running ? liveStateClockMs.value : state.updatedAt;
+}
+
+function getLiveRunStartedAt(state: WebSessionLiveState) {
+  return isValidTimestamp(state.startedAt) ? state.startedAt : undefined;
+}
+
+function getLiveToolStartedAt(state: WebSessionLiveState) {
+  return isValidTimestamp(state.tool?.startedAt) ? state.tool.startedAt : undefined;
+}
+
+function getLiveOperationStartedAt(state: WebSessionLiveState) {
+  if (state.phase === 'tool') {
+    return getLiveToolStartedAt(state) ?? getLiveRunStartedAt(state);
+  }
+  if (state.phase === 'waiting_approval') {
+    return isValidTimestamp(pendingApproval.value?.requestedAt)
+      ? pendingApproval.value.requestedAt
+      : getLiveRunStartedAt(state);
+  }
+  if (state.phase === 'waiting_input') {
+    return isValidTimestamp(pendingUserInput.value?.requestedAt)
+      ? pendingUserInput.value.requestedAt
+      : getLiveRunStartedAt(state);
+  }
   if (
-    typeof state.startedAt === 'number' &&
-    Number.isFinite(state.startedAt) &&
-    state.startedAt > 0
+    state.phase === 'starting' ||
+    state.phase === 'thinking' ||
+    state.phase === 'waiting_plan_approval'
   ) {
-    const endedAt = state.running ? liveStateClockMs.value : state.updatedAt;
-    return formatElapsedDuration(state.startedAt, endedAt);
+    return getLiveRunStartedAt(state);
+  }
+  return getLiveRunStartedAt(state);
+}
+
+function isUserOriginatedInteractionBlock(block: WebSessionBlock) {
+  return (
+    block.kind === 'user' ||
+    block.detail?.type === 'approval_response' ||
+    block.detail?.type === 'user_input_response'
+  );
+}
+
+function getLivePreviousInteractionAt(state: WebSessionLiveState) {
+  const endedAt = getLiveStateEndedAt(state);
+  for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
+    const block = blocks.value[index];
+    if (!isValidTimestamp(block.timestamp) || block.timestamp > endedAt) {
+      continue;
+    }
+    if (isUserOriginatedInteractionBlock(block)) {
+      return block.timestamp;
+    }
+  }
+  return undefined;
+}
+
+function getLiveElapsedText(state: WebSessionLiveState) {
+  const startedAt = getLiveOperationStartedAt(state);
+  if (!startedAt) {
+    return '';
+  }
+  return formatElapsedDuration(startedAt, getLiveStateEndedAt(state));
+}
+
+function getLiveTimeText(state: WebSessionLiveState) {
+  const elapsed = getLiveElapsedText(state);
+  if (elapsed) {
+    return elapsed;
   }
   return formatTime(state.updatedAt);
 }
 
-function getLiveTimeTooltip(state: WebSessionLiveState) {
-  if (
-    typeof state.startedAt === 'number' &&
-    Number.isFinite(state.startedAt) &&
-    state.startedAt > 0
-  ) {
-    return formatDateTime(state.startedAt);
+function getLiveTimeTooltipItems(state: WebSessionLiveState): LiveTimeTooltipItem[] {
+  const startedAt = getLiveOperationStartedAt(state);
+  const elapsed = getLiveElapsedText(state);
+  const previousInteractionAt = getLivePreviousInteractionAt(state);
+  const endedAt = getLiveStateEndedAt(state);
+  const items: LiveTimeTooltipItem[] = [];
+
+  if (startedAt) {
+    items.push({
+      key: 'started-at',
+      label: t('webSession.liveTooltipStartedAt'),
+      value: formatDateTime(startedAt),
+    });
   }
-  return formatDateTime(state.updatedAt);
+
+  if (elapsed) {
+    items.push({
+      key: 'elapsed',
+      label: t('webSession.liveTooltipElapsed'),
+      value: elapsed,
+    });
+  }
+
+  if (previousInteractionAt) {
+    items.push({
+      key: 'since-previous-interaction',
+      label: t('webSession.liveTooltipSincePreviousInteraction'),
+      value: formatElapsedDuration(previousInteractionAt, endedAt),
+    });
+  }
+
+  if (items.length > 0) {
+    return items;
+  }
+
+  const updatedAt = formatDateTime(state.updatedAt);
+  if (updatedAt) {
+    return [
+      {
+        key: 'updated-at',
+        label: t('webSession.liveTooltipStartedAt'),
+        value: updatedAt,
+      },
+    ];
+  }
+
+  return [];
 }
 
 function stringifyValue(value: unknown): string {
@@ -4033,7 +4282,7 @@ function insertUploadedImagePlaceholders(uploadedCount: number) {
   const nextComposer = insertImagePlaceholdersAtCursor(
     composerText.value,
     textarea?.selectionStart ?? composerText.value.length,
-    textarea?.selectionEnd ?? (textarea?.selectionStart ?? composerText.value.length),
+    textarea?.selectionEnd ?? textarea?.selectionStart ?? composerText.value.length,
     placeholders
   );
 
@@ -4867,6 +5116,17 @@ function handleTabDragEnd(event: SortableEvent) {
   });
 }
 
+async function loadCodexRuntimeConfig() {
+  try {
+    codexRuntimeConfig.value = await webSessionApi.runtimeConfig();
+  } catch (error) {
+    codexRuntimeConfig.value = null;
+    console.warn('[Web Session] Failed to load Codex runtime config', error);
+  } finally {
+    codexRuntimeConfigReady.value = true;
+  }
+}
+
 watch(
   () => props.projectId,
   projectId => {
@@ -5098,6 +5358,7 @@ onMounted(() => {
   liveStateClockTimer = window.setInterval(() => {
     liveStateClockMs.value = Date.now();
   }, LIVE_TIME_TICK_MS);
+  void loadCodexRuntimeConfig();
   if (projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
       console.error('[Web Session] Failed to preload projects', error);
@@ -6848,6 +7109,41 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
+.live-time {
+  display: inline-flex;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.live-time-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 220px;
+}
+
+.live-time-tooltip-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.live-time-tooltip-label {
+  font-size: 11px;
+  color: var(--n-text-color-3);
+  white-space: nowrap;
+}
+
+.live-time-tooltip-value {
+  min-width: 0;
+  font-size: 12px;
+  color: var(--n-text-color-1);
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
 .approval-card {
   position: relative;
   overflow: hidden;
@@ -7207,6 +7503,61 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+.composer-context-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, transparent);
+  color: var(--n-text-color-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.composer-context-pill.state-idle {
+  border-color: color-mix(in srgb, var(--n-primary-color) 22%, var(--n-border-color));
+}
+
+.composer-context-pill.state-active {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.08);
+  color: #b45309;
+}
+
+.composer-context-pill.state-warning {
+  border-color: rgba(239, 68, 68, 0.32);
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+}
+
+.composer-context-pill.state-unavailable {
+  border-style: dashed;
+  opacity: 0.8;
+}
+
+.composer-context-tooltip {
+  display: grid;
+  gap: 6px;
+  min-width: 240px;
+  max-width: 320px;
+}
+
+.composer-context-tooltip-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--n-text-color);
+}
+
+.composer-context-tooltip-line {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--n-text-color-2);
 }
 
 .composer-footer-left {

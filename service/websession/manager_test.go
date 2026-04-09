@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
@@ -86,6 +87,97 @@ func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
 	}
 	if effectiveSessionBackend(record) != SessionBackendCodexAppServer {
 		t.Fatalf("expected codex sessions to default to %q, got %q", SessionBackendCodexAppServer, effectiveSessionBackend(record))
+	}
+}
+
+func TestParseCodexContextWindowRootLevelOnly(t *testing.T) {
+	raw := `
+model_context_window = 1000000 # root setting
+
+[model_providers.OpenAI]
+model_context_window = 123
+`
+
+	got, ok := parseCodexContextWindow(raw)
+	if !ok {
+		t.Fatal("expected parseCodexContextWindow to succeed")
+	}
+	if got != 1000000 {
+		t.Fatalf("expected 1000000, got %d", got)
+	}
+}
+
+func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+	configDir := filepath.Join(homeDir, ".codex")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("mkdir config dir failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(configDir, "config.toml"), []byte("model_context_window = 1000000\n"), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	project := seedProject(t)
+	seedWebSession(t, project.ID, "Codex", 1000)
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	items, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(items))
+	}
+	if items[0].ContextWindowTokens == nil || *items[0].ContextWindowTokens != 1000000 {
+		t.Fatalf("expected contextWindowTokens 1000000, got %#v", items[0].ContextWindowTokens)
+	}
+	if items[0].ContextWindowSource != ContextWindowSourceConfig {
+		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceConfig, items[0].ContextWindowSource)
+	}
+	config := manager.GetCodexRuntimeConfig()
+	if config.ContextWindowTokens != 1000000 {
+		t.Fatalf("expected runtime context window 1000000, got %d", config.ContextWindowTokens)
+	}
+	if config.CompactLimitTokens != 1000000 {
+		t.Fatalf("expected runtime compact limit fallback 1000000, got %d", config.CompactLimitTokens)
+	}
+}
+
+func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Claude", 1000)
+	if err := model.GetDB().Model(session).Update("agent", string(AgentClaude)).Error; err != nil {
+		t.Fatalf("update session agent failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	items, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(items))
+	}
+	if items[0].ContextWindowTokens != nil {
+		t.Fatalf("expected nil contextWindowTokens, got %#v", items[0].ContextWindowTokens)
+	}
+	if items[0].ContextWindowSource != ContextWindowSourceUnavailable {
+		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceUnavailable, items[0].ContextWindowSource)
 	}
 }
 
@@ -1510,6 +1602,107 @@ func TestCodexToolResultUsesCamelCaseAggregatedOutput(t *testing.T) {
 	}
 }
 
+func TestTruncateToolOutputKeepsPlanText(t *testing.T) {
+	planText := testLongPlanText()
+	if got := truncateToolOutput("plan", planText); got != planText {
+		t.Fatalf("expected full plan text to be preserved, got length %d want %d", len(got), len(planText))
+	}
+}
+
+func TestTruncateToolOutputTruncatesNonPlanSafely(t *testing.T) {
+	output := strings.Repeat("计划步骤保持完整", 600)
+
+	got := truncateToolOutput("commandExecution", output)
+	if got == output {
+		t.Fatal("expected non-plan output to be truncated")
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("expected truncated output suffix, got %q", got[len(got)-min(len(got), 12):])
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("expected truncated output to remain valid UTF-8, got %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Fatalf("expected truncated output to avoid replacement rune, got %q", got)
+	}
+}
+
+func TestHandleCodexAppServerItemCompletedPreservesFullPlanOutput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Long Plan App Server", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_plan_app_server",
+		assistantMessageID: "msg_plan_app_server",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	planText := testLongPlanText()
+	params := []byte(fmt.Sprintf(`{"item":{"type":"plan","id":"plan_test","text":%q}}`, planText))
+
+	manager.handleCodexAppServerItemCompleted(*session, run, params)
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	event, ok := historyToolEventByKind(history.Events, "plan")
+	if !ok {
+		t.Fatalf("expected plan tool history, got %#v", history.Events)
+	}
+	if got := eventToolOutput(event); got != planText {
+		t.Fatalf("expected app-server plan output to stay intact, got length %d want %d", len(got), len(planText))
+	}
+}
+
+func TestHandleCodexEventPreservesFullPlanOutput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Long Plan Legacy", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_plan_legacy",
+		assistantMessageID: "msg_plan_legacy",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	planText := testLongPlanText()
+
+	manager.handleCodexEvent(*session, run, map[string]any{
+		"type": "item.completed",
+		"item": map[string]any{
+			"type": "plan",
+			"id":   "plan_test",
+			"text": planText,
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	event, ok := historyToolEventByKind(history.Events, "plan")
+	if !ok {
+		t.Fatalf("expected plan tool history, got %#v", history.Events)
+	}
+	if got := eventToolOutput(event); got != planText {
+		t.Fatalf("expected legacy plan output to stay intact, got length %d want %d", len(got), len(planText))
+	}
+}
+
 func initTestDB(t *testing.T) func() {
 	t.Helper()
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
@@ -1850,9 +2043,38 @@ func historyHasToolKind(events []Event, kind string) bool {
 	return false
 }
 
+func historyToolEventByKind(events []Event, kind string) (Event, bool) {
+	for _, event := range events {
+		if event.Type != "tool_st" && event.Type != "tool_end" {
+			continue
+		}
+		if eventToolKind(event) == kind {
+			return event, true
+		}
+	}
+	return Event{}, false
+}
+
+func testLongPlanText() string {
+	return "## Plan\n" + strings.Repeat("- 计划步骤：保持中文内容完整，不要被截断。\n", 240)
+}
+
 func appendHistoryEvent(t *testing.T, manager *Manager, sessionID string, event Event) {
 	t.Helper()
+	manager.mu.Lock()
+	if manager.runs[sessionID] == nil {
+		manager.runs[sessionID] = &activeRun{
+			sessionID:          sessionID,
+			done:               make(chan struct{}),
+			assistantDeltaSeen: make(map[string]bool),
+		}
+	}
+	manager.mu.Unlock()
+	manager.decorateProjectedEvent(sessionID, &event)
 	if err := manager.store.appendEvent(sessionID, event); err != nil {
 		t.Fatalf("appendEvent returned error: %v", err)
+	}
+	if _, err := manager.applyEventToHistoryCache(context.Background(), sessionID, event); err != nil {
+		t.Fatalf("applyEventToHistoryCache returned error: %v", err)
 	}
 }

@@ -127,16 +127,25 @@ func (m *Manager) GetCommandExecutionGroup(
 		items = append(items, historyGroupDetailItem(cachedItem))
 	}
 
+	var firstSeq int64
+	var lastSeq int64
+	latestToolID := cachedItem.Tool.ID
+	if cachedItem.Tool.CommandGroup != nil {
+		firstSeq = cachedItem.Tool.CommandGroup.FirstSeq
+		lastSeq = cachedItem.Tool.CommandGroup.LastSeq
+		latestToolID = firstNonEmpty(cachedItem.Tool.CommandGroup.LatestToolID, latestToolID)
+	}
+
 	return CommandExecutionGroupDetail{
 		GroupID:    firstNonEmpty(groupID, cachedItem.Tool.ID),
 		Kind:       cachedItem.Tool.Kind,
 		Title:      firstNonEmpty(stringValue(cachedItem.Tool.Meta["title"]), cachedItem.Tool.Name),
 		Summary:    compactToolSummary(cachedItem.Tool.Kind, cachedItem.Tool.Input, cachedItem.Tool.Meta, cachedItem.Tool.Output),
 		Count:      len(items),
-		FirstSeq:   0,
-		LastSeq:    0,
+		FirstSeq:   firstSeq,
+		LastSeq:    lastSeq,
 		Status:     cachedItem.Tool.Status,
-		LatestTool: cachedItem.Tool.ID,
+		LatestTool: latestToolID,
 		Items:      items,
 	}, nil
 }

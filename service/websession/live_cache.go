@@ -484,7 +484,7 @@ func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *Se
 	if err != nil {
 		return nil
 	}
-	summary := mapSessionRecord(record)
+	summary := m.mapSessionSummary(record)
 	return &summary
 }
 

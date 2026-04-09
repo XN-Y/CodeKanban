@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
@@ -32,6 +33,7 @@ const (
 	DefaultHistoryWindow          = 80
 	MaxHistoryWindow              = 120
 	sessionOrderStep              = 1000.0
+	defaultToolOutputLimit        = 4000
 	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
 	recoveryReasonProcessRestart  = "process_restart"
 	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
@@ -51,9 +53,10 @@ type Manager struct {
 	projectSvc  *model.ProjectService
 	worktreeSvc *service.WorktreeService
 
-	mu      sync.RWMutex
-	runs    map[string]*activeRun
-	clients map[*client]struct{}
+	mu                 sync.RWMutex
+	runs               map[string]*activeRun
+	clients            map[*client]struct{}
+	codexContextWindow codexContextWindowResolver
 }
 
 type client struct {
@@ -251,7 +254,7 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
-		items = append(items, mapSessionRecord(record))
+		items = append(items, m.mapSessionSummary(record))
 	}
 	return items, nil
 }
@@ -315,7 +318,7 @@ func (m *Manager) ListArchivedSessions(
 
 	items := make([]SessionSummary, 0, len(records))
 	for _, record := range records {
-		items = append(items, mapSessionRecord(record))
+		items = append(items, m.mapSessionSummary(record))
 	}
 
 	nextOffset := offset + len(items)
@@ -383,7 +386,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		return SessionSummary{}, err
 	}
 
-	return mapSessionRecord(record), nil
+	return m.mapSessionSummary(record), nil
 }
 
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebSessionTable, error) {
@@ -433,7 +436,7 @@ func (m *Manager) loadSnapshot(ctx context.Context, sessionID string, limit int,
 		}
 	}
 
-	summary := mapSessionRecord(record)
+	summary := m.mapSessionSummary(record)
 	if clearUnread {
 		summary.HasUnread = false
 	}
@@ -486,7 +489,7 @@ func (m *Manager) RenameSession(ctx context.Context, sessionID, title string) (S
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	return mapSessionRecord(record), nil
+	return m.mapSessionSummary(record), nil
 }
 
 func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) (SessionSummary, error) {
@@ -608,7 +611,7 @@ func (m *Manager) MoveSession(ctx context.Context, sessionID, prevSessionID, nex
 			}
 		}
 
-		summary = mapSessionRecord(moving)
+		summary = m.mapSessionSummary(moving)
 		return nil
 	})
 	if err != nil {
@@ -623,7 +626,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 		return SessionSummary{}, err
 	}
 	if record.ArchivedAt != nil {
-		return mapSessionRecord(record), nil
+		return m.mapSessionSummary(record), nil
 	}
 
 	hadActiveRun := m.hasActiveRun(sessionID)
@@ -654,7 +657,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	return mapSessionRecord(archived), nil
+	return m.mapSessionSummary(archived), nil
 }
 
 func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (SessionSummary, error) {
@@ -663,7 +666,7 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 		return SessionSummary{}, err
 	}
 	if record.ArchivedAt == nil {
-		return mapSessionRecord(record), nil
+		return m.mapSessionSummary(record), nil
 	}
 
 	orderIndex, err := m.getNextSessionOrderIndex(ctx, record.ProjectID)
@@ -684,7 +687,7 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	return mapSessionRecord(current), nil
+	return m.mapSessionSummary(current), nil
 }
 
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
@@ -1744,7 +1747,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
-				"out":  truncateString(codexToolResult(item), 4000),
+				"out":  codexToolOutput(item),
 				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
 			},
@@ -1969,7 +1972,7 @@ func (m *Manager) updateFields(ctx context.Context, sessionID string, updates ma
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	return mapSessionRecord(record), nil
+	return m.mapSessionSummary(record), nil
 }
 
 func (m *Manager) getNextSessionOrderIndex(ctx context.Context, projectID string) (float64, error) {
@@ -2945,7 +2948,15 @@ func truncateString(value string, limit int) string {
 	if limit <= 0 || len(value) <= limit {
 		return value
 	}
-	return value[:limit] + "..."
+	end := 0
+	for idx, r := range value {
+		next := idx + utf8.RuneLen(r)
+		if next > limit {
+			break
+		}
+		end = next
+	}
+	return value[:end] + "..."
 }
 
 func claudeToolResultText(raw any) string {
@@ -3035,6 +3046,21 @@ func codexToolResult(item map[string]any) string {
 	}
 	encoded, _ := json.Marshal(item)
 	return string(encoded)
+}
+
+func toolOutputLimit(kind string) int {
+	if normalizeCodexItemType(kind) == "plan" {
+		return 0
+	}
+	return defaultToolOutputLimit
+}
+
+func truncateToolOutput(kind, value string) string {
+	return truncateString(value, toolOutputLimit(kind))
+}
+
+func codexToolOutput(item map[string]any) string {
+	return truncateToolOutput(stringValue(item["type"]), codexToolResult(item))
 }
 
 func stringValue(value any) string {

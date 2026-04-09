@@ -70,6 +70,14 @@ type Usage struct {
 	Cost              float64 `json:"cost"`
 }
 
+type ContextWindowSource string
+
+const (
+	ContextWindowSourceConfig      ContextWindowSource = "config"
+	ContextWindowSourceDefault     ContextWindowSource = "default"
+	ContextWindowSourceUnavailable ContextWindowSource = "unavailable"
+)
+
 type SyncState string
 
 const (
@@ -81,38 +89,40 @@ const (
 )
 
 type SessionSummary struct {
-	ID                      string          `json:"id"`
-	ProjectID               string          `json:"projectId"`
-	WorktreeID              *string         `json:"worktreeId,omitempty"`
-	OrderIndex              float64         `json:"orderIndex"`
-	Agent                   Agent           `json:"agent"`
-	Title                   string          `json:"title"`
-	Model                   string          `json:"model"`
-	ReasoningEffort         ReasoningEffort `json:"reasoningEffort"`
-	WorkflowMode            WorkflowMode    `json:"workflowMode"`
-	PermissionLevel         PermissionLevel `json:"permissionLevel"`
-	Cwd                     string          `json:"cwd"`
-	NativeSessionID         *string         `json:"nativeSessionId,omitempty"`
-	Status                  Status          `json:"status"`
-	AssistantState          AssistantState  `json:"assistantState,omitempty"`
-	HasUnread               bool            `json:"hasUnread"`
-	ArchivedAt              *time.Time      `json:"archivedAt,omitempty"`
-	ActivityAt              time.Time       `json:"activityAt"`
-	LastMessageAt           *time.Time      `json:"lastMessageAt,omitempty"`
-	AssistantStateUpdatedAt *time.Time      `json:"assistantStateUpdatedAt,omitempty"`
-	SourceKind              string          `json:"sourceKind"`
-	SyncState               SyncState       `json:"syncState"`
-	SourceCreatedAt         *time.Time      `json:"sourceCreatedAt,omitempty"`
-	SourceUpdatedAt         *time.Time      `json:"sourceUpdatedAt,omitempty"`
-	LastSyncedAt            *time.Time      `json:"lastSyncedAt,omitempty"`
-	ThreadPath              *string         `json:"threadPath,omitempty"`
-	ThreadPreview           *string         `json:"threadPreview,omitempty"`
-	TurnCount               int             `json:"turnCount"`
-	ItemCount               int             `json:"itemCount"`
-	SyncError               *string         `json:"syncError,omitempty"`
-	CreatedAt               time.Time       `json:"createdAt"`
-	UpdatedAt               time.Time       `json:"updatedAt"`
-	Usage                   Usage           `json:"usage"`
+	ID                      string              `json:"id"`
+	ProjectID               string              `json:"projectId"`
+	WorktreeID              *string             `json:"worktreeId,omitempty"`
+	OrderIndex              float64             `json:"orderIndex"`
+	Agent                   Agent               `json:"agent"`
+	Title                   string              `json:"title"`
+	Model                   string              `json:"model"`
+	ReasoningEffort         ReasoningEffort     `json:"reasoningEffort"`
+	WorkflowMode            WorkflowMode        `json:"workflowMode"`
+	PermissionLevel         PermissionLevel     `json:"permissionLevel"`
+	Cwd                     string              `json:"cwd"`
+	NativeSessionID         *string             `json:"nativeSessionId,omitempty"`
+	Status                  Status              `json:"status"`
+	AssistantState          AssistantState      `json:"assistantState,omitempty"`
+	HasUnread               bool                `json:"hasUnread"`
+	ArchivedAt              *time.Time          `json:"archivedAt,omitempty"`
+	ActivityAt              time.Time           `json:"activityAt"`
+	LastMessageAt           *time.Time          `json:"lastMessageAt,omitempty"`
+	AssistantStateUpdatedAt *time.Time          `json:"assistantStateUpdatedAt,omitempty"`
+	SourceKind              string              `json:"sourceKind"`
+	SyncState               SyncState           `json:"syncState"`
+	SourceCreatedAt         *time.Time          `json:"sourceCreatedAt,omitempty"`
+	SourceUpdatedAt         *time.Time          `json:"sourceUpdatedAt,omitempty"`
+	LastSyncedAt            *time.Time          `json:"lastSyncedAt,omitempty"`
+	ThreadPath              *string             `json:"threadPath,omitempty"`
+	ThreadPreview           *string             `json:"threadPreview,omitempty"`
+	TurnCount               int                 `json:"turnCount"`
+	ItemCount               int                 `json:"itemCount"`
+	SyncError               *string             `json:"syncError,omitempty"`
+	CreatedAt               time.Time           `json:"createdAt"`
+	UpdatedAt               time.Time           `json:"updatedAt"`
+	Usage                   Usage               `json:"usage"`
+	ContextWindowTokens     *int64              `json:"contextWindowTokens,omitempty"`
+	ContextWindowSource     ContextWindowSource `json:"contextWindowSource"`
 }
 
 type ArchivedQueryResult struct {

@@ -653,6 +653,9 @@ export default {
     liveDoneDetail: 'Waiting for the next message',
     liveError: 'Execution hit an error',
     liveErrorDetail: 'This run failed or was interrupted',
+    liveTooltipStartedAt: 'Started at',
+    liveTooltipElapsed: 'Elapsed',
+    liveTooltipSincePreviousInteraction: 'Since previous interaction',
     approvalTitle: 'Approval Required',
     approvalPromptFallback: 'The agent is waiting for confirmation before continuing.',
     approvalApprove: 'Approve',
@@ -692,6 +695,22 @@ export default {
     attachmentUploading: 'Uploading image',
     attachmentUploadingBatch: 'Uploading image {current}/{total}',
     attachmentUploadFailed: 'Image upload failed',
+    contextUsageTitle: 'Remaining Budget Estimate',
+    contextUsageLabel: '{percent}%',
+    contextUsageLabelUnavailable: '--',
+    contextUsageWindow: 'Window: {count} tokens',
+    contextUsageCompactLimit: 'Compact at: {count} tokens',
+    contextUsageRemainingEstimate: 'Estimated remaining: {count} tokens',
+    contextUsageUsed: 'Used: {count} tokens',
+    contextUsageSource: 'Source: {source}',
+    contextUsageSourceConfig: 'local Codex config',
+    contextUsageSourceDefault: 'default 400000',
+    contextUsageBreakdown: 'Breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageNote:
+      'Note: the badge percentage is estimated from cumulative usage total vs. the compact limit; current cumulative usage is about {percent}%, not the true current context occupancy.',
+    contextUsageUnavailableTitle: 'Context estimate unavailable',
+    contextUsageUnavailableDescription:
+      'This estimate is currently available only for Codex web sessions. Claude sessions do not expose a comparable context-window value here yet.',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintUploading:

@@ -71,6 +71,8 @@ type wireSess struct {
 	SyncError               *string   `json:"se,omitempty"`
 	Usage                   wireUsage `json:"usa"`
 	Cost                    float64   `json:"cost"`
+	ContextWindowTokens     *int64    `json:"cwt,omitempty"`
+	ContextWindowSource     string    `json:"cws"`
 }
 
 type wireUsage struct {
@@ -301,7 +303,9 @@ func mapWireSession(session SessionSummary) *wireSess {
 			CachedInputTokens: session.Usage.CachedInputTokens,
 			OutputTokens:      session.Usage.OutputTokens,
 		},
-		Cost: session.Usage.Cost,
+		Cost:                session.Usage.Cost,
+		ContextWindowTokens: session.ContextWindowTokens,
+		ContextWindowSource: string(session.ContextWindowSource),
 	}
 }
 

@@ -2,13 +2,21 @@ import EventEmitter from 'eventemitter3';
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { webSessionApi, type WebSessionAttachmentUploadProgress } from '@/api/webSession';
-import type { WebSessionAttachment, WebSessionSummary } from '@/types/models';
+import type {
+  WebSessionAttachment,
+  WebSessionContextWindowSource,
+  WebSessionSummary,
+} from '@/types/models';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
 type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err';
 type SessionStatus = WebSessionSummary['status'];
-type SessionAssistantState = 'working' | 'waiting_approval' | 'waiting_input' | 'waiting_plan_approval';
+type SessionAssistantState =
+  | 'working'
+  | 'waiting_approval'
+  | 'waiting_input'
+  | 'waiting_plan_approval';
 
 type WireSession = {
   id: string;
@@ -48,6 +56,8 @@ type WireSession = {
     out?: number;
   };
   cost?: number;
+  cwt?: number | null;
+  cws?: WebSessionContextWindowSource;
 };
 
 type WireHistoryItem = {
@@ -125,6 +135,7 @@ export interface WebSessionToolBlock {
   input?: unknown;
   output?: string;
   status: 'running' | 'done' | 'error';
+  startedAt?: number;
   meta?: Record<string, unknown>;
   commandGroup?: {
     id: string;
@@ -231,6 +242,7 @@ export interface WebSessionLiveState {
     summary?: string;
     count?: number;
     groupId?: string;
+    startedAt?: number;
   };
   approval?: WebSessionApprovalState | null;
   userInput?: WebSessionUserInputState | null;
@@ -456,7 +468,9 @@ function normalizeAssistantStateValue(value: unknown): SessionAssistantState | '
   }
 }
 
-function getSessionAssistantStateValue(session?: WebSessionSummary | null): SessionAssistantState | '' {
+function getSessionAssistantStateValue(
+  session?: WebSessionSummary | null
+): SessionAssistantState | '' {
   if (!session) {
     return '';
   }
@@ -719,8 +733,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
-  const draftAttachmentUploadsByProject =
-    ref<Record<string, Record<string, WebSessionDraftAttachmentUploadState>>>({});
+  const draftAttachmentUploadsByProject = ref<
+    Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
+  >({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
@@ -838,7 +853,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!normalizedProjectId || !normalizedSessionId) {
       return null;
     }
-    return draftAttachmentUploadsByProject.value[normalizedProjectId]?.[normalizedSessionId] ?? null;
+    return (
+      draftAttachmentUploadsByProject.value[normalizedProjectId]?.[normalizedSessionId] ?? null
+    );
   }
 
   function getPendingInputs(sessionId: string) {
@@ -987,63 +1004,65 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     const queueKey = draftAttachmentUploadQueueKey(normalizedProjectId, normalizedSessionId);
     const previousTask = draftAttachmentUploadQueues.get(queueKey) ?? Promise.resolve();
-    const task = previousTask.catch(() => undefined).then(async () => {
-      const attachments: WebSessionAttachment[] = [];
-      const errors: WebSessionDraftAttachmentUploadError[] = [];
-      const batchID = createDraftAttachmentUploadID();
-      const existingAttachmentCount =
-        getDraft(normalizedProjectId, normalizedSessionId).attachments.length;
+    const task = previousTask
+      .catch(() => undefined)
+      .then(async () => {
+        const attachments: WebSessionAttachment[] = [];
+        const errors: WebSessionDraftAttachmentUploadError[] = [];
+        const batchID = createDraftAttachmentUploadID();
+        const existingAttachmentCount = getDraft(normalizedProjectId, normalizedSessionId)
+          .attachments.length;
 
-      for (const [index, file] of imageFiles.entries()) {
-        const nextAttachmentIndex = existingAttachmentCount + attachments.length + 1;
-        const normalizedFile = normalizeDraftAttachmentFile(file, nextAttachmentIndex);
-        const fileName = normalizedFile.fileName;
-        const applyProgress = (progress: WebSessionAttachmentUploadProgress) => {
-          setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, {
-            id: batchID,
-            fileName,
-            currentFileIndex: index + 1,
-            totalFiles: imageFiles.length,
-            loaded: progress.loaded,
-            total: progress.total,
-            percent: progress.percent ?? 0,
+        for (const [index, file] of imageFiles.entries()) {
+          const nextAttachmentIndex = existingAttachmentCount + attachments.length + 1;
+          const normalizedFile = normalizeDraftAttachmentFile(file, nextAttachmentIndex);
+          const fileName = normalizedFile.fileName;
+          const applyProgress = (progress: WebSessionAttachmentUploadProgress) => {
+            setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, {
+              id: batchID,
+              fileName,
+              currentFileIndex: index + 1,
+              totalFiles: imageFiles.length,
+              loaded: progress.loaded,
+              total: progress.total,
+              percent: progress.percent ?? 0,
+            });
+          };
+
+          applyProgress({
+            loaded: 0,
+            total: file.size > 0 ? file.size : undefined,
+            percent: 0,
           });
-        };
 
-        applyProgress({
-          loaded: 0,
-          total: file.size > 0 ? file.size : undefined,
-          percent: 0,
-        });
-
-        try {
-          const attachment = await webSessionApi.uploadAttachment(
-            normalizedProjectId,
-            normalizedFile.file,
-            {
-              onProgress: applyProgress,
-            }
-          );
-          attachments.push(attachment);
-          updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
-            ...draft,
-            attachments: [...draft.attachments, attachment],
-            updatedAt: Date.now(),
-          }));
-        } catch (error) {
-          errors.push({
-            fileName,
-            message: error instanceof Error ? error.message : 'failed to upload attachment',
-          });
+          try {
+            const attachment = await webSessionApi.uploadAttachment(
+              normalizedProjectId,
+              normalizedFile.file,
+              {
+                onProgress: applyProgress,
+              }
+            );
+            attachments.push(attachment);
+            updateDraft(normalizedProjectId, normalizedSessionId, draft => ({
+              ...draft,
+              attachments: [...draft.attachments, attachment],
+              updatedAt: Date.now(),
+            }));
+          } catch (error) {
+            errors.push({
+              fileName,
+              message: error instanceof Error ? error.message : 'failed to upload attachment',
+            });
+          }
         }
-      }
 
-      setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, null);
-      return {
-        attachments,
-        errors,
-      };
-    });
+        setDraftAttachmentUploadState(normalizedProjectId, normalizedSessionId, null);
+        return {
+          attachments,
+          errors,
+        };
+      });
 
     draftAttachmentUploadQueues.set(queueKey, task);
 
@@ -1262,6 +1281,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
         outputTokens: session.usa?.out ?? 0,
         cost: session.cost ?? 0,
       },
+      contextWindowTokens:
+        typeof session.cwt === 'number' && Number.isFinite(session.cwt) ? session.cwt : null,
+      contextWindowSource:
+        session.cws === 'config' || session.cws === 'default' || session.cws === 'unavailable'
+          ? session.cws
+          : 'unavailable',
     };
   }
 
@@ -1282,7 +1307,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? item.obs
             : 0,
       observedAt:
-        typeof item.obs === 'number' && Number.isFinite(item.obs) ? item.obs : item.ts2 ?? null,
+        typeof item.obs === 'number' && Number.isFinite(item.obs) ? item.obs : (item.ts2 ?? null),
       attachments: Array.isArray(item.atts)
         ? item.atts.map(attachment => ({
             id: String(attachment.id ?? ''),
@@ -1305,6 +1330,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 : item.tl.st === 'completed'
                   ? 'done'
                   : 'running',
+            startedAt:
+              typeof item.ts2 === 'number' && Number.isFinite(item.ts2)
+                ? item.ts2
+                : typeof item.obs === 'number' && Number.isFinite(item.obs)
+                  ? item.obs
+                  : undefined,
             meta: item.tl.meta,
             commandGroup: item.tl.cg
               ? {
@@ -1312,8 +1343,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   count: Math.max(1, Number(item.tl.cg.count ?? 1) || 1),
                   firstSeq:
                     typeof item.tl.cg.firstSeq === 'number' ? item.tl.cg.firstSeq : undefined,
-                  lastSeq:
-                    typeof item.tl.cg.lastSeq === 'number' ? item.tl.cg.lastSeq : undefined,
+                  lastSeq: typeof item.tl.cg.lastSeq === 'number' ? item.tl.cg.lastSeq : undefined,
                   latestToolId:
                     typeof item.tl.cg.latestToolId === 'string'
                       ? item.tl.cg.latestToolId
@@ -1324,9 +1354,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           }
         : undefined,
       level:
-        item.lvl === 'warn' || item.lvl === 'error' || item.lvl === 'info'
-          ? item.lvl
-          : undefined,
+        item.lvl === 'warn' || item.lvl === 'error' || item.lvl === 'info' ? item.lvl : undefined,
       done: item.dn === true,
       detail: item.dt
         ? {
@@ -1720,19 +1748,33 @@ export const useWebSessionStore = defineStore('web-session', () => {
           summary?: string;
           count?: number;
           groupId?: string;
+          startedAt?: number;
         }
       | undefined;
     let sawAssistantOutput = false;
     let assistantDone = false;
+    let firstAssistantOutputAt: number | undefined;
     let errorMessage = '';
     let updatedAt = session ? Date.parse(session.updatedAt) || Date.now() : Date.now();
     const assistantStateUpdatedAt = getAssistantStateUpdatedAt(session);
+    let runStartedAt: number | undefined;
 
     for (const block of buildBlocks(sessionId)) {
       updatedAt = block.observedAt || block.timestamp || updatedAt;
       if (block.kind === 'assistant') {
         sawAssistantOutput = true;
         assistantDone = block.done === true;
+        if (!firstAssistantOutputAt && block.timestamp > 0) {
+          firstAssistantOutputAt = block.timestamp;
+        }
+      }
+      if (block.kind === 'user' && block.timestamp > 0) {
+        runStartedAt = block.timestamp;
+        sawAssistantOutput = false;
+        assistantDone = false;
+        firstAssistantOutputAt = undefined;
+        activeTool = undefined;
+        errorMessage = '';
       }
       if (block.kind === 'tool' && block.tool) {
         if (block.tool.kind === 'reasoning') {
@@ -1751,6 +1793,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
             } as Record<string, unknown>),
             count: block.tool.commandGroup?.count,
             groupId: block.tool.commandGroup?.id,
+            startedAt: block.tool.startedAt ?? block.timestamp,
           };
         } else if (activeTool?.id === block.tool.id) {
           activeTool = undefined;
@@ -1766,6 +1809,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'waiting_approval',
         running: session?.status === 'running',
         updatedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
+        startedAt: approval?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
         approval,
         tool: activeTool,
       };
@@ -1776,6 +1820,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'waiting_plan_approval',
         running: false,
         updatedAt: assistantStateUpdatedAt || updatedAt,
+        startedAt: assistantStateUpdatedAt ?? runStartedAt,
       };
     }
 
@@ -1784,6 +1829,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'waiting_input',
         running: session?.status === 'running',
         updatedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? updatedAt,
+        startedAt: userInput?.requestedAt ?? assistantStateUpdatedAt ?? runStartedAt,
         tool: activeTool,
         userInput,
       };
@@ -1795,6 +1841,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           phase: 'tool',
           running: true,
           updatedAt,
+          startedAt: activeTool.startedAt ?? assistantStateUpdatedAt ?? runStartedAt,
           tool: activeTool,
         };
       }
@@ -1803,12 +1850,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
           phase: 'thinking',
           running: true,
           updatedAt,
+          startedAt: firstAssistantOutputAt ?? assistantStateUpdatedAt ?? runStartedAt,
         };
       }
       return {
         phase: 'starting',
         running: true,
         updatedAt,
+        startedAt: assistantStateUpdatedAt ?? runStartedAt,
       };
     }
 
@@ -1817,6 +1866,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'done',
         running: false,
         updatedAt,
+        startedAt: runStartedAt,
       };
     }
 
@@ -1825,6 +1875,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         phase: 'error',
         running: false,
         updatedAt,
+        startedAt: runStartedAt,
         errorMessage,
       };
     }
@@ -1896,7 +1947,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextApproval = getPendingApproval(sessionId);
     const approvalForNotification =
       nextApproval ??
-      ((nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval')
+      (nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval'
         ? {
             id: `status:${sessionId}:${nextState.updatedAt}`,
             prompt: '',
@@ -2017,7 +2068,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
         schedulePendingFlush(frame.sid);
       }
 
-      if (frame.op === 'hist_item' && frame.i && normalizeHistoryItem(frame.i).tool?.status !== 'running') {
+      if (
+        frame.op === 'hist_item' &&
+        frame.i &&
+        normalizeHistoryItem(frame.i).tool?.status !== 'running'
+      ) {
         maybeAbortForRedirect(frame.sid);
       }
 

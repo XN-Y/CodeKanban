@@ -73,6 +73,19 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Get(group, "/web-sessions/runtime-config", func(
+		ctx context.Context,
+		_ *struct{},
+	) (*h.ItemResponse[websession.CodexRuntimeConfig], error) {
+		resp := h.NewItemResponse(c.manager.GetCodexRuntimeConfig())
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-runtime-config"
+		op.Summary = "获取网页会话运行时配置"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Post(group, "/projects/{projectId}/web-sessions", func(
 		ctx context.Context,
 		input *struct {

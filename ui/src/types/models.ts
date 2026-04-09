@@ -254,6 +254,14 @@ export interface WebSessionUsage {
   cost: number;
 }
 
+export type WebSessionContextWindowSource = 'config' | 'default' | 'unavailable';
+
+export interface WebSessionCodexRuntimeConfig {
+  contextWindowTokens: number;
+  compactLimitTokens: number;
+  source: Exclude<WebSessionContextWindowSource, 'unavailable'>;
+}
+
 export interface WebSessionSummary {
   id: string;
   projectId: string;
@@ -268,7 +276,12 @@ export interface WebSessionSummary {
   cwd: string;
   nativeSessionId?: string | null;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
-  assistantState?: 'working' | 'waiting_approval' | 'waiting_input' | 'waiting_plan_approval' | null;
+  assistantState?:
+    | 'working'
+    | 'waiting_approval'
+    | 'waiting_input'
+    | 'waiting_plan_approval'
+    | null;
   hasUnread: boolean;
   archivedAt?: string | null;
   activityAt: string;
@@ -287,6 +300,8 @@ export interface WebSessionSummary {
   createdAt: string;
   updatedAt: string;
   usage: WebSessionUsage;
+  contextWindowTokens?: number | null;
+  contextWindowSource: WebSessionContextWindowSource;
 }
 
 export interface WebSessionAttachment {

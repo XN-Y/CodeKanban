@@ -1,4 +1,8 @@
-import type { WebSessionAttachment, WebSessionSummary } from '@/types/models';
+import type {
+  WebSessionAttachment,
+  WebSessionCodexRuntimeConfig,
+  WebSessionSummary,
+} from '@/types/models';
 import { urlBase } from '@/api';
 import { extractItem } from './response';
 import { http } from './http';
@@ -31,6 +35,15 @@ type WebSessionSnapshot = {
 };
 
 export const webSessionApi = {
+  async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
+    return extractItem<ItemResponse<WebSessionCodexRuntimeConfig>>(
+      await http
+        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config')
+        .send(true),
+      'failed to load web session runtime config'
+    );
+  },
+
   async list(projectId: string): Promise<WebSessionSummary[]> {
     const body =
       (await http
@@ -100,9 +113,9 @@ export const webSessionApi = {
   async sync(projectId: string, sessionId: string): Promise<WebSessionSnapshot> {
     const body =
       (await http
-        .Post<ItemResponse<WebSessionSnapshot>>(
-          `/projects/${projectId}/web-sessions/${sessionId}/sync`
-        )
+        .Post<
+          ItemResponse<WebSessionSnapshot>
+        >(`/projects/${projectId}/web-sessions/${sessionId}/sync`)
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to sync web session');
@@ -199,7 +212,9 @@ export const webSessionApi = {
           return;
         }
 
-        const item = extractItem<WebSessionAttachment>(payload as ItemResponse<WebSessionAttachment>);
+        const item = extractItem<WebSessionAttachment>(
+          payload as ItemResponse<WebSessionAttachment>
+        );
         if (!item?.id) {
           reject(new Error('upload succeeded but no attachment was returned'));
           return;
