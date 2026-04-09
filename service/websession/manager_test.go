@@ -823,6 +823,71 @@ func TestRespondToUserInputCodexAppServer(t *testing.T) {
 	}
 }
 
+func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Needs Input", 1000)
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	requestID := "req_input_123"
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_user_input",
+		Seq:       1,
+		Type:      "user_input_req",
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"iid": requestID,
+			"txt": "Please choose a scope",
+			"qs": []map[string]any{
+				{
+					"id":       "scope",
+					"header":   "Scope",
+					"question": "Which scope should I use?",
+					"options": []map[string]any{
+						{
+							"label":       "Full migration",
+							"description": "Apply all changes",
+						},
+					},
+				},
+			},
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(history.Items))
+	}
+	if history.Items[0].SourceItemID == nil || *history.Items[0].SourceItemID != requestID {
+		t.Fatalf("expected source item id %q, got %v", requestID, history.Items[0].SourceItemID)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 10)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	frame := newSnapshotFrame(session.ID, snapshot)
+	if frame.History == nil || len(frame.History.Items) != 1 {
+		t.Fatalf("expected snapshot frame history item, got %#v", frame.History)
+	}
+	if frame.History.Items[0].SourceItemID == nil || *frame.History.Items[0].SourceItemID != requestID {
+		t.Fatalf(
+			"expected wire snapshot source item id %q, got %v",
+			requestID,
+			frame.History.Items[0].SourceItemID,
+		)
+	}
+}
+
 func TestRespondToApprovalCodexAppServer(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

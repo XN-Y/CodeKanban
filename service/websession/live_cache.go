@@ -366,12 +366,13 @@ func (m *Manager) applyEventToHistoryCache(
 	case "user_input_req":
 		questions := decodeToolQuestions(payload["qs"])
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "user_input_request",
-			Text:       firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      "warn",
+			SourceItemID: nilIfEmptyHistory(stringValue(payload["iid"])),
+			Kind:         "system",
+			ItemType:     "user_input_request",
+			Text:         firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),
+			Timestamp:    ptr(event.Timestamp),
+			ObservedAt:   ptr(event.Timestamp),
+			Level:        "warn",
 			Detail: &HistoryDetail{
 				Type:      "user_input_request",
 				Prompt:    firstNonEmpty(stringValue(payload["txt"]), summarizeHistoryQuestions(questions)),

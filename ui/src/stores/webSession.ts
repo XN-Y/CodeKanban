@@ -512,6 +512,22 @@ function getRecoveryMessage(payload?: Record<string, unknown>) {
   return message || DEFAULT_RECOVERY_MESSAGE;
 }
 
+function normalizeHistorySourceItemId(
+  record: Record<string, unknown>,
+  payload?: Record<string, unknown>
+) {
+  if (typeof record.siid === 'string' && record.siid.trim()) {
+    return record.siid;
+  }
+  if (typeof record.sourceItemId === 'string' && record.sourceItemId.trim()) {
+    return record.sourceItemId;
+  }
+  if (typeof payload?.iid === 'string' && payload.iid.trim()) {
+    return payload.iid;
+  }
+  return null;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return undefined;
@@ -1386,12 +1402,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
           : typeof record.sourceTurnId === 'string'
             ? record.sourceTurnId
             : null,
-      sourceItemId:
-        typeof record.siid === 'string'
-          ? record.siid
-          : typeof record.sourceItemId === 'string'
-            ? record.sourceItemId
-            : null,
+      sourceItemId: normalizeHistorySourceItemId(record, rawPayload),
       orderIndex: Number(record.oi ?? record.orderIndex ?? 0),
       kind:
         kind === 'user' || kind === 'assistant' || kind === 'system' || kind === 'tool'
@@ -1410,17 +1421,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
         .map(attachment => asRecord(attachment))
         .filter((attachment): attachment is Record<string, unknown> => Boolean(attachment))
         .map(attachment => ({
-            id: String(attachment.id ?? ''),
-            name: String(attachment.name ?? ''),
-            mime: typeof attachment.mime === 'string' ? attachment.mime : undefined,
-            size:
-              typeof attachment.sz === 'number'
-                ? attachment.sz
-                : typeof attachment.size === 'number'
-                  ? attachment.size
-                  : undefined,
-            path: typeof attachment.path === 'string' ? attachment.path : undefined,
-          }))
+          id: String(attachment.id ?? ''),
+          name: String(attachment.name ?? ''),
+          mime: typeof attachment.mime === 'string' ? attachment.mime : undefined,
+          size:
+            typeof attachment.sz === 'number'
+              ? attachment.sz
+              : typeof attachment.size === 'number'
+                ? attachment.size
+                : undefined,
+          path: typeof attachment.path === 'string' ? attachment.path : undefined,
+        }))
         .filter(attachment => Boolean(attachment.id || attachment.name)),
       tool: rawTool
         ? {
@@ -1442,8 +1453,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
                     rawTool.status === 'done'
                   ? rawTool.status
                   : rawTool.st === 'completed' || rawTool.status === 'completed'
-                  ? 'done'
-                  : 'running',
+                    ? 'done'
+                    : 'running',
             startedAt:
               rawTimestamp != null
                 ? rawTimestamp
