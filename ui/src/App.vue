@@ -12,8 +12,9 @@ import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useResponsive } from '@/composables/useResponsive';
-import { formatAiStatusTitle, useAiStatusSummary } from '@/composables/useAiStatusSummary';
+import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
+import { formatBrowserTabTitle } from '@/utils/browserTitle';
 import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
 import { APP_NAME } from '@/constants/app';
@@ -32,7 +33,30 @@ const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
 const route = useRoute();
-const browserTabTitle = computed(() => formatAiStatusTitle(totalSummary.value, APP_NAME));
+const currentRouteProjectId = computed(() =>
+  typeof route.params.id === 'string' ? route.params.id : ''
+);
+const workspaceProjectName = computed(() => {
+  if (route.name !== 'project' || !currentRouteProjectId.value) {
+    return '';
+  }
+
+  if (projectStore.currentProject?.id === currentRouteProjectId.value) {
+    return projectStore.currentProject.name?.trim() ?? '';
+  }
+
+  const matchedProject = projectStore.projects.find(
+    project => project.id === currentRouteProjectId.value
+  );
+  return matchedProject?.name?.trim() ?? '';
+});
+const browserTabTitle = computed(() =>
+  formatBrowserTabTitle({
+    summary: totalSummary.value,
+    appName: APP_NAME,
+    projectName: workspaceProjectName.value,
+  })
+);
 const canLoadProtectedContent = computed(() => authStore.canAccessProtectedContent);
 const shouldRenderWorkspaceOverlays = computed(() => canLoadProtectedContent.value);
 

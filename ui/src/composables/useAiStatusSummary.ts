@@ -73,14 +73,6 @@ function summarizeProjectBuckets(sessionBuckets?: Map<string, StatusBucket>): Ai
   return summary;
 }
 
-export function formatAiStatusTitle(summary: AiStatusSummary, appName: string) {
-  const total = summary.working + summary.blocking + summary.unreadCompleted;
-  if (total === 0) {
-    return appName;
-  }
-  return `[${summary.working}/${summary.blocking}/${summary.unreadCompleted}] ${appName}`;
-}
-
 export function useAiStatusSummary() {
   const projectStore = useProjectStore();
   const reminderStore = useTerminalReminderStore();
