@@ -53,6 +53,7 @@ export default {
     terminal: 'Terminal',
     webSession: 'Web Chat',
     projects: 'Projects',
+    settingsShort: 'Settings',
     notifications: 'Alerts',
   },
   project: {
@@ -692,6 +693,7 @@ export default {
       'This step expired after the app restarted. Send a new message to continue the session.',
     showReasoning: 'Show Reasoning',
     hideReasoning: 'Hide Reasoning',
+    infiniteRetry: 'Auto Retry',
     workflowDefault: 'Execute',
     workflowPlan: 'Plan',
     planCardBadge: 'Plan Ready',
@@ -720,8 +722,7 @@ export default {
     contextUsageSourceDefault: 'default 400000',
     contextUsageMode: 'Mode: {mode}',
     contextUsageModeSinceCompaction: 'estimated since the latest context compaction',
-    contextUsageModeCumulativeTotal:
-      'cumulative usage total (no context compaction observed yet)',
+    contextUsageModeCumulativeTotal: 'cumulative usage total (no context compaction observed yet)',
     contextUsageEstimatedBreakdown:
       'Estimated breakdown: input {input} / cached {cached} / output {output}',
     contextUsageTotalUsed: 'Cumulative total used: {count} tokens',
@@ -868,6 +869,18 @@ export default {
     showWebSessionReasoning: 'Show AI reasoning',
     showWebSessionReasoningTip:
       'Only affects reasoning entries in the session view. Most of the time this is low-value noise, so only enable it when debugging agent behavior.',
+    webSessionAutoContinueScope: 'Auto-continue failure scope',
+    webSessionAutoContinueScopeTip:
+      'This only applies after run_fail. It does not change Codex transport reconnect attempts like 1/5 or 2/5.',
+    webSessionAutoContinueScopeNetworkOnly: 'Final network failures only',
+    webSessionAutoContinueScopeNetworkAndRateLimit: 'Network + rate-limit failures',
+    webSessionAutoContinueScopeAllFailures: 'All run_fail events',
+    webSessionAutoContinuePreset: 'Auto-continue backoff strategy',
+    webSessionAutoContinuePresetTip:
+      'If repeated automatic continue attempts still fail, the wait time will expand based on this preset. Any manual user action cancels the automatic sequence.',
+    webSessionAutoContinuePresetGentleStop: 'Gentle: stop after 3/10/30/60s',
+    webSessionAutoContinuePresetAggressiveStop: 'Aggressive: stop after 2/5/15/30/60s',
+    webSessionAutoContinuePresetSustain60s: 'Sustain: 3/10/30s, then every 60s',
     terminalQuickActions: 'Terminal Quick Actions',
     terminalQuickActionsList: 'Actions',
     terminalQuickActionStackLabel: 'Stack into unified button',

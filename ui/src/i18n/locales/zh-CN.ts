@@ -53,6 +53,7 @@ export default {
     terminal: '终端',
     webSession: '会话',
     projects: '项目',
+    settingsShort: '设置',
     notifications: '提醒',
   },
   project: {
@@ -675,6 +676,7 @@ export default {
     recoveredActionExpired: '这一步已因程序重启失效，请发送新消息继续会话。',
     showReasoning: '显示思考',
     hideReasoning: '隐藏思考',
+    infiniteRetry: '自动重试',
     workflowDefault: '执行',
     workflowPlan: '计划',
     planCardBadge: '计划已完成',
@@ -836,6 +838,18 @@ export default {
     showWebSessionReasoning: '显示 AI 思考过程',
     showWebSessionReasoningTip:
       '仅影响会话页中的思考条目显示。大部分时候这些内容都是无用信息，只有排查模型行为或调试时才建议开启。',
+    webSessionAutoContinueScope: '自动继续失败范围',
+    webSessionAutoContinueScopeTip:
+      '仅影响 run_fail 之后的自动 continue；不影响 Codex 已有的 1/5、2/5 这类传输层重连。',
+    webSessionAutoContinueScopeNetworkOnly: '仅最终网络类',
+    webSessionAutoContinueScopeNetworkAndRateLimit: '网络类 + 限流类',
+    webSessionAutoContinueScopeAllFailures: '所有 run_fail',
+    webSessionAutoContinuePreset: '自动继续退避策略',
+    webSessionAutoContinuePresetTip:
+      '连续自动 continue 仍失败时，按这里的节奏逐步拉长等待时间；用户手动介入后会取消自动策略。',
+    webSessionAutoContinuePresetGentleStop: '温和：3/10/30/60 秒后停止',
+    webSessionAutoContinuePresetAggressiveStop: '积极：2/5/15/30/60 秒后停止',
+    webSessionAutoContinuePresetSustain60s: '持续：3/10/30 秒后每 60 秒继续',
     terminalQuickActions: '终端快捷按钮',
     terminalQuickActionsList: '按钮列表',
     terminalQuickActionStackLabel: '叠入统一快捷按钮',
