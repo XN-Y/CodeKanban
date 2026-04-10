@@ -2277,7 +2277,9 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 		return Event{}, cacheErr
 	}
 	if cachedItem != nil {
-		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
+		if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
+			m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, summary))
+		}
 	} else if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
 		m.broadcast(newSessionFrame(sessionID, *summary))
 	}
@@ -2852,6 +2854,9 @@ func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
+	}
+	if record.ArchivedAt != nil {
+		return nil
 	}
 	snap, err := m.loadSnapshotLocal(ctx, record, DefaultHistoryWindow, false)
 	if err != nil {

@@ -147,6 +147,127 @@ func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
 	}
 }
 
+func TestManagerBroadcastSessionSummarySkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived Session", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	manager.broadcastSessionSummary(context.Background(), session.ID)
+
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived session summary to produce no broadcast frames, got %d", len(eventConn.frames))
+	}
+}
+
+func TestManagerBroadcastSnapshotSkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived Snapshot", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	if err := manager.broadcastSnapshot(context.Background(), session.ID); err != nil {
+		t.Fatalf("broadcastSnapshot returned error: %v", err)
+	}
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived snapshot broadcast to produce no frames, got %d", len(eventConn.frames))
+	}
+}
+
+func TestManagerAppendAndBroadcastPersistsArchivedHistoryWithoutRealtimeFrames(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived History", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+
+	eventTime := time.Now().UTC().Truncate(time.Millisecond)
+	appended, err := manager.appendAndBroadcast(context.Background(), session.ID, record, Event{
+		ID:        "evt_archived_note",
+		Type:      "note",
+		Timestamp: eventTime,
+		Payload: map[string]any{
+			"txt": "keep this history",
+			"lvl": "info",
+		},
+	})
+	if err != nil {
+		t.Fatalf("appendAndBroadcast returned error: %v", err)
+	}
+	if appended.Seq != 1 {
+		t.Fatalf("expected appended event seq 1, got %d", appended.Seq)
+	}
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived append to produce no realtime frames, got %d", len(eventConn.frames))
+	}
+
+	history, err := manager.History(context.Background(), session.ID, DefaultHistoryWindow, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Items) != 1 {
+		t.Fatalf("expected 1 archived history item, got %d", len(history.Items))
+	}
+	if history.Items[0].ItemType != "note" {
+		t.Fatalf("expected archived history item type note, got %q", history.Items[0].ItemType)
+	}
+	if history.Items[0].Text != "keep this history" {
+		t.Fatalf("expected archived history text to be preserved, got %q", history.Items[0].Text)
+	}
+}
+
 func TestParseCodexContextWindowRootLevelOnly(t *testing.T) {
 	raw := `
 model_context_window = 1000000 # root setting

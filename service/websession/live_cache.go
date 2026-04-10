@@ -524,6 +524,11 @@ func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *Se
 	if err != nil {
 		return nil
 	}
+	// Archived sessions remain queryable via explicit snapshot/history APIs,
+	// but they should not continue to emit live websocket updates.
+	if record.ArchivedAt != nil {
+		return nil
+	}
 	summary := m.mapSessionSummary(record)
 	return &summary
 }
