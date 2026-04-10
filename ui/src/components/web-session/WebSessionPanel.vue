@@ -972,16 +972,37 @@
                     {{ t('webSession.preinputRedirect') }}
                   </n-button>
                 </template>
-                <n-button
+                <n-popover
                   v-else
-                  type="primary"
-                  class="composer-send-btn"
-                  :loading="isSubmittingMessage"
-                  :disabled="!canSend"
-                  @click="handleSubmit"
+                  trigger="manual"
+                  placement="top-end"
+                  :show="showSendConflictWarning"
+                  :show-arrow="true"
+                  :disabled="!showSendConflictWarning"
                 >
-                  {{ t('webSession.send') }}
-                </n-button>
+                  <template #trigger>
+                    <n-button
+                      type="primary"
+                      :class="[
+                        'composer-send-btn',
+                        { 'is-confirm-armed': isSendConflictConfirmationArmed },
+                      ]"
+                      :loading="isSubmittingMessage"
+                      :disabled="!canSend"
+                      @click="handleSubmit"
+                    >
+                      {{ t('webSession.send') }}
+                    </n-button>
+                  </template>
+                  <div class="composer-send-confirm-popover-card" role="status" aria-live="polite">
+                    <div class="composer-send-confirm-title">
+                      {{ t('webSession.sendConflictWarningTitle') }}
+                    </div>
+                    <div class="composer-send-confirm-body">
+                      {{ sendConflictWarningBody }}
+                    </div>
+                  </div>
+                </n-popover>
               </div>
             </div>
             <TransferProgressDialog
@@ -1369,6 +1390,12 @@ import {
   scheduleWebSessionUserInputSlowHint,
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
+  buildWebSessionSendConfirmationSignature,
+  findWebSessionSendConflicts,
+  resolveWebSessionSendConfirmation,
+  type WebSessionSendConfirmationState,
+} from '@/components/web-session/webSessionSendGuard';
+import {
   resolveWebSessionDisplayState,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
@@ -1391,6 +1418,7 @@ const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
 const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
+const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -1575,6 +1603,7 @@ const submitStateBySessionId = ref<WebSessionSubmitState>({});
 const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
 const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
+const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
@@ -1589,6 +1618,7 @@ const tabDragSortable = shallowRef<Sortable | null>(null);
 let composerDragDepth = 0;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
+let sendConfirmationTimer: number | null = null;
 const loadedSidebarProjectIds = new Set<string>();
 const sidebarContainerWidth = ref(0);
 const isSidebarResizing = ref(false);
@@ -1672,6 +1702,7 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   const session = currentSession.value;
   return session && !isDraftSession(session) ? session : null;
 });
+const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
 const currentSessionAutoRetryEnabled = computed(() => Boolean(currentSession.value?.autoRetryEnabled));
 const webSessionAutoContinueEnabledValue = computed({
@@ -2138,6 +2169,21 @@ const historyMeta = computed(() =>
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
+const sendConflictSessions = computed(() => {
+  const projectId = sendGuardProjectId.value;
+  if (!projectId) {
+    return [];
+  }
+  return findWebSessionSendConflicts({
+    currentSessionId: currentRealSession.value?.id ?? '',
+    sessions: webSessionStore.getSessions(projectId).map(session => ({
+      id: session.id,
+      title: session.title,
+      workflowMode: session.workflowMode,
+      livePhase: webSessionStore.getLiveState(session.id).phase,
+    })),
+  });
+});
 const draftAttachmentUpload = computed(() =>
   webSessionStore.getDraftAttachmentUpload(props.projectId, currentDraftSessionId.value)
 );
@@ -2203,6 +2249,20 @@ const currentSessionLatestEventSeq = computed(() =>
 );
 const isPlanCardImplementPending = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
+);
+const sendConfirmationSignature = computed(() =>
+  buildWebSessionSendConfirmationSignature({
+    ownerId: currentDraftSessionId.value,
+    text: composerText.value,
+    attachmentIds: draftAttachments.value.map(item => item.id),
+    conflictSessionIds: sendConflictSessions.value.map(session => session.id),
+  })
+);
+const isSendConflictConfirmationArmed = computed(() =>
+  Boolean(
+    sendConfirmationState.value &&
+      sendConfirmationState.value.signature === sendConfirmationSignature.value
+  )
 );
 const isSubmittingMessage = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
@@ -2511,6 +2571,32 @@ function endUserInputSubmit(ownerId: string) {
     userInputSlowStateByOwnerId.value,
     normalizedOwnerId
   );
+}
+
+function clearSendConflictConfirmationTimer() {
+  if (sendConfirmationTimer != null) {
+    window.clearTimeout(sendConfirmationTimer);
+    sendConfirmationTimer = null;
+  }
+}
+
+function setSendConflictConfirmationState(nextState: WebSessionSendConfirmationState | null) {
+  clearSendConflictConfirmationTimer();
+  sendConfirmationState.value = nextState;
+  if (!nextState) {
+    return;
+  }
+  const delay = Math.max(0, nextState.expiresAt - Date.now());
+  sendConfirmationTimer = window.setTimeout(() => {
+    sendConfirmationTimer = null;
+    if (sendConfirmationState.value?.signature === nextState.signature) {
+      sendConfirmationState.value = null;
+    }
+  }, delay);
+}
+
+function clearSendConflictConfirmation() {
+  setSendConflictConfirmationState(null);
 }
 
 function showComposerTransferError(detail?: string) {
@@ -5686,6 +5772,17 @@ async function handleSubmit() {
   ) {
     return;
   }
+  const confirmation = resolveWebSessionSendConfirmation({
+    conflicts: sendConflictSessions.value,
+    currentState: sendConfirmationState.value,
+    signature: sendConfirmationSignature.value,
+    now: Date.now(),
+    ttlMs: WEB_SESSION_SEND_CONFIRM_TTL_MS,
+  });
+  setSendConflictConfirmationState(confirmation.nextState);
+  if (!confirmation.shouldProceed) {
+    return;
+  }
   let submitOwnerId = initialSubmitOwnerId;
   beginSessionSubmit(submitOwnerId);
   try {
@@ -5787,6 +5884,45 @@ function handleComposerEnter(event: KeyboardEvent) {
   event.preventDefault();
   void handleSubmit();
 }
+
+function getSendConflictSessionTitle(title: string) {
+  const normalized = String(title || '').trim();
+  return normalized || t('terminal.untitledSession');
+}
+
+function formatSendConflictSessionList(
+  sessions: Array<{
+    title: string;
+  }>
+) {
+  const titles = sessions.slice(0, 2).map(session => getSendConflictSessionTitle(session.title));
+  if (sessions.length <= 2) {
+    return titles.join(locale.value === 'zh-CN' ? '、' : ', ');
+  }
+  return t('webSession.sendConflictListOverflow', {
+    first: titles[0],
+    second: titles[1],
+    remaining: sessions.length - 2,
+  });
+}
+
+const showSendConflictWarning = computed(
+  () => isSendConflictConfirmationArmed.value && sendConflictSessions.value.length > 0
+);
+const sendConflictWarningBody = computed(() => {
+  const conflicts = sendConflictSessions.value;
+  if (!showSendConflictWarning.value || conflicts.length === 0) {
+    return '';
+  }
+  const sessions = formatSendConflictSessionList(conflicts);
+  if (conflicts.length === 1) {
+    return t('webSession.sendConflictWarningBodySingle', { sessions });
+  }
+  return t('webSession.sendConflictWarningBodyMultiple', {
+    count: conflicts.length,
+    sessions,
+  });
+});
 
 function handleUserInputEnter(event: KeyboardEvent) {
   if (event.key !== 'Enter') {
@@ -6678,12 +6814,22 @@ async function loadCodexRuntimeConfig() {
 watch(
   () => props.projectId,
   projectId => {
+    clearSendConflictConfirmation();
     if (projectId) {
       void initializeProjectSessions(projectId);
     }
   },
   { immediate: true }
 );
+
+watch(sendConfirmationSignature, signature => {
+  if (!sendConfirmationState.value) {
+    return;
+  }
+  if (sendConfirmationState.value.signature !== signature) {
+    clearSendConflictConfirmation();
+  }
+});
 
 watch(
   () => allVisibleSessions.value.map(session => session.id).join('|'),
@@ -6932,6 +7078,7 @@ watch(timelineContentVersion, async () => {
 
 watch(currentDraftSessionId, () => {
   clearComposerTransferError();
+  clearSendConflictConfirmation();
 });
 
 watch(
@@ -7042,6 +7189,7 @@ onBeforeUnmount(() => {
   userInputSlowStateByOwnerId.value = {};
   emitMobileComposerFocusChange(false);
   clearComposerTransferError();
+  clearSendConflictConfirmation();
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
   cleanupTabScrollListener();
@@ -10009,10 +10157,33 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
 }
 
+.composer-send-confirm-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 88%, #111827);
+}
+
+.composer-send-confirm-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong) 72%, #1f2937);
+}
+
 .composer-send-btn,
 .composer-stop-btn,
 .composer-queue-btn {
   min-width: 84px;
+}
+
+.composer-send-btn.is-confirm-armed {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--web-session-approval-border) 78%, transparent);
+}
+
+.composer-send-confirm-popover-card {
+  display: grid;
+  gap: 4px;
+  max-width: min(320px, 72vw);
+  padding: 2px 0;
 }
 
 .draft-attachments {

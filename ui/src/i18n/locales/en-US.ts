@@ -753,6 +753,12 @@ export default {
       'The agent is waiting for more information. Answer the current prompt first.',
     composerHintRecovered:
       'The previous run was interrupted by an app restart. Send a new message to continue this session.',
+    sendConflictWarningTitle: 'Other sessions are still running',
+    sendConflictWarningBodySingle:
+      'Another same-project non-plan session is still running: {sessions}. Click Send Again to continue anyway.',
+    sendConflictWarningBodyMultiple:
+      '{count} same-project non-plan sessions are still running: {sessions}. Click Send Again to continue anyway.',
+    sendConflictListOverflow: '{first}, {second}, and {remaining} others',
     preinputRedirect: 'Send',
     preinputQueue: 'Add Queue',
     pendingRedirect: 'Next',
