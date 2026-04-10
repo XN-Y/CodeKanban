@@ -208,6 +208,40 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 	}
 }
 
+func TestManagerCountSessionsByProjectSkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	projectA := seedProject(t)
+	projectB := seedProject(t)
+	seedWebSession(t, projectA.ID, "A-1", 1000)
+	archived := seedWebSession(t, projectA.ID, "A-2", 2000)
+	seedWebSession(t, projectB.ID, "B-1", 1000)
+	seedWebSession(t, projectB.ID, "B-2", 2000)
+
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(archived).Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	counts, err := manager.CountSessionsByProject(context.Background())
+	if err != nil {
+		t.Fatalf("CountSessionsByProject returned error: %v", err)
+	}
+
+	if got := counts[projectA.ID]; got != 1 {
+		t.Fatalf("expected project A count 1, got %d", got)
+	}
+	if got := counts[projectB.ID]; got != 2 {
+		t.Fatalf("expected project B count 2, got %d", got)
+	}
+}
+
 func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

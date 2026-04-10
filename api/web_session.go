@@ -31,6 +31,13 @@ type webSessionController struct {
 	upgrader websocket.Upgrader
 }
 
+type webSessionCountsResponse struct {
+	Status int `json:"-"`
+	Body   struct {
+		Counts map[string]int `json:"counts" doc:"项目ID到会话数量的映射"`
+	} `json:"body"`
+}
+
 func registerWebSessionRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppConfig, logger *zap.Logger) {
 	manager, err := websession.NewManager(websession.Config{
 		DataDir:             utils.GetDataDir(),
@@ -75,6 +82,24 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-list"
 		op.Summary = "获取会话列表"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/web-sessions/counts", func(
+		ctx context.Context,
+		_ *struct{},
+	) (*webSessionCountsResponse, error) {
+		counts, err := c.manager.CountSessionsByProject(ctx)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to count web sessions", err)
+		}
+		resp := &webSessionCountsResponse{}
+		resp.Status = http.StatusOK
+		resp.Body.Counts = counts
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-counts"
+		op.Summary = "获取项目会话数量"
 		op.Tags = []string{webSessionTag}
 	})
 

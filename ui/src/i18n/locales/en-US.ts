@@ -79,6 +79,7 @@ export default {
     hidePathHint:
       'When enabled, absolute paths will no longer be displayed in the project list and sidebar.',
     terminalCount: 'Terminal Count',
+    webSessionCount: 'Web Session Count',
     noProjects: 'No projects yet, click the top right corner to create one',
     projectDirectory: 'Project Directory',
     pathPlaceholder: 'Select or enter local project directory, e.g., C:\\Projects\\demo',

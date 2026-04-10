@@ -24,6 +24,10 @@ type ArchivedQueryResult = {
   nextOffset: number;
 };
 
+type CountsResponse = {
+  counts?: Record<string, number>;
+};
+
 export type WebSessionHistoryWindow = {
   items: unknown[];
   hasMore: boolean;
@@ -55,6 +59,11 @@ export const webSessionApi = {
         .Get<{ items?: WebSessionSummary[] }>(`/projects/${projectId}/web-sessions`)
         .send(true)) ?? {};
     return body.items ?? [];
+  },
+
+  async counts(): Promise<Record<string, number>> {
+    const body = (await http.Get<CountsResponse>('/web-sessions/counts').send(true)) ?? {};
+    return body.counts ?? {};
   },
 
   async create(

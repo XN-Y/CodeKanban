@@ -89,18 +89,43 @@
                 <div class="project-info">
                   <div class="project-name-row">
                     <n-tag
-                      v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
+                      v-if="getProjectSessionBadge(project.id)"
                       size="small"
-                      type="success"
+                      :type="
+                        getProjectSessionBadge(project.id)?.kind === 'terminal' ? 'success' : 'info'
+                      "
                       :bordered="false"
                       class="terminal-tag"
-                      :class="{ clickable: project.id === currentProjectId }"
-                      @click.stop="handleTerminalTagClick(project.id)"
+                      :class="{
+                        clickable:
+                          getProjectSessionBadge(project.id)?.kind === 'terminal' &&
+                          project.id === currentProjectId,
+                      }"
+                      :title="
+                        formatProjectBadgeLabel(
+                          getProjectSessionBadge(project.id)?.kind || 'terminal',
+                          getProjectSessionBadge(project.id)?.count || 0
+                        )
+                      "
+                      @click.stop="
+                        handleProjectBadgeClick(
+                          project.id,
+                          getProjectSessionBadge(project.id)?.kind || 'terminal'
+                        )
+                      "
                     >
                       <template #icon>
-                        <n-icon size="14"><TerminalOutline /></n-icon>
+                        <n-icon size="14">
+                          <component
+                            :is="
+                              getProjectSessionBadge(project.id)?.kind === 'terminal'
+                                ? TerminalOutline
+                                : ChatbubblesOutline
+                            "
+                          />
+                        </n-icon>
                       </template>
-                      {{ terminalCounts.get(project.id) }}
+                      {{ getProjectSessionBadge(project.id)?.count }}
                     </n-tag>
                     <n-text class="project-name" strong>{{ project.name }}</n-text>
                   </div>
@@ -200,20 +225,30 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
+import { useStorage } from '@vueuse/core';
+import { storeToRefs } from 'pinia';
 import { useDialog, useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
+import { useWebSessionStore } from '@/stores/webSession';
+import { useSettingsStore } from '@/stores/settings';
 import { useAppStore } from '@/stores/app';
 import {
   CreateOutline,
   SettingsOutline,
   TerminalOutline,
+  ChatbubblesOutline,
   ArrowUpCircleOutline,
 } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSummaryCard.vue';
+import {
+  resolvePreferredProjectSessionKind,
+  resolveProjectSessionBadge,
+  type ProjectSessionBadgeKind,
+} from '@/utils/projectSessionBadge';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
@@ -273,16 +308,42 @@ const props = defineProps<{
   isMobile?: boolean;
 }>();
 
+const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
+const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
+
+type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
+type WorkspaceTab = 'kanban' | 'terminal' | 'web';
+
+const route = useRoute();
 const router = useRouter();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
+const webSessionStore = useWebSessionStore();
+const settingsStore = useSettingsStore();
 const appStore = useAppStore();
+const { terminalDisplayMode } = storeToRefs(settingsStore);
 
 const loading = computed(() => projectStore.loading);
 const currentProject = computed(() => projectStore.currentProject);
 const recentProjects = computed(() => projectStore.recentProjects);
 const terminalCounts = terminalStore.terminalCounts;
+const webSessionCounts = webSessionStore.sessionCounts;
 const compactPopoverContentStyle = 'padding: 4px 6px;';
+const storedMobileViews = useStorage<Record<string, MobileView>>(
+  MOBILE_ACTIVE_VIEW_STORAGE_KEY,
+  {}
+);
+const storedWorkspaceTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
+
+const preferredSessionKind = computed(() =>
+  resolvePreferredProjectSessionKind({
+    isMobile: Boolean(props.isMobile),
+    isDockMode:
+      !props.isMobile && route.name === 'project' && terminalDisplayMode.value === 'docked',
+    mobileActiveView: props.currentProjectId ? storedMobileViews.value[props.currentProjectId] : '',
+    dockedActiveTab: storedWorkspaceTab.value,
+  })
+);
 
 const contextMenu = ref<ContextMenuState>({
   show: false,
@@ -480,6 +541,24 @@ const handleTerminalTagClick = (projectId: string) => {
   }
 };
 
+const getProjectSessionBadge = (projectId: string) =>
+  resolveProjectSessionBadge({
+    terminalCount: terminalCounts.get(projectId) ?? 0,
+    webSessionCount: webSessionCounts.get(projectId) ?? 0,
+    preferredKind: preferredSessionKind.value,
+  });
+
+const formatProjectBadgeLabel = (kind: ProjectSessionBadgeKind, count: number) =>
+  kind === 'terminal'
+    ? `${t('project.terminalCount')}: ${count}`
+    : `${t('project.webSessionCount')}: ${count}`;
+
+const handleProjectBadgeClick = (projectId: string, kind: ProjectSessionBadgeKind) => {
+  if (kind === 'terminal') {
+    handleTerminalTagClick(projectId);
+  }
+};
+
 const handleBackToList = () => {
   router.push({ name: 'projects' });
 };
@@ -508,6 +587,7 @@ onMounted(() => {
     projectStore.fetchProjects();
   }
   terminalStore.loadTerminalCounts();
+  webSessionStore.loadSessionCounts();
   // 延迟检查更新
   setTimeout(checkForUpdates, 2000);
 });

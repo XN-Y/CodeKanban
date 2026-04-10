@@ -388,6 +388,36 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 	return items, nil
 }
 
+func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, error) {
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	var rows []struct {
+		ProjectID string
+		Count     int64
+	}
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionTable{}).
+		Select("project_id, COUNT(1) AS count").
+		Where("archived_at IS NULL").
+		Group("project_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		projectID := strings.TrimSpace(row.ProjectID)
+		if projectID == "" {
+			continue
+		}
+		counts[projectID] = int(row.Count)
+	}
+	return counts, nil
+}
+
 func (m *Manager) ListArchivedSessions(
 	ctx context.Context,
 	projectIDs []string,

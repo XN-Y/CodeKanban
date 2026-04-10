@@ -1,6 +1,6 @@
 import EventEmitter from 'eventemitter3';
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { webSessionApi, type WebSessionAttachmentUploadProgress } from '@/api/webSession';
 import type {
   WebSessionAttachment,
@@ -818,6 +818,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
+  const cachedCounts = reactive(new Map<string, number>());
   const emitter = new EventEmitter();
 
   const connectionState = ref<'idle' | 'connecting' | 'open' | 'closed'>('idle');
@@ -854,6 +855,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function getSessions(projectId: string) {
     return sessionsByProject.value[projectId] ?? [];
+  }
+
+  function syncSessionCount(projectId: string) {
+    if (!projectId) {
+      return;
+    }
+    cachedCounts.set(projectId, getSessions(projectId).length);
+  }
+
+  function getSessionCount(projectId: string) {
+    return cachedCounts.get(projectId) ?? 0;
   }
 
   function getArchivedSessions(projectIds: string[]) {
@@ -1581,6 +1593,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [projectId]: next,
     };
+    syncSessionCount(projectId);
     const currentActive = activeSessionIdByProject.value[projectId];
     if (currentActive === sessionId) {
       activeSessionIdByProject.value = {
@@ -1632,6 +1645,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [summary.projectId]: sortSessions(next),
     };
+    syncSessionCount(summary.projectId);
   }
 
   function upsertSession(summary: WebSessionSummary) {
@@ -2410,6 +2424,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [projectId]: sortSessions(sessions),
     };
+    syncSessionCount(projectId);
     loadedProjects.value = {
       ...loadedProjects.value,
       [projectId]: true,
@@ -2418,6 +2433,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
       rememberActiveSession(projectId, sessions[0].id);
     }
     return sessions;
+  }
+
+  async function loadSessionCounts() {
+    try {
+      const counts = await webSessionApi.counts();
+      cachedCounts.clear();
+      Object.entries(counts).forEach(([projectId, count]) => {
+        cachedCounts.set(projectId, Math.max(0, Number(count) || 0));
+      });
+      return counts;
+    } catch (error) {
+      console.error('Failed to load web session counts', error);
+      return {};
+    }
   }
 
   function invalidateArchivedSessions() {
@@ -2876,6 +2905,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     lastError,
     getDraft,
     getSessions,
+    getSessionCount,
     getArchivedSessions,
     getArchivedMeta,
     getActiveSessionId,
@@ -2889,6 +2919,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getBlocks,
     getLatestEventSeq,
     loadSessions,
+    loadSessionCounts,
     loadArchivedSessions,
     invalidateArchivedSessions,
     setActiveSession,
@@ -2922,6 +2953,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     clearDraft,
     moveDraft,
     openEventStream,
+    sessionCounts: cachedCounts,
     emitter,
   };
 });

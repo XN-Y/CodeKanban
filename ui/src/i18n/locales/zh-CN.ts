@@ -78,6 +78,7 @@ export default {
     hidePath: '隐藏路径',
     hidePathHint: '开启后，项目列表与侧边栏中将不再展示绝对路径。',
     terminalCount: '终端数量',
+    webSessionCount: '会话数量',
     noProjects: '还没有任何项目，点击右上角创建一个吧',
     projectDirectory: '项目目录',
     pathPlaceholder: '选择或输入本地项目目录，例如 C:\\Projects\\demo',
