@@ -1,0 +1,665 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+
+import { CodeKanbanClient } from '../src/client.js';
+import { createFetchMock, createJsonResponse, FakeWebSocket } from './helpers.js';
+
+function createWebSessionSnapshot({
+  session = {},
+  items = [],
+  history = {},
+} = {}) {
+  return {
+    session: {
+      id: 'ws1',
+      projectId: 'p1',
+      worktreeId: 'w1',
+      orderIndex: 1000,
+      agent: 'codex',
+      title: 'Session 1',
+      model: 'gpt-5.4',
+      reasoningEffort: 'high',
+      workflowMode: 'plan',
+      permissionLevel: 'elevated',
+      cwd: '/repo/demo',
+      nativeSessionId: 'native-1',
+      status: 'idle',
+      assistantState: null,
+      hasUnread: false,
+      archivedAt: null,
+      activityAt: '2026-04-10T00:00:00Z',
+      lastMessageAt: '2026-04-10T00:00:00Z',
+      assistantStateUpdatedAt: null,
+      sourceKind: 'codex_app_server',
+      syncState: 'fresh',
+      lastSyncMode: 'fast',
+      sourceCreatedAt: null,
+      sourceUpdatedAt: null,
+      lastSyncedAt: null,
+      threadPath: null,
+      threadPreview: null,
+      turnCount: 0,
+      itemCount: items.length,
+      syncError: null,
+      createdAt: '2026-04-10T00:00:00Z',
+      updatedAt: '2026-04-10T00:00:00Z',
+      usage: {
+        inputTokens: 0,
+        cachedInputTokens: 0,
+        outputTokens: 0,
+        cost: 0,
+      },
+      contextWindowTokens: 1000000,
+      contextWindowSource: 'config',
+      ...session,
+    },
+    history: {
+      items,
+      hasMore: false,
+      beforeCursor: null,
+      total: items.length,
+      ...history,
+    },
+  };
+}
+
+function withAckingWebSocket(assertions) {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+    const originalSend = socket.send.bind(socket);
+    socket.send = payload => {
+      originalSend(payload);
+      const frame = JSON.parse(payload);
+      assertions?.(frame, socket);
+      queueMicrotask(() => {
+        socket.emitJson({
+          v: 1,
+          k: 'ack',
+          rid: frame.rid,
+          sid: frame.sid,
+          ts: 1710000001234,
+          op: frame.op,
+          ok: 1,
+        });
+      });
+    };
+  });
+}
+
+test('CodeKanbanClient web session HTTP methods call the expected endpoints', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions', () =>
+      createJsonResponse({ items: [{ id: 'ws1', projectId: 'p1', title: 'Session 1' }] })],
+    ['POST /api/v1/projects/p1/web-sessions', ({ body }) => {
+      assert.equal(body.agent, 'codex');
+      assert.equal(body.workflowMode, 'plan');
+      assert.equal(body.permissionLevel, 'elevated');
+      return createJsonResponse({ item: { id: 'ws2', projectId: 'p1', title: 'Created' } }, 201);
+    }],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', ({ url }) => {
+      assert.equal(url.searchParams.get('limit'), '30');
+      return createJsonResponse({
+        item: {
+          session: { id: 'ws1', projectId: 'p1' },
+          history: { items: [], hasMore: false, total: 0 },
+        },
+      });
+    }],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/history', ({ url }) => {
+      assert.equal(url.searchParams.get('beforeCursor'), '99');
+      assert.equal(url.searchParams.get('limit'), '20');
+      return createJsonResponse({
+        item: {
+          items: [{ id: 'hist-1' }],
+          hasMore: true,
+          beforeCursor: '77',
+          total: 10,
+        },
+      });
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/sync', ({ body }) => {
+      assert.deepEqual(body, { mode: 'deep', clearExisting: true });
+      return createJsonResponse({
+        item: {
+          session: { id: 'ws1', projectId: 'p1' },
+          history: { items: [], hasMore: false, total: 0 },
+        },
+      });
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/archive', () =>
+      createJsonResponse({ item: { id: 'ws1', projectId: 'p1', archivedAt: '2026-04-10T00:00:00Z' } })],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/unarchive', () =>
+      createJsonResponse({ item: { id: 'ws1', projectId: 'p1', archivedAt: null } })],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/rename', ({ body }) => {
+      assert.deepEqual(body, { title: 'Renamed' });
+      return createJsonResponse({ item: { id: 'ws1', projectId: 'p1', title: 'Renamed' } });
+    }],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/close', () => createJsonResponse({ message: 'session aborted' })],
+    ['DELETE /api/v1/projects/p1/web-sessions/ws1', () => createJsonResponse({ message: 'session deleted' })],
+    ['POST /api/v1/web-sessions/archived/query', ({ body }) => {
+      assert.deepEqual(body, { projectIds: ['p1'], offset: 10, limit: 5 });
+      return createJsonResponse({
+        item: {
+          items: [{ id: 'arch-1' }],
+          total: 12,
+          hasMore: true,
+          nextOffset: 15,
+        },
+      });
+    }],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/command-groups/group-1', () =>
+      createJsonResponse({ item: { groupId: 'group-1', count: 2 } })],
+    ['GET /api/v1/web-sessions/runtime-config', () =>
+      createJsonResponse({ item: { contextWindowTokens: 200000, compactLimitTokens: 200000, source: 'default' } })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const sessions = await client.listWebSessions({ projectId: 'p1' });
+  assert.equal(sessions.length, 1);
+
+  const created = await client.createWebSession({
+    projectId: 'p1',
+    agent: 'codex',
+    workflowMode: 'plan',
+    permissionLevel: 'elevated',
+  });
+  assert.equal(created.id, 'ws2');
+
+  const snapshot = await client.getWebSessionSnapshot({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    limit: 30,
+  });
+  assert.equal(snapshot.session.id, 'ws1');
+
+  const history = await client.getWebSessionHistory({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    beforeCursor: '99',
+    limit: 20,
+  });
+  assert.equal(history.beforeCursor, '77');
+
+  const synced = await client.syncWebSession({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    mode: 'deep',
+    clearExisting: true,
+  });
+  assert.equal(synced.session.id, 'ws1');
+
+  const archived = await client.archiveWebSession({ projectId: 'p1', sessionId: 'ws1' });
+  assert.equal(archived.id, 'ws1');
+
+  const unarchived = await client.unarchiveWebSession({ projectId: 'p1', sessionId: 'ws1' });
+  assert.equal(unarchived.archivedAt, null);
+
+  const renamed = await client.renameWebSession({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    title: 'Renamed',
+  });
+  assert.equal(renamed.title, 'Renamed');
+
+  const closed = await client.closeWebSession({ projectId: 'p1', sessionId: 'ws1' });
+  assert.equal(closed.message, 'session aborted');
+
+  const deleted = await client.deleteWebSession({ projectId: 'p1', sessionId: 'ws1' });
+  assert.equal(deleted.message, 'session deleted');
+
+  const archivedQuery = await client.queryArchivedWebSessions({
+    projectIds: ['p1'],
+    offset: 10,
+    limit: 5,
+  });
+  assert.equal(archivedQuery.nextOffset, 15);
+
+  const commandGroup = await client.getWebSessionCommandGroup({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    groupId: 'group-1',
+  });
+  assert.equal(commandGroup.groupId, 'group-1');
+
+  const runtimeConfig = await client.getWebSessionRuntimeConfig();
+  assert.equal(runtimeConfig.contextWindowTokens, 200000);
+});
+
+test('CodeKanbanClient uploadWebSessionAttachment sends multipart image data with inferred mime type', async t => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), 'codekanban-sdk-'));
+  t.after(async () => {
+    await rm(tempDir, { recursive: true, force: true });
+  });
+
+  const filePath = path.join(tempDir, 'image.png');
+  await writeFile(filePath, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['POST /api/v1/projects/p1/web-sessions/attachments', ({ body, headers }) => {
+      assert.equal(headers.Accept, 'application/json');
+      const file = body.get('file');
+      assert.ok(file);
+      assert.equal(file.name, 'image.png');
+      assert.equal(file.type, 'image/png');
+      return createJsonResponse({
+        item: {
+          id: 'att-1',
+          name: 'image.png',
+          mime: 'image/png',
+          size: 4,
+          path: '/tmp/image.png',
+          createdAt: '2026-04-10T00:00:00Z',
+        },
+      }, 201);
+    }],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const attachment = await client.uploadWebSessionAttachment({
+    projectId: 'p1',
+    filePath,
+  });
+
+  assert.equal(attachment.id, 'att-1');
+  assert.equal(attachment.mime, 'image/png');
+});
+
+test('CodeKanbanClient opens web session websocket helpers with the expected URLs', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: async () => createJsonResponse({}),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const commandChannel = client.openWebSessionCommandChannel();
+  await commandChannel.waitForOpen();
+  const eventStream = client.openWebSessionEventStream({ sessionId: 'ws1' });
+  await eventStream.waitForOpen();
+
+  assert.equal(FakeWebSocket.instances[0].url, 'ws://127.0.0.1:3000/api/v1/web-sessions/ws');
+  assert.equal(FakeWebSocket.instances[1].url, 'ws://127.0.0.1:3000/api/v1/web-sessions/events');
+
+  commandChannel.close();
+  eventStream.close();
+});
+
+test('CodeKanbanClient analyzeWebSession derives actionable polling state from snapshot', async () => {
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: async () => createJsonResponse({}),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = client.analyzeWebSession(
+    createWebSessionSnapshot({
+      session: {
+        status: 'running',
+        assistantState: 'waiting_plan_approval',
+        workflowMode: 'plan',
+      },
+      items: [
+        {
+          id: 'user-1',
+          orderIndex: 1,
+          kind: 'user',
+          itemType: 'user_message',
+          text: 'plan this',
+          timestamp: '2026-04-10T00:00:01Z',
+          observedAt: '2026-04-10T00:00:01Z',
+          payload: {},
+        },
+        {
+          id: 'plan-1',
+          orderIndex: 2,
+          kind: 'tool',
+          itemType: 'plan',
+          text: '',
+          timestamp: '2026-04-10T00:00:02Z',
+          observedAt: '2026-04-10T00:00:02Z',
+          tool: {
+            id: 'plan-tool-1',
+            name: 'Plan',
+            kind: 'plan',
+            output: '# Plan',
+            status: 'done',
+            meta: { title: 'Plan' },
+          },
+          payload: {},
+        },
+      ],
+    }),
+  );
+
+  assert.equal(state.phase, 'waiting_plan_approval');
+  assert.equal(state.canSend, true);
+  assert.equal(state.needsAction, true);
+  assert.equal(state.nextAction.type, 'execute_plan');
+  assert.equal(state.latestPlan.toolId, 'plan-tool-1');
+});
+
+test('CodeKanbanClient getWebSessionState identifies pending user input for polling clients', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_input',
+          },
+          items: [
+            {
+              id: 'req-1',
+              sourceItemId: 'call_1',
+              orderIndex: 1,
+              kind: 'system',
+              itemType: 'user_input_request',
+              text: 'Pick one',
+              timestamp: '2026-04-10T00:00:03Z',
+              observedAt: '2026-04-10T00:00:03Z',
+              detail: {
+                type: 'user_input_request',
+                prompt: 'Pick one',
+                questions: [
+                  {
+                    id: 'scope',
+                    header: 'Scope',
+                    question: 'Pick one',
+                    isOther: false,
+                    isSecret: false,
+                    options: [{ label: 'A', description: 'option A' }],
+                  },
+                ],
+              },
+              payload: { iid: 'call_1' },
+            },
+          ],
+        }),
+      })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.getWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.equal(state.phase, 'waiting_input');
+  assert.equal(state.needsAction, true);
+  assert.equal(state.nextAction.type, 'answer_user_input');
+  assert.equal(state.pendingUserInput.itemId, 'call_1');
+  assert.equal(state.canSend, false);
+});
+
+test('CodeKanbanClient answerPendingUserInput uses the active itemId from snapshot analysis', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_input',
+          },
+          items: [
+            {
+              id: 'req-1',
+              sourceItemId: 'call_42',
+              orderIndex: 1,
+              kind: 'system',
+              itemType: 'user_input_request',
+              text: 'Pick one',
+              timestamp: '2026-04-10T00:00:03Z',
+              observedAt: '2026-04-10T00:00:03Z',
+              detail: {
+                type: 'user_input_request',
+                prompt: 'Pick one',
+                questions: [],
+              },
+              payload: { iid: 'call_42' },
+            },
+          ],
+        }),
+      })],
+  ]);
+
+  withAckingWebSocket(frame => {
+    assert.equal(frame.op, 'user_input');
+    assert.equal(frame.sid, 'ws1');
+    assert.deepEqual(frame.p, {
+      iid: 'call_42',
+      ans: { scope: ['full'] },
+    });
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.answerPendingUserInput({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    answers: { scope: ['full'] },
+  });
+
+  assert.equal(result.itemId, 'call_42');
+  assert.equal(result.ack.operation, 'user_input');
+});
+
+test('CodeKanbanClient executeLatestPlan answers a plan-choice user input automatically', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_input',
+            workflowMode: 'plan',
+          },
+          items: [
+            {
+              id: 'plan-1',
+              orderIndex: 1,
+              kind: 'tool',
+              itemType: 'plan',
+              text: '',
+              timestamp: '2026-04-10T00:00:04Z',
+              observedAt: '2026-04-10T00:00:04Z',
+              tool: {
+                id: 'plan-tool-1',
+                name: 'Plan',
+                kind: 'plan',
+                output: '# Plan',
+                status: 'done',
+                meta: { title: 'Plan' },
+              },
+              payload: {},
+            },
+            {
+              id: 'req-plan-choice',
+              sourceItemId: 'call_plan_choice',
+              orderIndex: 2,
+              kind: 'system',
+              itemType: 'user_input_request',
+              text: 'What next?',
+              timestamp: '2026-04-10T00:00:05Z',
+              observedAt: '2026-04-10T00:00:05Z',
+              detail: {
+                type: 'user_input_request',
+                prompt: 'What next?',
+                questions: [
+                  {
+                    id: 'action',
+                    header: 'Action',
+                    question: 'What next?',
+                    isOther: false,
+                    isSecret: false,
+                    options: [
+                      { label: 'Execute plan', description: 'Start executing the plan now.' },
+                      { label: 'Stay in plan', description: 'Keep planning for later.' },
+                    ],
+                  },
+                ],
+              },
+              payload: { iid: 'call_plan_choice' },
+            },
+          ],
+        }),
+      })],
+  ]);
+
+  const seenOps = [];
+  withAckingWebSocket(frame => {
+    seenOps.push(frame.op);
+    if (frame.op === 'set_wm') {
+      assert.deepEqual(frame.p, { wm: 'default' });
+    }
+    if (frame.op === 'user_input') {
+      assert.deepEqual(frame.p, {
+        iid: 'call_plan_choice',
+        ans: {
+          action: ['Execute plan'],
+        },
+      });
+    }
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.executeLatestPlan({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.deepEqual(seenOps, ['set_wm', 'user_input']);
+  assert.equal(result.mode, 'plan_choice');
+});
+
+test('CodeKanbanClient executeLatestPlan sends a follow-up implementation message when no plan-choice prompt exists', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_plan_approval',
+            workflowMode: 'plan',
+          },
+          items: [
+            {
+              id: 'plan-1',
+              orderIndex: 1,
+              kind: 'tool',
+              itemType: 'plan',
+              text: '',
+              timestamp: '2026-04-10T00:00:04Z',
+              observedAt: '2026-04-10T00:00:04Z',
+              tool: {
+                id: 'plan-tool-1',
+                name: 'Plan',
+                kind: 'plan',
+                output: '# Plan',
+                status: 'done',
+                meta: { title: 'Plan' },
+              },
+              payload: {},
+            },
+          ],
+        }),
+      })],
+  ]);
+
+  const seenOps = [];
+  withAckingWebSocket(frame => {
+    seenOps.push(frame.op);
+    if (frame.op === 'send') {
+      assert.deepEqual(frame.p, {
+        txt: 'Implement the plan.',
+        atts: [],
+      });
+    }
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.executeLatestPlan({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.deepEqual(seenOps, ['set_wm', 'send']);
+  assert.equal(result.mode, 'followup_message');
+});
+
+test('CodeKanbanClient waitForWebSessionState works with simple polling clients', async () => {
+  let snapshotReads = 0;
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () => {
+      snapshotReads += 1;
+      return createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: snapshotReads >= 2 ? 'done' : 'running',
+            assistantState: snapshotReads >= 2 ? null : 'working',
+          },
+        }),
+      });
+    }],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.waitForWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    until: 'done',
+    intervalMs: 1,
+    timeoutMs: 1000,
+  });
+
+  assert.equal(state.phase, 'done');
+  assert.equal(snapshotReads, 2);
+});
