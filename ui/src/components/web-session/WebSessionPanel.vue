@@ -802,6 +802,11 @@
                 <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
                   {{ currentSession.cwd }}
                 </div>
+                <div class="composer-auto-continue">
+                  <n-checkbox v-model:checked="webSessionAutoContinueEnabledValue" size="small">
+                    {{ t('webSession.infiniteRetry') }}
+                  </n-checkbox>
+                </div>
               </div>
             </div>
 
@@ -1495,6 +1500,8 @@ const {
   currentPresetId,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionAutoContinueScope,
+  webSessionAutoContinuePreset,
   effectiveTerminalThemeId,
 } = storeToRefs(settingsStore);
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
@@ -1641,6 +1648,38 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
   return session && !isDraftSession(session) ? session : null;
 });
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const currentSessionAutoRetryEnabled = computed(() => Boolean(currentSession.value?.autoRetryEnabled));
+const webSessionAutoContinueEnabledValue = computed({
+  get: () => currentSessionAutoRetryEnabled.value,
+  set: value => {
+    const next = value === true;
+    const session = currentSession.value;
+    if (!session) {
+      return;
+    }
+    if (isDraftSession(session)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        autoRetryEnabled: next,
+        autoRetryScope: webSessionAutoContinueScope.value,
+        autoRetryPreset: webSessionAutoContinuePreset.value,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore
+        .updateAutoRetry(currentRealSession.value.id, {
+          enabled: next,
+          scope: webSessionAutoContinueScope.value,
+          preset: webSessionAutoContinuePreset.value,
+        })
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
+    }
+  },
+});
 const composerText = computed({
   get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
   set: value => {
@@ -2208,6 +2247,9 @@ const mobileComposerSummaryTokens = computed(() => {
     { key: 'workflow', label: selectedWorkflowModeLabel.value },
     { key: 'permission', label: selectedPermissionLevelLabel.value }
   );
+  if (currentSessionAutoRetryEnabled.value) {
+    tokens.push({ key: 'auto-continue', label: t('webSession.infiniteRetry') });
+  }
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
@@ -2479,10 +2521,7 @@ const liveStateWorking = computed(() =>
   ['starting', 'thinking', 'retrying', 'tool'].includes(liveState.value.phase)
 );
 const shouldAutoContinueOnLiveCardClick = computed(
-  () =>
-    liveState.value.phase === 'error' &&
-    Boolean(currentRealSession.value) &&
-    !liveCardContinuePending.value
+  () => liveState.value.phase === 'error' && Boolean(currentRealSession.value) && !liveCardContinuePending.value
 );
 const liveCardAriaLabel = computed(() =>
   shouldAutoContinueOnLiveCardClick.value ? 'continue' : t('webSession.jumpToBottom')
@@ -3010,6 +3049,16 @@ function normalizeDraftSession(
       session.permissionLevel === 'yolo'
         ? session.permissionLevel
         : 'elevated',
+    autoRetryEnabled: session.autoRetryEnabled === true,
+    autoRetryScope:
+      session.autoRetryScope === 'network_and_rate_limit' ||
+      session.autoRetryScope === 'all_failures'
+        ? session.autoRetryScope
+        : webSessionAutoContinueScope.value,
+    autoRetryPreset:
+      session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s'
+        ? session.autoRetryPreset
+        : webSessionAutoContinuePreset.value,
     cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
     nativeSessionId: null,
     status: 'idle',
@@ -3412,6 +3461,15 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       defaultReasoningEffortForAgent(nextAgent),
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
     permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+    autoRetryEnabled: source?.autoRetryEnabled === true,
+    autoRetryScope:
+      source?.autoRetryEnabled === true
+        ? source.autoRetryScope
+        : webSessionAutoContinueScope.value,
+    autoRetryPreset:
+      source?.autoRetryEnabled === true
+        ? source.autoRetryPreset
+        : webSessionAutoContinuePreset.value,
     cwd: context.cwd,
     nativeSessionId: null,
     status: 'idle',
@@ -5017,6 +5075,15 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
       workflowMode: source?.workflowMode || draftWorkflowMode.value,
       permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+      autoRetryEnabled: source?.autoRetryEnabled === true,
+      autoRetryScope:
+        source?.autoRetryEnabled === true
+          ? source.autoRetryScope
+          : webSessionAutoContinueScope.value,
+      autoRetryPreset:
+        source?.autoRetryEnabled === true
+          ? source.autoRetryPreset
+          : webSessionAutoContinuePreset.value,
     });
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(props.projectId, source.id, session.id);
@@ -5477,6 +5544,20 @@ async function prepareSessionForSend(session: WebSessionSummary) {
   };
 }
 
+async function continueErroredSession(session: WebSessionSummary) {
+  const prepared = await prepareSessionForSend(session);
+  await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
+  if (prepared.navigateProjectId) {
+    projectStore.addRecentProject(prepared.navigateProjectId);
+    await router.push({
+      name: 'project',
+      params: { id: prepared.navigateProjectId },
+    });
+  }
+  autoFollowBottom.value = true;
+  scrollToBottom(true);
+}
+
 async function handleSubmit() {
   const initialSubmitOwnerId = currentDraftSessionId.value;
   if (
@@ -5847,17 +5928,7 @@ async function handleLiveCardClick() {
   if (shouldAutoContinueOnLiveCardClick.value && currentRealSession.value) {
     liveCardContinuePending.value = true;
     try {
-      const prepared = await prepareSessionForSend(currentRealSession.value);
-      await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
-      if (prepared.navigateProjectId) {
-        projectStore.addRecentProject(prepared.navigateProjectId);
-        await router.push({
-          name: 'project',
-          params: { id: prepared.navigateProjectId },
-        });
-      }
-      autoFollowBottom.value = true;
-      scrollToBottom(true);
+      await continueErroredSession(currentRealSession.value);
       return;
     } catch (error) {
       message.error(formatSessionInteractionError(error));
@@ -6560,6 +6631,54 @@ watch(
 watch(currentSessionLatestEventSeq, () => {
   markSessionViewed(currentRealSession.value?.id);
 });
+
+watch(
+  [() => webSessionAutoContinueScope.value, () => webSessionAutoContinuePreset.value],
+  ([scope, preset]) => {
+    if (!isDraftSession(currentSession.value)) {
+      return;
+    }
+    if (
+      currentSession.value.autoRetryScope === scope &&
+      currentSession.value.autoRetryPreset === preset
+    ) {
+      return;
+    }
+    updateActiveDraftSession(current => ({
+      ...current,
+      autoRetryScope: scope,
+      autoRetryPreset: preset,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+);
+
+watch(
+  [
+    () => currentRealSession.value?.id ?? '',
+    () => currentRealSession.value?.autoRetryEnabled === true,
+    () => webSessionAutoContinueScope.value,
+    () => webSessionAutoContinuePreset.value,
+  ],
+  ([sessionId, enabled, scope, preset]) => {
+    const session = currentRealSession.value;
+    if (!sessionId || !session || !enabled) {
+      return;
+    }
+    if (session.autoRetryScope === scope && session.autoRetryPreset === preset) {
+      return;
+    }
+    void webSessionStore
+      .updateAutoRetry(sessionId, {
+        enabled: true,
+        scope,
+        preset,
+      })
+      .catch(error => {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      });
+  }
+);
 
 watch(
   () =>
@@ -9402,6 +9521,23 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.composer-auto-continue {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.composer-auto-continue :deep(.n-checkbox) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-auto-continue :deep(.n-checkbox__label) {
+  font-size: 12px;
+  color: var(--n-text-color-2);
+}
+
 .composer-input-shell {
   position: relative;
 }
@@ -9806,6 +9942,20 @@ onBeforeUnmount(() => {
 
   .composer-config.is-mobile {
     margin-bottom: 4px;
+  }
+
+  .composer-config.is-mobile .composer-config-row {
+    flex-wrap: wrap;
+  }
+
+  .composer-config.is-mobile .composer-path {
+    flex-basis: 100%;
+    text-align: left;
+    order: 10;
+  }
+
+  .composer-config.is-mobile .composer-auto-continue {
+    margin-left: auto;
   }
 
   .runtime-strip {

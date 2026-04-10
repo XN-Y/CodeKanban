@@ -984,6 +984,72 @@ func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
 	}
 }
 
+func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "auto_retry_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusDone) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after auto retry, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	userMessages := make([]Event, 0, 2)
+	for _, event := range rawEvents {
+		if event.Type == "msg_u" {
+			userMessages = append(userMessages, event)
+		}
+	}
+	if len(userMessages) < 2 {
+		t.Fatalf("expected auto retry to append a second user message, got %#v", rawEvents)
+	}
+	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
+		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
+	}
+}
+
 func TestRespondToUserInputCodexAppServer(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -2162,10 +2228,12 @@ func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 	path := filepath.Join(t.TempDir(), "fake-codex-app-server.js")
 	script := fmt.Sprintf(`#!/usr/bin/env node
 const readline = require('readline');
+const fs = require('fs');
 
 const mode = %q;
 const threadId = 'thread_test';
 const turnId = 'turn_test';
+const stateFile = __filename + '.state';
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
@@ -2272,8 +2340,21 @@ function failTurn(message) {
   });
 }
 
+function readPersistentTurnCount() {
+  try {
+    return Number(fs.readFileSync(stateFile, 'utf8').trim()) || 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function writePersistentTurnCount(value) {
+  fs.writeFileSync(stateFile, String(value));
+}
+
 let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+let startedTurns = 0;
 rl.on('line', line => {
   if (!line.trim()) {
     return;
@@ -2309,6 +2390,7 @@ rl.on('line', line => {
   }
 
   if (message.method === 'turn/start') {
+    startedTurns += 1;
     send({
       id: message.id,
       result: {
@@ -2346,6 +2428,17 @@ rl.on('line', line => {
         },
       });
       failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+      return;
+    }
+
+    if (mode === 'auto_retry_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+        return;
+      }
+      finishTurn('done');
       return;
     }
 

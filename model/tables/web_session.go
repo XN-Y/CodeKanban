@@ -23,6 +23,9 @@ type WebSessionTable struct {
 	ReasoningEffort      string `gorm:"type:text" json:"reasoningEffort"`
 	WorkflowMode         string `gorm:"type:text;not null;default:default" json:"workflowMode"`
 	PermissionLevel      string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
+	AutoRetryEnabled     bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
+	AutoRetryScope       string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`
+	AutoRetryPreset      string `gorm:"type:text;not null;default:gentle_stop" json:"autoRetryPreset"`
 	LegacyPermissionMode string `gorm:"column:permission_mode;type:text" json:"-"`
 	Cwd                  string `gorm:"type:text;not null" json:"cwd"`
 
@@ -55,6 +58,9 @@ type WebSessionTable struct {
 	ContextBaselineCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	ContextBaselineOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	LastContextCompactionAt          *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryAttempt                 int        `gorm:"type:integer;not null;default:0" json:"-"`
+	AutoRetryNextAt                  *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryLastErrorCode           *string    `gorm:"type:text" json:"-"`
 
 	LastError *string `gorm:"type:text" json:"lastError"`
 	SyncError *string `gorm:"type:text" json:"syncError"`

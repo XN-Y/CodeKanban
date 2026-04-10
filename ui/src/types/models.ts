@@ -283,6 +283,9 @@ export interface WebSessionSummary {
   reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   workflowMode: 'default' | 'plan';
   permissionLevel: 'default' | 'elevated' | 'yolo';
+  autoRetryEnabled: boolean;
+  autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+  autoRetryPreset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   cwd: string;
   nativeSessionId?: string | null;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';

@@ -485,10 +485,14 @@ func (m *Manager) runCodexAppServerSession(
 			context.Background(),
 			session.ID,
 			applyAssistantStateUpdates(map[string]any{
-				"status":     string(StatusIdle),
-				"updated_at": now,
+				"status":                     string(StatusIdle),
+				"updated_at":                 now,
+				"auto_retry_attempt":         0,
+				"auto_retry_next_at":         nil,
+				"auto_retry_last_error_code": nil,
 			}, AssistantStateNone, now),
 		)
+		m.cancelAutoRetryTimer(session.ID)
 		m.broadcastSessionSummary(context.Background(), session.ID)
 		return
 	}

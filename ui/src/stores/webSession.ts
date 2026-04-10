@@ -36,6 +36,9 @@ type WireSession = {
   re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
+  ae?: boolean;
+  ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+  arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   ttl: string;
   cwd: string;
   nsid?: string | null;
@@ -1318,6 +1321,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort: session.re ?? 'default',
       workflowMode: session.wm ?? 'default',
       permissionLevel: session.pl ?? 'elevated',
+      autoRetryEnabled: session.ae === true,
+      autoRetryScope:
+        session.ars === 'network_and_rate_limit' || session.ars === 'all_failures'
+          ? session.ars
+          : 'network_only',
+      autoRetryPreset:
+        session.arp === 'aggressive_stop' || session.arp === 'sustain_60s'
+          ? session.arp
+          : 'gentle_stop',
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       status: session.st,
@@ -2712,6 +2724,50 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_ag', sessionId, { ag: agent });
   }
 
+  async function updateAutoRetry(
+    sessionId: string,
+    config: {
+      enabled: boolean;
+      scope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      preset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+    }
+  ) {
+    const session = findSessionById(sessionId);
+    const previous =
+      session && !session.archivedAt
+        ? {
+            enabled: session.autoRetryEnabled,
+            scope: session.autoRetryScope,
+            preset: session.autoRetryPreset,
+          }
+        : null;
+    if (previous) {
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        autoRetryEnabled: config.enabled === true,
+        autoRetryScope: config.scope,
+        autoRetryPreset: config.preset,
+      }));
+    }
+    try {
+      await sendCommand('set_ar', sessionId, {
+        ae: config.enabled === true,
+        ars: config.scope,
+        arp: config.preset,
+      });
+    } catch (error) {
+      if (previous) {
+        updateSessionStatus(sessionId, current => ({
+          ...current,
+          autoRetryEnabled: previous.enabled,
+          autoRetryScope: previous.scope,
+          autoRetryPreset: previous.preset,
+        }));
+      }
+      throw error;
+    }
+  }
+
   async function moveSession(
     projectId: string,
     sessionId: string,
@@ -2798,6 +2854,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      autoRetryEnabled?: boolean;
+      autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       title?: string;
     }
   ) {
@@ -2850,6 +2909,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateWorkflowMode,
     updatePermissionLevel,
     updateAgent,
+    updateAutoRetry,
     moveSession,
     getPendingApproval,
     getPendingUserInput,

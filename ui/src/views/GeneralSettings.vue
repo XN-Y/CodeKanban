@@ -124,6 +124,26 @@
               <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.webSessionAutoContinueScope')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="webSessionAutoContinueScopeValue"
+                :options="webSessionAutoContinueScopeOptions"
+                style="max-width: 320px"
+              />
+              <span class="form-tip">{{ t('settings.webSessionAutoContinueScopeTip') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.webSessionAutoContinuePreset')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="webSessionAutoContinuePresetValue"
+                :options="webSessionAutoContinuePresetOptions"
+                style="max-width: 320px"
+              />
+              <span class="form-tip">{{ t('settings.webSessionAutoContinuePresetTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -773,6 +793,8 @@ import {
   type FontWeight,
   type TerminalQuickAction,
   type TerminalQuickActionIcon,
+  type WebSessionAutoContinuePreset,
+  type WebSessionAutoContinueScope,
 } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
@@ -831,6 +853,8 @@ const {
   editorSettings,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionAutoContinueScope,
+  webSessionAutoContinuePreset,
   terminalThemeId,
   terminalFont,
   terminalWebGLRenderer,
@@ -1459,6 +1483,48 @@ const defaultTerminalSnapshotZlibCompressionValue = computed({
 const showWebSessionReasoningValue = computed({
   get: () => showWebSessionReasoning.value,
   set: value => settingsStore.updateShowWebSessionReasoning(value),
+});
+
+const webSessionAutoContinueScopeOptions = computed(() => [
+  {
+    label: t('settings.webSessionAutoContinueScopeNetworkOnly'),
+    value: 'network_only',
+  },
+  {
+    label: t('settings.webSessionAutoContinueScopeNetworkAndRateLimit'),
+    value: 'network_and_rate_limit',
+  },
+  {
+    label: t('settings.webSessionAutoContinueScopeAllFailures'),
+    value: 'all_failures',
+  },
+]);
+
+const webSessionAutoContinueScopeValue = computed({
+  get: () => webSessionAutoContinueScope.value,
+  set: (value: WebSessionAutoContinueScope) =>
+    settingsStore.updateWebSessionAutoContinueScope(value),
+});
+
+const webSessionAutoContinuePresetOptions = computed(() => [
+  {
+    label: t('settings.webSessionAutoContinuePresetGentleStop'),
+    value: 'gentle_stop',
+  },
+  {
+    label: t('settings.webSessionAutoContinuePresetAggressiveStop'),
+    value: 'aggressive_stop',
+  },
+  {
+    label: t('settings.webSessionAutoContinuePresetSustain60s'),
+    value: 'sustain_60s',
+  },
+]);
+
+const webSessionAutoContinuePresetValue = computed({
+  get: () => webSessionAutoContinuePreset.value,
+  set: (value: WebSessionAutoContinuePreset) =>
+    settingsStore.updateWebSessionAutoContinuePreset(value),
 });
 
 const terminalConnectionPolicyValue = computed({

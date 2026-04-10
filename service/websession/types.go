@@ -31,6 +31,22 @@ const (
 	PermissionLevelYolo     PermissionLevel = "yolo"
 )
 
+type AutoRetryScope string
+
+const (
+	AutoRetryScopeNetworkOnly         AutoRetryScope = "network_only"
+	AutoRetryScopeNetworkAndRateLimit AutoRetryScope = "network_and_rate_limit"
+	AutoRetryScopeAllFailures         AutoRetryScope = "all_failures"
+)
+
+type AutoRetryPreset string
+
+const (
+	AutoRetryPresetGentleStop     AutoRetryPreset = "gentle_stop"
+	AutoRetryPresetAggressiveStop AutoRetryPreset = "aggressive_stop"
+	AutoRetryPresetSustain60s     AutoRetryPreset = "sustain_60s"
+)
+
 type Status string
 
 const (
@@ -120,6 +136,9 @@ type SessionSummary struct {
 	ReasoningEffort         ReasoningEffort     `json:"reasoningEffort"`
 	WorkflowMode            WorkflowMode        `json:"workflowMode"`
 	PermissionLevel         PermissionLevel     `json:"permissionLevel"`
+	AutoRetryEnabled        bool                `json:"autoRetryEnabled"`
+	AutoRetryScope          AutoRetryScope      `json:"autoRetryScope"`
+	AutoRetryPreset         AutoRetryPreset     `json:"autoRetryPreset"`
 	Cwd                     string              `json:"cwd"`
 	NativeSessionID         *string             `json:"nativeSessionId,omitempty"`
 	Status                  Status              `json:"status"`
@@ -278,13 +297,16 @@ type CommandExecutionGroupDetail struct {
 }
 
 type CreateParams struct {
-	ProjectID       string
-	WorktreeID      string
-	Agent           Agent
-	Backend         SessionBackend
-	Model           string
-	ReasoningEffort ReasoningEffort
-	WorkflowMode    WorkflowMode
-	PermissionLevel PermissionLevel
-	Title           string
+	ProjectID        string
+	WorktreeID       string
+	Agent            Agent
+	Backend          SessionBackend
+	Model            string
+	ReasoningEffort  ReasoningEffort
+	WorkflowMode     WorkflowMode
+	PermissionLevel  PermissionLevel
+	AutoRetryEnabled bool
+	AutoRetryScope   AutoRetryScope
+	AutoRetryPreset  AutoRetryPreset
+	Title            string
 }

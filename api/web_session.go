@@ -158,14 +158,17 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 			Body      struct {
-				WorktreeID      string `json:"worktreeId"`
-				Agent           string `json:"agent"`
-				Model           string `json:"model"`
-				ReasoningEffort string `json:"reasoningEffort"`
-				WorkflowMode    string `json:"workflowMode"`
-				PermissionLevel string `json:"permissionLevel"`
-				PermissionMode  string `json:"permissionMode,omitempty"`
-				Title           string `json:"title"`
+				WorktreeID       string `json:"worktreeId"`
+				Agent            string `json:"agent"`
+				Model            string `json:"model"`
+				ReasoningEffort  string `json:"reasoningEffort"`
+				WorkflowMode     string `json:"workflowMode"`
+				PermissionLevel  string `json:"permissionLevel"`
+				AutoRetryEnabled bool   `json:"autoRetryEnabled"`
+				AutoRetryScope   string `json:"autoRetryScope"`
+				AutoRetryPreset  string `json:"autoRetryPreset"`
+				PermissionMode   string `json:"permissionMode,omitempty"`
+				Title            string `json:"title"`
 			}
 		},
 	) (*h.ItemResponse[websession.SessionSummary], error) {
@@ -197,14 +200,17 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			}
 		}
 		item, err := c.manager.CreateSession(ctx, websession.CreateParams{
-			ProjectID:       input.ProjectID,
-			WorktreeID:      input.Body.WorktreeID,
-			Agent:           websession.Agent(input.Body.Agent),
-			Model:           input.Body.Model,
-			ReasoningEffort: websession.ReasoningEffort(input.Body.ReasoningEffort),
-			WorkflowMode:    workflowMode,
-			PermissionLevel: permissionLevel,
-			Title:           input.Body.Title,
+			ProjectID:        input.ProjectID,
+			WorktreeID:       input.Body.WorktreeID,
+			Agent:            websession.Agent(input.Body.Agent),
+			Model:            input.Body.Model,
+			ReasoningEffort:  websession.ReasoningEffort(input.Body.ReasoningEffort),
+			WorkflowMode:     workflowMode,
+			PermissionLevel:  permissionLevel,
+			AutoRetryEnabled: input.Body.AutoRetryEnabled,
+			AutoRetryScope:   websession.AutoRetryScope(input.Body.AutoRetryScope),
+			AutoRetryPreset:  websession.AutoRetryPreset(input.Body.AutoRetryPreset),
+			Title:            input.Body.Title,
 		})
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())

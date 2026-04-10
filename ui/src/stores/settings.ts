@@ -190,6 +190,13 @@ export interface TerminalQuickAction {
   stacked: boolean;
 }
 
+export type WebSessionAutoContinueScope =
+  | 'network_only'
+  | 'network_and_rate_limit'
+  | 'all_failures';
+
+export type WebSessionAutoContinuePreset = 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+
 interface GeneralSettings {
   theme: ThemeSettings;
   currentPresetId: string;
@@ -202,6 +209,8 @@ interface GeneralSettings {
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
   showWebSessionReasoning: boolean;
+  webSessionAutoContinueScope: WebSessionAutoContinueScope;
+  webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
@@ -217,6 +226,8 @@ const STORAGE_KEY = 'general_settings';
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
+const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
+const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
 
 const defaultTheme: ThemeSettings = getDefaultPreset().colors;
 
@@ -271,6 +282,8 @@ const defaultSettings: GeneralSettings = {
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
   showWebSessionReasoning: false,
+  webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
+  webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
@@ -298,6 +311,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const showWebSessionReasoning = computed(() => settings.value.showWebSessionReasoning);
+  const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
+  const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
@@ -439,6 +454,14 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.showWebSessionReasoning = value;
   }
 
+  function updateWebSessionAutoContinueScope(value: WebSessionAutoContinueScope) {
+    settings.value.webSessionAutoContinueScope = sanitizeWebSessionAutoContinueScope(value);
+  }
+
+  function updateWebSessionAutoContinuePreset(value: WebSessionAutoContinuePreset) {
+    settings.value.webSessionAutoContinuePreset = sanitizeWebSessionAutoContinuePreset(value);
+  }
+
   function updateTerminalTheme(themeId: string) {
     settings.value.terminalThemeId = themeId;
   }
@@ -553,6 +576,8 @@ export const useSettingsStore = defineStore('settings', () => {
     editorSettings,
     confirmBeforeTerminalClose,
     showWebSessionReasoning,
+    webSessionAutoContinueScope,
+    webSessionAutoContinuePreset,
     terminalThemeId,
     terminalFont,
     terminalWebGLRenderer,
@@ -576,6 +601,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
     updateShowWebSessionReasoning,
+    updateWebSessionAutoContinueScope,
+    updateWebSessionAutoContinuePreset,
     updateTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
@@ -632,6 +659,12 @@ function loadSettings(): GeneralSettings {
           parsed.showWebSessionReasoning,
           loadLegacyShowWebSessionReasoning()
         ),
+        webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
+          parsed.webSessionAutoContinueScope
+        ),
+        webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
+          parsed.webSessionAutoContinuePreset
+        ),
         terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
         terminalFont: sanitizeTerminalFont(parsed.terminalFont),
         terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
@@ -681,6 +714,8 @@ function cloneDefaultSettings(): GeneralSettings {
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     showWebSessionReasoning: defaultSettings.showWebSessionReasoning,
+    webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
+    webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
     terminalDisplayMode: defaultSettings.terminalDisplayMode,
@@ -731,6 +766,38 @@ function sanitizeShowWebSessionReasoning(value: unknown, fallback = false) {
     return value;
   }
   return fallback;
+}
+
+const VALID_WEB_SESSION_AUTO_CONTINUE_SCOPES: WebSessionAutoContinueScope[] = [
+  'network_only',
+  'network_and_rate_limit',
+  'all_failures',
+];
+
+function sanitizeWebSessionAutoContinueScope(value: unknown): WebSessionAutoContinueScope {
+  if (
+    typeof value === 'string' &&
+    VALID_WEB_SESSION_AUTO_CONTINUE_SCOPES.includes(value as WebSessionAutoContinueScope)
+  ) {
+    return value as WebSessionAutoContinueScope;
+  }
+  return DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE;
+}
+
+const VALID_WEB_SESSION_AUTO_CONTINUE_PRESETS: WebSessionAutoContinuePreset[] = [
+  'gentle_stop',
+  'aggressive_stop',
+  'sustain_60s',
+];
+
+function sanitizeWebSessionAutoContinuePreset(value: unknown): WebSessionAutoContinuePreset {
+  if (
+    typeof value === 'string' &&
+    VALID_WEB_SESSION_AUTO_CONTINUE_PRESETS.includes(value as WebSessionAutoContinuePreset)
+  ) {
+    return value as WebSessionAutoContinuePreset;
+  }
+  return DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET;
 }
 
 function loadLegacyShowWebSessionReasoning() {

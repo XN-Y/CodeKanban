@@ -47,6 +47,9 @@ type wireSess struct {
 	ReasoningEffort         string     `json:"re"`
 	WorkflowMode            string     `json:"wm"`
 	PermissionLevel         string     `json:"pl"`
+	AutoRetryEnabled        bool       `json:"ae"`
+	AutoRetryScope          string     `json:"ars"`
+	AutoRetryPreset         string     `json:"arp"`
 	Title                   string     `json:"ttl"`
 	Cwd                     string     `json:"cwd"`
 	NativeSessionID         *string    `json:"nsid,omitempty"`
@@ -292,6 +295,9 @@ func mapWireSession(session SessionSummary) *wireSess {
 		ReasoningEffort:         string(session.ReasoningEffort),
 		WorkflowMode:            string(session.WorkflowMode),
 		PermissionLevel:         string(session.PermissionLevel),
+		AutoRetryEnabled:        session.AutoRetryEnabled,
+		AutoRetryScope:          string(session.AutoRetryScope),
+		AutoRetryPreset:         string(session.AutoRetryPreset),
 		Title:                   session.Title,
 		Cwd:                     session.Cwd,
 		NativeSessionID:         session.NativeSessionID,

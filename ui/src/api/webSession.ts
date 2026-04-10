@@ -66,6 +66,9 @@ export const webSessionApi = {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      autoRetryEnabled?: boolean;
+      autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       permissionMode?: string;
       title?: string;
     }
@@ -79,6 +82,9 @@ export const webSessionApi = {
           reasoningEffort: data.reasoningEffort ?? 'default',
           workflowMode: data.workflowMode ?? 'default',
           permissionLevel: data.permissionLevel ?? 'elevated',
+          autoRetryEnabled: data.autoRetryEnabled === true,
+          autoRetryScope: data.autoRetryScope ?? 'network_only',
+          autoRetryPreset: data.autoRetryPreset ?? 'gentle_stop',
           permissionMode: data.permissionMode ?? '',
           title: data.title ?? '',
         })
