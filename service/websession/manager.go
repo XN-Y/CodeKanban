@@ -3547,6 +3547,9 @@ func codexToolMeta(item map[string]any) map[string]any {
 		stringValue(item["query"]),
 		stringValue(item["text"]),
 	)
+	if kind == "file_change" {
+		subtitle = firstNonEmpty(fileChangeSummary(item), subtitle)
+	}
 	if kind == "context_compaction" {
 		subtitle = contextCompactionSubtitle(item)
 	}

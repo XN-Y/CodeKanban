@@ -62,6 +62,42 @@ func historyGroupDetailItemFromPayload(
 	return detail
 }
 
+func mergeHistoryToolPayload(existingPayload, nextPayload map[string]any) map[string]any {
+	merged := cloneMap(existingPayload)
+	if merged == nil {
+		merged = make(map[string]any)
+	}
+	for key, value := range nextPayload {
+		merged[key] = value
+	}
+
+	existingMeta := decodeRawObject(existingPayload["meta"])
+	nextMeta := decodeRawObject(nextPayload["meta"])
+	if len(existingMeta) > 0 || len(nextMeta) > 0 {
+		meta := cloneMap(existingMeta)
+		if meta == nil {
+			meta = make(map[string]any)
+		}
+		for key, value := range nextMeta {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+				if _, exists := meta[key]; exists {
+					continue
+				}
+			}
+			meta[key] = value
+		}
+		merged["meta"] = meta
+	}
+
+	if _, ok := nextPayload["in"]; !ok {
+		if value, ok := existingPayload["in"]; ok {
+			merged["in"] = value
+		}
+	}
+
+	return merged
+}
+
 func mergeHistoryGroupItems(
 	existing []CommandExecutionGroupItem,
 	next CommandExecutionGroupItem,
@@ -300,19 +336,20 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
+			mergedPayload := mergeHistoryToolPayload(existingPayload, payload)
 			next.Kind = "tool"
-			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), next.ItemType, "tool")
-			next.Tool = historyToolFromEventPayload(payload, status)
+			next.ItemType = firstNonEmpty(stringValue(mergedPayload["kind"]), next.ItemType, "tool")
+			next.Tool = historyToolFromEventPayload(mergedPayload, status)
 			next.ObservedAt = ptr(event.Timestamp)
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
 			}
 			next.Done = true
-			next.Payload = payload
+			next.Payload = mergedPayload
 			if next.Tool != nil && isCompactToolKind(next.Tool.Kind) {
 				groupItems := mergeHistoryGroupItems(
 					decodeHistoryGroupItems(existingPayload),
-					historyGroupDetailItemFromPayload(payload, event.Timestamp, status),
+					historyGroupDetailItemFromPayload(mergedPayload, event.Timestamp, status),
 				)
 				next.Payload["groupItems"] = groupItems
 			}

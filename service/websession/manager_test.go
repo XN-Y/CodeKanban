@@ -1860,6 +1860,99 @@ func TestHistoryAggregatesConsecutiveFileChanges(t *testing.T) {
 	}
 }
 
+func TestFileChangeSnapshotKeepsCurrentFileWhenToolEndOmitsInput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Single File Change", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "fc1",
+			"name": "FileChange",
+			"kind": "file_change",
+			"in": map[string]any{
+				"changes": []any{
+					map[string]any{"path": "/home/dev/CodeKanban/123.md"},
+				},
+			},
+			"meta": map[string]any{"kind": "file_change", "title": "FileChange"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "fc1",
+			"out": "patched",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":     "file_change",
+				"title":    "FileChange",
+				"subtitle": "",
+			},
+		},
+	})
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 10)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(snapshot.History.Items))
+	}
+	if snapshot.History.Items[0].Tool == nil {
+		t.Fatalf("expected tool history item, got %#v", snapshot.History.Items[0])
+	}
+
+	meta := decodeRawObject(snapshot.History.Items[0].Tool.Meta)
+	if got := stringValue(meta["subtitle"]); got != "/home/dev/CodeKanban/123.md" {
+		t.Fatalf("expected snapshot subtitle to keep current file path, got %q", got)
+	}
+
+	input := decodeRawObject(snapshot.History.Items[0].Tool.Input)
+	changes := decodeRawArray(input["changes"])
+	if len(changes) != 1 || stringValue(changes[0]["path"]) != "/home/dev/CodeKanban/123.md" {
+		t.Fatalf("expected snapshot tool input to keep file path, got %#v", snapshot.History.Items[0].Tool.Input)
+	}
+}
+
+func TestFileChangeSummaryReturnsCurrentFilePath(t *testing.T) {
+	t.Run("changes path", func(t *testing.T) {
+		got := fileChangeSummary(map[string]any{
+			"changes": []any{
+				map[string]any{"path": "/home/dev/CodeKanban/123.md"},
+				map[string]any{"path": "/home/dev/CodeKanban/other.md"},
+			},
+		})
+		if got != "/home/dev/CodeKanban/123.md" {
+			t.Fatalf("expected first changed path, got %q", got)
+		}
+	})
+
+	t.Run("camel case path", func(t *testing.T) {
+		got := fileChangeSummary(map[string]any{
+			"changes": []any{
+				map[string]any{"newPath": "/home/dev/CodeKanban/123.md"},
+			},
+		})
+		if got != "/home/dev/CodeKanban/123.md" {
+			t.Fatalf("expected camel-case path, got %q", got)
+		}
+	})
+}
+
 func TestHistorySeparatesDifferentCompactToolKinds(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
