@@ -316,7 +316,7 @@
                       <button
                         type="button"
                         class="tool-header"
-                        @click="toggleToolExpanded(item.tool.id)"
+                        @click="toggleToolExpanded(item.tool)"
                       >
                         <span class="tool-header-main">
                           <span class="tool-header-leading">
@@ -333,6 +333,54 @@
                         }}</span>
                       </button>
                       <div v-if="isToolExpanded(item.tool.id)" class="tool-body">
+                        <div v-if="isImageViewTool(item.tool)" class="tool-section">
+                          <div class="tool-section-label">{{ t('webSession.imageViewPreview') }}</div>
+                          <div class="image-view-preview-card">
+                            <div class="image-view-preview-meta">
+                              <span class="image-view-preview-name">
+                                <n-icon size="14"><ImageOutline /></n-icon>
+                                <span>{{ getImageViewDisplayName(item.tool) }}</span>
+                              </span>
+                              <span
+                                v-if="getImageViewDisplayPath(item.tool)"
+                                class="image-view-preview-path"
+                                :title="getImageViewDisplayPath(item.tool)"
+                              >
+                                {{ getImageViewDisplayPath(item.tool) }}
+                              </span>
+                            </div>
+                            <div class="image-view-preview-frame">
+                              <div
+                                v-if="getImageViewPreviewState(item.tool) !== 'ready'"
+                                class="image-view-preview-status"
+                                :class="{
+                                  'is-error': getImageViewPreviewState(item.tool) === 'error',
+                                }"
+                              >
+                                {{
+                                  getImageViewPreviewState(item.tool) === 'error'
+                                    ? t('webSession.imageViewLoadFailed')
+                                    : t('webSession.imageViewLoading')
+                                }}
+                              </div>
+                              <img
+                                v-if="
+                                  getImageViewPreviewSrc(item.tool) &&
+                                  getImageViewPreviewState(item.tool) !== 'error'
+                                "
+                                :src="getImageViewPreviewSrc(item.tool)"
+                                :alt="getImageViewDisplayName(item.tool)"
+                                class="image-view-preview-image"
+                                :class="{
+                                  'is-ready': getImageViewPreviewState(item.tool) === 'ready',
+                                }"
+                                loading="lazy"
+                                @load="handleImageViewPreviewLoad(item.tool.id)"
+                                @error="handleImageViewPreviewError(item.tool.id)"
+                              />
+                            </div>
+                          </div>
+                        </div>
                         <div v-if="item.tool.input" class="tool-section">
                           <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
                           <pre class="tool-code">{{ stringifyValue(item.tool.input) }}</pre>
@@ -1445,9 +1493,12 @@ import { renderMarkdown } from '@/utils/markdown';
 import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
 import {
   buildImagePlaceholder,
+  buildImageViewPreviewUrl,
   insertImagePlaceholdersAtCursor,
+  parseImageViewToolOutput,
   resolveImageAttachmentDisplayName,
   stripImagePlaceholdersFromText,
+  resolveImageViewDisplayName,
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
@@ -1606,6 +1657,8 @@ type LiveTimeTooltipItem = {
   value: string;
 };
 
+type ImageViewPreviewState = 'loading' | 'ready' | 'error';
+
 type TimelineRawSurface = 'message' | 'plan';
 
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
@@ -1656,6 +1709,8 @@ const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
+const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
+const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
 const showQuickInputPopover = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
@@ -4645,6 +4700,102 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function extractToolWorkingDirectory(input: unknown) {
+  const record = asRecord(input);
+  if (!record) {
+    return '';
+  }
+
+  const direct = String(record.cwd ?? record.workdir ?? '').trim();
+  if (direct) {
+    return direct;
+  }
+
+  const args = asRecord(record.arguments);
+  return String(args?.cwd ?? args?.workdir ?? '').trim();
+}
+
+function getImageViewToolData(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return null;
+  }
+  return parseImageViewToolOutput(tool.output);
+}
+
+function isImageViewTool(tool?: NonNullable<WebSessionBlock['tool']>) {
+  return Boolean(getImageViewToolData(tool));
+}
+
+function getImageViewDisplayName(tool?: NonNullable<WebSessionBlock['tool']>) {
+  const data = getImageViewToolData(tool);
+  return data ? resolveImageViewDisplayName(data.path) : '';
+}
+
+function getImageViewDisplayPath(tool?: NonNullable<WebSessionBlock['tool']>) {
+  return getImageViewToolData(tool)?.path ?? '';
+}
+
+function getImageViewPreviewSrc(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return '';
+  }
+  return imageViewPreviewSrcByToolId.value[tool.id] ?? '';
+}
+
+function getImageViewPreviewState(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return 'loading' as const;
+  }
+  return imageViewPreviewStateByToolId.value[tool.id] ?? 'loading';
+}
+
+function ensureImageViewPreview(tool: NonNullable<WebSessionBlock['tool']>) {
+  if (imageViewPreviewSrcByToolId.value[tool.id]) {
+    if (imageViewPreviewStateByToolId.value[tool.id] === 'error') {
+      imageViewPreviewStateByToolId.value = {
+        ...imageViewPreviewStateByToolId.value,
+        [tool.id]: 'loading',
+      };
+    }
+    return;
+  }
+
+  const data = getImageViewToolData(tool);
+  if (!data) {
+    return;
+  }
+
+  const previewSrc = buildImageViewPreviewUrl(data.path, {
+    cwd: data.cwd || extractToolWorkingDirectory(tool.input) || currentRealSession.value?.cwd,
+  });
+  if (!previewSrc) {
+    return;
+  }
+
+  imageViewPreviewSrcByToolId.value = {
+    ...imageViewPreviewSrcByToolId.value,
+    [tool.id]: previewSrc,
+  };
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [tool.id]: 'loading',
+  };
+}
+
+function handleImageViewPreviewLoad(toolId: string) {
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [toolId]: 'ready',
+  };
+}
+
+function handleImageViewPreviewError(toolId: string) {
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [toolId]: 'error',
+  };
+}
+
 function normalizeToolKindValue(value: string | undefined) {
   const normalized = String(value ?? '').trim();
   if (normalized === 'commandExecution') {
@@ -4999,10 +5150,15 @@ function isToolExpanded(toolId: string) {
   return Boolean(expandedTools.value[toolId]);
 }
 
-function toggleToolExpanded(toolId: string) {
+function toggleToolExpanded(tool: NonNullable<WebSessionBlock['tool']>) {
+  const nextExpanded = !expandedTools.value[tool.id];
+  if (nextExpanded && isImageViewTool(tool)) {
+    ensureImageViewPreview(tool);
+  }
+
   expandedTools.value = {
     ...expandedTools.value,
-    [toolId]: !expandedTools.value[toolId],
+    [tool.id]: nextExpanded,
   };
 }
 
@@ -5038,7 +5194,10 @@ function isSessionArchiving(sessionId: string) {
   return isWebSessionSubmitting(archiveStateBySessionId.value, sessionId);
 }
 
-function toolKindLabel(tool: { name: string; kind?: string }) {
+function toolKindLabel(tool: { name: string; kind?: string; output?: string }) {
+  if (isImageViewTool(tool as NonNullable<WebSessionBlock['tool']>)) {
+    return t('webSession.toolImageView');
+  }
   const kind = normalizeToolKindValue(tool.kind);
   if (!kind) {
     return t('webSession.toolKindDefault');
@@ -5073,6 +5232,10 @@ function formatToolPreview(tool: {
 }) {
   if (isContextCompactionToolKind(tool.kind || String(tool.meta?.kind ?? ''))) {
     return contextCompactionPreview(tool);
+  }
+  const imageViewData = getImageViewToolData(tool as NonNullable<WebSessionBlock['tool']>);
+  if (imageViewData) {
+    return resolveImageViewDisplayName(imageViewData.path);
   }
   if (isCompactTool(tool as NonNullable<WebSessionBlock['tool']>)) {
     return getCompactToolSummary(tool as NonNullable<WebSessionBlock['tool']>);
@@ -9216,6 +9379,85 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
   border-radius: 8px;
   padding: 10px;
+}
+
+.image-view-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
+}
+
+.image-view-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.image-view-preview-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.image-view-preview-path {
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n-text-color-3);
+  word-break: break-all;
+}
+
+.image-view-preview-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%) 0%,
+      color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%) 100%
+    );
+}
+
+.image-view-preview-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  padding: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-3);
+  text-align: center;
+}
+
+.image-view-preview-status.is-error {
+  color: var(--n-error-color, #dc2626);
+}
+
+.image-view-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(56vh, 520px);
+  border-radius: 10px;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.image-view-preview-image.is-ready {
+  opacity: 1;
 }
 
 .plan-tool-content {

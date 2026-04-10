@@ -1,3 +1,5 @@
+import { urlBase } from '@/api';
+
 export function buildImagePlaceholder(index: number) {
   return `[Image #${index}]`;
 }
@@ -109,4 +111,92 @@ export function stripImagePlaceholdersFromText(text: string, attachmentCount: nu
     .replace(/ *\n */g, '\n')
     .replace(/\n{2,}/g, '\n')
     .trim();
+}
+
+export type ImageViewToolOutput = {
+  id?: string;
+  path: string;
+  type: 'imageView';
+  cwd?: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+export function parseImageViewToolOutput(value: unknown): ImageViewToolOutput | null {
+  let parsed = value;
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('{')) {
+      return null;
+    }
+
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return null;
+    }
+  }
+
+  const record = asRecord(parsed);
+  if (!record) {
+    return null;
+  }
+
+  if (String(record.type ?? '').trim() !== 'imageView') {
+    return null;
+  }
+
+  const path = String(record.path ?? '').trim();
+  if (!path) {
+    return null;
+  }
+
+  const id = String(record.id ?? '').trim();
+  const cwd = String(record.cwd ?? record.workdir ?? '').trim();
+
+  return {
+    id: id || undefined,
+    path,
+    type: 'imageView',
+    cwd: cwd || undefined,
+  };
+}
+
+export function resolveImageViewDisplayName(path: string) {
+  const trimmed = String(path || '')
+    .trim()
+    .split(/[\\/]/)
+    .pop();
+  return trimmed || String(path || '').trim();
+}
+
+export function buildImageViewPreviewUrl(
+  path: string,
+  options?: {
+    cwd?: string;
+    baseUrl?: string;
+  }
+) {
+  const normalizedPath = String(path || '').trim();
+  if (!normalizedPath) {
+    return '';
+  }
+
+  const params = new URLSearchParams();
+  params.set('path', normalizedPath);
+
+  const cwd = String(options?.cwd || '').trim();
+  if (cwd) {
+    params.set('cwd', cwd);
+  }
+
+  const requestPath = `/api/v1/web-sessions/image-view?${params.toString()}`;
+  const baseUrl = typeof options?.baseUrl === 'string' ? options.baseUrl : urlBase;
+  return baseUrl ? new URL(requestPath, baseUrl).toString() : requestPath;
 }
