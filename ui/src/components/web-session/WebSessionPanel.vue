@@ -208,9 +208,25 @@
                     v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
                     class="timeline-tool-shell plan-tool-shell"
                   >
-                    <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
+                    <div
+                      class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool"
+                      :class="{
+                        'is-raw-capable': shouldShowPlanRawToggle(item),
+                        'is-raw-active': isTimelineRawBlockActive(item, 'plan'),
+                      }"
+                      :data-raw-toggle-card="
+                        shouldShowPlanRawToggle(item)
+                          ? getTimelineRawModeKey(item, 'plan')
+                          : undefined
+                      "
+                      :tabindex="shouldShowPlanRawToggle(item) ? 0 : undefined"
+                      @click="activateTimelineRawBlock(item, 'plan')"
+                      @focusin="activateTimelineRawBlock(item, 'plan')"
+                      @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'plan')"
+                      @keydown.space.self.prevent="activateTimelineRawBlock(item, 'plan')"
+                    >
                       <button
-                        v-if="shouldShowPlanRawToggle(item)"
+                        v-if="shouldShowTimelineRawToggle(item, 'plan')"
                         type="button"
                         class="timeline-display-toggle"
                         :class="{ 'is-active': isBlockRawMode(item, 'plan') }"
@@ -441,10 +457,24 @@
                     :class="[
                       item.level ? `level-${item.level}` : undefined,
                       item.itemType ? `type-${item.itemType}` : undefined,
+                      {
+                        'is-raw-capable': shouldShowMessageRawToggle(item),
+                        'is-raw-active': isTimelineRawBlockActive(item, 'message'),
+                      },
                     ]"
+                    :data-raw-toggle-card="
+                      shouldShowMessageRawToggle(item)
+                        ? getTimelineRawModeKey(item, 'message')
+                        : undefined
+                    "
+                    :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
+                    @click="activateTimelineRawBlock(item, 'message')"
+                    @focusin="activateTimelineRawBlock(item, 'message')"
+                    @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
+                    @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
                     <button
-                      v-if="shouldShowMessageRawToggle(item)"
+                      v-if="shouldShowTimelineRawToggle(item, 'message')"
                       type="button"
                       class="timeline-display-toggle"
                       :class="{ 'is-active': isBlockRawMode(item, 'message') }"
@@ -1295,7 +1325,7 @@ import {
   type HTMLAttributes,
 } from 'vue';
 import { useRouter } from 'vue-router';
-import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
+import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
@@ -1561,6 +1591,7 @@ const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
 const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const rawTimelineBlocks = ref<Record<string, boolean>>({});
+const activeRawTimelineBlockKey = ref('');
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
@@ -1861,10 +1892,32 @@ function shouldShowPlanRawToggle(block: WebSessionBlock) {
 function getTimelineRawModeKey(block: WebSessionBlock, surface: TimelineRawSurface) {
   return `${currentSession.value?.id ?? 'unknown'}:${surface}:${block.key}`;
 }
+function isTimelineRawBlockActive(block: WebSessionBlock, surface: TimelineRawSurface) {
+  return activeRawTimelineBlockKey.value === getTimelineRawModeKey(block, surface);
+}
+function activateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
+  if (
+    (surface === 'message' && !shouldShowMessageRawToggle(block)) ||
+    (surface === 'plan' && !shouldShowPlanRawToggle(block))
+  ) {
+    return;
+  }
+  activeRawTimelineBlockKey.value = getTimelineRawModeKey(block, surface);
+}
+function shouldShowTimelineRawToggle(block: WebSessionBlock, surface: TimelineRawSurface) {
+  if (surface === 'message' && !shouldShowMessageRawToggle(block)) {
+    return false;
+  }
+  if (surface === 'plan' && !shouldShowPlanRawToggle(block)) {
+    return false;
+  }
+  return isTimelineRawBlockActive(block, surface) || isBlockRawMode(block, surface);
+}
 function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   return !!rawTimelineBlocks.value[getTimelineRawModeKey(block, surface)];
 }
 function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
+  activateTimelineRawBlock(block, surface);
   const key = getTimelineRawModeKey(block, surface);
   rawTimelineBlocks.value = {
     ...rawTimelineBlocks.value,
@@ -1942,6 +1995,18 @@ const visibleBlocks = computed(() =>
     return true;
   })
 );
+const visibleRawTimelineBlockKeys = computed(() => {
+  const keys: string[] = [];
+  visibleBlocks.value.forEach(block => {
+    if (shouldShowMessageRawToggle(block)) {
+      keys.push(getTimelineRawModeKey(block, 'message'));
+    }
+    if (shouldShowPlanRawToggle(block)) {
+      keys.push(getTimelineRawModeKey(block, 'plan'));
+    }
+  });
+  return keys;
+});
 const latestPlanToolId = computed(() => {
   for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
     const block = blocks.value[index];
@@ -6230,6 +6295,7 @@ watch(
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
+    activeRawTimelineBlockKey.value = '';
     syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
       showMobileTabSelector.value = false;
@@ -6255,6 +6321,27 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  visibleRawTimelineBlockKeys,
+  keys => {
+    if (activeRawTimelineBlockKey.value && !keys.includes(activeRawTimelineBlockKey.value)) {
+      activeRawTimelineBlockKey.value = '';
+    }
+  },
+  { immediate: true }
+);
+
+useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointerdown', event => {
+  if (!activeRawTimelineBlockKey.value) {
+    return;
+  }
+  const target = event.target;
+  if (target instanceof Element && target.closest('[data-raw-toggle-card]')) {
+    return;
+  }
+  activeRawTimelineBlockKey.value = '';
+});
 
 watch(
   () => props.isActive,
@@ -7681,6 +7768,24 @@ onBeforeUnmount(() => {
   background: var(--app-surface-color, #fff);
   padding: 15px 16px;
   position: relative;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.item-bubble.is-raw-capable {
+  cursor: pointer;
+}
+
+.item-bubble.is-raw-active {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+}
+
+.item-bubble.is-raw-capable:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .timeline-item.kind-user .item-bubble {
@@ -7717,6 +7822,11 @@ onBeforeUnmount(() => {
 .item-bubble.level-warn {
   border-color: color-mix(in srgb, var(--n-warning-color) 35%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-warning-color) 10%, rgba(255, 255, 255, 0.92));
+}
+
+.item-bubble.is-raw-active,
+.item-bubble.is-raw-capable:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
 }
 
 .item-text {
@@ -7954,6 +8064,24 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
   overflow: hidden;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.tool-card.is-raw-capable {
+  cursor: pointer;
+}
+
+.tool-card.is-raw-active {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+}
+
+.tool-card.is-raw-capable:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .tool-card.is-plan-tool {
@@ -7980,6 +8108,11 @@ onBeforeUnmount(() => {
   inset: 0 0 auto;
   height: 4px;
   background: linear-gradient(90deg, #14b8a6 0%, #0ea5e9 55%, #38bdf8 100%);
+}
+
+.tool-card.is-raw-active,
+.tool-card.is-raw-capable:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
 }
 
 .timeline-tool-card {
