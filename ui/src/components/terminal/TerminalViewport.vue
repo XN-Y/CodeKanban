@@ -44,6 +44,7 @@ import {
   type TerminalImageUploadSource,
 } from '@/utils/terminalImageUpload';
 import { useLocale } from '@/composables/useLocale';
+import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 
 type TerminalClientPayload = {
@@ -111,6 +112,8 @@ let pasteHandler: ((event: ClipboardEvent) => void) | null = null;
 let keydownCaptureHandler: ((event: KeyboardEvent) => void) | null = null;
 let dragOverHandler: ((event: DragEvent) => void) | null = null;
 let dropHandler: ((event: DragEvent) => void) | null = null;
+let terminalFocusHandler: (() => void) | null = null;
+let terminalBlurHandler: (() => void) | null = null;
 let transferOverlayTimer: number | null = null;
 let initialViewportRepairTimer: number | null = null;
 let initialViewportReady = false;
@@ -1157,12 +1160,76 @@ function isContainerVisible() {
   );
 }
 
+const mobileKeyboard = useMobileKeyboard({
+  enabled: () => Boolean(props.isMobile),
+  onDismissed: () => {
+    if (isDisposed || !terminal) {
+      return;
+    }
+
+    syncTerminalSize({
+      forceServerResize: props.tab.renderMode === 'snapshot',
+      serverSync: 'immediate',
+      finalizeReason: 'mobile-keyboard-dismissed',
+    });
+
+    refreshTerminalViewport('mobile-keyboard-dismissed', {
+      retry: false,
+      skipFit: true,
+    });
+
+    if (props.tab.renderMode === 'snapshot') {
+      requestSnapshot('mobile-keyboard-dismissed', {
+        continueAfterResize: true,
+      });
+    }
+  },
+});
+
+function shouldFreezeTerminalResize() {
+  return Boolean(props.isMobile) && mobileKeyboard.shouldFreezeResizeNow();
+}
+
+function performLocalViewportRefresh(
+  reason: string,
+  options: {
+    clearTextureAtlas?: boolean;
+  } = {}
+) {
+  if (!terminal || !isContainerVisible()) {
+    return;
+  }
+
+  if (options.clearTextureAtlas !== false) {
+    try {
+      terminal.clearTextureAtlas();
+    } catch (error) {
+      console.warn('[Terminal Refresh] Failed to clear texture atlas', {
+        sessionId: props.tab.id,
+        reason,
+        error,
+      });
+    }
+  }
+
+  try {
+    terminal.refresh(0, Math.max(terminal.rows - 1, 0));
+  } catch (error) {
+    console.warn('[Terminal Refresh] Failed to refresh terminal viewport', {
+      sessionId: props.tab.id,
+      reason,
+      error,
+    });
+  }
+}
+
 function refreshTerminalViewport(
   reason: string,
   options: {
     clearTextureAtlas?: boolean;
     forceServerResize?: boolean;
     retry?: boolean;
+    skipFit?: boolean;
   } = {}
 ) {
   if (!terminal) {
@@ -1179,50 +1246,42 @@ function refreshTerminalViewport(
     return;
   }
 
+  let initialRefreshFrozen = false;
+  let runCount = 0;
   const runRefresh = () => {
     if (!terminal || !isContainerVisible()) {
       return;
     }
 
-    handleResize({
-      forceServerResize,
-      serverSync: 'deferred',
-    });
-    forceServerResize = false;
-
-    if (options.clearTextureAtlas !== false) {
-      try {
-        terminal.clearTextureAtlas();
-      } catch (error) {
-        console.warn('[Terminal Refresh] Failed to clear texture atlas', {
-          sessionId: props.tab.id,
-          reason,
-          error,
-        });
-      }
+    runCount += 1;
+    const frozen = options.skipFit !== true && shouldFreezeTerminalResize();
+    if (runCount === 1) {
+      initialRefreshFrozen = frozen;
     }
 
-    try {
-      terminal.refresh(0, Math.max(terminal.rows - 1, 0));
-    } catch (error) {
-      console.warn('[Terminal Refresh] Failed to refresh terminal viewport', {
-        sessionId: props.tab.id,
-        reason,
-        error,
+    if (!frozen && options.skipFit !== true) {
+      handleResize({
+        forceServerResize,
+        serverSync: 'deferred',
       });
+      forceServerResize = false;
+    } else {
+      forceServerResize = false;
     }
+
+    performLocalViewportRefresh(reason, options);
   };
 
   runRefresh();
 
-  if (options.retry !== false) {
+  if (options.retry !== false && !initialRefreshFrozen) {
     window.setTimeout(runRefresh, 160);
   }
 }
 
 function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
   if (!terminal || !fitAddon) {
-    return;
+    return false;
   }
 
   // 检查容器是否可见（v-show="false" 时容器尺寸为 0）
@@ -1231,15 +1290,21 @@ function syncTerminalSize(options: TerminalSizeSyncOptions = {}) {
     containerRef.value.offsetWidth === 0 ||
     containerRef.value.offsetHeight === 0
   ) {
-    return;
+    return false;
+  }
+
+  if (shouldFreezeTerminalResize()) {
+    return false;
   }
 
   try {
     fitAddon.fit();
     commitTerminalSize(options);
+    return true;
   } catch (error) {
     // 忽略 fit 可能出现的错误
     console.warn('Terminal resize failed:', error);
+    return false;
   }
 }
 
@@ -1465,6 +1530,17 @@ onMounted(() => {
     sendTerminalInput(data);
   });
 
+  terminalFocusHandler = () => {
+    mobileKeyboard.setFocused(true);
+  };
+
+  terminalBlurHandler = () => {
+    mobileKeyboard.setFocused(false);
+  };
+
+  terminal.textarea?.addEventListener('focus', terminalFocusHandler);
+  terminal.textarea?.addEventListener('blur', terminalBlurHandler);
+
   keydownCaptureHandler = (event: KeyboardEvent) => {
     if (shouldUseBrowserPasteShortcut(event)) {
       // Keep browser paste enabled, but stop xterm/Codex from consuming Ctrl/Cmd+V first.
@@ -1545,6 +1621,7 @@ onMounted(() => {
 });
 
 function handleTerminalBlurEvent() {
+  mobileKeyboard.setFocused(false);
   terminal?.blur();
 }
 
@@ -1619,6 +1696,12 @@ onBeforeUnmount(() => {
     document.removeEventListener('visibilitychange', handleTerminalDocumentVisibilityChange);
   }
   if (containerRef.value) {
+    if (terminal?.textarea && terminalFocusHandler) {
+      terminal.textarea.removeEventListener('focus', terminalFocusHandler);
+    }
+    if (terminal?.textarea && terminalBlurHandler) {
+      terminal.textarea.removeEventListener('blur', terminalBlurHandler);
+    }
     if (keydownCaptureHandler) {
       containerRef.value.removeEventListener('keydown', keydownCaptureHandler, true);
     }
@@ -1668,8 +1751,11 @@ onBeforeUnmount(() => {
   pasteHandler = null;
   dragOverHandler = null;
   dropHandler = null;
+  terminalFocusHandler = null;
+  terminalBlurHandler = null;
   debugRefreshHandler = null;
   clearTransferOverlay();
+  mobileKeyboard.setFocused(false);
 });
 </script>
 
