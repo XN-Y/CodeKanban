@@ -5,6 +5,7 @@
         v-if="renderMessages.length > 0"
         ref="conversationContainerRef"
         class="conversation-container"
+        @click.capture="handleMarkdownLinkClick"
         @scroll="handleConversationScroll"
       >
         <div
@@ -254,13 +255,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useTimeAgo } from '@vueuse/core';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { useConversationVirtualizer } from '@/composables/useConversationVirtualizer';
 import { renderMarkdown } from '@/utils/markdown';
+import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
 import {
   estimateConversationMessageHeight,
   recordConversationMessageHeight,
@@ -354,6 +356,7 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useLocale();
+const dialog = useDialog();
 const message = useMessage();
 
 const showUserOnly = ref(false);
@@ -778,6 +781,57 @@ function handleConversationScroll() {
   scheduleNavigationSync();
 }
 
+function getClickedMessageAnchor(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null
+): HTMLAnchorElement | null {
+  if (!(target instanceof Element) || !(currentTarget instanceof HTMLElement)) {
+    return null;
+  }
+
+  const anchor = target.closest('a[href]');
+  if (!(anchor instanceof HTMLAnchorElement) || !currentTarget.contains(anchor)) {
+    return null;
+  }
+
+  return anchor.closest('.chat-markdown') ? anchor : null;
+}
+
+function handleMarkdownLinkClick(event: MouseEvent) {
+  if (event.defaultPrevented || typeof window === 'undefined') {
+    return;
+  }
+
+  const anchor = getClickedMessageAnchor(event.target, event.currentTarget);
+  if (!anchor) {
+    return;
+  }
+
+  event.preventDefault();
+  const href = resolveNavigableHref(anchor.getAttribute('href') ?? '', window.location.href);
+  if (!href) {
+    message.warning(t('common.invalidLink'));
+    return;
+  }
+
+  dialog.warning({
+    title: t('common.openLinkTitle'),
+    content: () =>
+      h('div', { class: 'conversation-link-confirm' }, [
+        h('div', { class: 'conversation-link-confirm__message' }, [t('common.openLinkMessage')]),
+        h('code', { class: 'conversation-link-confirm__href' }, href),
+      ]),
+    positiveText: t('common.openInNewTab'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      const opened = window.open(href, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        message.error(t('common.openLinkFailed'));
+      }
+    },
+  });
+}
+
 async function resetScrollToPrimaryMessage() {
   const container = conversationContainerRef.value;
   if (container) {
@@ -1053,6 +1107,26 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 18px 16px 12px 8px;
+}
+
+.conversation-link-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.conversation-link-confirm__message {
+  line-height: 1.5;
+}
+
+.conversation-link-confirm__href {
+  display: block;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--n-code-color);
 }
 
 .conversation-spacer {

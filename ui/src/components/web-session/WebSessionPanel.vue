@@ -173,7 +173,12 @@
           </div>
 
           <div v-if="currentSession" class="timeline-shell">
-            <div ref="timelineScrollRef" class="timeline-scroll" @scroll="handleTimelineScroll">
+            <div
+              ref="timelineScrollRef"
+              class="timeline-scroll"
+              @click.capture="handleTimelineLinkClick"
+              @scroll="handleTimelineScroll"
+            >
               <div ref="timelineListRef" class="timeline-list">
                 <div v-if="historyMeta.loading" class="history-loading">
                   {{
@@ -1333,6 +1338,7 @@ import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/termi
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { hexToRgba, isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
+import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
 import {
   buildImagePlaceholder,
   insertImagePlaceholdersAtCursor,
@@ -6065,6 +6071,57 @@ function restoreHistoryAnchor() {
   return true;
 }
 
+function getClickedTimelineAnchor(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null
+): HTMLAnchorElement | null {
+  if (!(target instanceof Element) || !(currentTarget instanceof HTMLElement)) {
+    return null;
+  }
+
+  const anchor = target.closest('a[href]');
+  if (!(anchor instanceof HTMLAnchorElement) || !currentTarget.contains(anchor)) {
+    return null;
+  }
+
+  return anchor.closest('.chat-markdown') ? anchor : null;
+}
+
+function handleTimelineLinkClick(event: MouseEvent) {
+  if (event.defaultPrevented || typeof window === 'undefined') {
+    return;
+  }
+
+  const anchor = getClickedTimelineAnchor(event.target, event.currentTarget);
+  if (!anchor) {
+    return;
+  }
+
+  event.preventDefault();
+  const href = resolveNavigableHref(anchor.getAttribute('href') ?? '', window.location.href);
+  if (!href) {
+    message.warning(t('common.invalidLink'));
+    return;
+  }
+
+  dialog.warning({
+    title: t('common.openLinkTitle'),
+    content: () =>
+      h('div', { class: 'web-session-close-confirm' }, [
+        h('div', { class: 'web-session-close-confirm__message' }, [t('common.openLinkMessage')]),
+        h('code', { class: 'web-session-close-confirm__href' }, href),
+      ]),
+    positiveText: t('common.openInNewTab'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      const opened = window.open(href, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        message.error(t('common.openLinkFailed'));
+      }
+    },
+  });
+}
+
 function handleTimelineScroll(event: Event) {
   const container = event.currentTarget as HTMLDivElement | null;
   if (!container) {
@@ -9560,6 +9617,16 @@ onBeforeUnmount(() => {
 
 .web-session-close-confirm__message {
   line-height: 1.5;
+}
+
+.web-session-close-confirm__href {
+  display: block;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--n-code-color);
 }
 
 .web-session-close-confirm__checkbox {
