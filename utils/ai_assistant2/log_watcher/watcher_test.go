@@ -2,6 +2,7 @@ package log_watcher
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,27 @@ func TestParseLine_UserMessage(t *testing.T) {
 	}
 }
 
+func TestParseLine_CodexAssistantMessagesIgnored(t *testing.T) {
+	tests := []string{
+		`{"timestamp":"2025-11-30T20:16:39.465Z","type":"event_msg","payload":{"type":"agent_message","message":"assistant output"}}`,
+		`{"timestamp":"2025-11-30T20:16:39.465Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"assistant reasoning"}}`,
+	}
+
+	for _, line := range tests {
+		watcher := NewLogWatcher(WatcherConfig{
+			ProcessStartTime: time.Now(),
+		})
+
+		msg, err := watcher.parseLine(line)
+		if err != nil {
+			t.Fatalf("parseLine failed: %v", err)
+		}
+		if msg != nil {
+			t.Fatalf("expected assistant event to be ignored, got %+v", msg)
+		}
+	}
+}
+
 func TestParseLine_TurnAborted(t *testing.T) {
 	line := `{"timestamp":"2025-11-30T20:29:42.092Z","type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}`
 
@@ -126,6 +148,51 @@ func TestCodexFileSearcher_GetSessionDir(t *testing.T) {
 	}
 }
 
+func writeCodexRolloutTestFile(
+	t *testing.T,
+	homeDir string,
+	createdAt time.Time,
+	sessionID string,
+	cwd string,
+	originator string,
+	source string,
+) string {
+	t.Helper()
+
+	dateDir := filepath.Join(
+		homeDir,
+		".codex",
+		"sessions",
+		createdAt.Format("2006"),
+		createdAt.Format("01"),
+		createdAt.Format("02"),
+	)
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	filePath := filepath.Join(
+		dateDir,
+		"rollout-"+createdAt.Format("2006-01-02T15-04-05")+"-"+sessionID+".jsonl",
+	)
+	content := fmt.Sprintf(
+		`{"timestamp":%q,"type":"session_meta","payload":{"id":%q,"timestamp":%q,"cwd":%q,"originator":%q,"cli_version":"0.63.0","source":%q}}`+"\n",
+		createdAt.UTC().Format(time.RFC3339),
+		sessionID,
+		createdAt.UTC().Format(time.RFC3339),
+		cwd,
+		originator,
+		source,
+	)
+	if err := os.WriteFile(filePath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to create rollout file: %v", err)
+	}
+	if err := os.Chtimes(filePath, createdAt, createdAt); err != nil {
+		t.Fatalf("failed to update rollout file time: %v", err)
+	}
+	return filePath
+}
+
 func TestCodexFileSearcher_FindSessionFile(t *testing.T) {
 	// Create temp directory structure
 	homeDir := t.TempDir()
@@ -166,6 +233,112 @@ func TestCodexFileSearcher_FindSessionFile(t *testing.T) {
 
 	if found != "" {
 		t.Errorf("expected empty string for future time, got %s", found)
+	}
+}
+
+func TestCodexFileSearcher_FindSessionFilePrefersMatchingWorkingDir(t *testing.T) {
+	homeDir := t.TempDir()
+	startTime := time.Now().Truncate(time.Second)
+	workingDir := filepath.Join(homeDir, "project-a")
+	otherDir := filepath.Join(homeDir, "project-b")
+
+	expected := writeCodexRolloutTestFile(
+		t,
+		homeDir,
+		startTime.Add(1*time.Second),
+		"019d6f7b-5dd6-7d73-8dee-23b492e85de1",
+		workingDir,
+		"codex_cli_rs",
+		"",
+	)
+	writeCodexRolloutTestFile(
+		t,
+		homeDir,
+		startTime.Add(2*time.Second),
+		"019d6f7b-5dd6-7d73-8dee-23b492e85de2",
+		otherDir,
+		"codex_cli_rs",
+		"",
+	)
+
+	searcher := NewCodexFileSearcherWithHomeDirAndWorkingDir(homeDir, workingDir)
+	found, err := searcher.FindSessionFile(context.Background(), startTime)
+	if err != nil {
+		t.Fatalf("FindSessionFile failed: %v", err)
+	}
+	if found != expected {
+		t.Fatalf("expected matching working dir rollout %q, got %q", expected, found)
+	}
+}
+
+func TestCodexFileSearcher_FindSessionFileSkipsCodeKanbanWebSessionSource(t *testing.T) {
+	homeDir := t.TempDir()
+	startTime := time.Now().Truncate(time.Second)
+	workingDir := filepath.Join(homeDir, "project-a")
+
+	writeCodexRolloutTestFile(
+		t,
+		homeDir,
+		startTime.Add(1*time.Second),
+		"019d6f7b-5dd6-7d73-8dee-23b492e85de3",
+		workingDir,
+		"codekanban-web-session",
+		"codekanban-web-session",
+	)
+	expected := writeCodexRolloutTestFile(
+		t,
+		homeDir,
+		startTime.Add(3*time.Second),
+		"019d6f7b-5dd6-7d73-8dee-23b492e85de4",
+		workingDir,
+		"codex_cli_rs",
+		"",
+	)
+
+	searcher := NewCodexFileSearcherWithHomeDirAndWorkingDir(homeDir, workingDir)
+	found, err := searcher.FindSessionFile(context.Background(), startTime)
+	if err != nil {
+		t.Fatalf("FindSessionFile failed: %v", err)
+	}
+	if found != expected {
+		t.Fatalf("expected non-web-session rollout %q, got %q", expected, found)
+	}
+}
+
+func TestCodexFileSearcher_FindSessionFileReturnsEmptyWithoutConfirmedWorkingDir(t *testing.T) {
+	homeDir := t.TempDir()
+	startTime := time.Now().Truncate(time.Second)
+	workingDir := filepath.Join(homeDir, "project-a")
+	dateDir := filepath.Join(
+		homeDir,
+		".codex",
+		"sessions",
+		startTime.Format("2006"),
+		startTime.Format("01"),
+		startTime.Format("02"),
+	)
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		t.Fatalf("failed to create directory: %v", err)
+	}
+
+	filePath := filepath.Join(
+		dateDir,
+		"rollout-"+startTime.Add(time.Second).Format("2006-01-02T15-04-05")+"-019d6f7b-5dd6-7d73-8dee-23b492e85de5.jsonl",
+	)
+	if err := os.WriteFile(filePath, []byte(`{"timestamp":"2025-11-30T20:14:23Z","type":"session_meta","payload":{"id":"019d6f7b-5dd6-7d73-8dee-23b492e85de5","originator":"codex_cli_rs"}}`+"\n"), 0o644); err != nil {
+		t.Fatalf("failed to create rollout file: %v", err)
+	}
+	if err := os.Chtimes(filePath, startTime.Add(time.Second), startTime.Add(time.Second)); err != nil {
+		t.Fatalf("failed to update rollout file time: %v", err)
+	}
+
+	searcher := NewCodexFileSearcherWithHomeDirAndWorkingDir(homeDir, workingDir)
+	found, err := searcher.FindSessionFile(context.Background(), startTime)
+	if err != nil {
+		t.Fatalf("FindSessionFile failed: %v", err)
+	}
+	if found != "" {
+		t.Fatalf("expected no rollout match without confirmed cwd, got %q", found)
 	}
 }
 

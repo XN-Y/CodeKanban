@@ -489,6 +489,7 @@ func (w *LogWatcher) parseCodexLine(line string) (*UserMessage, error) {
 			Timestamp:    ts,
 			Cwd:          payload.Cwd,
 			Originator:   payload.Originator,
+			Source:       payload.Source,
 			CliVersion:   payload.CliVersion,
 			Instructions: payload.Instructions,
 		}
@@ -517,22 +518,6 @@ func (w *LogWatcher) parseCodexLine(line string) (*UserMessage, error) {
 				Message:   payload.Message,
 				Images:    images,
 			}, nil
-		case "agent_message":
-			// Agent final response message
-			if payload.Message != "" {
-				return &UserMessage{
-					Timestamp: ts,
-					Message:   payload.Message,
-				}, nil
-			}
-		case "agent_reasoning":
-			// Agent reasoning/thinking text
-			if payload.Text != "" {
-				return &UserMessage{
-					Timestamp: ts,
-					Message:   payload.Text,
-				}, nil
-			}
 		}
 
 		return nil, nil
