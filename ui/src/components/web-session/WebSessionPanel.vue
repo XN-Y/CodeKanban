@@ -645,7 +645,7 @@
                       <n-checkbox-group
                         v-if="question.options.length > 0"
                         v-model:value="userInputSelections[question.id]"
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         class="user-input-options"
                       >
                         <div
@@ -666,7 +666,7 @@
                         v-model:value="userInputDrafts[question.id]"
                         :type="question.isSecret ? 'password' : 'text'"
                         size="small"
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         :show-password-on="question.isSecret ? 'mousedown' : undefined"
                         :placeholder="userInputPlaceholder(question)"
                         @keydown="handleUserInputEnter"
@@ -676,7 +676,8 @@
                       <n-button
                         size="small"
                         type="primary"
-                        :disabled="pendingUserInput.stale"
+                        :loading="isSubmittingUserInput"
+                        :disabled="isUserInputInteractionDisabled"
                         @click="handleUserInputSubmit"
                       >
                         {{ t('webSession.userInputSubmit') }}
@@ -684,11 +685,18 @@
                       <n-button
                         size="small"
                         tertiary
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         @click="handleAbortCurrent"
                       >
                         {{ t('webSession.stop') }}
                       </n-button>
+                    </div>
+                    <div
+                      v-if="showUserInputSubmitSlowHint"
+                      class="approval-note"
+                      aria-live="polite"
+                    >
+                      {{ t('webSession.userInputSubmitSlow') }}
                     </div>
                   </div>
                 </div>
@@ -1343,11 +1351,17 @@ import {
 } from '@/components/web-session/sessionVisualState';
 import {
   beginWebSessionSubmit,
+  buildWebSessionSubmitOwnerId,
   endWebSessionSubmit,
   isWebSessionSubmitting,
   transferWebSessionSubmit,
   type WebSessionSubmitState,
 } from '@/components/web-session/webSessionSubmitState';
+import {
+  buildWebSessionUserInputSubmitOwnerId,
+  hasMissingWebSessionUserInputAnswers,
+  scheduleWebSessionUserInputSlowHint,
+} from '@/components/web-session/webSessionUserInputSubmit';
 import {
   resolveWebSessionDisplayState,
   type WebSessionDisplayState,
@@ -1551,6 +1565,8 @@ const rawTimelineBlocks = ref<Record<string, boolean>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
+const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
+const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
@@ -1577,6 +1593,8 @@ let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
 let composerTransferErrorTimer: number | null = null;
+let cancelUserInputSlowHint: (() => void) | null = null;
+let activeUserInputSlowHintOwnerId = '';
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -2032,6 +2050,26 @@ const pendingApproval = computed(() =>
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
+const currentUserInputSubmitOwnerId = computed(() =>
+  currentRealSession.value && pendingUserInput.value
+    ? buildWebSessionUserInputSubmitOwnerId(
+        currentRealSession.value.id,
+        pendingUserInput.value.itemId
+      )
+    : ''
+);
+const isSubmittingUserInput = computed(() =>
+  isWebSessionSubmitting(userInputSubmitStateByOwnerId.value, currentUserInputSubmitOwnerId.value)
+);
+const isUserInputSubmitSlow = computed(() =>
+  isWebSessionSubmitting(userInputSlowStateByOwnerId.value, currentUserInputSubmitOwnerId.value)
+);
+const isUserInputInteractionDisabled = computed(
+  () => Boolean(pendingUserInput.value?.stale) || isSubmittingUserInput.value
+);
+const showUserInputSubmitSlowHint = computed(
+  () => isSubmittingUserInput.value && isUserInputSubmitSlow.value
+);
 const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
   const request = pendingUserInput.value;
   if (!request || request.stale || !latestPlanToolId.value) {
@@ -2411,6 +2449,63 @@ function transferSessionSubmit(fromOwnerId: string, toOwnerId: string) {
   );
 }
 
+function clearUserInputSlowHintTimer(ownerId = '') {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (
+    normalizedOwnerId &&
+    activeUserInputSlowHintOwnerId &&
+    activeUserInputSlowHintOwnerId !== normalizedOwnerId
+  ) {
+    return;
+  }
+  if (cancelUserInputSlowHint) {
+    cancelUserInputSlowHint();
+    cancelUserInputSlowHint = null;
+  }
+  activeUserInputSlowHintOwnerId = '';
+}
+
+function beginUserInputSubmit(ownerId: string) {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (!normalizedOwnerId) {
+    return;
+  }
+  userInputSubmitStateByOwnerId.value = beginWebSessionSubmit(
+    userInputSubmitStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  userInputSlowStateByOwnerId.value = endWebSessionSubmit(
+    userInputSlowStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  clearUserInputSlowHintTimer();
+  activeUserInputSlowHintOwnerId = normalizedOwnerId;
+  cancelUserInputSlowHint = scheduleWebSessionUserInputSlowHint(normalizedOwnerId, slowOwnerId => {
+    cancelUserInputSlowHint = null;
+    activeUserInputSlowHintOwnerId = '';
+    userInputSlowStateByOwnerId.value = beginWebSessionSubmit(
+      userInputSlowStateByOwnerId.value,
+      slowOwnerId
+    );
+  });
+}
+
+function endUserInputSubmit(ownerId: string) {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (!normalizedOwnerId) {
+    return;
+  }
+  userInputSubmitStateByOwnerId.value = endWebSessionSubmit(
+    userInputSubmitStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  clearUserInputSlowHintTimer(normalizedOwnerId);
+  userInputSlowStateByOwnerId.value = endWebSessionSubmit(
+    userInputSlowStateByOwnerId.value,
+    normalizedOwnerId
+  );
+}
+
 function showComposerTransferError(detail?: string) {
   clearComposerTransferError();
   composerTransferErrorMessage.value = t('webSession.attachmentUploadFailed');
@@ -2623,6 +2718,12 @@ watch(
   },
   { immediate: true }
 );
+
+watch(currentUserInputSubmitOwnerId, (nextOwnerId, previousOwnerId) => {
+  if (previousOwnerId && previousOwnerId !== nextOwnerId) {
+    endUserInputSubmit(previousOwnerId);
+  }
+});
 
 const mobileTabOptions = computed<MobileTabDropdownOption[]>(
   () =>
@@ -5683,6 +5784,9 @@ function handleUserInputEnter(event: KeyboardEvent) {
   }
   event.preventDefault();
   event.stopPropagation();
+  if (isSubmittingUserInput.value) {
+    return;
+  }
   void handleUserInputSubmit();
 }
 
@@ -5821,34 +5925,38 @@ async function handlePlanCardCancel() {
 }
 
 async function handleUserInputSubmit() {
-  if (!currentRealSession.value || !pendingUserInput.value) {
+  if (!currentRealSession.value || !pendingUserInput.value || isSubmittingUserInput.value) {
     return;
   }
-  if (pendingUserInput.value.stale) {
-    message.info(pendingUserInput.value.recoveryMessage || t('webSession.recoveredActionExpired'));
+  const sessionId = currentRealSession.value.id;
+  const request = pendingUserInput.value;
+  if (request.stale) {
+    message.info(request.recoveryMessage || t('webSession.recoveredActionExpired'));
     return;
   }
   const answers = buildUserInputAnswers();
   if (!answers) {
     return;
   }
-  const hasMissingAnswer = pendingUserInput.value.questions.some(
-    question => !Array.isArray(answers[question.id]) || answers[question.id].length === 0
-  );
-  if (hasMissingAnswer) {
+  if (hasMissingWebSessionUserInputAnswers(request.questions, answers)) {
     message.warning(t('webSession.userInputAnswerRequired'));
     return;
   }
+  const submitOwnerId = buildWebSessionUserInputSubmitOwnerId(sessionId, request.itemId);
+  if (!submitOwnerId) {
+    return;
+  }
+  beginUserInputSubmit(submitOwnerId);
+  let answered = false;
   try {
-    await webSessionStore.answerUserInput(
-      currentRealSession.value.id,
-      pendingUserInput.value.itemId,
-      answers
-    );
-    userInputSelections.value = {};
-    userInputDrafts.value = {};
+    await webSessionStore.answerUserInput(sessionId, request.itemId, answers);
+    answered = true;
   } catch (error) {
     message.error(formatSessionInteractionError(error));
+  } finally {
+    if (!answered || currentUserInputSubmitOwnerId.value !== submitOwnerId) {
+      endUserInputSubmit(submitOwnerId);
+    }
   }
 }
 
@@ -6849,6 +6957,9 @@ onBeforeUnmount(() => {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;
   }
+  clearUserInputSlowHintTimer();
+  userInputSubmitStateByOwnerId.value = {};
+  userInputSlowStateByOwnerId.value = {};
   emitMobileComposerFocusChange(false);
   clearComposerTransferError();
   stopWebSessionCatchUp('unmount');

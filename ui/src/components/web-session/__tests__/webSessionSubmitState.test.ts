@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWebSessionSubmitOwnerId,
   beginWebSessionSubmit,
   endWebSessionSubmit,
   isWebSessionSubmitting,
@@ -42,5 +43,12 @@ describe('webSessionSubmitState', () => {
     expect(invalidTransfer).toEqual(initial);
     expect(isWebSessionSubmitting(blankTargetTransfer, 'session-a')).toBe(false);
     expect(isWebSessionSubmitting(blankTargetTransfer, 'session-c')).toBe(false);
+  });
+
+  it('builds stable composite owner ids', () => {
+    expect(buildWebSessionSubmitOwnerId(' user_input ', 'session-1', ' item-2 ')).toBe(
+      'user_input::session-1::item-2'
+    );
+    expect(buildWebSessionSubmitOwnerId(' ', 'session-1', '')).toBe('session-1');
   });
 });

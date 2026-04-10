@@ -4,6 +4,10 @@ function normalizeSubmitOwnerId(ownerId: string) {
   return String(ownerId || '').trim();
 }
 
+export function buildWebSessionSubmitOwnerId(...ownerIdParts: string[]) {
+  return ownerIdParts.map(normalizeSubmitOwnerId).filter(Boolean).join('::');
+}
+
 export function beginWebSessionSubmit(
   state: WebSessionSubmitState,
   ownerId: string

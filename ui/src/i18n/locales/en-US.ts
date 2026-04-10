@@ -679,6 +679,7 @@ export default {
     userInputTitle: 'More Input Required',
     userInputPromptFallback: 'The agent needs more information before it can continue.',
     userInputSubmit: 'Submit Answers',
+    userInputSubmitSlow: 'Submitting your answers. Please do not click again.',
     userInputAnswerPlaceholder: 'Enter an answer',
     userInputOtherPlaceholder: 'Add extra detail',
     userInputAnswerRequired: 'Answer every question before continuing',

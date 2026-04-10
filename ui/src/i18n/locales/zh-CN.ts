@@ -664,6 +664,7 @@ export default {
     userInputTitle: '需要补充信息',
     userInputPromptFallback: 'Agent 需要你补充一些信息后才能继续。',
     userInputSubmit: '提交答案',
+    userInputSubmitSlow: '正在提交答案，请勿重复点击。',
     userInputAnswerPlaceholder: '输入答案',
     userInputOtherPlaceholder: '输入补充内容',
     userInputAnswerRequired: '请先回答所有问题',
