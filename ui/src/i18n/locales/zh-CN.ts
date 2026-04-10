@@ -629,6 +629,7 @@ export default {
     approvalLockedPlaceholder: '当前有待处理审批，先批准或拒绝再继续',
     stop: '停止',
     send: '发送',
+    sendEmphatic: '发送!',
     showSidebar: '显示右侧栏',
     hideSidebar: '隐藏右侧栏',
     readyTitle: '准备开始这一轮协作',
@@ -714,6 +715,12 @@ export default {
     composerHintApproval: '当前等待审批；你仍可预输入，并选择转向或加入队列。',
     composerHintUserInput: 'Agent 正在等待你补充信息，请先完成当前问题。',
     composerHintRecovered: '上次运行已因程序重启中断；可直接发送新消息继续这个会话。',
+    sendConflictWarningTitle: '检测到其他执行中的会话',
+    sendConflictWarningBodySingle:
+      '同项目还有 1 个非计划会话正在执行：{sessions}。再次点击发送将继续本次操作。',
+    sendConflictWarningBodyMultiple:
+      '同项目还有 {count} 个非计划会话正在执行：{sessions}。再次点击发送将继续本次操作。',
+    sendConflictListOverflow: '{first}、{second} 等 {remaining} 个',
     preinputRedirect: '发送',
     preinputQueue: '加入队列',
     pendingRedirect: '下一步',
