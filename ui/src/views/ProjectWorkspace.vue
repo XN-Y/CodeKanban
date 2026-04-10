@@ -4,20 +4,14 @@
     :class="{
       'is-mobile': isMobileLayout,
       'is-websession-composing':
-        isMobileLayout &&
-        mobileActiveView === 'webSession' &&
-        isMobileWebSessionComposerFocused,
+        isMobileLayout && mobileActiveView === 'webSession' && isMobileWebSessionComposerFocused,
     }"
   >
     <!-- 桌面端布局 -->
     <template v-if="!isMobileLayout">
       <n-layout has-sider class="workspace-desktop-shell">
         <!-- 左侧最近项目侧边栏 -->
-        <n-layout-sider
-          bordered
-          class="project-sidebar"
-          :width="effectiveLeftSidebarWidth"
-        >
+        <n-layout-sider bordered class="project-sidebar" :width="effectiveLeftSidebarWidth">
           <RecentProjects
             :current-project-id="currentProjectId"
             @edit-current="openProjectEditDialog"
@@ -61,7 +55,11 @@
     <template v-else>
       <div class="mobile-workspace">
         <!-- 看板视图 -->
-        <div v-show="mobileActiveView === 'kanban'" class="mobile-view mobile-kanban-view">
+        <div
+          v-if="mobileKanbanEnabled"
+          v-show="mobileActiveView === 'kanban'"
+          class="mobile-view mobile-kanban-view"
+        >
           <KanbanBoard :project-id="currentProjectId" />
         </div>
 
@@ -114,6 +112,17 @@
             </n-icon>
             <span>{{ t('nav.projects') }}</span>
           </button>
+          <button type="button" class="nav-item" @click="handleGoToSettings">
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.14 7.14 0 0 0-1.63-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.58.22-1.13.53-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.58-.22 1.13-.53 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.settingsShort') }}</span>
+          </button>
           <button
             type="button"
             class="nav-item"
@@ -146,38 +155,6 @@
             </n-icon>
             <span>{{ t('nav.webSession') }}</span>
           </button>
-          <button
-            type="button"
-            class="nav-item"
-            :class="{ active: mobileActiveView === 'kanban' }"
-            @click="setMobileView('kanban')"
-          >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M4 4h4v4H4V4zm0 6h4v4H4v-4zm0 6h4v4H4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4zm0 6h4v4h-4v-4zm6-12h4v4h-4V4zm0 6h4v4h-4v-4z"
-                />
-              </svg>
-            </n-icon>
-            <span>{{ t('nav.kanban') }}</span>
-          </button>
-          <button
-            type="button"
-            class="nav-item"
-            :class="{ active: mobileActiveView === 'notifications' }"
-            @click="setMobileView('notifications')"
-          >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z"
-                />
-              </svg>
-            </n-icon>
-            <span>{{ t('nav.notifications') }}</span>
-          </button>
         </div>
       </div>
     </template>
@@ -199,8 +176,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { useMessage } from 'naive-ui';
@@ -218,6 +195,12 @@ import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import type { Worktree } from '@/types/models';
+import {
+  DEFAULT_MOBILE_VIEW,
+  normalizeMobileView,
+  restorePersistedMobileView,
+  type MobileView,
+} from '@/views/projectWorkspaceMobileView';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
@@ -229,6 +212,7 @@ const MIN_MAIN_WORKSPACE_WIDTH = 320;
 const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
 
 const route = useRoute();
+const router = useRouter();
 const message = useMessage();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
@@ -239,6 +223,8 @@ const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
+const mobileKanbanEnabled = false;
+let mobileWebSessionComposerFocusFrame: number | null = null;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
@@ -333,9 +319,6 @@ function startProjectSidebarResize(event: MouseEvent) {
 // Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
 const isDockMode = computed(() => !isMobileLayout.value && terminalDisplayMode.value === 'docked');
 
-// 移动端视图切换
-type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
-
 // 提供终端面板引用给子组件
 provide('terminalPanelRef', terminalPanelRef);
 
@@ -343,41 +326,48 @@ const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
 
-function normalizeMobileView(value: unknown): MobileView {
-  if (
-    value === 'kanban' ||
-    value === 'terminal' ||
-    value === 'webSession' ||
-    value === 'projects' ||
-    value === 'notifications'
-  ) {
-    return value;
-  }
-  return 'kanban';
-}
-
 const storedMobileViews = useStorage<Record<string, MobileView>>(
   MOBILE_ACTIVE_VIEW_STORAGE_KEY,
   {}
 );
-const mobileActiveView = computed<MobileView>({
-  get() {
-    const projectId = currentProjectId.value;
+const mobileActiveView = ref<MobileView>(DEFAULT_MOBILE_VIEW);
+
+watch(
+  currentProjectId,
+  projectId => {
     if (!projectId) {
-      return 'kanban';
-    }
-    return normalizeMobileView(storedMobileViews.value[projectId]);
-  },
-  set(value) {
-    const projectId = currentProjectId.value;
-    if (!projectId) {
+      mobileActiveView.value = DEFAULT_MOBILE_VIEW;
       return;
     }
-    storedMobileViews.value = {
-      ...storedMobileViews.value,
-      [projectId]: normalizeMobileView(value),
-    };
+
+    const storedView = storedMobileViews.value[projectId];
+    const restoredView = restorePersistedMobileView(storedView);
+    mobileActiveView.value = restoredView;
+
+    if (storedView !== restoredView) {
+      storedMobileViews.value = {
+        ...storedMobileViews.value,
+        [projectId]: restoredView,
+      };
+    }
   },
+  { immediate: true }
+);
+
+watch([currentProjectId, mobileActiveView], ([projectId, view]) => {
+  if (!projectId) {
+    return;
+  }
+
+  const normalizedView = normalizeMobileView(view);
+  if (storedMobileViews.value[projectId] === normalizedView) {
+    return;
+  }
+
+  storedMobileViews.value = {
+    ...storedMobileViews.value,
+    [projectId]: normalizedView,
+  };
 });
 
 watch(mobileActiveView, view => {
@@ -410,6 +400,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (mobileWebSessionComposerFocusFrame != null) {
+    window.cancelAnimationFrame(mobileWebSessionComposerFocusFrame);
+    mobileWebSessionComposerFocusFrame = null;
+  }
   stopProjectSidebarResize();
 });
 
@@ -480,7 +474,26 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
     isMobileWebSessionComposerFocused.value = false;
     return;
   }
-  isMobileWebSessionComposerFocused.value = focused;
+  if (mobileWebSessionComposerFocusFrame != null) {
+    window.cancelAnimationFrame(mobileWebSessionComposerFocusFrame);
+    mobileWebSessionComposerFocusFrame = null;
+  }
+  if (!focused) {
+    isMobileWebSessionComposerFocused.value = false;
+    return;
+  }
+  mobileWebSessionComposerFocusFrame = window.requestAnimationFrame(() => {
+    mobileWebSessionComposerFocusFrame = null;
+    if (!isMobileLayout.value || mobileActiveView.value !== 'webSession') {
+      isMobileWebSessionComposerFocused.value = false;
+      return;
+    }
+    isMobileWebSessionComposerFocused.value = true;
+  });
+}
+
+function handleGoToSettings() {
+  void router.push({ name: 'settings' });
 }
 
 // 移动端视图切换
@@ -488,7 +501,7 @@ function setMobileView(view: MobileView) {
   if (view !== 'webSession') {
     isMobileWebSessionComposerFocused.value = false;
   }
-  mobileActiveView.value = view;
+  mobileActiveView.value = normalizeMobileView(view);
 }
 </script>
 

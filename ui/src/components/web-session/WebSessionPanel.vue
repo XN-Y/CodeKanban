@@ -96,6 +96,11 @@
                       ></span>
                       <span class="tab-title" :style="tabTitleStyle">{{ session.title }}</span>
                       <span
+                        v-if="isSessionArchiving(session.id)"
+                        class="tab-action-spinner"
+                        aria-hidden="true"
+                      ></span>
+                      <span
                         class="ai-status-pill"
                         :class="[
                           `state-${getSessionPillStateClass(session)}`,
@@ -168,7 +173,12 @@
           </div>
 
           <div v-if="currentSession" class="timeline-shell">
-            <div ref="timelineScrollRef" class="timeline-scroll" @scroll="handleTimelineScroll">
+            <div
+              ref="timelineScrollRef"
+              class="timeline-scroll"
+              @click.capture="handleTimelineLinkClick"
+              @scroll="handleTimelineScroll"
+            >
               <div ref="timelineListRef" class="timeline-list">
                 <div v-if="historyMeta.loading" class="history-loading">
                   {{
@@ -208,25 +218,9 @@
                     v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
                     class="timeline-tool-shell plan-tool-shell"
                   >
-                    <div
-                      class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool"
-                      :class="{
-                        'is-raw-capable': shouldShowPlanRawToggle(item),
-                        'is-raw-active': isTimelineRawBlockActive(item, 'plan'),
-                      }"
-                      :data-raw-toggle-card="
-                        shouldShowPlanRawToggle(item)
-                          ? getTimelineRawModeKey(item, 'plan')
-                          : undefined
-                      "
-                      :tabindex="shouldShowPlanRawToggle(item) ? 0 : undefined"
-                      @click="activateTimelineRawBlock(item, 'plan')"
-                      @focusin="activateTimelineRawBlock(item, 'plan')"
-                      @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'plan')"
-                      @keydown.space.self.prevent="activateTimelineRawBlock(item, 'plan')"
-                    >
+                    <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
                       <button
-                        v-if="shouldShowTimelineRawToggle(item, 'plan')"
+                        v-if="shouldShowPlanRawToggle(item)"
                         type="button"
                         class="timeline-display-toggle"
                         :class="{ 'is-active': isBlockRawMode(item, 'plan') }"
@@ -259,8 +253,8 @@
                               size="small"
                               type="primary"
                               class="plan-tool-action-primary"
-                              :loading="isSubmittingPlanExecution"
-                              :disabled="isSubmittingMessage"
+                              :loading="isPlanCardImplementPending"
+                              :disabled="isPlanCardImplementPending"
                               @click="handlePlanCardImplement"
                             >
                               {{ t('webSession.planActionImplement') }}
@@ -269,7 +263,7 @@
                               size="small"
                               secondary
                               class="plan-tool-action-secondary"
-                              :disabled="isSubmittingMessage"
+                              :disabled="isPlanCardImplementPending"
                               @click="handlePlanCardCancel"
                             >
                               {{ t('webSession.planActionCancel') }}
@@ -318,11 +312,11 @@
                       </button>
                     </div>
 
-                    <div v-else class="tool-card timeline-tool-card">
+                    <div v-else class="tool-card timeline-tool-card" :class="toolCardClass(item.tool)">
                       <button
                         type="button"
                         class="tool-header"
-                        @click="toggleToolExpanded(item.tool.id)"
+                        @click="toggleToolExpanded(item.tool)"
                       >
                         <span class="tool-header-main">
                           <span class="tool-header-leading">
@@ -339,6 +333,54 @@
                         }}</span>
                       </button>
                       <div v-if="isToolExpanded(item.tool.id)" class="tool-body">
+                        <div v-if="isImageViewTool(item.tool)" class="tool-section">
+                          <div class="tool-section-label">{{ t('webSession.imageViewPreview') }}</div>
+                          <div class="image-view-preview-card">
+                            <div class="image-view-preview-meta">
+                              <span class="image-view-preview-name">
+                                <n-icon size="14"><ImageOutline /></n-icon>
+                                <span>{{ getImageViewDisplayName(item.tool) }}</span>
+                              </span>
+                              <span
+                                v-if="getImageViewDisplayPath(item.tool)"
+                                class="image-view-preview-path"
+                                :title="getImageViewDisplayPath(item.tool)"
+                              >
+                                {{ getImageViewDisplayPath(item.tool) }}
+                              </span>
+                            </div>
+                            <div class="image-view-preview-frame">
+                              <div
+                                v-if="getImageViewPreviewState(item.tool) !== 'ready'"
+                                class="image-view-preview-status"
+                                :class="{
+                                  'is-error': getImageViewPreviewState(item.tool) === 'error',
+                                }"
+                              >
+                                {{
+                                  getImageViewPreviewState(item.tool) === 'error'
+                                    ? t('webSession.imageViewLoadFailed')
+                                    : t('webSession.imageViewLoading')
+                                }}
+                              </div>
+                              <img
+                                v-if="
+                                  getImageViewPreviewSrc(item.tool) &&
+                                  getImageViewPreviewState(item.tool) !== 'error'
+                                "
+                                :src="getImageViewPreviewSrc(item.tool)"
+                                :alt="getImageViewDisplayName(item.tool)"
+                                class="image-view-preview-image"
+                                :class="{
+                                  'is-ready': getImageViewPreviewState(item.tool) === 'ready',
+                                }"
+                                loading="lazy"
+                                @load="handleImageViewPreviewLoad(item.tool.id)"
+                                @error="handleImageViewPreviewError(item.tool.id)"
+                              />
+                            </div>
+                          </div>
+                        </div>
                         <div v-if="item.tool.input" class="tool-section">
                           <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
                           <pre class="tool-code">{{ stringifyValue(item.tool.input) }}</pre>
@@ -457,24 +499,10 @@
                     :class="[
                       item.level ? `level-${item.level}` : undefined,
                       item.itemType ? `type-${item.itemType}` : undefined,
-                      {
-                        'is-raw-capable': shouldShowMessageRawToggle(item),
-                        'is-raw-active': isTimelineRawBlockActive(item, 'message'),
-                      },
                     ]"
-                    :data-raw-toggle-card="
-                      shouldShowMessageRawToggle(item)
-                        ? getTimelineRawModeKey(item, 'message')
-                        : undefined
-                    "
-                    :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
-                    @click="activateTimelineRawBlock(item, 'message')"
-                    @focusin="activateTimelineRawBlock(item, 'message')"
-                    @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
-                    @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
                     <button
-                      v-if="shouldShowTimelineRawToggle(item, 'message')"
+                      v-if="shouldShowMessageRawToggle(item)"
                       type="button"
                       class="timeline-display-toggle"
                       :class="{ 'is-active': isBlockRawMode(item, 'message') }"
@@ -488,9 +516,9 @@
                       class="item-text item-text--raw timeline-raw-text"
                     ><code>{{ item.text }}</code></pre>
                     <div
-                      v-else-if="item.text"
+                      v-else-if="getDisplayBlockText(item)"
                       class="item-text chat-markdown"
-                      v-html="renderMarkdown(item.text)"
+                      v-html="renderMarkdown(getDisplayBlockText(item))"
                     ></div>
                     <div v-if="item.attachments.length > 0" class="attachment-row">
                       <span
@@ -501,7 +529,7 @@
                         <n-popover
                           v-if="canPreviewAttachment(attachment)"
                           trigger="hover"
-                          placement="top-start"
+                          placement="bottom-start"
                           :delay="120"
                         >
                           <template #trigger>
@@ -543,7 +571,7 @@
                     type="button"
                     class="live-card"
                     :class="[
-                      `phase-${displayLiveState.phase}`,
+                      `phase-${liveState.phase}`,
                       {
                         'show-jump-hint': showJumpToBottom,
                       },
@@ -571,11 +599,11 @@
                       </span>
                       <n-tooltip placement="top-end" :delay="120">
                         <template #trigger>
-                          <span class="live-time">{{ getLiveTimeText(displayLiveState) }}</span>
+                          <span class="live-time">{{ getLiveTimeText(liveState) }}</span>
                         </template>
                         <div class="live-time-tooltip">
                           <div
-                            v-for="item in getLiveTimeTooltipItems(displayLiveState)"
+                            v-for="item in getLiveTimeTooltipItems(liveState)"
                             :key="item.key"
                             class="live-time-tooltip-row"
                           >
@@ -670,7 +698,7 @@
                       <n-checkbox-group
                         v-if="question.options.length > 0"
                         v-model:value="userInputSelections[question.id]"
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         class="user-input-options"
                       >
                         <div
@@ -691,7 +719,7 @@
                         v-model:value="userInputDrafts[question.id]"
                         :type="question.isSecret ? 'password' : 'text'"
                         size="small"
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         :show-password-on="question.isSecret ? 'mousedown' : undefined"
                         :placeholder="userInputPlaceholder(question)"
                         @keydown="handleUserInputEnter"
@@ -701,7 +729,8 @@
                       <n-button
                         size="small"
                         type="primary"
-                        :disabled="pendingUserInput.stale"
+                        :loading="isSubmittingUserInput"
+                        :disabled="isUserInputInteractionDisabled"
                         @click="handleUserInputSubmit"
                       >
                         {{ t('webSession.userInputSubmit') }}
@@ -709,11 +738,18 @@
                       <n-button
                         size="small"
                         tertiary
-                        :disabled="pendingUserInput.stale"
+                        :disabled="isUserInputInteractionDisabled"
                         @click="handleAbortCurrent"
                       >
                         {{ t('webSession.stop') }}
                       </n-button>
+                    </div>
+                    <div
+                      v-if="showUserInputSubmitSlowHint"
+                      class="approval-note"
+                      aria-live="polite"
+                    >
+                      {{ t('webSession.userInputSubmitSlow') }}
                     </div>
                   </div>
                 </div>
@@ -827,6 +863,11 @@
                 <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
                   {{ currentSession.cwd }}
                 </div>
+                <div class="composer-auto-continue">
+                  <n-checkbox v-model:checked="webSessionAutoContinueEnabledValue" size="small">
+                    {{ t('webSession.infiniteRetry') }}
+                  </n-checkbox>
+                </div>
               </div>
             </div>
 
@@ -839,7 +880,7 @@
                 <n-popover
                   v-if="canPreviewAttachment(attachment)"
                   trigger="hover"
-                  placement="top-start"
+                  placement="bottom-start"
                   :delay="120"
                 >
                   <template #trigger>
@@ -907,15 +948,61 @@
                 class="composer-input"
                 :autosize="composerAutosize"
                 :placeholder="composerPlaceholder"
+                @mousedown.stop
+                @touchstart.stop
                 @focus="handleComposerFocus"
                 @blur="handleComposerBlur"
                 @keydown.enter.exact="handleComposerEnter"
               />
+              <n-popover
+                v-if="isMobile"
+                v-model:show="showQuickInputPopover"
+                trigger="click"
+                placement="top-start"
+                content-style="padding: 4px 0;"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="composer-icon-btn composer-icon-btn-mobile"
+                    :title="quickInputButtonTitle"
+                    :aria-label="quickInputButtonTitle"
+                    @mousedown.stop
+                    @touchstart.stop
+                    @click.stop
+                  >
+                    <n-icon size="14"><FlashOutline /></n-icon>
+                  </button>
+                </template>
+                <div class="quick-input-popover-card">
+                  <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                    {{ t('webSession.quickInputEmpty') }}
+                  </div>
+                  <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                    <div class="quick-input-item-list">
+                      <button
+                        v-for="text in quickInputItems"
+                        :key="text"
+                        type="button"
+                        class="quick-input-item"
+                        :class="{ 'is-selected': isQuickInputSelected(text) }"
+                        @click="handleQuickInputApply(text)"
+                      >
+                        <span class="quick-input-item-text">{{ text }}</span>
+                      </button>
+                    </div>
+                  </n-scrollbar>
+                </div>
+              </n-popover>
               <button
                 v-if="isMobile"
                 type="button"
-                class="composer-icon-btn composer-icon-btn-mobile"
-                @click="openFilePicker"
+                class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                :title="t('webSession.attachImage')"
+                :aria-label="t('webSession.attachImage')"
+                @mousedown.stop
+                @touchstart.stop
+                @click.stop="openFilePicker"
               >
                 <n-icon size="14"><ImageOutline /></n-icon>
               </button>
@@ -923,6 +1010,42 @@
 
             <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
               <div v-if="!isMobile" class="composer-footer-left">
+                <n-popover
+                  v-model:show="showQuickInputPopover"
+                  trigger="click"
+                  placement="top-start"
+                  content-style="padding: 4px 0;"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="composer-icon-btn"
+                      :title="quickInputButtonTitle"
+                      :aria-label="quickInputButtonTitle"
+                    >
+                      <n-icon size="14"><FlashOutline /></n-icon>
+                    </button>
+                  </template>
+                  <div class="quick-input-popover-card">
+                    <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                      {{ t('webSession.quickInputEmpty') }}
+                    </div>
+                    <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                      <div class="quick-input-item-list">
+                        <button
+                          v-for="text in quickInputItems"
+                          :key="text"
+                          type="button"
+                          class="quick-input-item"
+                          :class="{ 'is-selected': isQuickInputSelected(text) }"
+                          @click="handleQuickInputApply(text)"
+                        >
+                          <span class="quick-input-item-text">{{ text }}</span>
+                        </button>
+                      </div>
+                    </n-scrollbar>
+                  </div>
+                </n-popover>
                 <button type="button" class="composer-icon-btn" @click="openFilePicker">
                   <n-icon size="14"><ImageOutline /></n-icon>
                 </button>
@@ -994,15 +1117,11 @@
                         'composer-send-btn',
                         { 'is-confirm-armed': isSendConflictConfirmationArmed },
                       ]"
-                      :loading="isSubmittingMessage && !isSubmittingPlanExecution"
+                      :loading="isSubmittingMessage"
                       :disabled="!canSend"
                       @click="handleSubmit"
                     >
-                      {{
-                        isSendConflictConfirmationArmed
-                          ? t('webSession.sendEmphatic')
-                          : t('webSession.send')
-                      }}
+                      {{ t('webSession.send') }}
                     </n-button>
                   </template>
                   <div class="composer-send-confirm-popover-card" role="status" aria-live="polite">
@@ -1077,6 +1196,7 @@
                     ...getSidebarSessionClasses(item),
                     {
                       'has-workflow-plan-badge': shouldShowSessionWorkflowPlanBadge(item.session),
+                      'is-archiving': isSessionArchiving(item.session.id),
                     },
                     { 'is-active': item.isCurrent },
                   ]"
@@ -1101,6 +1221,11 @@
                   </div>
 
                   <div class="session-sidebar-actions">
+                    <span
+                      v-if="isSessionArchiving(item.session.id)"
+                      class="session-sidebar-spinner"
+                      aria-hidden="true"
+                    ></span>
                     <span
                       v-if="item.projectIndex"
                       class="project-index-badge session-project-badge"
@@ -1325,7 +1450,7 @@ import {
   type HTMLAttributes,
 } from 'vue';
 import { useRouter } from 'vue-router';
-import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
+import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
@@ -1334,6 +1459,7 @@ import {
   ChevronDownOutline,
   ChevronForwardOutline,
   EllipsisHorizontalOutline,
+  FlashOutline,
   ImageOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
@@ -1364,10 +1490,15 @@ import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/termi
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { hexToRgba, isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
+import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
 import {
   buildImagePlaceholder,
+  buildImageViewPreviewUrl,
   insertImagePlaceholdersAtCursor,
+  parseImageViewToolOutput,
   resolveImageAttachmentDisplayName,
+  stripImagePlaceholdersFromText,
+  resolveImageViewDisplayName,
 } from '@/utils/webSessionImages';
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
@@ -1381,15 +1512,17 @@ import {
 } from '@/components/web-session/sessionVisualState';
 import {
   beginWebSessionSubmit,
+  buildWebSessionSubmitOwnerId,
   endWebSessionSubmit,
-  getWebSessionSubmitEntry,
   isWebSessionSubmitting,
-  resolveOptimisticWebSessionLiveState,
-  shouldShowWebSessionExecuteFeedback,
   transferWebSessionSubmit,
-  type WebSessionSubmitKind,
   type WebSessionSubmitState,
 } from '@/components/web-session/webSessionSubmitState';
+import {
+  buildWebSessionUserInputSubmitOwnerId,
+  hasMissingWebSessionUserInputAnswers,
+  scheduleWebSessionUserInputSlowHint,
+} from '@/components/web-session/webSessionUserInputSubmit';
 import {
   buildWebSessionSendConfirmationSignature,
   findWebSessionSendConflicts,
@@ -1400,6 +1533,7 @@ import {
   resolveWebSessionDisplayState,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
+import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -1414,6 +1548,8 @@ const MIN_SESSION_MAIN_WIDTH = 420;
 const WEB_SESSION_CATCH_UP_SETTLE_MS = 180;
 const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
+const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
+const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
@@ -1477,7 +1613,6 @@ type MobileTabRenderOption = {
 };
 
 type MobileTabDropdownOption = DropdownOption | MobileTabRenderOption;
-
 type InlinePlanChoiceOption = {
   label: string;
   isExecute: boolean;
@@ -1522,6 +1657,8 @@ type LiveTimeTooltipItem = {
   value: string;
 };
 
+type ImageViewPreviewState = 'loading' | 'ready' | 'error';
+
 type TimelineRawSurface = 'message' | 'plan';
 
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
@@ -1547,7 +1684,10 @@ const {
   currentPresetId,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionAutoContinueScope,
+  webSessionAutoContinuePreset,
   effectiveTerminalThemeId,
+  webSessionQuickInput,
 } = storeToRefs(settingsStore);
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
   DRAFT_SESSION_STORAGE_KEY,
@@ -1557,6 +1697,8 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
   ACTIVE_DRAFT_SESSION_STORAGE_KEY,
   {}
 );
+const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
+const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -1567,7 +1709,10 @@ const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
+const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
+const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
+const showQuickInputPopover = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
@@ -1591,14 +1736,17 @@ const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
 const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const rawTimelineBlocks = ref<Record<string, boolean>>({});
-const activeRawTimelineBlockKey = ref('');
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
+const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
+const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
+const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
 const viewedEventSeqBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
+const isProjectSessionInitializing = ref(false);
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
 const pendingHistoryAnchor = ref<{
   sessionId: string;
@@ -1621,6 +1769,8 @@ let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
 let composerTransferErrorTimer: number | null = null;
+let cancelUserInputSlowHint: (() => void) | null = null;
+let activeUserInputSlowHintOwnerId = '';
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -1631,7 +1781,10 @@ const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
 const draftSessions = ref<DraftSessionTab[]>([]);
 const activeDraftSessionId = ref('');
+const activeArchivedPreviewId = ref('');
 const archivedPreviewSession = ref<ArchivedPreviewSessionTab | null>(null);
+const tabOrderIds = ref<string[]>([]);
+const tabMruIds = ref<string[]>([]);
 
 const realSessions = computed<SessionTab[]>(() =>
   webSessionStore.getSessions(props.projectId).map(session => ({
@@ -1639,16 +1792,46 @@ const realSessions = computed<SessionTab[]>(() =>
     isDraft: false as const,
   }))
 );
-const sessions = computed<SessionTab[]>(() => [
+const allVisibleSessions = computed<SessionTab[]>(() => [
   ...realSessions.value,
-  ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
   ...draftSessions.value,
+  ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
 ]);
+const visibleSessionById = computed(() => {
+  const map = new Map<string, SessionTab>();
+  allVisibleSessions.value.forEach(session => {
+    map.set(session.id, session);
+  });
+  return map;
+});
+const sessions = computed<SessionTab[]>(() => {
+  const ordered: SessionTab[] = [];
+  const seen = new Set<string>();
+  tabOrderIds.value.forEach(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    if (!session || seen.has(session.id)) {
+      return;
+    }
+    ordered.push(session);
+    seen.add(session.id);
+  });
+  allVisibleSessions.value.forEach(session => {
+    if (seen.has(session.id)) {
+      return;
+    }
+    ordered.push(session);
+    seen.add(session.id);
+  });
+  return ordered;
+});
 const currentSession = computed<SessionTab | null>(() => {
   if (activeDraftSessionId.value) {
     return draftSessions.value.find(session => session.id === activeDraftSessionId.value) ?? null;
   }
-  if (archivedPreviewSession.value) {
+  if (
+    activeArchivedPreviewId.value &&
+    archivedPreviewSession.value?.id === activeArchivedPreviewId.value
+  ) {
     return archivedPreviewSession.value;
   }
   const activeRealId = webSessionStore.getActiveSessionId(props.projectId);
@@ -1660,6 +1843,38 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
 });
 const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
+const currentSessionAutoRetryEnabled = computed(() => Boolean(currentSession.value?.autoRetryEnabled));
+const webSessionAutoContinueEnabledValue = computed({
+  get: () => currentSessionAutoRetryEnabled.value,
+  set: value => {
+    const next = value === true;
+    const session = currentSession.value;
+    if (!session) {
+      return;
+    }
+    if (isDraftSession(session)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        autoRetryEnabled: next,
+        autoRetryScope: webSessionAutoContinueScope.value,
+        autoRetryPreset: webSessionAutoContinuePreset.value,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      void webSessionStore
+        .updateAutoRetry(currentRealSession.value.id, {
+          enabled: next,
+          scope: webSessionAutoContinueScope.value,
+          preset: webSessionAutoContinuePreset.value,
+        })
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
+    }
+  },
+});
 const composerText = computed({
   get: () => webSessionStore.getDraft(props.projectId, currentDraftSessionId.value).text,
   set: value => {
@@ -1884,6 +2099,12 @@ function shouldShowMessageRawToggle(block: WebSessionBlock) {
   }
   return Boolean(block.text?.trim());
 }
+function getDisplayBlockText(block: WebSessionBlock) {
+  if (!block.text) {
+    return '';
+  }
+  return stripImagePlaceholdersFromText(block.text, block.attachments.length);
+}
 function shouldShowPlanRawToggle(block: WebSessionBlock) {
   return Boolean(
     block.kind === 'tool' && block.tool && isPlanTool(block.tool) && block.tool.output?.trim()
@@ -1892,32 +2113,10 @@ function shouldShowPlanRawToggle(block: WebSessionBlock) {
 function getTimelineRawModeKey(block: WebSessionBlock, surface: TimelineRawSurface) {
   return `${currentSession.value?.id ?? 'unknown'}:${surface}:${block.key}`;
 }
-function isTimelineRawBlockActive(block: WebSessionBlock, surface: TimelineRawSurface) {
-  return activeRawTimelineBlockKey.value === getTimelineRawModeKey(block, surface);
-}
-function activateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
-  if (
-    (surface === 'message' && !shouldShowMessageRawToggle(block)) ||
-    (surface === 'plan' && !shouldShowPlanRawToggle(block))
-  ) {
-    return;
-  }
-  activeRawTimelineBlockKey.value = getTimelineRawModeKey(block, surface);
-}
-function shouldShowTimelineRawToggle(block: WebSessionBlock, surface: TimelineRawSurface) {
-  if (surface === 'message' && !shouldShowMessageRawToggle(block)) {
-    return false;
-  }
-  if (surface === 'plan' && !shouldShowPlanRawToggle(block)) {
-    return false;
-  }
-  return isTimelineRawBlockActive(block, surface) || isBlockRawMode(block, surface);
-}
 function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   return !!rawTimelineBlocks.value[getTimelineRawModeKey(block, surface)];
 }
 function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
-  activateTimelineRawBlock(block, surface);
   const key = getTimelineRawModeKey(block, surface);
   rawTimelineBlocks.value = {
     ...rawTimelineBlocks.value,
@@ -1995,18 +2194,6 @@ const visibleBlocks = computed(() =>
     return true;
   })
 );
-const visibleRawTimelineBlockKeys = computed(() => {
-  const keys: string[] = [];
-  visibleBlocks.value.forEach(block => {
-    if (shouldShowMessageRawToggle(block)) {
-      keys.push(getTimelineRawModeKey(block, 'message'));
-    }
-    if (shouldShowPlanRawToggle(block)) {
-      keys.push(getTimelineRawModeKey(block, 'plan'));
-    }
-  });
-  return keys;
-});
 const latestPlanToolId = computed(() => {
   for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
     const block = blocks.value[index];
@@ -2040,6 +2227,26 @@ const pendingApproval = computed(() =>
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
+const currentUserInputSubmitOwnerId = computed(() =>
+  currentRealSession.value && pendingUserInput.value
+    ? buildWebSessionUserInputSubmitOwnerId(
+        currentRealSession.value.id,
+        pendingUserInput.value.itemId
+      )
+    : ''
+);
+const isSubmittingUserInput = computed(() =>
+  isWebSessionSubmitting(userInputSubmitStateByOwnerId.value, currentUserInputSubmitOwnerId.value)
+);
+const isUserInputSubmitSlow = computed(() =>
+  isWebSessionSubmitting(userInputSlowStateByOwnerId.value, currentUserInputSubmitOwnerId.value)
+);
+const isUserInputInteractionDisabled = computed(
+  () => Boolean(pendingUserInput.value?.stale) || isSubmittingUserInput.value
+);
+const showUserInputSubmitSlowHint = computed(
+  () => isSubmittingUserInput.value && isUserInputSubmitSlow.value
+);
 const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
   const request = pendingUserInput.value;
   if (!request || request.stale || !latestPlanToolId.value) {
@@ -2065,72 +2272,18 @@ const isPlanWaitingApprovalState = computed(
     Boolean(latestPlanToolId.value) &&
     !hasUserMessageAfterLatestPlan.value
 );
-const sendConflictSessions = computed(() => {
-  const projectId = sendGuardProjectId.value;
-  if (!projectId) {
-    return [];
-  }
-  return findWebSessionSendConflicts({
-    currentSessionId: currentRealSession.value?.id ?? '',
-    sessions: webSessionStore.getSessions(projectId).map(session => ({
-      id: session.id,
-      title: session.title,
-      workflowMode: session.workflowMode,
-      livePhase: webSessionStore.getLiveState(session.id).phase,
-    })),
-  });
-});
-const currentSubmitEntry = computed(() =>
-  getWebSessionSubmitEntry(submitStateBySessionId.value, currentDraftSessionId.value)
-);
-const currentSubmitShowsExecuteFeedback = computed(() =>
-  shouldShowWebSessionExecuteFeedback(currentSubmitEntry.value)
-);
-const isOptimisticExecuteFeedbackActive = computed(
-  () => currentSubmitShowsExecuteFeedback.value && !liveState.value.running
-);
-const displayLiveState = computed(() =>
-  resolveOptimisticWebSessionLiveState(liveState.value, currentSubmitEntry.value)
-);
-const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
-const currentComposerSubmitKind = computed(() => resolveComposerSubmitKind());
-const sendConfirmationSignature = computed(() =>
-  buildWebSessionSendConfirmationSignature({
-    ownerId: currentDraftSessionId.value,
-    text: composerText.value,
-    attachmentIds: draftAttachments.value.map(item => item.id),
-    conflictSessionIds: sendConflictSessions.value.map(session => session.id),
-  })
-);
-const planImplementConfirmationSignature = computed(() =>
-  buildWebSessionSendConfirmationSignature({
-    ownerId: currentRealSession.value?.id ?? '',
-    text: '__implement_plan__',
-    attachmentIds: [],
-    conflictSessionIds: sendConflictSessions.value.map(session => session.id),
-  })
-);
-const isSendConflictConfirmationArmed = computed(
-  () =>
-    currentComposerSubmitKind.value === 'execute_send' &&
-    sendConflictSessions.value.length > 0 &&
-    Boolean(
-      sendConfirmationState.value &&
-        sendConfirmationState.value.signature === sendConfirmationSignature.value
-    )
-);
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
     return true;
   }
-  if (isPlanWaitingApprovalState.value && !isOptimisticExecuteFeedbackActive.value) {
+  if (isPlanWaitingApprovalState.value) {
     return false;
   }
-  if (displayLiveState.value.phase === 'idle') {
+  if (liveState.value.phase === 'idle') {
     return false;
   }
   if (
-    displayLiveState.value.phase === 'done' &&
+    liveState.value.phase === 'done' &&
     latestPlanToolId.value &&
     !hasUserMessageAfterLatestPlan.value
   ) {
@@ -2155,6 +2308,21 @@ const historyMeta = computed(() =>
 const draftAttachments = computed(() =>
   webSessionStore.getDraftAttachments(props.projectId, currentDraftSessionId.value)
 );
+const sendConflictSessions = computed(() => {
+  const projectId = sendGuardProjectId.value;
+  if (!projectId) {
+    return [];
+  }
+  return findWebSessionSendConflicts({
+    currentSessionId: currentRealSession.value?.id ?? '',
+    sessions: webSessionStore.getSessions(projectId).map(session => ({
+      id: session.id,
+      title: session.title,
+      workflowMode: session.workflowMode,
+      livePhase: webSessionStore.getLiveState(session.id).phase,
+    })),
+  });
+});
 const draftAttachmentUpload = computed(() =>
   webSessionStore.getDraftAttachmentUpload(props.projectId, currentDraftSessionId.value)
 );
@@ -2218,6 +2386,23 @@ const pendingInputs = computed(() =>
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
+const isPlanCardImplementPending = computed(() =>
+  isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
+);
+const sendConfirmationSignature = computed(() =>
+  buildWebSessionSendConfirmationSignature({
+    ownerId: currentDraftSessionId.value,
+    text: composerText.value,
+    attachmentIds: draftAttachments.value.map(item => item.id),
+    conflictSessionIds: sendConflictSessions.value.map(session => session.id),
+  })
+);
+const isSendConflictConfirmationArmed = computed(() =>
+  Boolean(
+    sendConfirmationState.value &&
+      sendConfirmationState.value.signature === sendConfirmationSignature.value
+  )
+);
 const isSubmittingMessage = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
 );
@@ -2267,6 +2452,22 @@ const composerHint = computed(() => {
   }
   return t('webSession.composerHintIdle');
 });
+const quickInputPinnedItems = computed(() => webSessionQuickInput.value.pinned);
+const quickInputRecentItems = computed(() => {
+  const pinned = new Set(quickInputPinnedItems.value);
+  return webSessionQuickInput.value.recent.filter(text => !pinned.has(text));
+});
+const hasQuickInputOptions = computed(
+  () => quickInputPinnedItems.value.length > 0 || quickInputRecentItems.value.length > 0
+);
+const quickInputButtonTitle = computed(() =>
+  hasQuickInputOptions.value ? t('webSession.quickInput') : t('webSession.quickInputUnavailable')
+);
+const quickInputItems = computed(() => [
+  ...quickInputPinnedItems.value,
+  ...quickInputRecentItems.value,
+]);
+const normalizedComposerText = computed(() => composerText.value.trim());
 const selectedAgentLabel = computed(
   () =>
     agentOptions.find(option => option.value === selectedAgent.value)?.label ?? selectedAgent.value
@@ -2306,6 +2507,9 @@ const mobileComposerSummaryTokens = computed(() => {
     { key: 'workflow', label: selectedWorkflowModeLabel.value },
     { key: 'permission', label: selectedPermissionLevelLabel.value }
   );
+  if (currentSessionAutoRetryEnabled.value) {
+    tokens.push({ key: 'auto-continue', label: t('webSession.infiniteRetry') });
+  }
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
@@ -2355,19 +2559,34 @@ const contextUsageIndicator = computed(() => {
     };
   }
 
-  const inputTokens = Number(session.usage.inputTokens || 0);
-  const cachedInputTokens = Number(session.usage.cachedInputTokens || 0);
-  const outputTokens = Number(session.usage.outputTokens || 0);
-  const usedTokens = Math.max(0, inputTokens + cachedInputTokens + outputTokens);
+  const estimateInputTokens = Number(session.contextEstimate.inputTokens || 0);
+  const estimateCachedInputTokens = Number(session.contextEstimate.cachedInputTokens || 0);
+  const estimateOutputTokens = Number(session.contextEstimate.outputTokens || 0);
+  const usedTokens = Math.max(0, Number(session.contextEstimate.usedTokens || 0));
+  const totalInputTokens = Number(session.usage.inputTokens || 0);
+  const totalCachedInputTokens = Number(session.usage.cachedInputTokens || 0);
+  const totalOutputTokens = Number(session.usage.outputTokens || 0);
+  const totalUsedTokens = Math.max(
+    0,
+    totalInputTokens + totalCachedInputTokens + totalOutputTokens
+  );
   const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
   const remainingPercent =
     compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
-  const usagePercent =
-    compactLimitTokens > 0 ? Math.round((usedTokens / compactLimitTokens) * 100) : 0;
   const sourceLabel =
     source === 'config'
       ? t('webSession.contextUsageSourceConfig')
       : t('webSession.contextUsageSourceDefault');
+  const estimateMode =
+    session.contextEstimateMode === 'since_compaction' ? 'since_compaction' : 'cumulative_total';
+  const estimateModeLabel =
+    estimateMode === 'since_compaction'
+      ? t('webSession.contextUsageModeSinceCompaction')
+      : t('webSession.contextUsageModeCumulativeTotal');
+  const estimateNote =
+    estimateMode === 'since_compaction'
+      ? t('webSession.contextUsageNoteSinceCompaction')
+      : t('webSession.contextUsageNoteCumulativeTotal');
 
   return {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
@@ -2379,7 +2598,7 @@ const contextUsageIndicator = computed(() => {
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),
-      t('webSession.contextUsageUsed', {
+      t('webSession.contextUsageEstimatedUsed', {
         count: tokenNumberFormatter.format(usedTokens),
       }),
       t('webSession.contextUsageWindow', {
@@ -2391,14 +2610,23 @@ const contextUsageIndicator = computed(() => {
       t('webSession.contextUsageSource', {
         source: sourceLabel,
       }),
-      t('webSession.contextUsageBreakdown', {
-        input: tokenNumberFormatter.format(inputTokens),
-        cached: tokenNumberFormatter.format(cachedInputTokens),
-        output: tokenNumberFormatter.format(outputTokens),
+      t('webSession.contextUsageMode', {
+        mode: estimateModeLabel,
       }),
-      t('webSession.contextUsageNote', {
-        percent: usagePercent,
+      t('webSession.contextUsageEstimatedBreakdown', {
+        input: tokenNumberFormatter.format(estimateInputTokens),
+        cached: tokenNumberFormatter.format(estimateCachedInputTokens),
+        output: tokenNumberFormatter.format(estimateOutputTokens),
       }),
+      t('webSession.contextUsageTotalUsed', {
+        count: tokenNumberFormatter.format(totalUsedTokens),
+      }),
+      t('webSession.contextUsageTotalBreakdown', {
+        input: tokenNumberFormatter.format(totalInputTokens),
+        cached: tokenNumberFormatter.format(totalCachedInputTokens),
+        output: tokenNumberFormatter.format(totalOutputTokens),
+      }),
+      estimateNote,
     ],
   };
 });
@@ -2427,10 +2655,8 @@ function clearComposerTransferError() {
   composerTransferErrorDetail.value = '';
 }
 
-function beginSessionSubmit(ownerId: string, kind: WebSessionSubmitKind) {
-  submitStateBySessionId.value = beginWebSessionSubmit(submitStateBySessionId.value, ownerId, {
-    kind,
-  });
+function beginSessionSubmit(ownerId: string) {
+  submitStateBySessionId.value = beginWebSessionSubmit(submitStateBySessionId.value, ownerId);
 }
 
 function endSessionSubmit(ownerId: string) {
@@ -2442,6 +2668,63 @@ function transferSessionSubmit(fromOwnerId: string, toOwnerId: string) {
     submitStateBySessionId.value,
     fromOwnerId,
     toOwnerId
+  );
+}
+
+function clearUserInputSlowHintTimer(ownerId = '') {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (
+    normalizedOwnerId &&
+    activeUserInputSlowHintOwnerId &&
+    activeUserInputSlowHintOwnerId !== normalizedOwnerId
+  ) {
+    return;
+  }
+  if (cancelUserInputSlowHint) {
+    cancelUserInputSlowHint();
+    cancelUserInputSlowHint = null;
+  }
+  activeUserInputSlowHintOwnerId = '';
+}
+
+function beginUserInputSubmit(ownerId: string) {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (!normalizedOwnerId) {
+    return;
+  }
+  userInputSubmitStateByOwnerId.value = beginWebSessionSubmit(
+    userInputSubmitStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  userInputSlowStateByOwnerId.value = endWebSessionSubmit(
+    userInputSlowStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  clearUserInputSlowHintTimer();
+  activeUserInputSlowHintOwnerId = normalizedOwnerId;
+  cancelUserInputSlowHint = scheduleWebSessionUserInputSlowHint(normalizedOwnerId, slowOwnerId => {
+    cancelUserInputSlowHint = null;
+    activeUserInputSlowHintOwnerId = '';
+    userInputSlowStateByOwnerId.value = beginWebSessionSubmit(
+      userInputSlowStateByOwnerId.value,
+      slowOwnerId
+    );
+  });
+}
+
+function endUserInputSubmit(ownerId: string) {
+  const normalizedOwnerId = buildWebSessionSubmitOwnerId(ownerId);
+  if (!normalizedOwnerId) {
+    return;
+  }
+  userInputSubmitStateByOwnerId.value = endWebSessionSubmit(
+    userInputSubmitStateByOwnerId.value,
+    normalizedOwnerId
+  );
+  clearUserInputSlowHintTimer(normalizedOwnerId);
+  userInputSlowStateByOwnerId.value = endWebSessionSubmit(
+    userInputSlowStateByOwnerId.value,
+    normalizedOwnerId
   );
 }
 
@@ -2480,31 +2763,41 @@ function showComposerTransferError(detail?: string) {
     clearComposerTransferError();
   }, 900);
 }
+
+function handleQuickInputApply(text: string) {
+  applyQuickInputText(text);
+  showQuickInputPopover.value = false;
+}
+
+function isQuickInputSelected(text: string) {
+  return normalizedComposerText.value.length > 0 && normalizedComposerText.value === text.trim();
+}
+
 const liveStateLabel = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.liveRecovered');
   }
-  switch (displayLiveState.value.phase) {
+  switch (liveState.value.phase) {
     case 'starting':
       return t('webSession.liveStarting');
     case 'thinking':
       return t('webSession.liveThinking');
     case 'retrying':
-      if (displayLiveState.value.retry?.attempt && displayLiveState.value.retry?.maxAttempts) {
+      if (liveState.value.retry?.attempt && liveState.value.retry?.maxAttempts) {
         return t('webSession.liveRetryingProgress', {
-          attempt: displayLiveState.value.retry.attempt,
-          max: displayLiveState.value.retry.maxAttempts,
+          attempt: liveState.value.retry.attempt,
+          max: liveState.value.retry.maxAttempts,
         });
       }
       return t('webSession.liveRetrying');
     case 'tool':
-      if (isCompactToolKind(displayLiveState.value.tool?.kind)) {
-        const count = Math.max(1, Number(displayLiveState.value.tool?.count ?? 1) || 1);
-        const label = compactToolLabel(displayLiveState.value.tool);
+      if (isCompactToolKind(liveState.value.tool?.kind)) {
+        const count = Math.max(1, Number(liveState.value.tool?.count ?? 1) || 1);
+        const label = compactToolLabel(liveState.value.tool);
         const toolLabel = count > 1 ? `${label} x${count}` : label;
         return t('webSession.liveTool', { tool: toolLabel });
       }
-      return t('webSession.liveTool', { tool: displayLiveState.value.tool?.name || 'Tool' });
+      return t('webSession.liveTool', { tool: liveState.value.tool?.name || 'Tool' });
     case 'waiting_approval':
     case 'waiting_plan_approval':
       return t('webSession.liveWaitingApproval');
@@ -2522,35 +2815,32 @@ const liveStateDetail = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return recoveredRuntimeHint.value;
   }
-  if (isOptimisticExecuteFeedbackActive.value) {
-    return '';
-  }
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
   }
   if (
-    displayLiveState.value.phase === 'waiting_approval' ||
-    displayLiveState.value.phase === 'waiting_plan_approval'
+    liveState.value.phase === 'waiting_approval' ||
+    liveState.value.phase === 'waiting_plan_approval'
   ) {
     return t('webSession.liveWaitingApprovalDetail');
   }
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
   }
-  if (displayLiveState.value.phase === 'retrying' && displayLiveState.value.retry?.message) {
-    const message = displayLiveState.value.retry.message.trim();
+  if (liveState.value.phase === 'retrying' && liveState.value.retry?.message) {
+    const message = liveState.value.retry.message.trim();
     if (message && message !== liveStateLabel.value) {
       return message;
     }
   }
-  if (displayLiveState.value.phase === 'tool' && displayLiveState.value.tool?.summary) {
-    return displayLiveState.value.tool.summary;
+  if (liveState.value.phase === 'tool' && liveState.value.tool?.summary) {
+    return liveState.value.tool.summary;
   }
-  if (displayLiveState.value.phase === 'tool' && displayLiveState.value.tool?.kind) {
-    return displayLiveState.value.tool.kind;
+  if (liveState.value.phase === 'tool' && liveState.value.tool?.kind) {
+    return liveState.value.tool.kind;
   }
-  if (displayLiveState.value.phase === 'error' && displayLiveState.value.errorMessage) {
-    return displayLiveState.value.errorMessage;
+  if (liveState.value.phase === 'error' && liveState.value.errorMessage) {
+    return liveState.value.errorMessage;
   }
   return '';
 });
@@ -2558,7 +2848,7 @@ const liveStateSecondaryText = computed(() => {
   if (liveStateDetail.value) {
     return liveStateDetail.value;
   }
-  switch (displayLiveState.value.phase) {
+  switch (liveState.value.phase) {
     case 'starting':
       return t('webSession.liveStartingDetail');
     case 'thinking':
@@ -2566,7 +2856,7 @@ const liveStateSecondaryText = computed(() => {
     case 'retrying':
       return t('webSession.liveRetryingDetail');
     case 'tool':
-      return compactToolLabel(displayLiveState.value.tool);
+      return compactToolLabel(liveState.value.tool);
     case 'waiting_approval':
     case 'waiting_plan_approval':
       return t('webSession.liveWaitingApprovalDetail');
@@ -2581,13 +2871,10 @@ const liveStateSecondaryText = computed(() => {
   }
 });
 const liveStateWorking = computed(() =>
-  ['starting', 'thinking', 'retrying', 'tool'].includes(displayLiveState.value.phase)
+  ['starting', 'thinking', 'retrying', 'tool'].includes(liveState.value.phase)
 );
 const shouldAutoContinueOnLiveCardClick = computed(
-  () =>
-    liveState.value.phase === 'error' &&
-    Boolean(currentRealSession.value) &&
-    !liveCardContinuePending.value
+  () => liveState.value.phase === 'error' && Boolean(currentRealSession.value) && !liveCardContinuePending.value
 );
 const liveCardAriaLabel = computed(() =>
   shouldAutoContinueOnLiveCardClick.value ? 'continue' : t('webSession.jumpToBottom')
@@ -2607,10 +2894,9 @@ const activeSessionHasWorkflowPlanBadge = computed(() =>
 );
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
 const mobileSessionCategory = ref<'current' | 'archived'>('current');
-const mobileCurrentSessions = computed<SessionTab[]>(() => [
-  ...realSessions.value,
-  ...draftSessions.value,
-]);
+const mobileCurrentSessions = computed<SessionTab[]>(() =>
+  sessions.value.filter(session => !isArchivedPreviewSession(session))
+);
 const mobileArchivedSessions = computed<SessionTab[]>(() => {
   const items = crossProjectArchivedSessions.value
     .filter(item => item.projectId === props.projectId)
@@ -2690,6 +2976,12 @@ watch(
   },
   { immediate: true }
 );
+
+watch(currentUserInputSubmitOwnerId, (nextOwnerId, previousOwnerId) => {
+  if (previousOwnerId && previousOwnerId !== nextOwnerId) {
+    endUserInputSubmit(previousOwnerId);
+  }
+});
 
 const mobileTabOptions = computed<MobileTabDropdownOption[]>(
   () =>
@@ -2937,7 +3229,11 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     {
       label: t('webSession.archiveAction'),
       key: 'archive',
-      disabled: !session || isDraftSession(session) || isArchivedPreviewSession(session),
+      disabled:
+        !session ||
+        isDraftSession(session) ||
+        isArchivedPreviewSession(session) ||
+        isSessionArchiving(session.id),
     },
     {
       label: t('common.delete'),
@@ -3016,6 +3312,17 @@ const approvalColors = computed(() => {
     glow: isDarkTheme ? 'rgba(251, 146, 60, 0.24)' : 'rgba(249, 115, 22, 0.16)',
   };
 });
+const planApprovalColors = computed(() => {
+  const theme = activeTheme.value;
+  const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
+  return {
+    bg: isDarkTheme ? 'rgba(34, 211, 238, 0.18)' : 'rgba(6, 182, 212, 0.14)',
+    border: isDarkTheme ? 'rgba(34, 211, 238, 0.4)' : 'rgba(6, 182, 212, 0.3)',
+    accent: isDarkTheme ? '#22d3ee' : '#0891b2',
+    accentStrong: isDarkTheme ? '#06b6d4' : '#0e7490',
+    glow: isDarkTheme ? 'rgba(34, 211, 238, 0.24)' : 'rgba(6, 182, 212, 0.16)',
+  };
+});
 const webSessionStyleVars = computed(
   () =>
     ({
@@ -3024,6 +3331,11 @@ const webSessionStyleVars = computed(
       '--web-session-approval-accent': approvalColors.value.accent,
       '--web-session-approval-accent-strong': approvalColors.value.accentStrong,
       '--web-session-approval-glow': approvalColors.value.glow,
+      '--web-session-plan-approval-bg': planApprovalColors.value.bg,
+      '--web-session-plan-approval-border': planApprovalColors.value.border,
+      '--web-session-plan-approval-accent': planApprovalColors.value.accent,
+      '--web-session-plan-approval-accent-strong': planApprovalColors.value.accentStrong,
+      '--web-session-plan-approval-glow': planApprovalColors.value.glow,
     }) as CSSProperties
 );
 const tabTitleStyle = computed(() => ({
@@ -3112,6 +3424,16 @@ function normalizeDraftSession(
       session.permissionLevel === 'yolo'
         ? session.permissionLevel
         : 'elevated',
+    autoRetryEnabled: session.autoRetryEnabled === true,
+    autoRetryScope:
+      session.autoRetryScope === 'network_and_rate_limit' ||
+      session.autoRetryScope === 'all_failures'
+        ? session.autoRetryScope
+        : webSessionAutoContinueScope.value,
+    autoRetryPreset:
+      session.autoRetryPreset === 'aggressive_stop' || session.autoRetryPreset === 'sustain_60s'
+        ? session.autoRetryPreset
+        : webSessionAutoContinuePreset.value,
     cwd: typeof session.cwd === 'string' ? session.cwd : projectStore.currentProject?.path || '',
     nativeSessionId: null,
     status: 'idle',
@@ -3123,14 +3445,7 @@ function normalizeDraftSession(
         : nowIso,
     lastMessageAt: null,
     sourceKind: typeof session.sourceKind === 'string' ? session.sourceKind : 'codex_app_server',
-    syncState:
-      session.syncState === 'fresh' ||
-      session.syncState === 'stale' ||
-      session.syncState === 'missing' ||
-      session.syncState === 'syncing' ||
-      session.syncState === 'error'
-        ? session.syncState
-        : 'missing',
+    syncState: normalizeWebSessionSyncState(session.syncState),
     sourceCreatedAt: null,
     sourceUpdatedAt: null,
     lastSyncedAt: null,
@@ -3153,6 +3468,14 @@ function normalizeDraftSession(
       outputTokens: 0,
       cost: 0,
     },
+    contextEstimate: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 0,
+    },
+    contextEstimateMode: 'cumulative_total',
+    lastContextCompactionAt: null,
     contextWindowTokens: agent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
     contextWindowSource: agent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
@@ -3174,6 +3497,234 @@ function loadPersistedDraftSessions(projectId: string) {
       seen.add(session.id);
       return true;
     });
+}
+
+function normalizeSessionIdList(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return value
+    .map(item => String(item || '').trim())
+    .filter(sessionId => {
+      if (!sessionId || seen.has(sessionId)) {
+        return false;
+      }
+      seen.add(sessionId);
+      return true;
+    });
+}
+
+function loadPersistedTabOrderIds(projectId: string) {
+  return normalizeSessionIdList(persistedTabOrderByProject.value[projectId]);
+}
+
+function loadPersistedTabMruIds(projectId: string) {
+  return normalizeSessionIdList(persistedTabMruByProject.value[projectId]);
+}
+
+function getVisibleTabIds() {
+  const ids = [
+    ...realSessions.value.map(session => session.id),
+    ...draftSessions.value.map(session => session.id),
+  ];
+  if (archivedPreviewSession.value?.id) {
+    ids.push(archivedPreviewSession.value.id);
+  }
+  return ids;
+}
+
+function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
+  const visibleSet = new Set(visibleIds);
+  const ids = [
+    ...realSessions.value.map(session => session.id).filter(sessionId => visibleSet.has(sessionId)),
+    ...draftSessions.value
+      .map(session => session.id)
+      .filter(sessionId => visibleSet.has(sessionId)),
+  ];
+  const archivedId = archivedPreviewSession.value?.id ?? '';
+  if (archivedId && visibleSet.has(archivedId)) {
+    ids.push(archivedId);
+  }
+  return ids;
+}
+
+function normalizeTabOrderIds(orderIds: string[], visibleIds = getVisibleTabIds()) {
+  const defaultIds = getDefaultTabOrderIds(visibleIds);
+  const visibleSet = new Set(defaultIds);
+  const next: string[] = [];
+
+  normalizeSessionIdList(orderIds).forEach(sessionId => {
+    if (!visibleSet.has(sessionId) || next.includes(sessionId)) {
+      return;
+    }
+    next.push(sessionId);
+  });
+
+  defaultIds.forEach(sessionId => {
+    if (!next.includes(sessionId)) {
+      next.push(sessionId);
+    }
+  });
+
+  return next;
+}
+
+function normalizeTabMruIds(
+  mruIds: string[],
+  visibleIds = getVisibleTabIds(),
+  orderIds = normalizeTabOrderIds(tabOrderIds.value, visibleIds)
+) {
+  const visibleSet = new Set(visibleIds);
+  const next: string[] = [];
+
+  normalizeSessionIdList(mruIds).forEach(sessionId => {
+    if (!visibleSet.has(sessionId) || next.includes(sessionId)) {
+      return;
+    }
+    next.push(sessionId);
+  });
+
+  orderIds.forEach(sessionId => {
+    if (visibleSet.has(sessionId) && !next.includes(sessionId)) {
+      next.push(sessionId);
+    }
+  });
+
+  return next;
+}
+
+function persistTabNavigationState(
+  projectId: string,
+  nextOrderIds = tabOrderIds.value,
+  nextMruIds = tabMruIds.value,
+  visibleIds = getVisibleTabIds()
+) {
+  if (!projectId) {
+    return;
+  }
+
+  const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  const persistableIds = normalizedOrderIds.filter(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    return session && !isArchivedPreviewSession(session);
+  });
+  const persistableMruIds = normalizedMruIds.filter(sessionId => {
+    const session = visibleSessionById.value.get(sessionId);
+    return session && !isArchivedPreviewSession(session);
+  });
+
+  persistedTabOrderByProject.value = persistableIds.length
+    ? {
+        ...persistedTabOrderByProject.value,
+        [projectId]: persistableIds,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedTabOrderByProject.value).filter(([key]) => key !== projectId)
+      );
+
+  persistedTabMruByProject.value = persistableMruIds.length
+    ? {
+        ...persistedTabMruByProject.value,
+        [projectId]: persistableMruIds,
+      }
+    : Object.fromEntries(
+        Object.entries(persistedTabMruByProject.value).filter(([key]) => key !== projectId)
+      );
+}
+
+function replaceTabNavigationState(
+  nextOrderIds: string[],
+  nextMruIds: string[],
+  projectId = props.projectId,
+  visibleIds = getVisibleTabIds()
+) {
+  const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
+  const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
+  tabOrderIds.value = normalizedOrderIds;
+  tabMruIds.value = normalizedMruIds;
+  persistTabNavigationState(projectId, normalizedOrderIds, normalizedMruIds, visibleIds);
+}
+
+function syncTabNavigationState(
+  projectId = props.projectId,
+  options?: { orderIds?: string[]; mruIds?: string[]; visibleIds?: string[] }
+) {
+  const visibleIds = options?.visibleIds ?? getVisibleTabIds();
+  replaceTabNavigationState(
+    options?.orderIds ?? tabOrderIds.value,
+    options?.mruIds ?? tabMruIds.value,
+    projectId,
+    visibleIds
+  );
+}
+
+function rememberTabVisit(sessionId: string, projectId = props.projectId) {
+  const normalizedSessionId = String(sessionId || '').trim();
+  if (!normalizedSessionId) {
+    return;
+  }
+  const visibleIds = getVisibleTabIds();
+  if (!visibleIds.includes(normalizedSessionId)) {
+    return;
+  }
+  replaceTabNavigationState(
+    tabOrderIds.value,
+    [normalizedSessionId, ...tabMruIds.value.filter(id => id !== normalizedSessionId)],
+    projectId,
+    visibleIds
+  );
+}
+
+function insertTabAfter(
+  sessionId: string,
+  afterId = activeSessionId.value,
+  projectId = props.projectId
+) {
+  const visibleIds = getVisibleTabIds();
+  if (!visibleIds.includes(sessionId)) {
+    return;
+  }
+  const nextOrderIds = normalizeTabOrderIds(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    visibleIds.filter(id => id !== sessionId)
+  );
+  const anchorIndex = afterId ? nextOrderIds.indexOf(afterId) : -1;
+  const insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : nextOrderIds.length;
+  nextOrderIds.splice(insertIndex, 0, sessionId);
+  replaceTabNavigationState(
+    nextOrderIds,
+    [sessionId, ...tabMruIds.value.filter(id => id !== sessionId)],
+    projectId,
+    visibleIds
+  );
+}
+
+function removeTabFromNavigationState(
+  sessionId: string,
+  projectId = props.projectId,
+  visibleIds = getVisibleTabIds().filter(id => id !== sessionId)
+) {
+  replaceTabNavigationState(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    tabMruIds.value.filter(id => id !== sessionId),
+    projectId,
+    visibleIds
+  );
+}
+
+function replaceTabIdInNavigationState(
+  fromId: string,
+  toId: string,
+  projectId = props.projectId,
+  visibleIds = Array.from(new Set([...getVisibleTabIds().filter(id => id !== fromId), toId]))
+) {
+  const nextOrderIds = tabOrderIds.value.map(sessionId =>
+    sessionId === fromId ? toId : sessionId
+  );
+  const nextMruIds = tabMruIds.value.map(sessionId => (sessionId === fromId ? toId : sessionId));
+  replaceTabNavigationState(nextOrderIds, nextMruIds, projectId, visibleIds);
 }
 
 function persistDraftSessionState(
@@ -3217,6 +3768,9 @@ function replaceDraftSessionState(
 ) {
   draftSessions.value = nextDrafts;
   activeDraftSessionId.value = nextActiveDraftId;
+  if (nextActiveDraftId) {
+    activeArchivedPreviewId.value = '';
+  }
   persistDraftSessionState(projectId, nextDrafts, nextActiveDraftId);
 }
 
@@ -3254,6 +3808,7 @@ function updateActiveDraftSession(updater: (draft: DraftSessionTab) => DraftSess
 }
 
 function createDraftSession(forceAgent?: 'claude' | 'codex') {
+  const anchorId = activeSessionId.value;
   const source = currentSession.value;
   const nextAgent = forceAgent ?? source?.agent ?? draftAgent.value;
   const context = resolveDraftContext(
@@ -3274,6 +3829,15 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       defaultReasoningEffortForAgent(nextAgent),
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
     permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+    autoRetryEnabled: source?.autoRetryEnabled === true,
+    autoRetryScope:
+      source?.autoRetryEnabled === true
+        ? source.autoRetryScope
+        : webSessionAutoContinueScope.value,
+    autoRetryPreset:
+      source?.autoRetryEnabled === true
+        ? source.autoRetryPreset
+        : webSessionAutoContinuePreset.value,
     cwd: context.cwd,
     nativeSessionId: null,
     status: 'idle',
@@ -3299,11 +3863,20 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       outputTokens: 0,
       cost: 0,
     },
+    contextEstimate: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      usedTokens: 0,
+    },
+    contextEstimateMode: 'cumulative_total',
+    lastContextCompactionAt: null,
     contextWindowTokens: nextAgent === 'codex' ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS : null,
     contextWindowSource: nextAgent === 'codex' ? 'default' : 'unavailable',
     isDraft: true,
   };
   replaceDraftSessionState([...draftSessions.value, draft], draft.id);
+  insertTabAfter(draft.id, anchorId);
   webSessionStore.setActiveSession(props.projectId, '');
   return draft;
 }
@@ -3319,7 +3892,14 @@ function ensureDefaultDraftSession() {
   createDraftSession();
 }
 
-function clearArchivedPreviewSession() {
+function clearArchivedPreviewSession(options?: { preserveTabId?: boolean }) {
+  const archivedPreviewId = archivedPreviewSession.value?.id ?? '';
+  if (archivedPreviewId && !options?.preserveTabId) {
+    removeTabFromNavigationState(archivedPreviewId);
+  }
+  if (activeArchivedPreviewId.value === archivedPreviewId) {
+    activeArchivedPreviewId.value = '';
+  }
   archivedPreviewSession.value = null;
 }
 
@@ -3337,72 +3917,127 @@ function syncArchivedPreviewSessionSummary(sessionId: string) {
   };
 }
 
+function resolveNextTabAfterClose(sessionId: string) {
+  const nextVisibleIds = getVisibleTabIds().filter(id => id !== sessionId);
+  const nextOrderIds = normalizeTabOrderIds(
+    tabOrderIds.value.filter(id => id !== sessionId),
+    nextVisibleIds
+  );
+  const nextMruIds = normalizeTabMruIds(
+    tabMruIds.value.filter(id => id !== sessionId),
+    nextVisibleIds,
+    nextOrderIds
+  );
+  if (nextMruIds[0]) {
+    return nextMruIds[0];
+  }
+  const currentOrderIds = normalizeTabOrderIds(tabOrderIds.value, getVisibleTabIds());
+  const closedIndex = currentOrderIds.indexOf(sessionId);
+  if (closedIndex < 0) {
+    return nextOrderIds[0] ?? '';
+  }
+  return nextOrderIds[closedIndex] ?? nextOrderIds[closedIndex - 1] ?? nextOrderIds[0] ?? '';
+}
+
+async function activateTabById(sessionId: string, options?: { connectReal?: boolean }) {
+  const session = visibleSessionById.value.get(sessionId);
+  if (!session) {
+    return false;
+  }
+
+  if (isDraftSession(session)) {
+    replaceDraftSessionState(draftSessions.value, session.id);
+    activeArchivedPreviewId.value = '';
+    webSessionStore.setActiveSession(props.projectId, '');
+  } else if (isArchivedPreviewSession(session)) {
+    replaceDraftSessionState(draftSessions.value, '');
+    activeArchivedPreviewId.value = session.id;
+  } else {
+    replaceDraftSessionState(draftSessions.value, '');
+    activeArchivedPreviewId.value = '';
+    if (options?.connectReal === false) {
+      webSessionStore.setActiveSession(props.projectId, session.id);
+    } else {
+      await connectVisibleRealSession(props.projectId, session.id);
+    }
+  }
+
+  rememberTabVisit(session.id);
+  return true;
+}
+
 async function openArchivedPreviewSession(session: WebSessionSummary) {
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
+  const anchorId = activeSessionId.value;
+  const previousPreviewId = archivedPreviewSession.value?.id ?? '';
+  if (previousPreviewId && previousPreviewId !== session.id) {
+    clearArchivedPreviewSession();
+  }
   archivedPreviewSession.value = {
     ...session,
     isArchivedPreview: true,
   };
+  replaceDraftSessionState(draftSessions.value, '');
+  activeArchivedPreviewId.value = session.id;
+  if (previousPreviewId !== session.id) {
+    insertTabAfter(session.id, anchorId);
+  } else {
+    syncTabNavigationState();
+  }
   await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
     rememberActive: false,
   });
   syncArchivedPreviewSessionSummary(session.id);
+  rememberTabVisit(session.id);
 }
 
 async function connectVisibleRealSession(projectId: string, sessionId: string) {
   if (!projectId || !sessionId) {
     return;
   }
+  activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
   await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
     rememberActive: true,
   });
 }
 
-function activateRealSession(sessionId: string, connect = true) {
-  const targetSession = realSessions.value.find(session => session.id === sessionId);
-  if (!targetSession) {
-    return false;
-  }
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
-  if (connect) {
-    void connectVisibleRealSession(props.projectId, targetSession.id).catch(error => {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    });
-  } else {
-    webSessionStore.setActiveSession(props.projectId, targetSession.id);
-  }
-  return true;
-}
-
-function removeDraftSession(
-  sessionId: string,
-  options?: { nextRealSessionId?: string; preserveDraftState?: boolean }
-) {
-  const nextDrafts = draftSessions.value.filter(session => session.id !== sessionId);
+function removeDraftSessionRecord(sessionId: string, options?: { preserveDraftState?: boolean }) {
   const removedActive = activeDraftSessionId.value === sessionId;
-  const nextActiveDraftId = removedActive
-    ? (nextDrafts[nextDrafts.length - 1]?.id ?? '')
-    : activeDraftSessionId.value;
-  replaceDraftSessionState(nextDrafts, nextActiveDraftId);
+  const nextActiveDraftId = removedActive ? '' : activeDraftSessionId.value;
+  replaceDraftSessionState(
+    draftSessions.value.filter(session => session.id !== sessionId),
+    nextActiveDraftId
+  );
   if (!options?.preserveDraftState) {
     webSessionStore.clearDraft(props.projectId, sessionId);
   }
-  if (!removedActive) {
-    return;
-  }
-  const nextActiveDraft = nextDrafts[nextDrafts.length - 1] ?? null;
-  if (!nextActiveDraft) {
-    if (options?.nextRealSessionId && activateRealSession(options.nextRealSessionId, false)) {
-      return;
-    }
-    const nextRealSessionId = realSessions.value[0]?.id;
-    if (nextRealSessionId && activateRealSession(nextRealSessionId)) {
+}
+
+async function closeTabById(
+  sessionId: string,
+  closer: () => Promise<void> | void,
+  options?: { syncNavigationOnly?: boolean }
+) {
+  const wasActive = activeSessionId.value === sessionId;
+  const fallbackTabId = wasActive ? resolveNextTabAfterClose(sessionId) : '';
+
+  await closer();
+
+  syncTabNavigationState();
+
+  if (wasActive) {
+    if (fallbackTabId && (await activateTabById(fallbackTabId))) {
       return;
     }
     ensureDefaultDraftSession();
+    if (activeSessionId.value) {
+      rememberTabVisit(activeSessionId.value);
+    }
+    return;
+  }
+
+  if (options?.syncNavigationOnly) {
+    syncTabNavigationState();
   }
 }
 
@@ -4065,10 +4700,109 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>;
 }
 
+function extractToolWorkingDirectory(input: unknown) {
+  const record = asRecord(input);
+  if (!record) {
+    return '';
+  }
+
+  const direct = String(record.cwd ?? record.workdir ?? '').trim();
+  if (direct) {
+    return direct;
+  }
+
+  const args = asRecord(record.arguments);
+  return String(args?.cwd ?? args?.workdir ?? '').trim();
+}
+
+function getImageViewToolData(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return null;
+  }
+  return parseImageViewToolOutput(tool.output);
+}
+
+function isImageViewTool(tool?: NonNullable<WebSessionBlock['tool']>) {
+  return Boolean(getImageViewToolData(tool));
+}
+
+function getImageViewDisplayName(tool?: NonNullable<WebSessionBlock['tool']>) {
+  const data = getImageViewToolData(tool);
+  return data ? resolveImageViewDisplayName(data.path) : '';
+}
+
+function getImageViewDisplayPath(tool?: NonNullable<WebSessionBlock['tool']>) {
+  return getImageViewToolData(tool)?.path ?? '';
+}
+
+function getImageViewPreviewSrc(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return '';
+  }
+  return imageViewPreviewSrcByToolId.value[tool.id] ?? '';
+}
+
+function getImageViewPreviewState(tool?: NonNullable<WebSessionBlock['tool']>) {
+  if (!tool) {
+    return 'loading' as const;
+  }
+  return imageViewPreviewStateByToolId.value[tool.id] ?? 'loading';
+}
+
+function ensureImageViewPreview(tool: NonNullable<WebSessionBlock['tool']>) {
+  if (imageViewPreviewSrcByToolId.value[tool.id]) {
+    if (imageViewPreviewStateByToolId.value[tool.id] === 'error') {
+      imageViewPreviewStateByToolId.value = {
+        ...imageViewPreviewStateByToolId.value,
+        [tool.id]: 'loading',
+      };
+    }
+    return;
+  }
+
+  const data = getImageViewToolData(tool);
+  if (!data) {
+    return;
+  }
+
+  const previewSrc = buildImageViewPreviewUrl(data.path, {
+    cwd: data.cwd || extractToolWorkingDirectory(tool.input) || currentRealSession.value?.cwd,
+  });
+  if (!previewSrc) {
+    return;
+  }
+
+  imageViewPreviewSrcByToolId.value = {
+    ...imageViewPreviewSrcByToolId.value,
+    [tool.id]: previewSrc,
+  };
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [tool.id]: 'loading',
+  };
+}
+
+function handleImageViewPreviewLoad(toolId: string) {
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [toolId]: 'ready',
+  };
+}
+
+function handleImageViewPreviewError(toolId: string) {
+  imageViewPreviewStateByToolId.value = {
+    ...imageViewPreviewStateByToolId.value,
+    [toolId]: 'error',
+  };
+}
+
 function normalizeToolKindValue(value: string | undefined) {
   const normalized = String(value ?? '').trim();
   if (normalized === 'commandExecution') {
     return 'command_execution';
+  }
+  if (normalized === 'contextCompaction') {
+    return 'context_compaction';
   }
   if (normalized === 'mcpToolCall') {
     return 'mcp_tool_call';
@@ -4080,6 +4814,10 @@ function normalizeToolKindValue(value: string | undefined) {
     return 'web_search';
   }
   return normalized;
+}
+
+function isContextCompactionToolKind(value: string | undefined) {
+  return normalizeToolKindValue(value) === 'context_compaction';
 }
 
 function isCompactToolKind(value: string | undefined) {
@@ -4113,6 +4851,14 @@ function isCompactTool(
 
 function getCompactToolKind(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
   return normalizeToolKindValue(tool.kind || String(tool.meta?.kind ?? ''));
+}
+
+function toolCardClass(tool: Pick<NonNullable<WebSessionBlock['tool']>, 'kind' | 'meta'>) {
+  return {
+    'is-context-compaction-tool': isContextCompactionToolKind(
+      tool.kind || String(tool.meta?.kind ?? '')
+    ),
+  };
 }
 
 function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
@@ -4172,6 +4918,17 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
   }
 
   return subtitle;
+}
+
+function contextCompactionPreview(tool: {
+  output?: string;
+  meta?: Record<string, unknown>;
+}) {
+  const preview = String(tool.output ?? tool.meta?.subtitle ?? '').replace(/\s+/g, ' ').trim();
+  if (preview) {
+    return preview.slice(0, 120);
+  }
+  return t('webSession.contextCompactionFallbackPreview');
 }
 
 function getCompactToolDisplaySummary(tool: NonNullable<WebSessionBlock['tool']>) {
@@ -4393,10 +5150,15 @@ function isToolExpanded(toolId: string) {
   return Boolean(expandedTools.value[toolId]);
 }
 
-function toggleToolExpanded(toolId: string) {
+function toggleToolExpanded(tool: NonNullable<WebSessionBlock['tool']>) {
+  const nextExpanded = !expandedTools.value[tool.id];
+  if (nextExpanded && isImageViewTool(tool)) {
+    ensureImageViewPreview(tool);
+  }
+
   expandedTools.value = {
     ...expandedTools.value,
-    [toolId]: !expandedTools.value[toolId],
+    [tool.id]: nextExpanded,
   };
 }
 
@@ -4420,7 +5182,22 @@ function setPlanActionsDismissed(toolId: string, dismissed: boolean) {
   };
 }
 
-function toolKindLabel(tool: { name: string; kind?: string }) {
+function beginSessionArchive(sessionId: string) {
+  archiveStateBySessionId.value = beginWebSessionSubmit(archiveStateBySessionId.value, sessionId);
+}
+
+function endSessionArchive(sessionId: string) {
+  archiveStateBySessionId.value = endWebSessionSubmit(archiveStateBySessionId.value, sessionId);
+}
+
+function isSessionArchiving(sessionId: string) {
+  return isWebSessionSubmitting(archiveStateBySessionId.value, sessionId);
+}
+
+function toolKindLabel(tool: { name: string; kind?: string; output?: string }) {
+  if (isImageViewTool(tool as NonNullable<WebSessionBlock['tool']>)) {
+    return t('webSession.toolImageView');
+  }
   const kind = normalizeToolKindValue(tool.kind);
   if (!kind) {
     return t('webSession.toolKindDefault');
@@ -4433,6 +5210,9 @@ function toolKindLabel(tool: { name: string; kind?: string }) {
   }
   if (kind === 'mcp_tool_call') {
     return t('webSession.toolMcpToolCall');
+  }
+  if (kind === 'context_compaction') {
+    return t('webSession.toolContextCompaction');
   }
   if (kind === 'tool_use') {
     return t('webSession.toolKindTool');
@@ -4450,6 +5230,13 @@ function formatToolPreview(tool: {
   meta?: Record<string, unknown>;
   commandGroup?: { count: number };
 }) {
+  if (isContextCompactionToolKind(tool.kind || String(tool.meta?.kind ?? ''))) {
+    return contextCompactionPreview(tool);
+  }
+  const imageViewData = getImageViewToolData(tool as NonNullable<WebSessionBlock['tool']>);
+  if (imageViewData) {
+    return resolveImageViewDisplayName(imageViewData.path);
+  }
   if (isCompactTool(tool as NonNullable<WebSessionBlock['tool']>)) {
     return getCompactToolSummary(tool as NonNullable<WebSessionBlock['tool']>);
   }
@@ -4567,42 +5354,60 @@ async function initializeProjectSessions(projectId: string) {
   if (!projectId) {
     return;
   }
-  clearArchivedPreviewSession();
-  const restoredDrafts = loadPersistedDraftSessions(projectId);
-  const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
-  const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
-    ? storedActiveDraftId
-    : '';
-  replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
-  const loadedSessions = await webSessionStore.loadSessions(projectId);
-  await webSessionStore.openEventStream();
-  if (activeDraftId) {
-    webSessionStore.setActiveSession(projectId, '');
-    return;
-  }
-  const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
-  const targetSessionId = webSessionStore.hasStoredActiveSession(projectId)
-    ? rememberedSessionId
-    : loadedSessions[0]?.id;
-  if (targetSessionId) {
-    try {
-      await connectVisibleRealSession(projectId, targetSessionId);
-    } catch (error) {
-      console.warn('[Web Session] Failed to initialize current session', {
-        projectId,
-        sessionId: targetSessionId,
-        error,
-      });
+  isProjectSessionInitializing.value = true;
+  try {
+    clearArchivedPreviewSession();
+    activeArchivedPreviewId.value = '';
+    tabOrderIds.value = loadPersistedTabOrderIds(projectId);
+    tabMruIds.value = loadPersistedTabMruIds(projectId);
+    const restoredDrafts = loadPersistedDraftSessions(projectId);
+    const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
+    const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
+      ? storedActiveDraftId
+      : '';
+    replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
+    const loadedSessions = await webSessionStore.loadSessions(projectId);
+    syncTabNavigationState(projectId, {
+      orderIds: tabOrderIds.value,
+      mruIds: tabMruIds.value,
+    });
+    await webSessionStore.openEventStream();
+    if (activeDraftId) {
+      await activateTabById(activeDraftId, { connectReal: false });
+      return;
     }
-    return;
+    const rememberedSessionId = webSessionStore.getActiveSessionId(projectId);
+    const targetSessionId =
+      loadedSessions.find(session => session.id === rememberedSessionId)?.id ??
+      loadedSessions[0]?.id;
+    if (targetSessionId) {
+      try {
+        await activateTabById(targetSessionId);
+      } catch (error) {
+        console.warn('[Web Session] Failed to initialize current session', {
+          projectId,
+          sessionId: targetSessionId,
+          error,
+        });
+      }
+      return;
+    }
+    if (restoredDrafts.length > 0) {
+      const fallbackDraftId =
+        tabMruIds.value.find(sessionId =>
+          restoredDrafts.some(session => session.id === sessionId)
+        ) ??
+        restoredDrafts[restoredDrafts.length - 1]?.id ??
+        '';
+      if (fallbackDraftId) {
+        await activateTabById(fallbackDraftId, { connectReal: false });
+      }
+      return;
+    }
+    ensureDefaultDraftSession();
+  } finally {
+    isProjectSessionInitializing.value = false;
   }
-  if (restoredDrafts.length > 0) {
-    const fallbackDraftId = restoredDrafts[restoredDrafts.length - 1]?.id ?? '';
-    replaceDraftSessionState(restoredDrafts, fallbackDraftId, projectId);
-    webSessionStore.setActiveSession(projectId, '');
-    return;
-  }
-  ensureDefaultDraftSession();
 }
 
 async function handleSessionSelect(sessionId: string) {
@@ -4610,22 +5415,17 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   showMobileTabSelector.value = false;
-  if (archivedPreviewSession.value?.id === sessionId) {
+  if (sessionId === activeSessionId.value) {
+    rememberTabVisit(sessionId);
     scrollToBottom(true);
     return;
   }
-  const draft = draftSessions.value.find(session => session.id === sessionId);
-  if (draft) {
-    clearArchivedPreviewSession();
-    replaceDraftSessionState(draftSessions.value, draft.id);
-    webSessionStore.setActiveSession(props.projectId, '');
+  try {
+    await activateTabById(sessionId);
     scrollToBottom(true);
-    return;
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
   }
-  clearArchivedPreviewSession();
-  replaceDraftSessionState(draftSessions.value, '');
-  await connectVisibleRealSession(props.projectId, sessionId);
-  scrollToBottom(true);
 }
 
 async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
@@ -4638,7 +5438,6 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       scrollToBottom(true);
       return;
     }
-    clearArchivedPreviewSession();
     if (item.projectId !== props.projectId) {
       webSessionStore.setActiveSession(item.projectId, sessionId);
       projectStore.addRecentProject(item.projectId);
@@ -4648,8 +5447,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       });
       return;
     }
-    await connectVisibleRealSession(item.projectId, sessionId);
-    replaceDraftSessionState(draftSessions.value, '');
+    await activateTabById(sessionId);
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -4661,6 +5459,12 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
     return;
   }
   try {
+    if (archivedPreviewSession.value?.id === item.session.id) {
+      activeArchivedPreviewId.value = item.session.id;
+      rememberTabVisit(item.session.id);
+      scrollToBottom(true);
+      return;
+    }
     await openArchivedPreviewSession(item.session);
     scrollToBottom(true);
   } catch (error) {
@@ -4747,11 +5551,20 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
       workflowMode: source?.workflowMode || draftWorkflowMode.value,
       permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+      autoRetryEnabled: source?.autoRetryEnabled === true,
+      autoRetryScope:
+        source?.autoRetryEnabled === true
+          ? source.autoRetryScope
+          : webSessionAutoContinueScope.value,
+      autoRetryPreset:
+        source?.autoRetryEnabled === true
+          ? source.autoRetryPreset
+          : webSessionAutoContinuePreset.value,
     });
     if (isDraftSession(source)) {
       webSessionStore.moveDraft(props.projectId, source.id, session.id);
-      removeDraftSession(source.id, {
-        nextRealSessionId: session.id,
+      replaceTabIdInNavigationState(source.id, session.id);
+      removeDraftSessionRecord(source.id, {
         preserveDraftState: true,
       });
     }
@@ -4761,7 +5574,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
     draftWorkflowMode.value = session.workflowMode;
     draftPermissionLevel.value = session.permissionLevel;
-    clearArchivedPreviewSession();
+    await activateTabById(session.id, { connectReal: false });
     scrollToBottom(true);
     return session;
   } catch (error) {
@@ -4771,7 +5584,6 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
-  clearArchivedPreviewSession();
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
@@ -4846,17 +5658,24 @@ async function refreshArchivedSidebar() {
 }
 
 function handleArchiveSession(sessionId: string) {
+  if (isSessionArchiving(sessionId)) {
+    return;
+  }
   const session = sessions.value.find(item => item.id === sessionId);
   if (!session) {
     return;
   }
 
   if (isDraftSession(session)) {
-    removeDraftSession(sessionId);
+    void closeTabById(sessionId, () => {
+      removeDraftSessionRecord(sessionId);
+    });
     return;
   }
   if (isArchivedPreviewSession(session)) {
-    clearArchivedPreviewSession();
+    void closeTabById(sessionId, () => {
+      clearArchivedPreviewSession();
+    });
     return;
   }
 
@@ -4880,24 +5699,21 @@ function handleArchiveSession(sessionId: string) {
 }
 
 async function performArchiveSession(session: WebSessionSummary): Promise<boolean> {
+  if (isSessionArchiving(session.id)) {
+    return false;
+  }
+  beginSessionArchive(session.id);
   try {
-    await webSessionStore.archiveSession(session.projectId, session.id);
+    await closeTabById(session.id, async () => {
+      await webSessionStore.archiveSession(session.projectId, session.id);
+    });
     await refreshArchivedSidebar();
-    const nextSession = webSessionStore.getActiveSession(props.projectId);
-    if (nextSession?.id) {
-      await connectVisibleRealSession(props.projectId, nextSession.id);
-    } else if (draftSessions.value.length > 0) {
-      replaceDraftSessionState(
-        draftSessions.value,
-        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
-      );
-    } else {
-      ensureDefaultDraftSession();
-    }
     return true;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
     return false;
+  } finally {
+    endSessionArchive(session.id);
   }
 }
 
@@ -4907,22 +5723,19 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
     return false;
   }
   try {
-    await webSessionStore.deleteSession(session.projectId, sessionId);
-    if (isArchivedPreviewSession(session)) {
-      clearArchivedPreviewSession();
-    } else if (!isDraftSession(session)) {
+    await closeTabById(sessionId, async () => {
+      if (isArchivedPreviewSession(session)) {
+        clearArchivedPreviewSession();
+        return;
+      }
+      if (isDraftSession(session)) {
+        removeDraftSessionRecord(sessionId);
+        return;
+      }
+      await webSessionStore.deleteSession(session.projectId, sessionId);
+    });
+    if (!isDraftSession(session) && !isArchivedPreviewSession(session)) {
       await refreshArchivedSidebar();
-    }
-    const nextSession = webSessionStore.getActiveSession(props.projectId);
-    if (nextSession?.id) {
-      await connectVisibleRealSession(props.projectId, nextSession.id);
-    } else if (draftSessions.value.length > 0) {
-      replaceDraftSessionState(
-        draftSessions.value,
-        draftSessions.value[draftSessions.value.length - 1]?.id ?? ''
-      );
-    } else {
-      ensureDefaultDraftSession();
     }
     return true;
   } catch (error) {
@@ -5150,6 +5963,23 @@ function getComposerTextarea() {
   return null;
 }
 
+function applyQuickInputText(text: string) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+
+  webSessionStore.setDraftText(props.projectId, sessionId, text);
+
+  nextTick(() => {
+    composerInputRef.value?.focus();
+    const textarea = getComposerTextarea();
+    if (textarea) {
+      textarea.setSelectionRange(text.length, text.length);
+    }
+  });
+}
+
 function insertUploadedImagePlaceholders(uploadedCount: number) {
   const sessionId = currentDraftSessionId.value;
   if (!sessionId || uploadedCount <= 0) {
@@ -5194,9 +6024,9 @@ async function prepareSessionForSend(session: WebSessionSummary) {
 
   const restored = await webSessionStore.unarchiveSession(session.projectId, session.id);
   await refreshArchivedSidebar();
-  clearArchivedPreviewSession();
+  clearArchivedPreviewSession({ preserveTabId: true });
   if (restored.projectId === props.projectId) {
-    await connectVisibleRealSession(restored.projectId, restored.id);
+    await activateTabById(restored.id);
   } else {
     webSessionStore.setActiveSession(restored.projectId, restored.id);
   }
@@ -5207,9 +6037,18 @@ async function prepareSessionForSend(session: WebSessionSummary) {
   };
 }
 
-function resolveComposerSubmitKind(): WebSessionSubmitKind {
-  const workflowMode = currentSession.value?.workflowMode ?? draftWorkflowMode.value;
-  return workflowMode === 'plan' ? 'plan_message' : 'execute_send';
+async function continueErroredSession(session: WebSessionSummary) {
+  const prepared = await prepareSessionForSend(session);
+  await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
+  if (prepared.navigateProjectId) {
+    projectStore.addRecentProject(prepared.navigateProjectId);
+    await router.push({
+      name: 'project',
+      params: { id: prepared.navigateProjectId },
+    });
+  }
+  autoFollowBottom.value = true;
+  scrollToBottom(true);
 }
 
 async function handleSubmit() {
@@ -5223,16 +6062,19 @@ async function handleSubmit() {
   ) {
     return;
   }
-  const submitKind = resolveComposerSubmitKind();
-  if (submitKind === 'execute_send') {
-    if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
-      return;
-    }
-  } else {
-    clearSendConflictConfirmation();
+  const confirmation = resolveWebSessionSendConfirmation({
+    conflicts: sendConflictSessions.value,
+    currentState: sendConfirmationState.value,
+    signature: sendConfirmationSignature.value,
+    now: Date.now(),
+    ttlMs: WEB_SESSION_SEND_CONFIRM_TTL_MS,
+  });
+  setSendConflictConfirmationState(confirmation.nextState);
+  if (!confirmation.shouldProceed) {
+    return;
   }
   let submitOwnerId = initialSubmitOwnerId;
-  beginSessionSubmit(submitOwnerId, submitKind);
+  beginSessionSubmit(submitOwnerId);
   try {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
@@ -5260,6 +6102,8 @@ async function handleSubmit() {
       draftText,
       attachments.map(item => item.id)
     );
+    settingsStore.recordWebSessionRecentInput(draftText);
+    void settingsStore.syncWebSessionQuickInputToServer();
     webSessionStore.clearDraft(props.projectId, draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
@@ -5283,13 +6127,16 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     return;
   }
   try {
+    const draftText = composerText.value;
     const attachments = draftAttachments.value;
     await webSessionStore.sendMessage(
       currentRealSession.value.id,
-      composerText.value,
+      draftText,
       attachments.map(item => item.id),
       mode
     );
+    settingsStore.recordWebSessionRecentInput(draftText);
+    void settingsStore.syncWebSessionQuickInputToServer();
     webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
     isMobileComposerExpanded.value = false;
   } catch (error) {
@@ -5354,53 +6201,23 @@ function formatSendConflictSessionList(
   });
 }
 
-function buildSendConflictWarningBody(
-  sessions: Array<{
-    title: string;
-  }>
-) {
-  if (sessions.length === 0) {
-    return '';
-  }
-  const formatted = formatSendConflictSessionList(sessions);
-  if (sessions.length === 1) {
-    return t('webSession.sendConflictWarningBodySingle', { sessions: formatted });
-  }
-  return t('webSession.sendConflictWarningBodyMultiple', {
-    count: sessions.length,
-    sessions: formatted,
-  });
-}
-
-function ensureSendConflictConfirmed(
-  signature: string,
-  options?: {
-    notifyOnBlock?: boolean;
-  }
-) {
-  const confirmation = resolveWebSessionSendConfirmation({
-    conflicts: sendConflictSessions.value,
-    currentState: sendConfirmationState.value,
-    signature,
-    now: Date.now(),
-    ttlMs: WEB_SESSION_SEND_CONFIRM_TTL_MS,
-  });
-  setSendConflictConfirmationState(confirmation.nextState);
-  if (!confirmation.shouldProceed && options?.notifyOnBlock) {
-    const warningBody = buildSendConflictWarningBody(sendConflictSessions.value);
-    if (warningBody) {
-      message.warning(warningBody);
-    }
-  }
-  return confirmation.shouldProceed;
-}
-
 const showSendConflictWarning = computed(
   () => isSendConflictConfirmationArmed.value && sendConflictSessions.value.length > 0
 );
-const sendConflictWarningBody = computed(() =>
-  showSendConflictWarning.value ? buildSendConflictWarningBody(sendConflictSessions.value) : ''
-);
+const sendConflictWarningBody = computed(() => {
+  const conflicts = sendConflictSessions.value;
+  if (!showSendConflictWarning.value || conflicts.length === 0) {
+    return '';
+  }
+  const sessions = formatSendConflictSessionList(conflicts);
+  if (conflicts.length === 1) {
+    return t('webSession.sendConflictWarningBodySingle', { sessions });
+  }
+  return t('webSession.sendConflictWarningBodyMultiple', {
+    count: conflicts.length,
+    sessions,
+  });
+});
 
 function handleUserInputEnter(event: KeyboardEvent) {
   if (event.key !== 'Enter') {
@@ -5414,6 +6231,9 @@ function handleUserInputEnter(event: KeyboardEvent) {
   }
   event.preventDefault();
   event.stopPropagation();
+  if (isSubmittingUserInput.value) {
+    return;
+  }
   void handleUserInputSubmit();
 }
 
@@ -5509,34 +6329,26 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
 }
 
 async function handlePlanCardImplement() {
-  if (!currentRealSession.value || isSubmittingMessage.value) {
+  const submitOwnerId = currentDraftSessionId.value;
+  if (!currentRealSession.value || !submitOwnerId || isPlanCardImplementPending.value) {
     return;
   }
-  if (
-    !ensureSendConflictConfirmed(planImplementConfirmationSignature.value, { notifyOnBlock: true })
-  ) {
-    return;
-  }
-  let submitOwnerId = currentRealSession.value.id;
-  beginSessionSubmit(submitOwnerId, 'execute_plan');
 
+  beginSessionSubmit(submitOwnerId);
   try {
     const prepared = await prepareSessionForSend(currentRealSession.value);
     const targetSession = prepared.session;
-    if (targetSession.id !== submitOwnerId) {
-      transferSessionSubmit(submitOwnerId, targetSession.id);
-      submitOwnerId = targetSession.id;
-    }
 
     if (targetSession.workflowMode === 'plan') {
       await webSessionStore.updateWorkflowMode(targetSession.id, 'default');
     }
 
     const answered = await answerInlinePlanChoice('execute');
-    if (!answered) {
-      await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
+    if (answered) {
+      return;
     }
 
+    await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push({
@@ -5560,34 +6372,38 @@ async function handlePlanCardCancel() {
 }
 
 async function handleUserInputSubmit() {
-  if (!currentRealSession.value || !pendingUserInput.value) {
+  if (!currentRealSession.value || !pendingUserInput.value || isSubmittingUserInput.value) {
     return;
   }
-  if (pendingUserInput.value.stale) {
-    message.info(pendingUserInput.value.recoveryMessage || t('webSession.recoveredActionExpired'));
+  const sessionId = currentRealSession.value.id;
+  const request = pendingUserInput.value;
+  if (request.stale) {
+    message.info(request.recoveryMessage || t('webSession.recoveredActionExpired'));
     return;
   }
   const answers = buildUserInputAnswers();
   if (!answers) {
     return;
   }
-  const hasMissingAnswer = pendingUserInput.value.questions.some(
-    question => !Array.isArray(answers[question.id]) || answers[question.id].length === 0
-  );
-  if (hasMissingAnswer) {
+  if (hasMissingWebSessionUserInputAnswers(request.questions, answers)) {
     message.warning(t('webSession.userInputAnswerRequired'));
     return;
   }
+  const submitOwnerId = buildWebSessionUserInputSubmitOwnerId(sessionId, request.itemId);
+  if (!submitOwnerId) {
+    return;
+  }
+  beginUserInputSubmit(submitOwnerId);
+  let answered = false;
   try {
-    await webSessionStore.answerUserInput(
-      currentRealSession.value.id,
-      pendingUserInput.value.itemId,
-      answers
-    );
-    userInputSelections.value = {};
-    userInputDrafts.value = {};
+    await webSessionStore.answerUserInput(sessionId, request.itemId, answers);
+    answered = true;
   } catch (error) {
     message.error(formatSessionInteractionError(error));
+  } finally {
+    if (!answered || currentUserInputSubmitOwnerId.value !== submitOwnerId) {
+      endUserInputSubmit(submitOwnerId);
+    }
   }
 }
 
@@ -5667,17 +6483,7 @@ async function handleLiveCardClick() {
   if (shouldAutoContinueOnLiveCardClick.value && currentRealSession.value) {
     liveCardContinuePending.value = true;
     try {
-      const prepared = await prepareSessionForSend(currentRealSession.value);
-      await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
-      if (prepared.navigateProjectId) {
-        projectStore.addRecentProject(prepared.navigateProjectId);
-        await router.push({
-          name: 'project',
-          params: { id: prepared.navigateProjectId },
-        });
-      }
-      autoFollowBottom.value = true;
-      scrollToBottom(true);
+      await continueErroredSession(currentRealSession.value);
       return;
     } catch (error) {
       message.error(formatSessionInteractionError(error));
@@ -5704,6 +6510,57 @@ function restoreHistoryAnchor() {
   pendingHistoryAnchor.value = null;
   updateBottomState(container);
   return true;
+}
+
+function getClickedTimelineAnchor(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null
+): HTMLAnchorElement | null {
+  if (!(target instanceof Element) || !(currentTarget instanceof HTMLElement)) {
+    return null;
+  }
+
+  const anchor = target.closest('a[href]');
+  if (!(anchor instanceof HTMLAnchorElement) || !currentTarget.contains(anchor)) {
+    return null;
+  }
+
+  return anchor.closest('.chat-markdown') ? anchor : null;
+}
+
+function handleTimelineLinkClick(event: MouseEvent) {
+  if (event.defaultPrevented || typeof window === 'undefined') {
+    return;
+  }
+
+  const anchor = getClickedTimelineAnchor(event.target, event.currentTarget);
+  if (!anchor) {
+    return;
+  }
+
+  event.preventDefault();
+  const href = resolveNavigableHref(anchor.getAttribute('href') ?? '', window.location.href);
+  if (!href) {
+    message.warning(t('common.invalidLink'));
+    return;
+  }
+
+  dialog.warning({
+    title: t('common.openLinkTitle'),
+    content: () =>
+      h('div', { class: 'web-session-close-confirm' }, [
+        h('div', { class: 'web-session-close-confirm__message' }, [t('common.openLinkMessage')]),
+        h('code', { class: 'web-session-close-confirm__href' }, href),
+      ]),
+    positiveText: t('common.openInNewTab'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      const opened = window.open(href, '_blank', 'noopener,noreferrer');
+      if (!opened) {
+        message.error(t('common.openLinkFailed'));
+      }
+    },
+  });
 }
 
 function handleTimelineScroll(event: Event) {
@@ -5822,7 +6679,18 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
   };
   const classes: string[] = [];
 
-  if (usesSessionApprovalTone(session)) {
+  if (isSessionArchiving(session.id)) {
+    classes.push('is-archiving');
+  }
+
+  if (usesSessionPlanApprovalTone(session)) {
+    classes.push('has-unviewed-plan-approval');
+    if (isActive && hideHeaderBorder) {
+      props.style = {
+        borderBottom: 'none',
+      };
+    }
+  } else if (usesSessionApprovalTone(session)) {
     classes.push('has-unviewed-approval');
     if (isActive && hideHeaderBorder) {
       props.style = {
@@ -5906,12 +6774,7 @@ function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return agentName;
   }
-  const suffix =
-    session.syncState === 'stale'
-      ? t('webSession.syncStateStale')
-      : session.syncState === 'error' && session.syncError
-        ? session.syncError
-        : '';
+  const suffix = session.syncState === 'error' && session.syncError ? session.syncError : '';
   const base = label ? `${agentName} · ${label}` : agentName;
   return suffix ? `${base} · ${suffix}` : base;
 }
@@ -5930,7 +6793,9 @@ function getSidebarSessionAccentColor(item: CrossProjectSessionItem) {
     case 'working':
       return '#8b5cf6';
     case 'approval':
-      return '#f79009';
+      return approvalColors.value.accent;
+    case 'plan_approval':
+      return planApprovalColors.value.accent;
     case 'completion':
       return '#10b981';
     case 'idle':
@@ -5950,6 +6815,8 @@ function getSidebarSessionClasses(item: CrossProjectSessionItem): string[] {
       return ['session-sidebar-working'];
     case 'approval':
       return ['session-sidebar-approval'];
+    case 'plan_approval':
+      return ['session-sidebar-plan-approval'];
     case 'completion':
       return ['session-sidebar-completion'];
     case 'idle':
@@ -5980,14 +6847,21 @@ function getSessionStatusDotClass(session: (typeof sessions.value)[number]) {
   return getSessionDisplayState(session).statusDotClass ?? session.status;
 }
 
-function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
+function getSessionTabTone(session: (typeof sessions.value)[number]) {
   const visualInput = getSessionVisualInput(session);
-  return visualInput ? getWebSessionTabTone(visualInput) === 'approval' : false;
+  return visualInput ? getWebSessionTabTone(visualInput) : 'default';
+}
+
+function usesSessionApprovalTone(session: (typeof sessions.value)[number]) {
+  return getSessionTabTone(session) === 'approval';
+}
+
+function usesSessionPlanApprovalTone(session: (typeof sessions.value)[number]) {
+  return getSessionTabTone(session) === 'plan_approval';
 }
 
 function usesSessionCompletionTone(session: (typeof sessions.value)[number]) {
-  const visualInput = getSessionVisualInput(session);
-  return visualInput ? getWebSessionTabTone(visualInput) === 'completion' : false;
+  return getSessionTabTone(session) === 'completion';
 }
 
 function handleTabContextMenu(event: MouseEvent, session: (typeof sessions.value)[number]) {
@@ -6071,6 +6945,8 @@ function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   if (mobileOption.section === 'archived') {
     showMobileTabSelector.value = false;
     if (archivedPreviewSession.value?.id === mobileOption.session.id) {
+      activeArchivedPreviewId.value = mobileOption.session.id;
+      rememberTabVisit(mobileOption.session.id);
       scrollToBottom(true);
       return;
     }
@@ -6138,26 +7014,20 @@ function setupTabSorting() {
     return;
   }
   const container = tabsContainerRef.value;
-  if (
-    !container ||
-    sessions.value.length <= 1 ||
-    draftSessions.value.length > 0 ||
-    archivedPreviewSession.value
-  ) {
+  if (!container || sessions.value.length <= 1) {
     destroyTabSorting();
     return;
   }
-  const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
+  const wrapper = container.querySelector(
+    '.n-tabs-wrapper, .n-tabs-nav-scroll-content, .n-tabs-nav-scroll-content__wrapper'
+  ) as HTMLElement | null;
   if (!wrapper) {
     destroyTabSorting();
     return;
   }
   if (tabDragSortable.value) {
     if (tabDragSortable.value.el === wrapper) {
-      tabDragSortable.value.option(
-        'disabled',
-        sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
-      );
+      tabDragSortable.value.option('disabled', sessions.value.length <= 1);
       return;
     }
     destroyTabSorting();
@@ -6165,19 +7035,16 @@ function setupTabSorting() {
   tabDragSortable.value = Sortable.create(wrapper, {
     animation: 150,
     direction: 'horizontal',
-    draggable: '.n-tabs-tab-wrapper',
+    draggable: '.n-tabs-tab-wrapper, .n-tabs-tab',
     handle: '.n-tabs-tab',
-    filter: '.n-tabs-tab__close',
+    filter: '.n-tabs-tab__close, .n-tabs-tab__close-button, .n-base-close',
     preventOnFilter: false,
     ghostClass: 'web-session-tab-ghost',
     chosenClass: 'web-session-tab-chosen',
     dragClass: 'web-session-tab-dragging',
     onEnd: handleTabDragEnd,
   });
-  tabDragSortable.value.option(
-    'disabled',
-    sessions.value.length <= 1 || draftSessions.value.length > 0 || archivedPreviewSession.value
-  );
+  tabDragSortable.value.option('disabled', sessions.value.length <= 1);
 }
 
 function destroyTabSorting() {
@@ -6188,17 +7055,41 @@ function destroyTabSorting() {
 }
 
 function handleTabDragEnd(event: SortableEvent) {
-  if (draftSessions.value.length > 0 || archivedPreviewSession.value) {
-    return;
-  }
   const fromIndex = event.oldDraggableIndex ?? event.oldIndex ?? -1;
   const toIndex = event.newDraggableIndex ?? event.newIndex ?? -1;
   if (fromIndex === -1 || toIndex === -1 || fromIndex === toIndex) {
     return;
   }
-  void webSessionStore.moveSession(props.projectId, fromIndex, toIndex).catch(error => {
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  });
+  const previousOrderIds = [...tabOrderIds.value];
+  const previousMruIds = [...tabMruIds.value];
+  const reorderedSessions = [...sessions.value];
+  const [movingSession] = reorderedSessions.splice(fromIndex, 1);
+  if (!movingSession) {
+    return;
+  }
+  reorderedSessions.splice(toIndex, 0, movingSession);
+  replaceTabNavigationState(
+    reorderedSessions.map(session => session.id),
+    previousMruIds
+  );
+  if (isDraftSession(movingSession) || isArchivedPreviewSession(movingSession)) {
+    nextTick(() => {
+      updateActiveTabIndicator();
+    });
+    return;
+  }
+  const reorderedRealSessions = reorderedSessions.filter(
+    session => !isDraftSession(session) && !isArchivedPreviewSession(session)
+  );
+  const realIndex = reorderedRealSessions.findIndex(session => session.id === movingSession.id);
+  const previousRealSessionId = reorderedRealSessions[realIndex - 1]?.id ?? '';
+  const nextRealSessionId = reorderedRealSessions[realIndex + 1]?.id ?? '';
+  void webSessionStore
+    .moveSession(props.projectId, movingSession.id, previousRealSessionId, nextRealSessionId)
+    .catch(error => {
+      replaceTabNavigationState(previousOrderIds, previousMruIds);
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    });
   nextTick(() => {
     updateActiveTabIndicator();
   });
@@ -6224,6 +7115,40 @@ watch(
     }
   },
   { immediate: true }
+);
+
+watch(sendConfirmationSignature, signature => {
+  if (!sendConfirmationState.value) {
+    return;
+  }
+  if (sendConfirmationState.value.signature !== signature) {
+    clearSendConflictConfirmation();
+  }
+});
+
+watch(
+  () => allVisibleSessions.value.map(session => session.id).join('|'),
+  () => {
+    if (isProjectSessionInitializing.value) {
+      return;
+    }
+    syncTabNavigationState();
+  }
+);
+
+watch(
+  () => activeSessionId.value,
+  sessionId => {
+    if (
+      !sessionId ||
+      isProjectSessionInitializing.value ||
+      !visibleSessionById.value.has(sessionId) ||
+      tabMruIds.value[0] === sessionId
+    ) {
+      return;
+    }
+    rememberTabVisit(sessionId);
+  }
 );
 
 watch(
@@ -6295,7 +7220,6 @@ watch(
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
-    activeRawTimelineBlockKey.value = '';
     syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
       showMobileTabSelector.value = false;
@@ -6323,27 +7247,6 @@ watch(
 );
 
 watch(
-  visibleRawTimelineBlockKeys,
-  keys => {
-    if (activeRawTimelineBlockKey.value && !keys.includes(activeRawTimelineBlockKey.value)) {
-      activeRawTimelineBlockKey.value = '';
-    }
-  },
-  { immediate: true }
-);
-
-useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointerdown', event => {
-  if (!activeRawTimelineBlockKey.value) {
-    return;
-  }
-  const target = event.target;
-  if (target instanceof Element && target.closest('[data-raw-toggle-card]')) {
-    return;
-  }
-  activeRawTimelineBlockKey.value = '';
-});
-
-watch(
   () => props.isActive,
   active => {
     if (!active) {
@@ -6357,6 +7260,54 @@ watch(
 watch(currentSessionLatestEventSeq, () => {
   markSessionViewed(currentRealSession.value?.id);
 });
+
+watch(
+  [() => webSessionAutoContinueScope.value, () => webSessionAutoContinuePreset.value],
+  ([scope, preset]) => {
+    if (!isDraftSession(currentSession.value)) {
+      return;
+    }
+    if (
+      currentSession.value.autoRetryScope === scope &&
+      currentSession.value.autoRetryPreset === preset
+    ) {
+      return;
+    }
+    updateActiveDraftSession(current => ({
+      ...current,
+      autoRetryScope: scope,
+      autoRetryPreset: preset,
+      updatedAt: new Date().toISOString(),
+    }));
+  }
+);
+
+watch(
+  [
+    () => currentRealSession.value?.id ?? '',
+    () => currentRealSession.value?.autoRetryEnabled === true,
+    () => webSessionAutoContinueScope.value,
+    () => webSessionAutoContinuePreset.value,
+  ],
+  ([sessionId, enabled, scope, preset]) => {
+    const session = currentRealSession.value;
+    if (!sessionId || !session || !enabled) {
+      return;
+    }
+    if (session.autoRetryScope === scope && session.autoRetryPreset === preset) {
+      return;
+    }
+    void webSessionStore
+      .updateAutoRetry(sessionId, {
+        enabled: true,
+        scope,
+        preset,
+      })
+      .catch(error => {
+        message.error(error instanceof Error ? error.message : t('common.error'));
+      });
+  }
+);
 
 watch(
   () =>
@@ -6423,21 +7374,13 @@ watch(timelineContentVersion, async () => {
 watch(currentDraftSessionId, () => {
   clearComposerTransferError();
   clearSendConflictConfirmation();
-});
-
-watch([sendConfirmationSignature, planImplementConfirmationSignature], signatures => {
-  if (!sendConfirmationState.value) {
-    return;
-  }
-  const activeSignatures = signatures.filter(Boolean);
-  if (!activeSignatures.includes(sendConfirmationState.value.signature)) {
-    clearSendConflictConfirmation();
-  }
+  showQuickInputPopover.value = false;
 });
 
 watch(
   () => currentSession.value?.id,
   () => {
+    showQuickInputPopover.value = false;
     if (isMobile.value) {
       isMobileComposerExpanded.value = false;
     }
@@ -6511,6 +7454,7 @@ onMounted(() => {
   liveStateClockTimer = window.setInterval(() => {
     liveStateClockMs.value = Date.now();
   }, LIVE_TIME_TICK_MS);
+  void settingsStore.loadWebSessionQuickInput();
   void loadCodexRuntimeConfig();
   if (projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
@@ -6538,6 +7482,9 @@ onBeforeUnmount(() => {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;
   }
+  clearUserInputSlowHintTimer();
+  userInputSubmitStateByOwnerId.value = {};
+  userInputSlowStateByOwnerId.value = {};
   emitMobileComposerFocusChange(false);
   clearComposerTransferError();
   clearSendConflictConfirmation();
@@ -6559,6 +7506,8 @@ onBeforeUnmount(() => {
 .web-session-panel {
   --web-session-approval-bg: rgba(247, 144, 9, 0.25);
   --web-session-approval-border: rgba(247, 144, 9, 0.5);
+  --web-session-plan-approval-bg: rgba(6, 182, 212, 0.14);
+  --web-session-plan-approval-border: rgba(6, 182, 212, 0.3);
   box-sizing: border-box;
   height: 100%;
   padding-bottom: var(--workspace-mobile-websession-inset, 0px);
@@ -6707,6 +7656,14 @@ onBeforeUnmount(() => {
   color: var(--n-tab-text-color-active);
 }
 
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.is-archiving) {
+  cursor: wait;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.is-archiving .n-tabs-tab__close) {
+  display: none;
+}
+
 .tab-label {
   display: inline-flex;
   align-items: center;
@@ -6720,6 +7677,17 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tab-action-spinner,
+.session-sidebar-spinner {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.75px solid color-mix(in srgb, var(--n-primary-color) 24%, transparent);
+  border-top-color: var(--n-primary-color);
+  animation: web-session-action-spin 0.72s linear infinite;
 }
 
 .status-dot {
@@ -6750,11 +7718,6 @@ onBeforeUnmount(() => {
 .status-dot.aborting {
   background-color: var(--n-warning-color, #f59e0b);
   box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
-}
-
-.status-dot.stale {
-  background-color: #f79009;
-  box-shadow: 0 0 0 1px rgba(247, 144, 9, 0.25);
 }
 
 .ai-status-pill {
@@ -6805,6 +7768,11 @@ onBeforeUnmount(() => {
   color: #f79009;
 }
 
+.ai-status-pill.state-waiting_plan_approval {
+  background-color: rgba(34, 211, 238, 0.14);
+  color: #0891b2;
+}
+
 .ai-status-pill.state-completion {
   background-color: rgba(255, 255, 255, 0.84);
   color: #475467;
@@ -6813,11 +7781,6 @@ onBeforeUnmount(() => {
 }
 
 .ai-status-pill.state-waiting_input {
-  background-color: #eceef2;
-  color: #475467;
-}
-
-.ai-status-pill.state-idle {
   background-color: #eceef2;
   color: #475467;
 }
@@ -6864,6 +7827,44 @@ onBeforeUnmount(() => {
   :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-completion.n-tabs-tab--active) {
   background-color: rgba(16, 185, 129, 0.22) !important;
   border-color: rgba(16, 185, 129, 0.54) !important;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
+  background-color: var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) !important;
+  border-color: var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) !important;
+}
+
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
+  background-color: color-mix(
+    in srgb,
+    var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) 78%,
+    var(--app-surface-color, #fff) 22%
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) 88%,
+    transparent 12%
+  ) !important;
+}
+
+.panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-plan-approval) {
+  background-color: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) !important;
+  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) !important;
+}
+
+.panel-header
+  :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-plan-approval.n-tabs-tab--active) {
+  background-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 78%,
+    var(--app-surface-color, #fff) 22%
+  ) !important;
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 88%,
+    transparent 12%
+  ) !important;
 }
 
 .header-actions {
@@ -7139,6 +8140,12 @@ onBeforeUnmount(() => {
   color: #f79009;
 }
 
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_plan_approval) {
+  background: rgba(34, 211, 238, 0.14);
+  color: #0891b2;
+  border-color: rgba(6, 182, 212, 0.18);
+}
+
 :global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-completion) {
   background: rgba(16, 185, 129, 0.12);
   color: #059669;
@@ -7405,7 +8412,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   width: 18px;
   height: 2px;
-  background: #0ea5e9;
+  background: var(--session-sidebar-accent, #0ea5e9);
   transform: rotate(54deg);
   transform-origin: center center;
   pointer-events: none;
@@ -7419,7 +8426,7 @@ onBeforeUnmount(() => {
   z-index: 2;
   width: 18px;
   height: 2px;
-  background: #0ea5e9;
+  background: var(--session-sidebar-accent, #0ea5e9);
   transform: rotate(-54deg);
   transform-origin: center center;
   pointer-events: none;
@@ -7457,6 +8464,10 @@ onBeforeUnmount(() => {
 
 .session-sidebar-item.is-archived {
   border-style: dashed;
+}
+
+.session-sidebar-item.is-archiving {
+  cursor: wait;
 }
 
 .session-sidebar-main {
@@ -7515,6 +8526,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
+}
+
+@keyframes web-session-action-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .session-archived-pill {
@@ -7584,6 +8601,40 @@ onBeforeUnmount(() => {
   border-color: rgba(247, 144, 9, 0.6);
   background: rgba(247, 144, 9, 0.22);
   box-shadow: none;
+}
+
+.session-sidebar-plan-approval {
+  border-color: var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3));
+  background: var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14));
+}
+
+.session-sidebar-item.session-sidebar-plan-approval.is-active,
+.session-sidebar-item.session-sidebar-plan-approval.is-active:hover {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-accent-strong, #0e7490) 14%,
+    var(--web-session-plan-approval-border, rgba(6, 182, 212, 0.3)) 86%
+  );
+  border-left-color: var(--web-session-plan-approval-accent, #0891b2);
+  background: linear-gradient(
+    135deg,
+    color-mix(
+        in srgb,
+        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 92%,
+        var(--app-surface-color, #fff) 8%
+      )
+      0%,
+    color-mix(
+        in srgb,
+        var(--web-session-plan-approval-bg, rgba(6, 182, 212, 0.14)) 76%,
+        var(--app-surface-color, #fff) 24%
+      )
+      100%
+  );
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 16%, transparent),
+    0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-accent, #0891b2) 14%, transparent);
 }
 
 .session-sidebar-completion {
@@ -7768,24 +8819,6 @@ onBeforeUnmount(() => {
   background: var(--app-surface-color, #fff);
   padding: 15px 16px;
   position: relative;
-  transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.item-bubble.is-raw-capable {
-  cursor: pointer;
-}
-
-.item-bubble.is-raw-active {
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-}
-
-.item-bubble.is-raw-capable:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .timeline-item.kind-user .item-bubble {
@@ -7822,11 +8855,6 @@ onBeforeUnmount(() => {
 .item-bubble.level-warn {
   border-color: color-mix(in srgb, var(--n-warning-color) 35%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-warning-color) 10%, rgba(255, 255, 255, 0.92));
-}
-
-.item-bubble.is-raw-active,
-.item-bubble.is-raw-capable:focus-visible {
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
 }
 
 .item-text {
@@ -8064,24 +9092,6 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
   overflow: hidden;
-  transition:
-    border-color 0.18s ease,
-    box-shadow 0.18s ease;
-}
-
-.tool-card.is-raw-capable {
-  cursor: pointer;
-}
-
-.tool-card.is-raw-active {
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
-}
-
-.tool-card.is-raw-capable:focus-visible {
-  outline: none;
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .tool-card.is-plan-tool {
@@ -8110,9 +9120,22 @@ onBeforeUnmount(() => {
   background: linear-gradient(90deg, #14b8a6 0%, #0ea5e9 55%, #38bdf8 100%);
 }
 
-.tool-card.is-raw-active,
-.tool-card.is-raw-capable:focus-visible {
-  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+.tool-card.is-context-compaction-tool {
+  border-color: rgba(37, 99, 235, 0.24);
+  background:
+    linear-gradient(
+      135deg,
+      rgba(239, 246, 255, 0.98) 0%,
+      rgba(219, 234, 254, 0.92) 48%,
+      rgba(255, 255, 255, 0.98) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 16px 32px rgba(30, 64, 175, 0.08);
+}
+
+.tool-card.is-context-compaction-tool .tool-kind {
+  background: rgba(37, 99, 235, 0.12);
+  color: #2563eb;
 }
 
 .timeline-tool-card {
@@ -8358,6 +9381,85 @@ onBeforeUnmount(() => {
   padding: 10px;
 }
 
+.image-view-preview-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 12%, var(--n-border-color));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
+}
+
+.image-view-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.image-view-preview-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.image-view-preview-path {
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--n-text-color-3);
+  word-break: break-all;
+}
+
+.image-view-preview-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%) 0%,
+      color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%) 100%
+    );
+}
+
+.image-view-preview-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  padding: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--n-text-color-3);
+  text-align: center;
+}
+
+.image-view-preview-status.is-error {
+  color: var(--n-error-color, #dc2626);
+}
+
+.image-view-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: min(56vh, 520px);
+  border-radius: 10px;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.image-view-preview-image.is-ready {
+  opacity: 1;
+}
+
 .plan-tool-content {
   padding: 18px 20px;
   border-radius: 16px;
@@ -8535,7 +9637,6 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_approval,
-.live-card.phase-waiting_plan_approval,
 .live-card.phase-waiting_input {
   border-color: color-mix(in srgb, var(--web-session-approval-border) 82%, var(--n-border-color));
   background:
@@ -8555,8 +9656,35 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_approval::before,
-.live-card.phase-waiting_plan_approval::before,
 .live-card.phase-waiting_input::before {
+  opacity: 0.26;
+  animation: liveSweep 3.2s ease-in-out infinite;
+}
+
+.live-card.phase-waiting_plan_approval {
+  border-color: color-mix(
+    in srgb,
+    var(--web-session-plan-approval-border) 82%,
+    var(--n-border-color)
+  );
+  background:
+    radial-gradient(
+      circle at top right,
+      color-mix(in srgb, var(--web-session-plan-approval-accent) 12%, transparent) 0%,
+      transparent 42%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 24%, var(--app-surface-color, #fff)) 0%,
+      color-mix(in srgb, var(--web-session-plan-approval-bg) 11%, var(--app-surface-color, #fff))
+        54%,
+      var(--app-surface-color, #fff) 100%
+    ),
+    var(--app-surface-color, #fff);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--web-session-plan-approval-glow) 70%, transparent);
+}
+
+.live-card.phase-waiting_plan_approval::before {
   opacity: 0.26;
   animation: liveSweep 3.2s ease-in-out infinite;
 }
@@ -8690,7 +9818,6 @@ onBeforeUnmount(() => {
 }
 
 .live-card.phase-waiting_input .live-orb,
-.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb,
 .approval-badge {
   background: linear-gradient(
@@ -8700,16 +9827,30 @@ onBeforeUnmount(() => {
   );
 }
 
+.live-card.phase-waiting_plan_approval .live-orb {
+  background: linear-gradient(
+    135deg,
+    var(--web-session-plan-approval-accent) 0%,
+    var(--web-session-plan-approval-accent-strong) 100%
+  );
+}
+
 .live-card.phase-waiting_input .live-orb,
-.live-card.phase-waiting_plan_approval .live-orb,
 .live-card.phase-waiting_approval .live-orb {
   box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-approval-glow) 82%, transparent);
 }
 
-.live-card.phase-waiting_plan_approval .live-orb::after,
+.live-card.phase-waiting_plan_approval .live-orb {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--web-session-plan-approval-glow) 82%, transparent);
+}
+
 .live-card.phase-waiting_approval .live-orb::after,
 .live-card.phase-waiting_input .live-orb::after {
   background: color-mix(in srgb, var(--web-session-approval-accent) 28%, transparent);
+}
+
+.live-card.phase-waiting_plan_approval .live-orb::after {
+  background: color-mix(in srgb, var(--web-session-plan-approval-accent) 28%, transparent);
 }
 
 .live-card.phase-retrying .live-orb {
@@ -9145,6 +10286,16 @@ onBeforeUnmount(() => {
   line-height: 1.5;
 }
 
+.web-session-close-confirm__href {
+  display: block;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  background: var(--n-code-color);
+}
+
 .web-session-close-confirm__checkbox {
   display: flex;
   align-items: center;
@@ -9215,12 +10366,30 @@ onBeforeUnmount(() => {
   text-align: right;
 }
 
+.composer-auto-continue {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.composer-auto-continue :deep(.n-checkbox) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.composer-auto-continue :deep(.n-checkbox__label) {
+  font-size: 12px;
+  color: var(--n-text-color-2);
+}
+
 .composer-input-shell {
   position: relative;
 }
 
 .composer-input-shell.is-mobile {
   min-height: 96px;
+  z-index: 201;
 }
 
 .composer-input-shell.is-mobile .composer-input :deep(.n-input__textarea-el) {
@@ -9353,7 +10522,11 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 2px;
   bottom: -44px;
-  z-index: 1;
+  z-index: 202;
+}
+
+.composer-icon-btn-mobile-secondary {
+  left: 32px;
 }
 
 .composer-hint {
@@ -9407,6 +10580,70 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 2px;
+}
+
+.quick-input-popover-card {
+  width: min(320px, 74vw);
+  padding: 0;
+}
+
+.quick-input-empty {
+  padding: 8px 6px;
+  color: var(--n-text-color-3, #8a8f98);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.quick-input-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quick-input-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.quick-input-item:hover {
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+}
+
+.quick-input-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+}
+
+.quick-input-item.is-selected {
+  color: var(--n-primary-color);
+}
+
+.quick-input-item-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--n-text-color-1, #222);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.quick-input-item.is-selected .quick-input-item-text {
+  color: inherit;
+  font-weight: 600;
 }
 
 .pending-input-item {
@@ -9642,6 +10879,20 @@ onBeforeUnmount(() => {
 
   .composer-config.is-mobile {
     margin-bottom: 4px;
+  }
+
+  .composer-config.is-mobile .composer-config-row {
+    flex-wrap: wrap;
+  }
+
+  .composer-config.is-mobile .composer-path {
+    flex-basis: 100%;
+    text-align: left;
+    order: 10;
+  }
+
+  .composer-config.is-mobile .composer-auto-continue {
+    margin-left: auto;
   }
 
   .runtime-strip {

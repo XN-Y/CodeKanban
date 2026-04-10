@@ -1,8 +1,15 @@
 import { createRouter, createWebHashHistory } from 'vue-router';
+import { useAuthStore } from '@/stores/auth';
+import { pinia } from '@/stores/pinia';
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
   routes: [
+    {
+      path: '/login',
+      name: 'login',
+      component: () => import('@/views/LoginView.vue'),
+    },
     {
       path: '/',
       name: 'projects',
@@ -29,6 +36,36 @@ const router = createRouter({
       component: () => import('@/views/GeneralSettings.vue'),
     },
   ],
+});
+
+router.beforeEach(async to => {
+  const authStore = useAuthStore(pinia);
+  await authStore.ensureLoaded();
+
+  if (!authStore.enabled) {
+    if (to.name === 'login') {
+      return { name: 'projects' };
+    }
+    return true;
+  }
+
+  if (!authStore.authenticated && to.name !== 'login') {
+    const redirect = to.fullPath && to.fullPath !== '/login' ? to.fullPath : '/';
+    return {
+      name: 'login',
+      query: { redirect },
+    };
+  }
+
+  if (authStore.authenticated && to.name === 'login') {
+    const redirect =
+      typeof to.query.redirect === 'string' && to.query.redirect.startsWith('/')
+        ? to.query.redirect
+        : '/';
+    return redirect;
+  }
+
+  return true;
 });
 
 export default router;

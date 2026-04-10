@@ -84,17 +84,19 @@ export function buildWebSessionSendConfirmationSignature(input: {
 export function resolveWebSessionSendConfirmation(
   input: ResolveWebSessionSendConfirmationInput
 ): ResolveWebSessionSendConfirmationResult {
-  if (input.conflicts.length === 0) {
+  const hasConflicts = input.conflicts.length > 0;
+  if (!hasConflicts) {
     return {
       shouldProceed: true,
       nextState: null,
     };
   }
 
+  const currentState = input.currentState;
   const isConfirmed =
-    input.currentState != null &&
-    input.currentState.signature === input.signature &&
-    input.currentState.expiresAt > input.now;
+    currentState != null &&
+    currentState.signature === input.signature &&
+    currentState.expiresAt > input.now;
 
   if (isConfirmed) {
     return {

@@ -1,37 +1,16 @@
-import type { WebSessionLiveState } from '@/stores/webSession';
-
-export type WebSessionSubmitKind = 'execute_send' | 'execute_plan' | 'plan_message';
-
-export interface WebSessionSubmitEntry {
-  kind: WebSessionSubmitKind;
-  startedAt: number;
-}
-
-export type WebSessionSubmitState = Record<string, WebSessionSubmitEntry>;
+export type WebSessionSubmitState = Record<string, true>;
 
 function normalizeSubmitOwnerId(ownerId: string) {
   return String(ownerId || '').trim();
 }
 
-function normalizeSubmitStartedAt(startedAt?: number) {
-  return typeof startedAt === 'number' && Number.isFinite(startedAt) && startedAt > 0
-    ? startedAt
-    : Date.now();
-}
-
-function normalizeSubmitEntry(
-  entry: Pick<WebSessionSubmitEntry, 'kind'> & Partial<Pick<WebSessionSubmitEntry, 'startedAt'>>
-): WebSessionSubmitEntry {
-  return {
-    kind: entry.kind,
-    startedAt: normalizeSubmitStartedAt(entry.startedAt),
-  };
+export function buildWebSessionSubmitOwnerId(...ownerIdParts: string[]) {
+  return ownerIdParts.map(normalizeSubmitOwnerId).filter(Boolean).join('::');
 }
 
 export function beginWebSessionSubmit(
   state: WebSessionSubmitState,
-  ownerId: string,
-  entry: Pick<WebSessionSubmitEntry, 'kind'> & Partial<Pick<WebSessionSubmitEntry, 'startedAt'>>
+  ownerId: string
 ): WebSessionSubmitState {
   const normalizedOwnerId = normalizeSubmitOwnerId(ownerId);
   if (!normalizedOwnerId || state[normalizedOwnerId]) {
@@ -39,7 +18,7 @@ export function beginWebSessionSubmit(
   }
   return {
     ...state,
-    [normalizedOwnerId]: normalizeSubmitEntry(entry),
+    [normalizedOwnerId]: true,
   };
 }
 
@@ -61,36 +40,6 @@ export function isWebSessionSubmitting(state: WebSessionSubmitState, ownerId: st
   return Boolean(normalizedOwnerId && state[normalizedOwnerId]);
 }
 
-export function getWebSessionSubmitEntry(
-  state: WebSessionSubmitState,
-  ownerId: string
-): WebSessionSubmitEntry | null {
-  const normalizedOwnerId = normalizeSubmitOwnerId(ownerId);
-  return normalizedOwnerId ? (state[normalizedOwnerId] ?? null) : null;
-}
-
-export function shouldShowWebSessionExecuteFeedback(
-  entry: Pick<WebSessionSubmitEntry, 'kind'> | null | undefined
-) {
-  return entry?.kind === 'execute_send' || entry?.kind === 'execute_plan';
-}
-
-export function resolveOptimisticWebSessionLiveState(
-  state: WebSessionLiveState,
-  entry: WebSessionSubmitEntry | null | undefined
-): WebSessionLiveState {
-  if (!entry || !shouldShowWebSessionExecuteFeedback(entry) || state.running) {
-    return state;
-  }
-
-  return {
-    phase: 'starting',
-    running: true,
-    updatedAt: entry.startedAt,
-    startedAt: entry.startedAt,
-  };
-}
-
 export function transferWebSessionSubmit(
   state: WebSessionSubmitState,
   fromOwnerId: string,
@@ -107,10 +56,9 @@ export function transferWebSessionSubmit(
   }
 
   const nextState = { ...state };
-  const entry = nextState[normalizedFromOwnerId];
   delete nextState[normalizedFromOwnerId];
-  if (normalizedToOwnerId && entry) {
-    nextState[normalizedToOwnerId] = entry;
+  if (normalizedToOwnerId) {
+    nextState[normalizedToOwnerId] = true;
   }
   return nextState;
 }

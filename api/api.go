@@ -59,6 +59,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	app.Use(recover.New(recover.Config{EnableStackTrace: true}))
 	app.Use(logger.New())
 	app.Use(compress.New())
+	registerAuthMiddleware(app, cfg)
 
 	humaAPI, v1 := h.NewAPI(app, cfg)
 	humaAPI.UseMiddleware(h.HumaTraceMiddleware)
@@ -79,6 +80,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 
+	registerAuthRoutes(app, cfg)
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
 	registerWorktreeRoutes(v1, cfg)

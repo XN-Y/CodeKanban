@@ -24,6 +24,10 @@ type ArchivedQueryResult = {
   nextOffset: number;
 };
 
+type CountsResponse = {
+  counts?: Record<string, number>;
+};
+
 export type WebSessionHistoryWindow = {
   items: unknown[];
   hasMore: boolean;
@@ -39,9 +43,9 @@ export type WebSessionSnapshot = {
 export const webSessionApi = {
   async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
     const config = extractItem<WebSessionCodexRuntimeConfig>(
-      await http.Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config').send(
-        true
-      )
+      await http
+        .Get<ItemResponse<WebSessionCodexRuntimeConfig>>('/web-sessions/runtime-config')
+        .send(true)
     );
     if (!config) {
       throw new Error('failed to load web session runtime config');
@@ -57,6 +61,11 @@ export const webSessionApi = {
     return body.items ?? [];
   },
 
+  async counts(): Promise<Record<string, number>> {
+    const body = (await http.Get<CountsResponse>('/web-sessions/counts').send(true)) ?? {};
+    return body.counts ?? {};
+  },
+
   async create(
     projectId: string,
     data: {
@@ -66,6 +75,9 @@ export const webSessionApi = {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      autoRetryEnabled?: boolean;
+      autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       permissionMode?: string;
       title?: string;
     }
@@ -79,6 +91,9 @@ export const webSessionApi = {
           reasoningEffort: data.reasoningEffort ?? 'default',
           workflowMode: data.workflowMode ?? 'default',
           permissionLevel: data.permissionLevel ?? 'elevated',
+          autoRetryEnabled: data.autoRetryEnabled === true,
+          autoRetryScope: data.autoRetryScope ?? 'network_only',
+          autoRetryPreset: data.autoRetryPreset ?? 'gentle_stop',
           permissionMode: data.permissionMode ?? '',
           title: data.title ?? '',
         })
@@ -164,12 +179,13 @@ export const webSessionApi = {
   ): Promise<WebSessionSnapshot> {
     const body =
       (await http
-        .Post<
-          ItemResponse<WebSessionSnapshot>
-        >(`/projects/${projectId}/web-sessions/${sessionId}/sync`, {
-          ...(mode ? { mode } : {}),
-          clearExisting,
-        })
+        .Post<ItemResponse<WebSessionSnapshot>>(
+          `/projects/${projectId}/web-sessions/${sessionId}/sync`,
+          {
+            ...(mode ? { mode } : {}),
+            clearExisting,
+          }
+        )
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to sync web session');
@@ -219,11 +235,6 @@ export const webSessionApi = {
       xhr.open('POST', uploadUrl, true);
       xhr.withCredentials = true;
       xhr.responseType = 'json';
-
-      const token = window.localStorage.getItem('token');
-      if (token) {
-        xhr.setRequestHeader('Authorization', token);
-      }
 
       xhr.upload.onprogress = event => {
         if (!options?.onProgress) {

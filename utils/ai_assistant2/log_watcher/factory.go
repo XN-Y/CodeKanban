@@ -31,7 +31,7 @@ func CreateWatcherForAssistantWithWorkingDir(
 ) (*LogWatcher, error) {
 	switch assistantType {
 	case types.AssistantTypeCodex:
-		searcher, err := NewCodexFileSearcher()
+		searcher, err := NewCodexFileSearcherWithWorkingDir(workingDir)
 		if err != nil {
 			return nil, err
 		}
@@ -85,7 +85,7 @@ func CreateWatcherForAssistantWithWorkingDirAndMode(
 ) (*LogWatcher, error) {
 	switch assistantType {
 	case types.AssistantTypeCodex:
-		searcher, err := NewCodexFileSearcher()
+		searcher, err := NewCodexFileSearcherWithWorkingDir(workingDir)
 		if err != nil {
 			return nil, err
 		}

@@ -12,13 +12,12 @@ import (
 )
 
 func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachment {
-	rawItems, ok := payload["atts"].([]any)
-	if !ok {
+	rawItems := decodeRawArray(payload["atts"])
+	if len(rawItems) == 0 {
 		return nil
 	}
 	items := make([]HistoryAttachment, 0, len(rawItems))
-	for _, raw := range rawItems {
-		record := decodeRawObject(raw)
+	for _, record := range rawItems {
 		items = append(items, HistoryAttachment{
 			ID:   stringValue(record["id"]),
 			Name: stringValue(record["name"]),
@@ -26,6 +25,9 @@ func historyAttachmentsFromEventPayload(payload map[string]any) []HistoryAttachm
 			Size: int64(numberValue(record["sz"])),
 			Path: stringValue(record["path"]),
 		})
+	}
+	if len(items) == 0 {
+		return nil
 	}
 	return items
 }
@@ -58,6 +60,42 @@ func historyGroupDetailItemFromPayload(
 		detail.CompletedAt = timestamp
 	}
 	return detail
+}
+
+func mergeHistoryToolPayload(existingPayload, nextPayload map[string]any) map[string]any {
+	merged := cloneMap(existingPayload)
+	if merged == nil {
+		merged = make(map[string]any)
+	}
+	for key, value := range nextPayload {
+		merged[key] = value
+	}
+
+	existingMeta := decodeRawObject(existingPayload["meta"])
+	nextMeta := decodeRawObject(nextPayload["meta"])
+	if len(existingMeta) > 0 || len(nextMeta) > 0 {
+		meta := cloneMap(existingMeta)
+		if meta == nil {
+			meta = make(map[string]any)
+		}
+		for key, value := range nextMeta {
+			if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+				if _, exists := meta[key]; exists {
+					continue
+				}
+			}
+			meta[key] = value
+		}
+		merged["meta"] = meta
+	}
+
+	if _, ok := nextPayload["in"]; !ok {
+		if value, ok := existingPayload["in"]; ok {
+			merged["in"] = value
+		}
+	}
+
+	return merged
 }
 
 func mergeHistoryGroupItems(
@@ -298,19 +336,20 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
+			mergedPayload := mergeHistoryToolPayload(existingPayload, payload)
 			next.Kind = "tool"
-			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), next.ItemType, "tool")
-			next.Tool = historyToolFromEventPayload(payload, status)
+			next.ItemType = firstNonEmpty(stringValue(mergedPayload["kind"]), next.ItemType, "tool")
+			next.Tool = historyToolFromEventPayload(mergedPayload, status)
 			next.ObservedAt = ptr(event.Timestamp)
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
 			}
 			next.Done = true
-			next.Payload = payload
+			next.Payload = mergedPayload
 			if next.Tool != nil && isCompactToolKind(next.Tool.Kind) {
 				groupItems := mergeHistoryGroupItems(
 					decodeHistoryGroupItems(existingPayload),
-					historyGroupDetailItemFromPayload(payload, event.Timestamp, status),
+					historyGroupDetailItemFromPayload(mergedPayload, event.Timestamp, status),
 				)
 				next.Payload["groupItems"] = groupItems
 			}
@@ -483,6 +522,11 @@ func max(left, right int) int {
 func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *SessionSummary {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
+		return nil
+	}
+	// Archived sessions remain queryable via explicit snapshot/history APIs,
+	// but they should not continue to emit live websocket updates.
+	if record.ArchivedAt != nil {
 		return nil
 	}
 	summary := m.mapSessionSummary(record)

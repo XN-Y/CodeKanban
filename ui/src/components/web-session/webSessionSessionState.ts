@@ -4,6 +4,7 @@ import type { WebSessionSummary } from '@/types/models';
 export type WebSessionDisplayAssistantState =
   | 'working'
   | 'waiting_approval'
+  | 'waiting_plan_approval'
   | 'waiting_input'
   | 'idle'
   | 'unknown';
@@ -34,7 +35,7 @@ export interface WebSessionDisplayState {
   hasUnviewedApproval: boolean;
   hasUnviewedCompletion: boolean;
   showStatusDot: boolean;
-  statusDotClass: WebSessionSummary['status'] | 'stale' | null;
+  statusDotClass: WebSessionSummary['status'] | null;
 }
 
 function mapPhaseToAssistantState(
@@ -47,8 +48,9 @@ function mapPhaseToAssistantState(
     case 'retrying':
       return 'working';
     case 'waiting_approval':
-    case 'waiting_plan_approval':
       return 'waiting_approval';
+    case 'waiting_plan_approval':
+      return 'waiting_plan_approval';
     case 'waiting_input':
       return 'waiting_input';
     case 'done':
@@ -68,8 +70,9 @@ function mapAssistantStateToDisplayState(
     case 'working':
       return 'working';
     case 'waiting_approval':
-    case 'waiting_plan_approval':
       return 'waiting_approval';
+    case 'waiting_plan_approval':
+      return 'waiting_plan_approval';
     case 'waiting_input':
       return 'waiting_input';
     default:
@@ -105,13 +108,15 @@ export function resolveWebSessionDisplayState(
       mapAssistantStateToDisplayState(input.assistantState) ??
       mapStatusToAssistantState(input.status));
 
-  const hasUnviewedApproval = input.hasUnread && assistantStateClass === 'waiting_approval';
+  const hasUnviewedApproval =
+    input.hasUnread &&
+    (assistantStateClass === 'waiting_approval' || assistantStateClass === 'waiting_plan_approval');
   const hasUnviewedCompletion =
     input.hasUnread &&
     !hasUnviewedApproval &&
     assistantStateClass === 'idle' &&
     input.status !== 'err';
-  const showStatusDot = !input.isDraft && (input.status === 'err' || input.syncState === 'stale');
+  const showStatusDot = !input.isDraft && input.status === 'err';
 
   let statusLabelKey: WebSessionDisplayStatusKey | null = null;
   let statusEmoji = '';
@@ -122,6 +127,7 @@ export function resolveWebSessionDisplayState(
       statusEmoji = '🤔';
       break;
     case 'waiting_approval':
+    case 'waiting_plan_approval':
       statusLabelKey = 'terminal.aiStatusWaitingApproval';
       statusEmoji = '✋';
       break;
@@ -145,6 +151,6 @@ export function resolveWebSessionDisplayState(
     hasUnviewedApproval,
     hasUnviewedCompletion,
     showStatusDot,
-    statusDotClass: showStatusDot ? (input.syncState === 'stale' ? 'stale' : input.status) : null,
+    statusDotClass: showStatusDot ? input.status : null,
   };
 }

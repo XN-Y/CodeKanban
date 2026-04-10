@@ -255,6 +255,15 @@ export interface WebSessionUsage {
   cost: number;
 }
 
+export interface WebSessionContextEstimate {
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  usedTokens: number;
+}
+
+export type WebSessionContextEstimateMode = 'cumulative_total' | 'since_compaction';
+
 export type WebSessionContextWindowSource = 'config' | 'default' | 'unavailable';
 
 export interface WebSessionCodexRuntimeConfig {
@@ -274,6 +283,9 @@ export interface WebSessionSummary {
   reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   workflowMode: 'default' | 'plan';
   permissionLevel: 'default' | 'elevated' | 'yolo';
+  autoRetryEnabled: boolean;
+  autoRetryScope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+  autoRetryPreset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   cwd: string;
   nativeSessionId?: string | null;
   status: 'idle' | 'running' | 'waiting_approval' | 'done' | 'err' | 'aborting';
@@ -302,6 +314,9 @@ export interface WebSessionSummary {
   createdAt: string;
   updatedAt: string;
   usage: WebSessionUsage;
+  contextEstimate: WebSessionContextEstimate;
+  contextEstimateMode: WebSessionContextEstimateMode;
+  lastContextCompactionAt?: string | null;
   contextWindowTokens?: number | null;
   contextWindowSource: WebSessionContextWindowSource;
 }

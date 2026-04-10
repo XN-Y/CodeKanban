@@ -6,7 +6,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "run-p type-check \"build-only {@}\" --",
     "preview": "vite preview",
     "build-only": "vite build",
@@ -18,6 +18,7 @@
     "format": "prettier --write src/"
   },
   "dependencies": {
+    "@noble/hashes": "^2.0.1",
     "@vicons/ionicons5": "^0.12.0",
     "@vueuse/core": "^14.0.0",
     "@xterm/addon-fit": "^0.10.0",

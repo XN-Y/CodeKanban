@@ -2280,7 +2280,7 @@ func (s *Session) findAISessionSync(assistantType types.AssistantType, workingDi
 		sessionID = strings.TrimSuffix(baseName, ".jsonl")
 
 	case types.AssistantTypeCodex:
-		searcher, err := log_watcher.NewCodexFileSearcher()
+		searcher, err := log_watcher.NewCodexFileSearcherWithWorkingDir(workingDir)
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Debug("failed to create Codex file searcher", zap.Error(err))

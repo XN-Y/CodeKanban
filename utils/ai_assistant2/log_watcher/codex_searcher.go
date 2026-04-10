@@ -1,7 +1,9 @@
 package log_watcher
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,38 +23,66 @@ const (
 	CodexRolloutSuffix = ".jsonl"
 )
 
-// CodexFileSearcher searches for Codex session files
+// CodexFileSearcher searches for Codex session files.
 type CodexFileSearcher struct {
-	homeDir    string
-	sessionDir string
+	homeDir              string
+	sessionDir           string
+	normalizedWorkingDir string
 }
 
-// NewCodexFileSearcher creates a new Codex file searcher
+type codexRolloutMeta struct {
+	Cwd        string
+	Originator string
+	Source     string
+}
+
+type codexRolloutCandidate struct {
+	path    string
+	modTime time.Time
+	ctime   time.Time
+	meta    codexRolloutMeta
+}
+
+// NewCodexFileSearcher creates a new Codex file searcher.
 func NewCodexFileSearcher() (*CodexFileSearcher, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
 	}
 
-	sessionDir := filepath.Join(homeDir, CodexSessionDirName, CodexSessionSubDir)
-
-	return &CodexFileSearcher{
-		homeDir:    homeDir,
-		sessionDir: sessionDir,
-	}, nil
+	return newCodexFileSearcher(homeDir, ""), nil
 }
 
-// NewCodexFileSearcherWithHomeDir creates a new Codex file searcher with custom home directory
-func NewCodexFileSearcherWithHomeDir(homeDir string) *CodexFileSearcher {
-	sessionDir := filepath.Join(homeDir, CodexSessionDirName, CodexSessionSubDir)
+// NewCodexFileSearcherWithWorkingDir creates a new Codex file searcher scoped to a working directory.
+func NewCodexFileSearcherWithWorkingDir(workingDir string) (*CodexFileSearcher, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
 
+	return newCodexFileSearcher(homeDir, workingDir), nil
+}
+
+// NewCodexFileSearcherWithHomeDir creates a new Codex file searcher with custom home directory.
+func NewCodexFileSearcherWithHomeDir(homeDir string) *CodexFileSearcher {
+	return NewCodexFileSearcherWithHomeDirAndWorkingDir(homeDir, "")
+}
+
+// NewCodexFileSearcherWithHomeDirAndWorkingDir creates a new Codex file searcher with custom home dir.
+func NewCodexFileSearcherWithHomeDirAndWorkingDir(homeDir string, workingDir string) *CodexFileSearcher {
+	return newCodexFileSearcher(homeDir, workingDir)
+}
+
+func newCodexFileSearcher(homeDir string, workingDir string) *CodexFileSearcher {
+	sessionDir := filepath.Join(homeDir, CodexSessionDirName, CodexSessionSubDir)
 	return &CodexFileSearcher{
-		homeDir:    homeDir,
-		sessionDir: sessionDir,
+		homeDir:              homeDir,
+		sessionDir:           sessionDir,
+		normalizedWorkingDir: normalizeComparablePath(workingDir),
 	}
 }
 
-// GetSessionDir returns the base session directory
+// GetSessionDir returns the base session directory.
 func (s *CodexFileSearcher) GetSessionDir() string {
 	return s.sessionDir
 }
@@ -108,32 +138,21 @@ func (s *CodexFileSearcher) FindBySessionID(sessionID string) (string, error) {
 	return matches[0].path, nil
 }
 
-// FindSessionFile searches for a session file created after the given time
+// FindSessionFile searches for a session file created after the given time.
 func (s *CodexFileSearcher) FindSessionFile(ctx context.Context, afterTime time.Time) (string, error) {
-	// Get today's date directory
 	now := time.Now()
 	dateDir := filepath.Join(s.sessionDir, now.Format("2006"), now.Format("01"), now.Format("02"))
 
-	// Check if the directory exists
 	if _, err := os.Stat(dateDir); os.IsNotExist(err) {
-		return "", nil // Directory doesn't exist yet
+		return "", nil
 	}
 
-	// List all rollout files in the directory
 	entries, err := os.ReadDir(dateDir)
 	if err != nil {
 		return "", err
 	}
 
-	// Find files matching the pattern and created after afterTime
-	type fileWithTime struct {
-		path    string
-		modTime time.Time
-		ctime   time.Time
-	}
-
-	var candidates []fileWithTime
-
+	candidates := make([]codexRolloutCandidate, 0, len(entries))
 	for _, entry := range entries {
 		select {
 		case <-ctx.Done():
@@ -156,50 +175,163 @@ func (s *CodexFileSearcher) FindSessionFile(ctx context.Context, afterTime time.
 			continue
 		}
 
-		// Get creation time (or mod time as fallback)
 		ctime := getFileCreationTime(filePath, info)
-
-		// Check if file was created after the process start time
-		// Use a small tolerance (100ms) to account for timing differences
 		tolerance := 100 * time.Millisecond
-		if ctime.Add(tolerance).Before(afterTime) {
+		if !afterTime.IsZero() && ctime.Add(tolerance).Before(afterTime) {
 			continue
 		}
 
-		candidates = append(candidates, fileWithTime{
+		candidate := codexRolloutCandidate{
 			path:    filePath,
 			modTime: info.ModTime(),
 			ctime:   ctime,
-		})
+		}
+		if meta, ok := readCodexRolloutMeta(filePath); ok {
+			candidate.meta = meta
+		}
+		candidates = append(candidates, candidate)
 	}
 
 	if len(candidates) == 0 {
 		return "", nil
 	}
 
-	// Sort by creation time (newest first)
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].ctime.After(candidates[j].ctime)
+	filtered := make([]codexRolloutCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if s.normalizedWorkingDir != "" {
+			// If we know the terminal's working directory, refuse to bind an unrelated rollout.
+			if !sameComparablePath(candidate.meta.Cwd, s.normalizedWorkingDir) {
+				continue
+			}
+			if isCodeKanbanWebSessionRollout(candidate.meta) {
+				continue
+			}
+		}
+		filtered = append(filtered, candidate)
+	}
+	if len(filtered) == 0 {
+		return "", nil
+	}
+
+	sort.Slice(filtered, func(i, j int) bool {
+		leftWeb := isCodeKanbanWebSessionRollout(filtered[i].meta)
+		rightWeb := isCodeKanbanWebSessionRollout(filtered[j].meta)
+		if leftWeb != rightWeb {
+			return !leftWeb
+		}
+
+		if !afterTime.IsZero() {
+			leftDelta := absDuration(filtered[i].ctime.Sub(afterTime))
+			rightDelta := absDuration(filtered[j].ctime.Sub(afterTime))
+			if leftDelta != rightDelta {
+				return leftDelta < rightDelta
+			}
+		}
+
+		if !filtered[i].ctime.Equal(filtered[j].ctime) {
+			if afterTime.IsZero() {
+				return filtered[i].ctime.After(filtered[j].ctime)
+			}
+			return filtered[i].ctime.Before(filtered[j].ctime)
+		}
+		if !filtered[i].modTime.Equal(filtered[j].modTime) {
+			if afterTime.IsZero() {
+				return filtered[i].modTime.After(filtered[j].modTime)
+			}
+			return filtered[i].modTime.Before(filtered[j].modTime)
+		}
+		return filtered[i].path > filtered[j].path
 	})
 
-	// Return the newest file that was created after afterTime
-	return candidates[0].path, nil
+	return filtered[0].path, nil
 }
 
-// getFileCreationTime returns the file creation time
-// On Windows, it returns the actual creation time
-// On Unix systems, it returns the modification time as a fallback
+func readCodexRolloutMeta(filePath string) (codexRolloutMeta, bool) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return codexRolloutMeta{}, false
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	buf := make([]byte, 0, 4*1024)
+	scanner.Buffer(buf, 256*1024)
+
+	for lineCount := 0; scanner.Scan() && lineCount < 16; lineCount += 1 {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		var entry struct {
+			Type    string          `json:"type"`
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			continue
+		}
+		if entry.Type != "session_meta" {
+			continue
+		}
+
+		var payload SessionMetaPayload
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			return codexRolloutMeta{}, false
+		}
+
+		return codexRolloutMeta{
+			Cwd:        payload.Cwd,
+			Originator: payload.Originator,
+			Source:     payload.Source,
+		}, true
+	}
+
+	return codexRolloutMeta{}, false
+}
+
+func normalizeComparablePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+
+	normalized := filepath.Clean(filepath.FromSlash(trimmed))
+	if resolved, err := filepath.EvalSymlinks(normalized); err == nil && strings.TrimSpace(resolved) != "" {
+		normalized = filepath.Clean(resolved)
+	}
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(normalized)
+	}
+	return normalized
+}
+
+func sameComparablePath(path string, normalizedTarget string) bool {
+	return normalizeComparablePath(path) == normalizedTarget
+}
+
+func isCodeKanbanWebSessionRollout(meta codexRolloutMeta) bool {
+	source := strings.ToLower(strings.TrimSpace(meta.Source))
+	originator := strings.ToLower(strings.TrimSpace(meta.Originator))
+	return strings.Contains(source, "codekanban-web-session") ||
+		strings.Contains(originator, "codekanban-web-session")
+}
+
+// getFileCreationTime returns the file creation time.
+// On Windows, it returns the actual creation time.
+// On Unix systems, it returns the modification time as a fallback.
 func getFileCreationTime(path string, info os.FileInfo) time.Time {
 	if runtime.GOOS == "windows" {
-		// On Windows, we can get the creation time from the file info
-		// The ModTime is the last modification time, but for newly created files
-		// it's close to the creation time
 		return getWindowsCreationTime(path, info)
 	}
 
-	// On Unix systems, use modification time as fallback
-	// Most Unix filesystems don't track creation time
 	return info.ModTime()
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
 }
 
 // ExtractSessionIDFromFilename extracts the session UUID from a rollout filename

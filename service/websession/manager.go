@@ -58,6 +58,7 @@ type Manager struct {
 	mu                 sync.RWMutex
 	runs               map[string]*activeRun
 	clients            map[*client]struct{}
+	autoRetryTimers    map[string]*time.Timer
 	codexContextWindow codexContextWindowResolver
 }
 
@@ -132,6 +133,28 @@ func normalizeAssistantState(state AssistantState) AssistantState {
 		return AssistantStateWaitingPlanApproval
 	default:
 		return AssistantStateNone
+	}
+}
+
+func normalizeAutoRetryScope(scope AutoRetryScope) AutoRetryScope {
+	switch strings.ToLower(strings.TrimSpace(string(scope))) {
+	case string(AutoRetryScopeNetworkAndRateLimit):
+		return AutoRetryScopeNetworkAndRateLimit
+	case string(AutoRetryScopeAllFailures):
+		return AutoRetryScopeAllFailures
+	default:
+		return AutoRetryScopeNetworkOnly
+	}
+}
+
+func normalizeAutoRetryPreset(preset AutoRetryPreset) AutoRetryPreset {
+	switch strings.ToLower(strings.TrimSpace(string(preset))) {
+	case string(AutoRetryPresetAggressiveStop):
+		return AutoRetryPresetAggressiveStop
+	case string(AutoRetryPresetSustain60s):
+		return AutoRetryPresetSustain60s
+	default:
+		return AutoRetryPresetGentleStop
 	}
 }
 
@@ -214,14 +237,15 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		cfg:          cfg,
-		logger:       logger.Named("web-session-manager"),
-		store:        eventStore,
-		projectSvc:   model.NewProjectService(),
-		worktreeSvc:  service.NewWorktreeService(),
-		aiSessionSvc: service.NewAISessionService(),
-		runs:         make(map[string]*activeRun),
-		clients:      make(map[*client]struct{}),
+		cfg:             cfg,
+		logger:          logger.Named("web-session-manager"),
+		store:           eventStore,
+		projectSvc:      model.NewProjectService(),
+		worktreeSvc:     service.NewWorktreeService(),
+		aiSessionSvc:    service.NewAISessionService(),
+		runs:            make(map[string]*activeRun),
+		clients:         make(map[*client]struct{}),
+		autoRetryTimers: make(map[string]*time.Timer),
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
@@ -230,6 +254,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		return nil, err
 	}
 	if err := manager.recoverInterruptedSessions(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := manager.recoverPendingAutoRetrySessions(context.Background()); err != nil {
 		return nil, err
 	}
 	return manager, nil
@@ -253,6 +280,84 @@ func (m *Manager) RegisterCommandClient(conn wsConn) *client {
 
 func (m *Manager) RegisterEventClient(conn wsConn) *client {
 	return m.registerClient(conn, clientKindEvent)
+}
+
+var autoRetryNetworkFailureKeywords = []string{
+	"network",
+	"timeout",
+	"timed out",
+	"connection reset",
+	"connection closed",
+	"connection failed",
+	"socket hang up",
+	"transport error",
+	"temporarily unavailable",
+	"upstream service temporarily unavailable",
+	"bad gateway",
+	"502",
+	"websocket",
+}
+
+var autoRetryRateLimitFailureKeywords = []string{
+	"429",
+	"rate limit",
+	"too many requests",
+}
+
+func shouldAutoRetryFailure(scope AutoRetryScope, code string, message string) bool {
+	normalizedScope := normalizeAutoRetryScope(scope)
+	if normalizedScope == AutoRetryScopeAllFailures {
+		return true
+	}
+	normalizedCode := strings.ToLower(strings.TrimSpace(code))
+	normalizedMessage := strings.ToLower(strings.TrimSpace(message))
+	isNetworkFailure := normalizedCode == codexTransportRetryExhaustedCode
+	if !isNetworkFailure {
+		for _, keyword := range autoRetryNetworkFailureKeywords {
+			if strings.Contains(normalizedMessage, keyword) {
+				isNetworkFailure = true
+				break
+			}
+		}
+	}
+	if isNetworkFailure {
+		return true
+	}
+	if normalizedScope != AutoRetryScopeNetworkAndRateLimit {
+		return false
+	}
+	for _, keyword := range autoRetryRateLimitFailureKeywords {
+		if strings.Contains(normalizedMessage, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func autoRetryDelay(preset AutoRetryPreset, attempt int) (time.Duration, bool) {
+	if attempt <= 0 {
+		return 0, false
+	}
+	switch normalizeAutoRetryPreset(preset) {
+	case AutoRetryPresetAggressiveStop:
+		delays := []time.Duration{2 * time.Second, 5 * time.Second, 15 * time.Second, 30 * time.Second, 60 * time.Second}
+		if attempt > len(delays) {
+			return 0, false
+		}
+		return delays[attempt-1], true
+	case AutoRetryPresetSustain60s:
+		delays := []time.Duration{3 * time.Second, 10 * time.Second, 30 * time.Second}
+		if attempt <= len(delays) {
+			return delays[attempt-1], true
+		}
+		return 60 * time.Second, true
+	default:
+		delays := []time.Duration{3 * time.Second, 10 * time.Second, 30 * time.Second, 60 * time.Second}
+		if attempt > len(delays) {
+			return 0, false
+		}
+		return delays[attempt-1], true
+	}
 }
 
 func (m *Manager) UnregisterClient(client *client) {
@@ -281,6 +386,36 @@ func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]Session
 		items = append(items, m.mapSessionSummary(record))
 	}
 	return items, nil
+}
+
+func (m *Manager) CountSessionsByProject(ctx context.Context) (map[string]int, error) {
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	var rows []struct {
+		ProjectID string
+		Count     int64
+	}
+	if err := db.WithContext(ctx).
+		Model(&tables.WebSessionTable{}).
+		Select("project_id, COUNT(1) AS count").
+		Where("archived_at IS NULL").
+		Group("project_id").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int, len(rows))
+	for _, row := range rows {
+		projectID := strings.TrimSpace(row.ProjectID)
+		if projectID == "" {
+			continue
+		}
+		counts[projectID] = int(row.Count)
+	}
+	return counts, nil
 }
 
 func (m *Manager) ListArchivedSessions(
@@ -382,6 +517,9 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		ReasoningEffort:         string(defaultReasoningEffort(normalizeAgent(params.Agent), params.ReasoningEffort)),
 		WorkflowMode:            string(normalizeWorkflowMode(params.WorkflowMode)),
 		PermissionLevel:         string(normalizePermissionLevel(params.PermissionLevel)),
+		AutoRetryEnabled:        params.AutoRetryEnabled,
+		AutoRetryScope:          string(normalizeAutoRetryScope(params.AutoRetryScope)),
+		AutoRetryPreset:         string(normalizeAutoRetryPreset(params.AutoRetryPreset)),
 		Cwd:                     cwd,
 		Status:                  string(StatusIdle),
 		AssistantState:          "",
@@ -585,6 +723,43 @@ func (m *Manager) UpdatePermissionLevel(
 	})
 }
 
+func (m *Manager) UpdateAutoRetry(
+	ctx context.Context,
+	sessionID string,
+	enabled bool,
+	scope AutoRetryScope,
+	preset AutoRetryPreset,
+) (SessionSummary, error) {
+	summary, err := m.updateFields(ctx, sessionID, map[string]any{
+		"auto_retry_enabled": enabled,
+		"auto_retry_scope":   string(normalizeAutoRetryScope(scope)),
+		"auto_retry_preset":  string(normalizeAutoRetryPreset(preset)),
+		"auto_retry_attempt": 0,
+		"auto_retry_next_at": nil,
+		"updated_at":         time.Now(),
+	})
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	m.cancelAutoRetryTimer(sessionID)
+	if enabled && effectiveStatus(record, effectiveAssistantState(record)) == StatusError {
+		code := ""
+		if record.AutoRetryLastErrorCode != nil {
+			code = strings.TrimSpace(*record.AutoRetryLastErrorCode)
+		}
+		message := ""
+		if record.LastError != nil {
+			message = strings.TrimSpace(*record.LastError)
+		}
+		m.scheduleAutoRetry(record, code, message, time.Now())
+	}
+	return summary, nil
+}
+
 func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent) (SessionSummary, error) {
 	normalized := normalizeAgent(agent)
 	return m.updateFields(ctx, sessionID, map[string]any{
@@ -690,9 +865,12 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 
 	now := time.Now()
 	updates := map[string]any{
-		"archived_at": now,
-		"has_unread":  false,
-		"updated_at":  now,
+		"archived_at":                now,
+		"has_unread":                 false,
+		"updated_at":                 now,
+		"auto_retry_attempt":         0,
+		"auto_retry_next_at":         nil,
+		"auto_retry_last_error_code": nil,
 	}
 
 	current, currentErr := m.GetSession(ctx, sessionID)
@@ -707,6 +885,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	if err := m.updateRuntimeState(ctx, sessionID, updates); err != nil {
 		return SessionSummary{}, err
 	}
+	m.cancelAutoRetryTimer(sessionID)
 	archived, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSummary{}, err
@@ -746,6 +925,7 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	_ = m.AbortSession(sessionID)
+	m.cancelAutoRetryTimer(sessionID)
 	db := model.GetDB()
 	if db == nil {
 		return model.ErrDBNotInitialized
@@ -760,6 +940,110 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 		return err
 	}
 	return m.store.deleteSessionFiles(sessionID)
+}
+
+func (m *Manager) cancelAutoRetryTimer(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	timer := m.autoRetryTimers[sessionID]
+	if timer != nil {
+		timer.Stop()
+		delete(m.autoRetryTimers, sessionID)
+	}
+}
+
+func (m *Manager) setAutoRetryTimer(sessionID string, nextAt time.Time) {
+	m.cancelAutoRetryTimer(sessionID)
+	delay := time.Until(nextAt)
+	if delay < 0 {
+		delay = 0
+	}
+	timer := time.AfterFunc(delay, func() {
+		m.cancelAutoRetryTimer(sessionID)
+		m.executeAutoRetry(sessionID)
+	})
+	m.mu.Lock()
+	m.autoRetryTimers[sessionID] = timer
+	m.mu.Unlock()
+}
+
+func (m *Manager) resetAutoRetryProgress(ctx context.Context, sessionID string) {
+	m.cancelAutoRetryTimer(sessionID)
+	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
+		"auto_retry_attempt": 0,
+		"auto_retry_next_at": nil,
+		"updated_at":         time.Now(),
+	})
+}
+
+func (m *Manager) clearAutoRetryNextAt(ctx context.Context, sessionID string) {
+	m.cancelAutoRetryTimer(sessionID)
+	_ = m.updateRuntimeState(ctx, sessionID, map[string]any{
+		"auto_retry_next_at": nil,
+		"updated_at":         time.Now(),
+	})
+}
+
+func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, message string, now time.Time) {
+	if record.ArchivedAt != nil {
+		m.resetAutoRetryProgress(context.Background(), record.ID)
+		return
+	}
+	if !record.AutoRetryEnabled {
+		m.resetAutoRetryProgress(context.Background(), record.ID)
+		return
+	}
+	if !shouldAutoRetryFailure(AutoRetryScope(record.AutoRetryScope), code, message) {
+		m.resetAutoRetryProgress(context.Background(), record.ID)
+		return
+	}
+
+	nextAttempt := record.AutoRetryAttempt + 1
+	delay, ok := autoRetryDelay(AutoRetryPreset(record.AutoRetryPreset), nextAttempt)
+	if !ok {
+		m.cancelAutoRetryTimer(record.ID)
+		_ = m.updateRuntimeState(context.Background(), record.ID, map[string]any{
+			"auto_retry_attempt": nextAttempt,
+			"auto_retry_next_at": nil,
+			"updated_at":         now,
+		})
+		return
+	}
+
+	nextAt := now.Add(delay)
+	_ = m.updateRuntimeState(context.Background(), record.ID, map[string]any{
+		"auto_retry_attempt": nextAttempt,
+		"auto_retry_next_at": nextAt,
+		"updated_at":         now,
+	})
+	m.setAutoRetryTimer(record.ID, nextAt)
+}
+
+func (m *Manager) executeAutoRetry(sessionID string) {
+	ctx := context.Background()
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return
+	}
+	if record.ArchivedAt != nil || !record.AutoRetryEnabled || effectiveStatus(record, effectiveAssistantState(record)) != StatusError {
+		m.clearAutoRetryNextAt(ctx, sessionID)
+		return
+	}
+	message := ""
+	if record.LastError != nil {
+		message = strings.TrimSpace(*record.LastError)
+	}
+	code := ""
+	if record.AutoRetryLastErrorCode != nil {
+		code = strings.TrimSpace(*record.AutoRetryLastErrorCode)
+	}
+	if !shouldAutoRetryFailure(AutoRetryScope(record.AutoRetryScope), code, message) {
+		m.clearAutoRetryNextAt(ctx, sessionID)
+		return
+	}
+	if err := m.sendMessageInternal(ctx, sessionID, "continue", nil, true); err != nil && m.logger != nil {
+		m.logger.Warn("auto retry send failed", zap.String("sessionId", sessionID), zap.Error(err))
+	}
 }
 
 func (m *Manager) stopRunIfActive(sessionID string, timeout time.Duration) error {
@@ -827,6 +1111,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleSetWorkflowModeCommand(ctx, client, frame)
 	case "set_pl":
 		return m.handleSetPermissionLevelCommand(ctx, client, frame)
+	case "set_ar":
+		return m.handleSetAutoRetryCommand(ctx, client, frame)
 	case "set_pm":
 		return m.handleLegacySetModeCommand(ctx, client, frame)
 	case "set_ag":
@@ -936,15 +1222,18 @@ func (m *Manager) GetAttachment(id string) (Attachment, error) {
 
 func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
-		ProjectID       string `json:"pid"`
-		WorktreeID      string `json:"wid"`
-		Agent           string `json:"ag"`
-		Model           string `json:"md"`
-		ReasoningEffort string `json:"re"`
-		WorkflowMode    string `json:"wm"`
-		PermissionLevel string `json:"pl"`
-		PermissionMode  string `json:"pm"`
-		Title           string `json:"ttl"`
+		ProjectID        string `json:"pid"`
+		WorktreeID       string `json:"wid"`
+		Agent            string `json:"ag"`
+		Model            string `json:"md"`
+		ReasoningEffort  string `json:"re"`
+		WorkflowMode     string `json:"wm"`
+		PermissionLevel  string `json:"pl"`
+		AutoRetryEnabled bool   `json:"ae"`
+		AutoRetryScope   string `json:"ars"`
+		AutoRetryPreset  string `json:"arp"`
+		PermissionMode   string `json:"pm"`
+		Title            string `json:"ttl"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", "invalid create payload", false))
@@ -963,14 +1252,17 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 	}
 
 	summary, err := m.CreateSession(ctx, CreateParams{
-		ProjectID:       payload.ProjectID,
-		WorktreeID:      payload.WorktreeID,
-		Agent:           Agent(payload.Agent),
-		Model:           payload.Model,
-		ReasoningEffort: ReasoningEffort(payload.ReasoningEffort),
-		WorkflowMode:    workflowMode,
-		PermissionLevel: permissionLevel,
-		Title:           payload.Title,
+		ProjectID:        payload.ProjectID,
+		WorktreeID:       payload.WorktreeID,
+		Agent:            Agent(payload.Agent),
+		Model:            payload.Model,
+		ReasoningEffort:  ReasoningEffort(payload.ReasoningEffort),
+		WorkflowMode:     workflowMode,
+		PermissionLevel:  permissionLevel,
+		AutoRetryEnabled: payload.AutoRetryEnabled,
+		AutoRetryScope:   AutoRetryScope(payload.AutoRetryScope),
+		AutoRetryPreset:  AutoRetryPreset(payload.AutoRetryPreset),
+		Title:            payload.Title,
 	})
 	if err != nil {
 		return client.send(newErrorFrame(frame.RequestID, "", "bad_req", err.Error(), false))
@@ -1130,6 +1422,34 @@ func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *c
 	return m.broadcastSnapshot(ctx, frame.SessionID)
 }
 
+func (m *Manager) handleSetAutoRetryCommand(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+) error {
+	var payload struct {
+		Enabled bool   `json:"ae"`
+		Scope   string `json:"ars"`
+		Preset  string `json:"arp"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid auto retry payload", false))
+	}
+	if _, err := m.UpdateAutoRetry(
+		ctx,
+		frame.SessionID,
+		payload.Enabled,
+		AutoRetryScope(payload.Scope),
+		AutoRetryPreset(payload.Preset),
+	); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	return m.broadcastSnapshot(ctx, frame.SessionID)
+}
+
 func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		PermissionMode string `json:"pm"`
@@ -1234,10 +1554,21 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
+	return m.sendMessageInternal(ctx, sessionID, text, attachmentIDs, false)
+}
+
+func (m *Manager) sendMessageInternal(
+	ctx context.Context,
+	sessionID,
+	text string,
+	attachmentIDs []string,
+	fromAutoRetry bool,
+) error {
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
 	}
+	m.cancelAutoRetryTimer(sessionID)
 	if m.hasActiveRun(sessionID) {
 		return fmt.Errorf("session is already running")
 	}
@@ -1293,11 +1624,18 @@ func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attac
 	now := time.Now()
 	markStatus := StatusRunning
 	updates := map[string]any{
-		"status":          string(markStatus),
-		"has_unread":      false,
-		"last_error":      nil,
-		"updated_at":      now,
-		"last_message_at": now,
+		"status":                     string(markStatus),
+		"has_unread":                 false,
+		"last_error":                 nil,
+		"auto_retry_last_error_code": nil,
+		"updated_at":                 now,
+		"last_message_at":            now,
+	}
+	if fromAutoRetry {
+		updates["auto_retry_next_at"] = nil
+	} else {
+		updates["auto_retry_attempt"] = 0
+		updates["auto_retry_next_at"] = nil
 	}
 	updates = applyAssistantStateUpdates(updates, AssistantStateWorking, now)
 	titleChanged := false
@@ -1420,10 +1758,14 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			context.Background(),
 			session.ID,
 			applyAssistantStateUpdates(map[string]any{
-				"status":     string(StatusIdle),
-				"updated_at": now,
+				"status":                     string(StatusIdle),
+				"updated_at":                 now,
+				"auto_retry_attempt":         0,
+				"auto_retry_next_at":         nil,
+				"auto_retry_last_error_code": nil,
 			}, AssistantStateNone, now),
 		)
+		m.cancelAutoRetryTimer(session.ID)
 		m.broadcastSessionSummary(context.Background(), session.ID)
 		return
 	}
@@ -1470,10 +1812,14 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		context.Background(),
 		session.ID,
 		applyAssistantStateUpdates(map[string]any{
-			"status":     string(finalStatus),
-			"updated_at": now,
+			"status":                     string(finalStatus),
+			"updated_at":                 now,
+			"auto_retry_attempt":         0,
+			"auto_retry_next_at":         nil,
+			"auto_retry_last_error_code": nil,
 		}, finalAssistantState, now),
 	)
+	m.cancelAutoRetryTimer(session.ID)
 	m.broadcastSessionSummary(context.Background(), session.ID)
 	m.maybeSyncSessionAfterRun(session)
 }
@@ -1516,11 +1862,16 @@ func (m *Manager) handleRunFailureWithCode(
 		context.Background(),
 		sessionID,
 		applyAssistantStateUpdates(map[string]any{
-			"status":     string(StatusError),
-			"last_error": message,
-			"updated_at": now,
+			"status":                     string(StatusError),
+			"last_error":                 message,
+			"auto_retry_last_error_code": nilIfEmpty(code),
+			"updated_at":                 now,
 		}, AssistantStateNone, now),
 	)
+	current, currentErr := m.GetSession(context.Background(), sessionID)
+	if currentErr == nil {
+		m.scheduleAutoRetry(current, code, message, now)
+	}
 	m.broadcastSessionSummary(context.Background(), sessionID)
 }
 
@@ -1837,6 +2188,16 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		if toolSucceeded && codexToolIsPlan(item) {
 			run.markCompletedPlanTool()
 		}
+		if toolSucceeded && normalizeCodexItemType(stringValue(item["type"])) == "context_compaction" {
+			record, err := m.GetSession(context.Background(), session.ID)
+			if err == nil {
+				_ = m.updateRuntimeState(
+					context.Background(),
+					session.ID,
+					contextEstimateBaselineResetUpdate(record, time.Now()),
+				)
+			}
+		}
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1846,6 +2207,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
+				"kind": normalizeCodexItemType(stringValue(item["type"])),
 				"out":  codexToolOutput(item),
 				"ok":   toolSucceeded,
 				"meta": codexToolMeta(item),
@@ -1856,6 +2218,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		in := int64(numberValue(usage["input_tokens"]))
 		cin := int64(numberValue(usage["cached_input_tokens"]))
 		out := int64(numberValue(usage["output_tokens"]))
+		_ = m.updateRuntimeState(context.Background(), session.ID, contextEstimateIncrementUpdate(in, cin, out))
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -1868,15 +2231,6 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 				"out": out,
 			},
 		})
-		_ = model.GetDB().WithContext(context.Background()).
-			Model(&tables.WebSessionTable{}).
-			Where("id = ?", session.ID).
-			Updates(map[string]any{
-				"total_input_tokens":        gorm.Expr("total_input_tokens + ?", in),
-				"total_cached_input_tokens": gorm.Expr("total_cached_input_tokens + ?", cin),
-				"total_output_tokens":       gorm.Expr("total_output_tokens + ?", out),
-				"updated_at":                time.Now(),
-			}).Error
 	case "turn.failed":
 		errorMap, _ := raw["error"].(map[string]any)
 		run.lastError = stringValue(errorMap["message"])
@@ -1923,7 +2277,9 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 		return Event{}, cacheErr
 	}
 	if cachedItem != nil {
-		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, m.summaryForBroadcast(ctx, sessionID)))
+		if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
+			m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, summary))
+		}
 	} else if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
 		m.broadcast(newSessionFrame(sessionID, *summary))
 	}
@@ -2499,6 +2855,9 @@ func (m *Manager) broadcastSnapshot(ctx context.Context, sessionID string) error
 	if err != nil {
 		return err
 	}
+	if record.ArchivedAt != nil {
+		return nil
+	}
 	snap, err := m.loadSnapshotLocal(ctx, record, DefaultHistoryWindow, false)
 	if err != nil {
 		return err
@@ -2528,6 +2887,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	}
 	assistantState := effectiveAssistantState(record)
 	assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState)
+	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
 		ID:                      record.ID,
 		ProjectID:               record.ProjectID,
@@ -2539,6 +2899,9 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		ReasoningEffort:         ReasoningEffort(record.ReasoningEffort),
 		WorkflowMode:            effectiveWorkflowMode(record),
 		PermissionLevel:         effectivePermissionLevel(record),
+		AutoRetryEnabled:        record.AutoRetryEnabled,
+		AutoRetryScope:          normalizeAutoRetryScope(AutoRetryScope(record.AutoRetryScope)),
+		AutoRetryPreset:         normalizeAutoRetryPreset(AutoRetryPreset(record.AutoRetryPreset)),
 		Cwd:                     record.Cwd,
 		NativeSessionID:         record.NativeSessionID,
 		Status:                  effectiveStatus(record, assistantState),
@@ -2567,6 +2930,66 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			OutputTokens:      record.TotalOutputTokens,
 			Cost:              record.TotalCost,
 		},
+		ContextEstimate:         contextEstimate,
+		ContextEstimateMode:     contextEstimateMode,
+		LastContextCompactionAt: record.LastContextCompactionAt,
+	}
+}
+
+func buildContextEstimate(record tables.WebSessionTable) (ContextEstimate, ContextEstimateMode) {
+	mode := ContextEstimateModeCumulativeTotal
+	inputTokens := record.TotalInputTokens
+	cachedInputTokens := record.TotalCachedInputTokens
+	outputTokens := record.TotalOutputTokens
+	if record.LastContextCompactionAt != nil {
+		mode = ContextEstimateModeSinceCompaction
+		inputTokens = maxInt64(0, record.TotalInputTokens-record.ContextBaselineInputTokens)
+		cachedInputTokens = maxInt64(0, record.TotalCachedInputTokens-record.ContextBaselineCachedInputTokens)
+		outputTokens = maxInt64(0, record.TotalOutputTokens-record.ContextBaselineOutputTokens)
+	}
+	return ContextEstimate{
+		InputTokens:       inputTokens,
+		CachedInputTokens: cachedInputTokens,
+		OutputTokens:      outputTokens,
+		UsedTokens:        maxInt64(0, inputTokens+cachedInputTokens+outputTokens),
+	}, mode
+}
+
+func maxInt64(left, right int64) int64 {
+	if left > right {
+		return left
+	}
+	return right
+}
+
+func contextEstimateTotalsUpdate(in, cin, out int64) map[string]any {
+	return map[string]any{
+		"total_input_tokens":        in,
+		"total_cached_input_tokens": cin,
+		"total_output_tokens":       out,
+		"updated_at":                time.Now(),
+	}
+}
+
+func contextEstimateIncrementUpdate(in, cin, out int64) map[string]any {
+	return map[string]any{
+		"total_input_tokens":        gorm.Expr("total_input_tokens + ?", in),
+		"total_cached_input_tokens": gorm.Expr("total_cached_input_tokens + ?", cin),
+		"total_output_tokens":       gorm.Expr("total_output_tokens + ?", out),
+		"updated_at":                time.Now(),
+	}
+}
+
+func contextEstimateBaselineResetUpdate(record tables.WebSessionTable, timestamp time.Time) map[string]any {
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	return map[string]any{
+		"context_baseline_input_tokens":        record.TotalInputTokens,
+		"context_baseline_cached_input_tokens": record.TotalCachedInputTokens,
+		"context_baseline_output_tokens":       record.TotalOutputTokens,
+		"last_context_compaction_at":           timestamp,
+		"updated_at":                           time.Now(),
 	}
 }
 
@@ -2798,6 +3221,28 @@ func (m *Manager) migrateLegacySessionModes(ctx context.Context) error {
 	return nil
 }
 
+func (m *Manager) recoverPendingAutoRetrySessions(ctx context.Context) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Where("auto_retry_enabled = ? AND auto_retry_next_at IS NOT NULL AND archived_at IS NULL", true).
+		Order("auto_retry_next_at ASC").
+		Find(&records).Error; err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.AutoRetryNextAt == nil {
+			continue
+		}
+		m.setAutoRetryTimer(record.ID, *record.AutoRetryNextAt)
+	}
+	return nil
+}
+
 func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 	db := model.GetDB()
 	if db == nil {
@@ -2844,11 +3289,15 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 			"last_error":                 nil,
 			"has_unread":                 false,
 			"updated_at":                 now,
+			"auto_retry_attempt":         0,
+			"auto_retry_next_at":         nil,
+			"auto_retry_last_error_code": nil,
 			"assistant_state":            nil,
 			"assistant_state_updated_at": nil,
 		}); err != nil {
 			return err
 		}
+		m.cancelAutoRetryTimer(record.ID)
 		m.broadcastSessionSummary(ctx, record.ID)
 	}
 
@@ -3092,6 +3541,8 @@ func codexToolName(item map[string]any) string {
 	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return "CommandExecution"
+	case "context_compaction":
+		return "Context Compaction"
 	case "mcp_tool_call":
 		return "McpToolCall"
 	case "file_change":
@@ -3109,6 +3560,8 @@ func codexToolInput(item map[string]any) any {
 	switch normalizeCodexItemType(stringValue(item["type"])) {
 	case "command_execution":
 		return map[string]any{"command": stringValue(item["command"])}
+	case "context_compaction":
+		return nil
 	case "web_search":
 		return map[string]any{
 			"query":  item["query"],
@@ -3121,25 +3574,36 @@ func codexToolInput(item map[string]any) any {
 }
 
 func codexToolMeta(item map[string]any) map[string]any {
+	kind := normalizeCodexItemType(stringValue(item["type"]))
+	subtitle := firstNonEmpty(
+		stringValue(item["command"]),
+		stringValue(item["tool_name"]),
+		stringValue(item["path"]),
+		stringValue(item["query"]),
+		stringValue(item["text"]),
+	)
+	if kind == "file_change" {
+		subtitle = firstNonEmpty(fileChangeSummary(item), subtitle)
+	}
+	if kind == "context_compaction" {
+		subtitle = contextCompactionSubtitle(item)
+	}
 	return map[string]any{
-		"kind":  normalizeCodexItemType(stringValue(item["type"])),
-		"title": codexToolName(item),
-		"subtitle": firstNonEmpty(
-			stringValue(item["command"]),
-			stringValue(item["tool_name"]),
-			stringValue(item["path"]),
-			stringValue(item["query"]),
-			stringValue(item["text"]),
-		),
+		"kind":     kind,
+		"title":    codexToolName(item),
+		"subtitle": subtitle,
 	}
 }
 
 func codexToolResult(item map[string]any) string {
-	if normalizeCodexItemType(stringValue(item["type"])) == "reasoning" {
+	switch normalizeCodexItemType(stringValue(item["type"])) {
+	case "reasoning":
 		if text := extractReasoningText(item); text != "" {
 			return text
 		}
 		return ""
+	case "context_compaction":
+		return extractContextCompactionText(item)
 	}
 	if output := stringValue(item["aggregated_output"]); output != "" {
 		return output
@@ -3204,6 +3668,8 @@ func normalizeCodexItemType(value string) string {
 	switch strings.TrimSpace(value) {
 	case "commandExecution":
 		return "command_execution"
+	case "contextCompaction":
+		return "context_compaction"
 	case "mcpToolCall":
 		return "mcp_tool_call"
 	case "fileChange":
@@ -3217,6 +3683,35 @@ func normalizeCodexItemType(value string) string {
 	default:
 		return strings.TrimSpace(value)
 	}
+}
+
+func extractContextCompactionText(item map[string]any) string {
+	sections := make([]string, 0, 3)
+	if summary := strings.TrimSpace(strings.Join(collectReasoningFragments(item["summary"]), "")); summary != "" {
+		sections = append(sections, summary)
+	}
+	if text := strings.TrimSpace(stringValue(item["text"])); text != "" {
+		sections = append(sections, text)
+	}
+	if content := strings.TrimSpace(strings.Join(collectReasoningFragments(item["content"]), "")); content != "" {
+		sections = append(sections, content)
+	}
+	if output := strings.TrimSpace(strings.Join(collectReasoningFragments(item["output"]), "")); output != "" {
+		sections = append(sections, output)
+	}
+	if len(sections) > 0 {
+		return strings.TrimSpace(strings.Join(sections, "\n\n"))
+	}
+	encoded, _ := json.Marshal(item)
+	return string(encoded)
+}
+
+func contextCompactionSubtitle(item map[string]any) string {
+	text := strings.TrimSpace(extractContextCompactionText(item))
+	if text == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.SplitN(text, "\n", 2)[0])
 }
 
 func normalizeToolChoiceText(value string) string {

@@ -663,37 +663,31 @@ func decodeStringArray(raw any) []string {
 
 func fileChangeSummary(input any) string {
 	record := decodeRawObject(input)
-	if path := strings.TrimSpace(firstNonEmpty(
-		stringValue(record["path"]),
-		stringValue(record["file_path"]),
-		stringValue(record["new_path"]),
-		stringValue(record["old_path"]),
-	)); path != "" {
+	if path := fileChangePath(record); path != "" {
 		return path
 	}
 
 	if changes := decodeRawArray(record["changes"]); len(changes) > 0 {
-		paths := make([]string, 0, len(changes))
 		for _, change := range changes {
-			path := strings.TrimSpace(firstNonEmpty(
-				stringValue(change["path"]),
-				stringValue(change["file_path"]),
-				stringValue(change["new_path"]),
-				stringValue(change["old_path"]),
-			))
-			if path == "" {
-				continue
+			if path := fileChangePath(change); path != "" {
+				return path
 			}
-			paths = append(paths, path)
-		}
-		if len(paths) == 1 {
-			return paths[0]
-		}
-		if len(paths) > 1 {
-			return paths[0] + " +" + strconv.Itoa(len(paths)-1)
 		}
 	}
 	return ""
+}
+
+func fileChangePath(record map[string]any) string {
+	return strings.TrimSpace(firstNonEmpty(
+		stringValue(record["path"]),
+		stringValue(record["file_path"]),
+		stringValue(record["new_path"]),
+		stringValue(record["old_path"]),
+		stringValue(record["newPath"]),
+		stringValue(record["oldPath"]),
+		stringValue(record["move_path"]),
+		stringValue(record["movePath"]),
+	))
 }
 
 func summarizeChanges(input any) string {
@@ -738,8 +732,16 @@ func extractMcpArgumentHint(value any) string {
 }
 
 func decodeRawArray(raw any) []map[string]any {
-	items, ok := raw.([]any)
-	if !ok {
+	var items []any
+	switch typed := raw.(type) {
+	case []any:
+		items = typed
+	case []map[string]any:
+		items = make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+	default:
 		return nil
 	}
 	result := make([]map[string]any, 0, len(items))

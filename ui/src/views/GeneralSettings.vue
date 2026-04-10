@@ -124,6 +124,69 @@
               <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.webSessionAutoContinueScope')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="webSessionAutoContinueScopeValue"
+                :options="webSessionAutoContinueScopeOptions"
+                style="max-width: 320px"
+              />
+              <span class="form-tip">{{ t('settings.webSessionAutoContinueScopeTip') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.webSessionAutoContinuePreset')">
+            <n-space vertical size="small">
+              <n-select
+                v-model:value="webSessionAutoContinuePresetValue"
+                :options="webSessionAutoContinuePresetOptions"
+                style="max-width: 320px"
+              />
+              <span class="form-tip">{{ t('settings.webSessionAutoContinuePresetTip') }}</span>
+            </n-space>
+          </n-form-item>
+          <n-form-item :label="t('settings.webSessionQuickInputPinned')">
+            <n-space vertical size="small" style="width: 100%">
+              <n-dynamic-input
+                v-model:value="webSessionQuickInputPinnedLocal"
+                :on-create="createWebSessionQuickInputPinnedItem"
+              >
+                <template #default="{ value, index }">
+                  <n-input
+                    type="textarea"
+                    class="web-session-quick-input-textarea"
+                    :value="value"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
+                    @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
+                  />
+                </template>
+                <template #action="{ index, remove, create }">
+                  <n-button-group size="small">
+                    <n-button quaternary circle @click="remove(index)">
+                      <template #icon>
+                        <n-icon>
+                          <Remove />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                    <n-button quaternary circle @click="create(index)">
+                      <template #icon>
+                        <n-icon>
+                          <Add />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                  </n-button-group>
+                </template>
+              </n-dynamic-input>
+              <n-space>
+                <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
+                  {{ t('settings.restoreDefault') }}
+                </n-button>
+              </n-space>
+              <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -236,6 +299,127 @@
             </n-space>
           </n-form-item>
         </n-form>
+      </n-card>
+
+      <n-card :title="t('settings.securityTitle')" size="huge">
+        <n-space vertical size="large">
+          <n-alert
+            :type="authStore.enabled ? 'warning' : 'info'"
+            :bordered="false"
+            :show-icon="false"
+          >
+            {{
+              authStore.enabled
+                ? t('settings.securityEnabledHint')
+                : t('settings.securityDisabledHint')
+            }}
+          </n-alert>
+
+          <template v-if="!authStore.enabled">
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityNewPassword')">
+                <n-input
+                  v-model:value="enablePassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityConfirmPassword')">
+                <n-input
+                  v-model:value="enablePasswordConfirm"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="primary"
+                    :loading="authSaving"
+                    :disabled="!enablePassword.trim() || !enablePasswordConfirm.trim()"
+                    @click="handleEnablePasswordProtection"
+                  >
+                    {{ t('settings.securityEnableAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityAlgorithmHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+          </template>
+
+          <template v-else>
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityCurrentPassword')">
+                <n-input
+                  v-model:value="currentPassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityNewPassword')">
+                <n-input
+                  v-model:value="newPassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item :label="t('settings.securityConfirmPassword')">
+                <n-input
+                  v-model:value="newPasswordConfirm"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="primary"
+                    :loading="authSaving"
+                    :disabled="
+                      !currentPassword.trim() || !newPassword.trim() || !newPasswordConfirm.trim()
+                    "
+                    @click="handleChangePasswordProtection"
+                  >
+                    {{ t('settings.securityChangeAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityRotateHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+
+            <n-divider style="margin: 0" />
+
+            <n-form label-placement="left" label-width="160">
+              <n-form-item :label="t('settings.securityDisablePassword')">
+                <n-input
+                  v-model:value="disablePassword"
+                  type="password"
+                  show-password-on="click"
+                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                />
+              </n-form-item>
+              <n-form-item>
+                <n-space vertical size="small" style="width: 100%">
+                  <n-button
+                    type="error"
+                    ghost
+                    :loading="authSaving"
+                    :disabled="!disablePassword.trim()"
+                    @click="handleDisablePasswordProtection"
+                  >
+                    {{ t('settings.securityDisableAction') }}
+                  </n-button>
+                  <span class="form-tip">{{ t('settings.securityDisableHint') }}</span>
+                </n-space>
+              </n-form-item>
+            </n-form>
+          </template>
+        </n-space>
       </n-card>
 
       <n-card :title="t('settings.terminalQuickActions')" size="huge">
@@ -760,12 +944,14 @@ import {
 } from '@vicons/ionicons5';
 import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import { useLocale } from '@/composables/useLocale';
+import { useAuthStore } from '@/stores/auth';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   useSettingsStore,
   DEFAULT_TERMINAL_SHORTCUT,
   DEFAULT_NOTEPAD_SHORTCUT,
   DEFAULT_TERMINAL_QUICK_ACTIONS,
+  DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED,
   TERMINAL_FONT_OPTIONS,
   FONT_WEIGHT_OPTIONS,
   type PanelShortcutSetting,
@@ -773,6 +959,8 @@ import {
   type FontWeight,
   type TerminalQuickAction,
   type TerminalQuickActionIcon,
+  type WebSessionAutoContinuePreset,
+  type WebSessionAutoContinueScope,
 } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
@@ -817,6 +1005,7 @@ const { t, locale } = useLocale();
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
+const authStore = useAuthStore();
 const settingsStore = useSettingsStore();
 const {
   theme,
@@ -827,10 +1016,13 @@ const {
   maxTerminalsPerProject,
   terminalShortcut,
   notepadShortcut,
+  webSessionQuickInput,
   terminalQuickActions,
   editorSettings,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionAutoContinueScope,
+  webSessionAutoContinuePreset,
   terminalThemeId,
   terminalFont,
   terminalWebGLRenderer,
@@ -841,6 +1033,13 @@ const {
   inactiveTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
+const authSaving = ref(false);
+const enablePassword = ref('');
+const enablePasswordConfirm = ref('');
+const currentPassword = ref('');
+const newPassword = ref('');
+const newPasswordConfirm = ref('');
+const disablePassword = ref('');
 
 // 使用 composable 获取主题和终端配色选项
 const presetOptions = useThemeOptions();
@@ -1246,6 +1445,84 @@ async function saveShellConfig(shell: string) {
   }
 }
 
+function resetAuthFormFields() {
+  enablePassword.value = '';
+  enablePasswordConfirm.value = '';
+  currentPassword.value = '';
+  newPassword.value = '';
+  newPasswordConfirm.value = '';
+  disablePassword.value = '';
+}
+
+async function handleEnablePasswordProtection() {
+  if (!enablePassword.value.trim() || !enablePasswordConfirm.value.trim()) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+  if (enablePassword.value !== enablePasswordConfirm.value) {
+    message.error(t('auth.passwordMismatch'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.enablePasswordProtection(enablePassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityEnableSuccess'));
+  } catch (error) {
+    console.error('Failed to enable password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
+  }
+}
+
+async function handleChangePasswordProtection() {
+  if (
+    !currentPassword.value.trim() ||
+    !newPassword.value.trim() ||
+    !newPasswordConfirm.value.trim()
+  ) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+  if (newPassword.value !== newPasswordConfirm.value) {
+    message.error(t('auth.passwordMismatch'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.changePasswordProtection(currentPassword.value, newPassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityChangeSuccess'));
+  } catch (error) {
+    console.error('Failed to change password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
+  }
+}
+
+async function handleDisablePasswordProtection() {
+  if (!disablePassword.value.trim()) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+
+  authSaving.value = true;
+  try {
+    await authStore.disablePasswordProtection(disablePassword.value);
+    resetAuthFormFields();
+    message.success(t('settings.securityDisableSuccess'));
+  } catch (error) {
+    console.error('Failed to disable password protection:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authSaving.value = false;
+  }
+}
+
 const primaryColor = computed({
   get: () => theme.value.primaryColor,
   set: value => {
@@ -1461,6 +1738,48 @@ const showWebSessionReasoningValue = computed({
   set: value => settingsStore.updateShowWebSessionReasoning(value),
 });
 
+const webSessionAutoContinueScopeOptions = computed(() => [
+  {
+    label: t('settings.webSessionAutoContinueScopeNetworkOnly'),
+    value: 'network_only',
+  },
+  {
+    label: t('settings.webSessionAutoContinueScopeNetworkAndRateLimit'),
+    value: 'network_and_rate_limit',
+  },
+  {
+    label: t('settings.webSessionAutoContinueScopeAllFailures'),
+    value: 'all_failures',
+  },
+]);
+
+const webSessionAutoContinueScopeValue = computed({
+  get: () => webSessionAutoContinueScope.value,
+  set: (value: WebSessionAutoContinueScope) =>
+    settingsStore.updateWebSessionAutoContinueScope(value),
+});
+
+const webSessionAutoContinuePresetOptions = computed(() => [
+  {
+    label: t('settings.webSessionAutoContinuePresetGentleStop'),
+    value: 'gentle_stop',
+  },
+  {
+    label: t('settings.webSessionAutoContinuePresetAggressiveStop'),
+    value: 'aggressive_stop',
+  },
+  {
+    label: t('settings.webSessionAutoContinuePresetSustain60s'),
+    value: 'sustain_60s',
+  },
+]);
+
+const webSessionAutoContinuePresetValue = computed({
+  get: () => webSessionAutoContinuePreset.value,
+  set: (value: WebSessionAutoContinuePreset) =>
+    settingsStore.updateWebSessionAutoContinuePreset(value),
+});
+
 const terminalConnectionPolicyValue = computed({
   get: () => terminalConnectionPolicy.value,
   set: (value: TerminalConnectionPolicy) => settingsStore.updateTerminalConnectionPolicy(value),
@@ -1536,10 +1855,28 @@ const terminalQuickActionIconButtons = computed(() => {
 const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(
   terminalQuickActions.value.map(item => ({ ...item }))
 );
+const webSessionQuickInputPinnedLocal = ref<string[]>([...webSessionQuickInput.value.pinned]);
+let syncingWebSessionQuickInputPinned = false;
 let syncingTerminalQuickActions = false;
+const debouncedUpdateWebSessionQuickInputPinned = useDebounceFn((items: string[]) => {
+  settingsStore.updateWebSessionQuickInputPinned(items);
+  void settingsStore.syncWebSessionQuickInputToServer();
+}, 300);
 const debouncedUpdateTerminalQuickActions = useDebounceFn((actions: TerminalQuickAction[]) => {
   settingsStore.updateTerminalQuickActions(actions);
 }, 300);
+
+watch(
+  webSessionQuickInput,
+  next => {
+    syncingWebSessionQuickInputPinned = true;
+    webSessionQuickInputPinnedLocal.value = [...next.pinned];
+    setTimeout(() => {
+      syncingWebSessionQuickInputPinned = false;
+    }, 0);
+  },
+  { deep: true }
+);
 
 watch(
   terminalQuickActions,
@@ -1554,6 +1891,17 @@ watch(
 );
 
 watch(
+  webSessionQuickInputPinnedLocal,
+  next => {
+    if (syncingWebSessionQuickInputPinned) {
+      return;
+    }
+    debouncedUpdateWebSessionQuickInputPinned([...next]);
+  },
+  { deep: true }
+);
+
+watch(
   terminalQuickActionsLocal,
   next => {
     if (syncingTerminalQuickActions) {
@@ -1563,6 +1911,21 @@ watch(
   },
   { deep: true }
 );
+
+function createWebSessionQuickInputPinnedItem() {
+  return '';
+}
+
+function handleWebSessionQuickInputPinnedChange(index: number, value: string) {
+  webSessionQuickInputPinnedLocal.value = webSessionQuickInputPinnedLocal.value.map((item, i) =>
+    i === index ? value : item
+  );
+}
+
+function handleResetWebSessionQuickInputPinned() {
+  settingsStore.updateWebSessionQuickInputPinned([...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED]);
+  void settingsStore.syncWebSessionQuickInputToServer();
+}
 
 function createTerminalQuickAction(): TerminalQuickAction {
   return {
@@ -1833,6 +2196,10 @@ function formatShortcutLabel(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.web-session-quick-input-textarea {
+  width: 100%;
 }
 
 .terminal-quick-action-row {

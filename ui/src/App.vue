@@ -7,17 +7,20 @@ import { useI18n } from 'vue-i18n';
 import AppInitializer from '@/components/common/AppInitializer.vue';
 import NotePad from '@/components/notepad/NotePad.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
+import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useResponsive } from '@/composables/useResponsive';
-import { formatAiStatusTitle, useAiStatusSummary } from '@/composables/useAiStatusSummary';
+import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { darkenColor, lightenColor, isDarkHex } from '@/utils/color';
+import { formatBrowserTabTitle } from '@/utils/browserTitle';
 import { createThemeOverrides } from '@/utils/themeOverrides';
 import { getPresetById } from '@/constants/themes';
 import { APP_NAME } from '@/constants/app';
 
 const settingsStore = useSettingsStore();
+const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const reminderStore = useTerminalReminderStore();
 const {
@@ -30,7 +33,32 @@ const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
 const route = useRoute();
-const browserTabTitle = computed(() => formatAiStatusTitle(totalSummary.value, APP_NAME));
+const currentRouteProjectId = computed(() =>
+  typeof route.params.id === 'string' ? route.params.id : ''
+);
+const workspaceProjectName = computed(() => {
+  if (route.name !== 'project' || !currentRouteProjectId.value) {
+    return '';
+  }
+
+  if (projectStore.currentProject?.id === currentRouteProjectId.value) {
+    return projectStore.currentProject.name?.trim() ?? '';
+  }
+
+  const matchedProject = projectStore.projects.find(
+    project => project.id === currentRouteProjectId.value
+  );
+  return matchedProject?.name?.trim() ?? '';
+});
+const browserTabTitle = computed(() =>
+  formatBrowserTabTitle({
+    summary: totalSummary.value,
+    appName: APP_NAME,
+    projectName: workspaceProjectName.value,
+  })
+);
+const canLoadProtectedContent = computed(() => authStore.canAccessProtectedContent);
+const shouldRenderWorkspaceOverlays = computed(() => canLoadProtectedContent.value);
 
 const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
@@ -222,7 +250,7 @@ onMounted(() => {
   }
 
   reminderStore.retain();
-  if (projectStore.projects.length === 0) {
+  if (canLoadProtectedContent.value && projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
       console.error('[App] Failed to preload projects for browser title status', error);
     });
@@ -241,6 +269,15 @@ onMounted(() => {
   mediaQuery.addEventListener('change', handleChange);
 });
 
+watch(canLoadProtectedContent, value => {
+  if (!value || projectStore.projects.length > 0) {
+    return;
+  }
+  void projectStore.fetchProjects().catch(error => {
+    console.error('[App] Failed to preload projects after authentication', error);
+  });
+});
+
 onBeforeUnmount(() => {
   reminderStore.release();
   if (mediaQuery && handleChange) {
@@ -257,7 +294,6 @@ watch(
   },
   { immediate: true }
 );
-
 </script>
 
 <template>
@@ -279,8 +315,10 @@ watch(
             <n-modal-provider>
               <AppInitializer />
               <RouterView />
-              <NotePad />
-              <AINotificationBar v-if="shouldShowGlobalNotificationBar" />
+              <NotePad v-if="shouldRenderWorkspaceOverlays" />
+              <AINotificationBar
+                v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotificationBar"
+              />
             </n-modal-provider>
           </n-message-provider>
         </n-notification-provider>

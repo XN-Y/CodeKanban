@@ -410,6 +410,32 @@ func (m *Manager) applyCodexResponseItem(
 			return
 		}
 		appendItem(*plan)
+	case "contextCompaction", "context_compaction":
+		toolID := strings.TrimSpace(stringValue(payload["id"]))
+		if toolID == "" {
+			toolID = utils.NewID()
+		}
+		appendItem(HistoryItem{
+			ID:           toolID,
+			SourceItemID: ptr(toolID),
+			Kind:         "tool",
+			ItemType:     "context_compaction",
+			Timestamp:    ptr(ts),
+			ObservedAt:   ptr(ts),
+			Payload:      cloneMap(payload),
+			Tool: &HistoryTool{
+				ID:     toolID,
+				Name:   "Context Compaction",
+				Kind:   "context_compaction",
+				Output: extractContextCompactionText(payload),
+				Status: syncedToolStatus(firstNonEmpty(stringValue(payload["status"]), "completed")),
+				Meta: map[string]any{
+					"title":    "Context Compaction",
+					"kind":     "context_compaction",
+					"subtitle": contextCompactionSubtitle(payload),
+				},
+			},
+		})
 	case "function_call":
 		callID := strings.TrimSpace(stringValue(payload["call_id"]))
 		if callID == "" {

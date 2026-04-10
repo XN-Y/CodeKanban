@@ -38,16 +38,36 @@ describe('webSessionSendGuard', () => {
     const conflicts = findWebSessionSendConflicts({
       currentSessionId: 'session-1',
       sessions: [
-        makeSession({ id: 'session-1', livePhase: 'starting' }),
-        makeSession({ id: 'session-2', title: 'Default Thinking', livePhase: 'thinking' }),
+        makeSession({
+          id: 'session-1',
+          title: 'Current Session',
+          workflowMode: 'default',
+          livePhase: 'starting',
+        }),
+        makeSession({
+          id: 'session-2',
+          title: 'Default Thinking',
+          workflowMode: 'default',
+          livePhase: 'thinking',
+        }),
         makeSession({
           id: 'session-3',
           title: 'Plan Tool',
           workflowMode: 'plan',
           livePhase: 'tool',
         }),
-        makeSession({ id: 'session-4', title: 'Default Retrying', livePhase: 'retrying' }),
-        makeSession({ id: 'session-5', title: 'Waiting Approval', livePhase: 'waiting_approval' }),
+        makeSession({
+          id: 'session-4',
+          title: 'Default Retrying',
+          workflowMode: 'default',
+          livePhase: 'retrying',
+        }),
+        makeSession({
+          id: 'session-5',
+          title: 'Waiting Approval',
+          workflowMode: 'default',
+          livePhase: 'waiting_approval',
+        }),
       ],
     });
 
@@ -119,5 +139,68 @@ describe('webSessionSendGuard', () => {
 
     expect(secondAttempt.shouldProceed).toBe(true);
     expect(secondAttempt.nextState).toBeNull();
+  });
+
+  it('re-arms confirmation when the signature changes or the previous arm expires', () => {
+    const signature = buildWebSessionSendConfirmationSignature({
+      ownerId: 'draft-session',
+      text: 'Implement this',
+      attachmentIds: ['attachment-1'],
+      conflictSessionIds: ['session-2'],
+    });
+    const changedSignature = buildWebSessionSendConfirmationSignature({
+      ownerId: 'draft-session',
+      text: 'Implement this now',
+      attachmentIds: ['attachment-1'],
+      conflictSessionIds: ['session-2'],
+    });
+    const existingState = {
+      signature,
+      expiresAt: 6000,
+    };
+    const conflicts = [makeSession({ id: 'session-2', title: 'Busy Session' })];
+
+    const changedAttempt = resolveWebSessionSendConfirmation({
+      conflicts,
+      currentState: existingState,
+      signature: changedSignature,
+      now: 2000,
+      ttlMs: 5000,
+    });
+    const expiredAttempt = resolveWebSessionSendConfirmation({
+      conflicts,
+      currentState: existingState,
+      signature,
+      now: 7000,
+      ttlMs: 5000,
+    });
+
+    expect(changedAttempt.shouldProceed).toBe(false);
+    expect(changedAttempt.nextState).toEqual({
+      signature: changedSignature,
+      expiresAt: 7000,
+    });
+
+    expect(expiredAttempt.shouldProceed).toBe(false);
+    expect(expiredAttempt.nextState).toEqual({
+      signature,
+      expiresAt: 12000,
+    });
+  });
+
+  it('bypasses confirmation when there are no conflicting sessions', () => {
+    const result = resolveWebSessionSendConfirmation({
+      conflicts: [],
+      currentState: {
+        signature: 'stale',
+        expiresAt: 9999,
+      },
+      signature: 'current',
+      now: 1000,
+      ttlMs: 5000,
+    });
+
+    expect(result.shouldProceed).toBe(true);
+    expect(result.nextState).toBeNull();
   });
 });

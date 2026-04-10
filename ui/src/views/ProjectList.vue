@@ -171,11 +171,26 @@
                       size="small"
                       type="success"
                       :bordered="false"
+                      :title="`${t('project.terminalCount')}: ${terminalCounts.get(project.id)}`"
                     >
                       <template #icon>
                         <n-icon size="16"><TerminalOutline /></n-icon>
                       </template>
                       {{ terminalCounts.get(project.id) }}
+                    </n-tag>
+                    <n-tag
+                      v-if="
+                        webSessionCounts.get(project.id) && webSessionCounts.get(project.id)! > 0
+                      "
+                      size="small"
+                      type="info"
+                      :bordered="false"
+                      :title="`${t('project.webSessionCount')}: ${webSessionCounts.get(project.id)}`"
+                    >
+                      <template #icon>
+                        <n-icon size="16"><ChatbubblesOutline /></n-icon>
+                      </template>
+                      {{ webSessionCounts.get(project.id) }}
                     </n-tag>
                     <n-tag
                       v-if="project.priority"
@@ -265,6 +280,7 @@ import {
   SettingsOutline,
   BookOutline,
   TerminalOutline,
+  ChatbubblesOutline,
   SearchOutline,
   ArrowDownOutline,
   ArrowUpOutline,
@@ -277,6 +293,7 @@ import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
+import { useWebSessionStore } from '@/stores/webSession';
 import { useAppStore } from '@/stores/app';
 import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
@@ -291,6 +308,7 @@ const { t } = useLocale();
 const router = useRouter();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
+const webSessionStore = useWebSessionStore();
 const { getProjectSummary } = useAiStatusSummary();
 const message = useMessage();
 const dialog = useDialog();
@@ -349,6 +367,7 @@ const handleAppNameClick = () => {
 };
 
 const terminalCounts = terminalStore.terminalCounts;
+const webSessionCounts = webSessionStore.sessionCounts;
 
 // Check if a project has notifications
 function hasProjectNotifications(projectId: string): boolean {
@@ -469,6 +488,7 @@ const filteredAndSortedProjects = computed(() => {
 onMounted(() => {
   projectStore.fetchProjects();
   terminalStore.loadTerminalCounts();
+  webSessionStore.loadSessionCounts();
   // 延迟检查更新，避免阻塞页面加载
   setTimeout(checkForUpdates, 2000);
 });

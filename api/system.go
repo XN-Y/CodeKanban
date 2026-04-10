@@ -222,6 +222,37 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 		op.Tags = []string{systemTag}
 	})
 
+	huma.Get(group, "/system/web-session-quick-input", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
+		resp := h.NewItemResponse(cfg.UI.WebSessionQuickInput)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-web-session-quick-input-get"
+		op.Summary = "获取会话快捷输入配置"
+		op.Description = "返回 Web 会话输入框的常驻快捷项和最近输入记录"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/web-session-quick-input/update", func(ctx context.Context, input *struct {
+		Body utils.WebSessionQuickInputConfig `json:"body"`
+	}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
+		normalized := utils.NormalizeWebSessionQuickInputConfig(input.Body)
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.UI.WebSessionQuickInput = normalized
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
+
+		resp := h.NewItemResponse(normalized)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-web-session-quick-input-update"
+		op.Summary = "更新会话快捷输入配置"
+		op.Description = "更新 Web 会话输入框的常驻快捷项和最近输入记录，并持久化到配置文件"
+		op.Tags = []string{systemTag}
+	})
+
 	// Terminal Shell Settings
 	huma.Get(group, "/system/terminal-shells", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.AvailableShellsResponse], error) {
 		shells := utils.GetAvailableShells(cfg.Terminal.Shell)

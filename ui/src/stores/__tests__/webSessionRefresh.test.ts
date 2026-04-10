@@ -84,6 +84,14 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
       outputTokens: 1,
       cost: 0,
     },
+    contextEstimate: {
+      inputTokens: 1,
+      cachedInputTokens: 0,
+      outputTokens: 1,
+      usedTokens: 2,
+    },
+    contextEstimateMode: 'cumulative_total',
+    lastContextCompactionAt: null,
     contextWindowTokens: null,
     contextWindowSource: 'default',
     ...overrides,
@@ -134,6 +142,14 @@ function toWireSession(session: WebSessionSummary) {
       cin: session.usage.cachedInputTokens,
       out: session.usage.outputTokens,
     },
+    cea: {
+      in: session.contextEstimate.inputTokens,
+      cin: session.contextEstimate.cachedInputTokens,
+      out: session.contextEstimate.outputTokens,
+      usd: session.contextEstimate.usedTokens,
+    },
+    cem: session.contextEstimateMode,
+    lcca: session.lastContextCompactionAt ? toMillis(session.lastContextCompactionAt) : null,
     cost: session.usage.cost,
     cwt: session.contextWindowTokens,
     cws: session.contextWindowSource,
@@ -389,5 +405,57 @@ describe('webSession loading behavior', () => {
 
     expect(handleCompleted).toHaveBeenCalledTimes(1);
     store.emitter.off('ai:completed', handleCompleted);
+  });
+
+  it('keeps realtime user message attachments on incoming history items', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-live-attachments',
+      status: 'running',
+      assistantState: null,
+      itemCount: 0,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'hist_item',
+      i: {
+        id: 'history-live-1',
+        oi: 1,
+        kd: 'user',
+        tp: 'user_message',
+        txt: 'hello [Image #1]',
+        ts2: Date.parse('2026-04-09T10:01:00.000Z'),
+        atts: [
+          {
+            id: 'att-live-1',
+            name: 'image.png',
+            mime: 'image/png',
+            sz: 42,
+          },
+        ],
+      },
+    });
+
+    const blocks = store.getBlocks(session.id);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.attachments).toEqual([
+      expect.objectContaining({
+        id: 'att-live-1',
+        name: 'image.png',
+        mime: 'image/png',
+        size: 42,
+      }),
+    ]);
   });
 });

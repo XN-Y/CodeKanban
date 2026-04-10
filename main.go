@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -65,11 +66,33 @@ func main() {
 }
 
 func run(forceMigrate bool, bind string, port int) {
+	dataDir := utils.GetDataDir()
+	appLock, err := utils.AcquireAppInstanceLock(dataDir)
+	if err != nil {
+		var lockedErr *utils.AppInstanceLockedError
+		if errors.As(err, &lockedErr) {
+			fmt.Fprintf(os.Stderr, "CodeKanban is already running with data directory %s\n", lockedErr.DataDir)
+			fmt.Fprintln(os.Stderr, "Close the existing instance or use a different data directory.")
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Failed to acquire application lock: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if closeErr := appLock.Close(); closeErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to release application lock: %v\n", closeErr)
+		}
+	}()
+
 	// 异步检查版本更新（不阻塞启动）
 	checker := utils.NewVersionChecker(VERSION.String(), PACKAGE_NAME)
 	checker.CheckAsync()
 
 	cfg := utils.ReadConfig()
+	if err := utils.EnsureAuthConfig(cfg); err != nil {
+		fmt.Printf("Failed to initialize auth config: %v\n", err)
+		os.Exit(1)
+	}
 	if forceMigrate {
 		cfg.AutoMigrate = true
 	}

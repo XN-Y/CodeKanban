@@ -147,6 +147,127 @@ func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
 	}
 }
 
+func TestManagerBroadcastSessionSummarySkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived Session", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	manager.broadcastSessionSummary(context.Background(), session.ID)
+
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived session summary to produce no broadcast frames, got %d", len(eventConn.frames))
+	}
+}
+
+func TestManagerBroadcastSnapshotSkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived Snapshot", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	if err := manager.broadcastSnapshot(context.Background(), session.ID); err != nil {
+		t.Fatalf("broadcastSnapshot returned error: %v", err)
+	}
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived snapshot broadcast to produce no frames, got %d", len(eventConn.frames))
+	}
+}
+
+func TestManagerAppendAndBroadcastPersistsArchivedHistoryWithoutRealtimeFrames(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Archived History", 1000)
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	eventConn := &captureWSConn{}
+	eventClient := manager.RegisterEventClient(eventConn)
+	defer manager.UnregisterClient(eventClient)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+
+	eventTime := time.Now().UTC().Truncate(time.Millisecond)
+	appended, err := manager.appendAndBroadcast(context.Background(), session.ID, record, Event{
+		ID:        "evt_archived_note",
+		Type:      "note",
+		Timestamp: eventTime,
+		Payload: map[string]any{
+			"txt": "keep this history",
+			"lvl": "info",
+		},
+	})
+	if err != nil {
+		t.Fatalf("appendAndBroadcast returned error: %v", err)
+	}
+	if appended.Seq != 1 {
+		t.Fatalf("expected appended event seq 1, got %d", appended.Seq)
+	}
+	if len(eventConn.frames) != 0 {
+		t.Fatalf("expected archived append to produce no realtime frames, got %d", len(eventConn.frames))
+	}
+
+	history, err := manager.History(context.Background(), session.ID, DefaultHistoryWindow, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Items) != 1 {
+		t.Fatalf("expected 1 archived history item, got %d", len(history.Items))
+	}
+	if history.Items[0].ItemType != "note" {
+		t.Fatalf("expected archived history item type note, got %q", history.Items[0].ItemType)
+	}
+	if history.Items[0].Text != "keep this history" {
+		t.Fatalf("expected archived history text to be preserved, got %q", history.Items[0].Text)
+	}
+}
+
 func TestParseCodexContextWindowRootLevelOnly(t *testing.T) {
 	raw := `
 model_context_window = 1000000 # root setting
@@ -208,6 +329,40 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 	}
 }
 
+func TestManagerCountSessionsByProjectSkipsArchivedSessions(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	projectA := seedProject(t)
+	projectB := seedProject(t)
+	seedWebSession(t, projectA.ID, "A-1", 1000)
+	archived := seedWebSession(t, projectA.ID, "A-2", 2000)
+	seedWebSession(t, projectB.ID, "B-1", 1000)
+	seedWebSession(t, projectB.ID, "B-2", 2000)
+
+	archivedAt := time.Now()
+	if err := model.GetDB().Model(archived).Update("archived_at", &archivedAt).Error; err != nil {
+		t.Fatalf("archive session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	counts, err := manager.CountSessionsByProject(context.Background())
+	if err != nil {
+		t.Fatalf("CountSessionsByProject returned error: %v", err)
+	}
+
+	if got := counts[projectA.ID]; got != 1 {
+		t.Fatalf("expected project A count 1, got %d", got)
+	}
+	if got := counts[projectB.ID]; got != 2 {
+		t.Fatalf("expected project B count 2, got %d", got)
+	}
+}
+
 func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -235,6 +390,42 @@ func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	}
 	if items[0].ContextWindowSource != ContextWindowSourceUnavailable {
 		t.Fatalf("expected contextWindowSource %q, got %q", ContextWindowSourceUnavailable, items[0].ContextWindowSource)
+	}
+}
+
+func TestManagerListSessionsNormalizesLegacyStaleSyncState(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Legacy Stale", 1000)
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"sync_state": string(SyncStateStale),
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		t.Fatalf("update session sync_state failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	items, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(items))
+	}
+	if items[0].SyncState != SyncStateFresh {
+		t.Fatalf(
+			"expected legacy stale sync_state to normalize to %q, got %q",
+			SyncStateFresh,
+			items[0].SyncState,
+		)
 	}
 }
 
@@ -981,6 +1172,72 @@ func TestCodexAppServerTransportRetryExhaustionFailsRun(t *testing.T) {
 	}
 	if !historyFailFound {
 		t.Fatalf("expected projected final run_fail item, got %#v", history.Items)
+	}
+}
+
+func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "auto_retry_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: true,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusDone) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after auto retry, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	userMessages := make([]Event, 0, 2)
+	for _, event := range rawEvents {
+		if event.Type == "msg_u" {
+			userMessages = append(userMessages, event)
+		}
+	}
+	if len(userMessages) < 2 {
+		t.Fatalf("expected auto retry to append a second user message, got %#v", rawEvents)
+	}
+	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
+		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
 	}
 }
 
@@ -1794,6 +2051,99 @@ func TestHistoryAggregatesConsecutiveFileChanges(t *testing.T) {
 	}
 }
 
+func TestFileChangeSnapshotKeepsCurrentFileWhenToolEndOmitsInput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Single File Change", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "fc1",
+			"name": "FileChange",
+			"kind": "file_change",
+			"in": map[string]any{
+				"changes": []any{
+					map[string]any{"path": "/home/dev/CodeKanban/123.md"},
+				},
+			},
+			"meta": map[string]any{"kind": "file_change", "title": "FileChange"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_fc_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "fc1",
+			"out": "patched",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":     "file_change",
+				"title":    "FileChange",
+				"subtitle": "",
+			},
+		},
+	})
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 10)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(snapshot.History.Items))
+	}
+	if snapshot.History.Items[0].Tool == nil {
+		t.Fatalf("expected tool history item, got %#v", snapshot.History.Items[0])
+	}
+
+	meta := decodeRawObject(snapshot.History.Items[0].Tool.Meta)
+	if got := stringValue(meta["subtitle"]); got != "/home/dev/CodeKanban/123.md" {
+		t.Fatalf("expected snapshot subtitle to keep current file path, got %q", got)
+	}
+
+	input := decodeRawObject(snapshot.History.Items[0].Tool.Input)
+	changes := decodeRawArray(input["changes"])
+	if len(changes) != 1 || stringValue(changes[0]["path"]) != "/home/dev/CodeKanban/123.md" {
+		t.Fatalf("expected snapshot tool input to keep file path, got %#v", snapshot.History.Items[0].Tool.Input)
+	}
+}
+
+func TestFileChangeSummaryReturnsCurrentFilePath(t *testing.T) {
+	t.Run("changes path", func(t *testing.T) {
+		got := fileChangeSummary(map[string]any{
+			"changes": []any{
+				map[string]any{"path": "/home/dev/CodeKanban/123.md"},
+				map[string]any{"path": "/home/dev/CodeKanban/other.md"},
+			},
+		})
+		if got != "/home/dev/CodeKanban/123.md" {
+			t.Fatalf("expected first changed path, got %q", got)
+		}
+	})
+
+	t.Run("camel case path", func(t *testing.T) {
+		got := fileChangeSummary(map[string]any{
+			"changes": []any{
+				map[string]any{"newPath": "/home/dev/CodeKanban/123.md"},
+			},
+		})
+		if got != "/home/dev/CodeKanban/123.md" {
+			t.Fatalf("expected camel-case path, got %q", got)
+		}
+	})
+}
+
 func TestHistorySeparatesDifferentCompactToolKinds(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -1989,6 +2339,112 @@ func TestHandleCodexEventPreservesFullPlanOutput(t *testing.T) {
 	}
 }
 
+func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Cumulative Context Estimate", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_usage_only",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeCumulativeTotal {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeCumulativeTotal, summary.ContextEstimateMode)
+	}
+	if summary.ContextEstimate.UsedTokens != 160 {
+		t.Fatalf("expected usedTokens 160, got %d", summary.ContextEstimate.UsedTokens)
+	}
+	if summary.ContextEstimate.InputTokens != 120 || summary.ContextEstimate.CachedInputTokens != 30 || summary.ContextEstimate.OutputTokens != 10 {
+		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+}
+
+func TestHandleCodexAppServerContextCompactionResetsContextEstimateBaseline(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Context Compaction", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_context_compaction",
+		assistantMessageID: "msg_context_compaction",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+	)
+	manager.handleCodexAppServerItemCompleted(
+		*session,
+		run,
+		[]byte(`{"item":{"type":"contextCompaction","id":"compact_test","status":"completed","summary":["Compacted previous messages into a summary."]}}`),
+	)
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":150,"cachedInputTokens":35,"outputTokens":12}}}`),
+	)
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeSinceCompaction {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeSinceCompaction, summary.ContextEstimateMode)
+	}
+	if summary.LastContextCompactionAt == nil {
+		t.Fatal("expected lastContextCompactionAt to be recorded")
+	}
+	if summary.ContextEstimate.InputTokens != 30 || summary.ContextEstimate.CachedInputTokens != 5 || summary.ContextEstimate.OutputTokens != 2 {
+		t.Fatalf("unexpected context estimate after compaction: %#v", summary.ContextEstimate)
+	}
+	if summary.ContextEstimate.UsedTokens != 37 {
+		t.Fatalf("expected usedTokens 37 after compaction, got %d", summary.ContextEstimate.UsedTokens)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected 1 history item, got %d", len(snapshot.History.Items))
+	}
+	item := snapshot.History.Items[0]
+	if item.Tool == nil || item.Tool.Kind != "context_compaction" {
+		t.Fatalf("expected context_compaction tool item, got %#v", item)
+	}
+	if !strings.Contains(item.Tool.Output, "Compacted previous messages") {
+		t.Fatalf("expected compaction output to be preserved, got %q", item.Tool.Output)
+	}
+}
+
 func initTestDB(t *testing.T) func() {
 	t.Helper()
 	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
@@ -2056,10 +2512,12 @@ func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 	path := filepath.Join(t.TempDir(), "fake-codex-app-server.js")
 	script := fmt.Sprintf(`#!/usr/bin/env node
 const readline = require('readline');
+const fs = require('fs');
 
 const mode = %q;
 const threadId = 'thread_test';
 const turnId = 'turn_test';
+const stateFile = __filename + '.state';
 
 function send(message) {
   process.stdout.write(JSON.stringify(message) + '\n');
@@ -2166,8 +2624,21 @@ function failTurn(message) {
   });
 }
 
+function readPersistentTurnCount() {
+  try {
+    return Number(fs.readFileSync(stateFile, 'utf8').trim()) || 0;
+  } catch (error) {
+    return 0;
+  }
+}
+
+function writePersistentTurnCount(value) {
+  fs.writeFileSync(stateFile, String(value));
+}
+
 let awaiting = null;
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+let startedTurns = 0;
 rl.on('line', line => {
   if (!line.trim()) {
     return;
@@ -2203,6 +2674,7 @@ rl.on('line', line => {
   }
 
   if (message.method === 'turn/start') {
+    startedTurns += 1;
     send({
       id: message.id,
       result: {
@@ -2240,6 +2712,17 @@ rl.on('line', line => {
         },
       });
       failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+      return;
+    }
+
+    if (mode === 'auto_retry_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+        return;
+      }
+      finishTurn('done');
       return;
     }
 

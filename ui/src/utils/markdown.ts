@@ -137,6 +137,12 @@ markdownRenderer.use({
     code(token) {
       return renderCodeBlock(token);
     },
+    link(token) {
+      const href = token.href ? ` href="${escapeHtml(token.href)}"` : '';
+      const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
+      const text = this.parser.parseInline(token.tokens);
+      return `<a${href}${title} target="_blank" rel="noopener noreferrer" data-message-link="true">${text}</a>`;
+    },
   },
 });
 

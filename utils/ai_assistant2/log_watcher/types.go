@@ -20,6 +20,7 @@ type SessionMeta struct {
 	Timestamp    time.Time `json:"timestamp"`
 	Cwd          string    `json:"cwd"`
 	Originator   string    `json:"originator"`
+	Source       string    `json:"source,omitempty"`
 	CliVersion   string    `json:"cli_version"`
 	Model        string    `json:"model,omitempty"`
 	Instructions string    `json:"instructions,omitempty"`

@@ -23,6 +23,9 @@ type WebSessionTable struct {
 	ReasoningEffort      string `gorm:"type:text" json:"reasoningEffort"`
 	WorkflowMode         string `gorm:"type:text;not null;default:default" json:"workflowMode"`
 	PermissionLevel      string `gorm:"type:text;not null;default:elevated" json:"permissionLevel"`
+	AutoRetryEnabled     bool   `gorm:"type:boolean;not null;default:false" json:"autoRetryEnabled"`
+	AutoRetryScope       string `gorm:"type:text;not null;default:network_only" json:"autoRetryScope"`
+	AutoRetryPreset      string `gorm:"type:text;not null;default:gentle_stop" json:"autoRetryPreset"`
 	LegacyPermissionMode string `gorm:"column:permission_mode;type:text" json:"-"`
 	Cwd                  string `gorm:"type:text;not null" json:"cwd"`
 
@@ -47,10 +50,17 @@ type WebSessionTable struct {
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
 
-	TotalInputTokens       int64   `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
-	TotalCachedInputTokens int64   `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
-	TotalOutputTokens      int64   `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
-	TotalCost              float64 `gorm:"type:real;not null;default:0" json:"totalCost"`
+	TotalInputTokens                 int64      `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
+	TotalCachedInputTokens           int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
+	TotalOutputTokens                int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
+	TotalCost                        float64    `gorm:"type:real;not null;default:0" json:"totalCost"`
+	ContextBaselineInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastContextCompactionAt          *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryAttempt                 int        `gorm:"type:integer;not null;default:0" json:"-"`
+	AutoRetryNextAt                  *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryLastErrorCode           *string    `gorm:"type:text" json:"-"`
 
 	LastError *string `gorm:"type:text" json:"lastError"`
 	SyncError *string `gorm:"type:text" json:"syncError"`

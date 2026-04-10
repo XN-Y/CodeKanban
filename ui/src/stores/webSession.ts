@@ -1,6 +1,6 @@
 import EventEmitter from 'eventemitter3';
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import { webSessionApi, type WebSessionAttachmentUploadProgress } from '@/api/webSession';
 import type {
   WebSessionAttachment,
@@ -15,6 +15,7 @@ import {
   type WebSessionSnapshotVersion,
   type WebSessionSnapshotVersionInput,
 } from '@/stores/webSessionSnapshotVersion';
+import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
@@ -36,6 +37,9 @@ type WireSession = {
   re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   wm: 'default' | 'plan';
   pl: 'default' | 'elevated' | 'yolo';
+  ae?: boolean;
+  ars?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+  arp?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
   ttl: string;
   cwd: string;
   nsid?: string | null;
@@ -64,6 +68,14 @@ type WireSession = {
     cin?: number;
     out?: number;
   };
+  cea?: {
+    in?: number;
+    cin?: number;
+    out?: number;
+    usd?: number;
+  };
+  cem?: 'cumulative_total' | 'since_compaction';
+  lcca?: number | null;
   cost?: number;
   cwt?: number | null;
   cws?: WebSessionContextWindowSource;
@@ -806,6 +818,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
+  const cachedCounts = reactive(new Map<string, number>());
   const emitter = new EventEmitter();
 
   const connectionState = ref<'idle' | 'connecting' | 'open' | 'closed'>('idle');
@@ -842,6 +855,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function getSessions(projectId: string) {
     return sessionsByProject.value[projectId] ?? [];
+  }
+
+  function syncSessionCount(projectId: string) {
+    if (!projectId) {
+      return;
+    }
+    cachedCounts.set(projectId, getSessions(projectId).length);
+  }
+
+  function getSessionCount(projectId: string) {
+    return cachedCounts.get(projectId) ?? 0;
   }
 
   function getArchivedSessions(projectIds: string[]) {
@@ -1310,6 +1334,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort: session.re ?? 'default',
       workflowMode: session.wm ?? 'default',
       permissionLevel: session.pl ?? 'elevated',
+      autoRetryEnabled: session.ae === true,
+      autoRetryScope:
+        session.ars === 'network_and_rate_limit' || session.ars === 'all_failures'
+          ? session.ars
+          : 'network_only',
+      autoRetryPreset:
+        session.arp === 'aggressive_stop' || session.arp === 'sustain_60s'
+          ? session.arp
+          : 'gentle_stop',
       cwd: session.cwd,
       nativeSessionId: session.nsid ?? null,
       status: session.st,
@@ -1320,7 +1353,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
       assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
-      syncState: session.ss ?? 'missing',
+      syncState: normalizeWebSessionSyncState(session.ss),
       lastSyncMode: session.lsm === 'deep' || session.lsm === 'fast' ? session.lsm : null,
       sourceCreatedAt: session.sca ? new Date(session.sca).toISOString() : null,
       sourceUpdatedAt: session.sua ? new Date(session.sua).toISOString() : null,
@@ -1338,6 +1371,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
         outputTokens: session.usa?.out ?? 0,
         cost: session.cost ?? 0,
       },
+      contextEstimate: {
+        inputTokens: session.cea?.in ?? session.usa?.in ?? 0,
+        cachedInputTokens: session.cea?.cin ?? session.usa?.cin ?? 0,
+        outputTokens: session.cea?.out ?? session.usa?.out ?? 0,
+        usedTokens:
+          session.cea?.usd ??
+          Math.max(
+            0,
+            Number(session.cea?.in ?? session.usa?.in ?? 0) +
+              Number(session.cea?.cin ?? session.usa?.cin ?? 0) +
+              Number(session.cea?.out ?? session.usa?.out ?? 0)
+          ),
+      },
+      contextEstimateMode:
+        session.cem === 'since_compaction' ? 'since_compaction' : 'cumulative_total',
+      lastContextCompactionAt: session.lcca ? new Date(session.lcca).toISOString() : null,
       contextWindowTokens:
         typeof session.cwt === 'number' && Number.isFinite(session.cwt) ? session.cwt : null,
       contextWindowSource:
@@ -1544,12 +1593,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [projectId]: next,
     };
+    syncSessionCount(projectId);
     const currentActive = activeSessionIdByProject.value[projectId];
     if (currentActive === sessionId) {
-      const nextActive = next[0]?.id ?? '';
       activeSessionIdByProject.value = {
         ...activeSessionIdByProject.value,
-        [projectId]: nextActive,
+        [projectId]: '',
       };
       persistActiveSessions(activeSessionIdByProject.value);
     }
@@ -1596,6 +1645,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [summary.projectId]: sortSessions(next),
     };
+    syncSessionCount(summary.projectId);
   }
 
   function upsertSession(summary: WebSessionSummary) {
@@ -2374,6 +2424,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ...sessionsByProject.value,
       [projectId]: sortSessions(sessions),
     };
+    syncSessionCount(projectId);
     loadedProjects.value = {
       ...loadedProjects.value,
       [projectId]: true,
@@ -2382,6 +2433,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
       rememberActiveSession(projectId, sessions[0].id);
     }
     return sessions;
+  }
+
+  async function loadSessionCounts() {
+    try {
+      const counts = await webSessionApi.counts();
+      cachedCounts.clear();
+      Object.entries(counts).forEach(([projectId, count]) => {
+        cachedCounts.set(projectId, Math.max(0, Number(count) || 0));
+      });
+      return counts;
+    } catch (error) {
+      console.error('Failed to load web session counts', error);
+      return {};
+    }
   }
 
   function invalidateArchivedSessions() {
@@ -2689,26 +2754,83 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_ag', sessionId, { ag: agent });
   }
 
-  async function moveSession(projectId: string, fromIndex: number, toIndex: number) {
+  async function updateAutoRetry(
+    sessionId: string,
+    config: {
+      enabled: boolean;
+      scope: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      preset: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+    }
+  ) {
+    const session = findSessionById(sessionId);
+    const previous =
+      session && !session.archivedAt
+        ? {
+            enabled: session.autoRetryEnabled,
+            scope: session.autoRetryScope,
+            preset: session.autoRetryPreset,
+          }
+        : null;
+    if (previous) {
+      updateSessionStatus(sessionId, current => ({
+        ...current,
+        autoRetryEnabled: config.enabled === true,
+        autoRetryScope: config.scope,
+        autoRetryPreset: config.preset,
+      }));
+    }
+    try {
+      await sendCommand('set_ar', sessionId, {
+        ae: config.enabled === true,
+        ars: config.scope,
+        arp: config.preset,
+      });
+    } catch (error) {
+      if (previous) {
+        updateSessionStatus(sessionId, current => ({
+          ...current,
+          autoRetryEnabled: previous.enabled,
+          autoRetryScope: previous.scope,
+          autoRetryPreset: previous.preset,
+        }));
+      }
+      throw error;
+    }
+  }
+
+  async function moveSession(
+    projectId: string,
+    sessionId: string,
+    previousSessionId = '',
+    nextSessionId = ''
+  ) {
     const current = getSessions(projectId);
     if (
       !projectId ||
-      fromIndex < 0 ||
-      toIndex < 0 ||
-      fromIndex >= current.length ||
-      toIndex >= current.length ||
-      fromIndex === toIndex
+      !sessionId ||
+      (previousSessionId && previousSessionId === sessionId) ||
+      (nextSessionId && nextSessionId === sessionId)
     ) {
       return;
     }
 
     const original = [...current];
-    const reordered = [...current];
-    const [moving] = reordered.splice(fromIndex, 1);
+    const reordered = current.filter(session => session.id !== sessionId);
+    const moving = current.find(session => session.id === sessionId);
     if (!moving) {
       return;
     }
-    reordered.splice(toIndex, 0, moving);
+
+    let insertIndex = reordered.length;
+    if (previousSessionId) {
+      const previousIndex = reordered.findIndex(session => session.id === previousSessionId);
+      insertIndex = previousIndex >= 0 ? previousIndex + 1 : reordered.length;
+    } else if (nextSessionId) {
+      const nextIndex = reordered.findIndex(session => session.id === nextSessionId);
+      insertIndex = nextIndex >= 0 ? nextIndex : 0;
+    }
+
+    reordered.splice(insertIndex, 0, moving);
     const reorderedWithOrder = reordered.map((session, index) => ({
       ...session,
       orderIndex: (index + 1) * 1000,
@@ -2718,12 +2840,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       [projectId]: reorderedWithOrder,
     };
 
-    const prevSessionId = reorderedWithOrder[toIndex - 1]?.id ?? '';
-    const nextSessionId = reorderedWithOrder[toIndex + 1]?.id ?? '';
-
     try {
       await sendCommand('move', moving.id, {
-        prv: prevSessionId,
+        prv: previousSessionId,
         nxt: nextSessionId,
       });
     } catch (error) {
@@ -2765,6 +2884,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
       permissionLevel?: 'default' | 'elevated' | 'yolo';
+      autoRetryEnabled?: boolean;
+      autoRetryScope?: 'network_only' | 'network_and_rate_limit' | 'all_failures';
+      autoRetryPreset?: 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
       title?: string;
     }
   ) {
@@ -2783,6 +2905,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     lastError,
     getDraft,
     getSessions,
+    getSessionCount,
     getArchivedSessions,
     getArchivedMeta,
     getActiveSessionId,
@@ -2796,6 +2919,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getBlocks,
     getLatestEventSeq,
     loadSessions,
+    loadSessionCounts,
     loadArchivedSessions,
     invalidateArchivedSessions,
     setActiveSession,
@@ -2817,6 +2941,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     updateWorkflowMode,
     updatePermissionLevel,
     updateAgent,
+    updateAutoRetry,
     moveSession,
     getPendingApproval,
     getPendingUserInput,
@@ -2828,6 +2953,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     clearDraft,
     moveDraft,
     openEventStream,
+    sessionCounts: cachedCounts,
     emitter,
   };
 });

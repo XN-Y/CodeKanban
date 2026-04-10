@@ -49,16 +49,18 @@ describe('webSessionSessionState', () => {
     expect(state.statusEmoji).toBe('🤔');
   });
 
-  it('maps plan approval to the approval label', () => {
+  it('maps plan approval to a distinct pill state while keeping the approval label', () => {
     const state = resolveWebSessionDisplayState(
       makeInput({
         livePhase: 'waiting_plan_approval',
+        hasUnread: true,
       })
     );
 
-    expect(state.assistantStateClass).toBe('waiting_approval');
+    expect(state.assistantStateClass).toBe('waiting_plan_approval');
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingApproval');
-    expect(state.hasUnviewedApproval).toBe(false);
+    expect(state.pillStateClass).toBe('waiting_plan_approval');
+    expect(state.hasUnviewedApproval).toBe(true);
   });
 
   it('treats draft sessions as waiting for input without status dots', () => {
@@ -127,7 +129,7 @@ describe('webSessionSessionState', () => {
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingInput');
   });
 
-  it('shows error dots and prefers stale dots over status dots', () => {
+  it('shows error dots and ignores legacy stale sync state markers', () => {
     const errorState = resolveWebSessionDisplayState(
       makeInput({
         livePhase: 'error',
@@ -144,7 +146,7 @@ describe('webSessionSessionState', () => {
 
     expect(errorState.showStatusDot).toBe(true);
     expect(errorState.statusDotClass).toBe('err');
-    expect(staleState.showStatusDot).toBe(true);
-    expect(staleState.statusDotClass).toBe('stale');
+    expect(staleState.showStatusDot).toBe(false);
+    expect(staleState.statusDotClass).toBeNull();
   });
 });

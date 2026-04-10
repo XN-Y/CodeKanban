@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"errors"
+	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -29,6 +31,13 @@ type webSessionController struct {
 	manager  *websession.Manager
 	logger   *zap.Logger
 	upgrader websocket.Upgrader
+}
+
+type webSessionCountsResponse struct {
+	Status int `json:"-"`
+	Body   struct {
+		Counts map[string]int `json:"counts" doc:"项目ID到会话数量的映射"`
+	} `json:"body"`
 }
 
 func registerWebSessionRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppConfig, logger *zap.Logger) {
@@ -75,6 +84,24 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-list"
 		op.Summary = "获取会话列表"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Get(group, "/web-sessions/counts", func(
+		ctx context.Context,
+		_ *struct{},
+	) (*webSessionCountsResponse, error) {
+		counts, err := c.manager.CountSessionsByProject(ctx)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to count web sessions", err)
+		}
+		resp := &webSessionCountsResponse{}
+		resp.Status = http.StatusOK
+		resp.Body.Counts = counts
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-counts"
+		op.Summary = "获取项目会话数量"
 		op.Tags = []string{webSessionTag}
 	})
 
@@ -158,14 +185,17 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		input *struct {
 			ProjectID string `path:"projectId"`
 			Body      struct {
-				WorktreeID      string `json:"worktreeId"`
-				Agent           string `json:"agent"`
-				Model           string `json:"model"`
-				ReasoningEffort string `json:"reasoningEffort"`
-				WorkflowMode    string `json:"workflowMode"`
-				PermissionLevel string `json:"permissionLevel"`
-				PermissionMode  string `json:"permissionMode,omitempty"`
-				Title           string `json:"title"`
+				WorktreeID       string `json:"worktreeId"`
+				Agent            string `json:"agent"`
+				Model            string `json:"model"`
+				ReasoningEffort  string `json:"reasoningEffort"`
+				WorkflowMode     string `json:"workflowMode"`
+				PermissionLevel  string `json:"permissionLevel"`
+				AutoRetryEnabled bool   `json:"autoRetryEnabled"`
+				AutoRetryScope   string `json:"autoRetryScope"`
+				AutoRetryPreset  string `json:"autoRetryPreset"`
+				PermissionMode   string `json:"permissionMode,omitempty"`
+				Title            string `json:"title"`
 			}
 		},
 	) (*h.ItemResponse[websession.SessionSummary], error) {
@@ -197,14 +227,17 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			}
 		}
 		item, err := c.manager.CreateSession(ctx, websession.CreateParams{
-			ProjectID:       input.ProjectID,
-			WorktreeID:      input.Body.WorktreeID,
-			Agent:           websession.Agent(input.Body.Agent),
-			Model:           input.Body.Model,
-			ReasoningEffort: websession.ReasoningEffort(input.Body.ReasoningEffort),
-			WorkflowMode:    workflowMode,
-			PermissionLevel: permissionLevel,
-			Title:           input.Body.Title,
+			ProjectID:        input.ProjectID,
+			WorktreeID:       input.Body.WorktreeID,
+			Agent:            websession.Agent(input.Body.Agent),
+			Model:            input.Body.Model,
+			ReasoningEffort:  websession.ReasoningEffort(input.Body.ReasoningEffort),
+			WorkflowMode:     workflowMode,
+			PermissionLevel:  permissionLevel,
+			AutoRetryEnabled: input.Body.AutoRetryEnabled,
+			AutoRetryScope:   websession.AutoRetryScope(input.Body.AutoRetryScope),
+			AutoRetryPreset:  websession.AutoRetryPreset(input.Body.AutoRetryPreset),
+			Title:            input.Body.Title,
 		})
 		if err != nil {
 			return nil, huma.Error400BadRequest(err.Error())
@@ -451,6 +484,8 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		return ctx.Status(http.StatusCreated).JSON(resp)
 	})
 
+	app.Get("/api/v1/web-sessions/image-view", c.serveImageViewPreview)
+
 	app.Get("/api/v1/web-sessions/attachments/:attachmentId", func(ctx *fiber.Ctx) error {
 		attachmentID := strings.TrimSpace(ctx.Params("attachmentId"))
 		if attachmentID == "" {
@@ -474,6 +509,92 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		ctx.Set(fiber.HeaderContentDisposition, "inline")
 		return ctx.SendFile(attachment.Path, false)
 	})
+}
+
+func (c *webSessionController) serveImageViewPreview(ctx *fiber.Ctx) error {
+	resolvedPath, err := resolveWebSessionImageViewPath(ctx.Query("path"), ctx.Query("cwd"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, err.Error())
+	}
+
+	info, err := os.Stat(resolvedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fiber.NewError(http.StatusNotFound, "image not found")
+		}
+		return fiber.NewError(http.StatusInternalServerError, "failed to read image")
+	}
+	if !info.Mode().IsRegular() {
+		return fiber.NewError(http.StatusBadRequest, "path is not a regular file")
+	}
+
+	mimeType := detectWebSessionImagePreviewMimeType(resolvedPath)
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(mimeType)), "image/") {
+		return fiber.NewError(http.StatusBadRequest, "path is not an image")
+	}
+
+	ctx.Set(fiber.HeaderContentDisposition, "inline")
+	ctx.Set(fiber.HeaderCacheControl, "no-store")
+	ctx.Set(fiber.HeaderContentType, mimeType)
+	return ctx.SendFile(resolvedPath, false)
+}
+
+func resolveWebSessionImageViewPath(rawPath string, rawCwd string) (string, error) {
+	path := strings.TrimSpace(rawPath)
+	if path == "" {
+		return "", errors.New("path is required")
+	}
+	if filepath.IsAbs(path) || looksLikeWindowsAbsolutePath(path) {
+		return filepath.Clean(path), nil
+	}
+
+	cwd := strings.TrimSpace(rawCwd)
+	if cwd == "" {
+		return "", errors.New("cwd is required for relative paths")
+	}
+	if !filepath.IsAbs(cwd) && !looksLikeWindowsAbsolutePath(cwd) {
+		return "", errors.New("cwd must be absolute")
+	}
+	return filepath.Clean(filepath.Join(cwd, path)), nil
+}
+
+func detectWebSessionImagePreviewMimeType(filePath string) string {
+	extMimeType := strings.TrimSpace(mime.TypeByExtension(strings.ToLower(filepath.Ext(filePath))))
+	if strings.HasPrefix(extMimeType, "image/") {
+		return extMimeType
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	var header [512]byte
+	readBytes, err := file.Read(header[:])
+	if err != nil || readBytes <= 0 {
+		return extMimeType
+	}
+
+	detected := strings.TrimSpace(http.DetectContentType(header[:readBytes]))
+	if strings.HasPrefix(detected, "image/") {
+		return detected
+	}
+	return extMimeType
+}
+
+func looksLikeWindowsAbsolutePath(value string) bool {
+	if len(value) < 3 {
+		return false
+	}
+	if value[1] != ':' {
+		return false
+	}
+	if value[2] != '\\' && value[2] != '/' {
+		return false
+	}
+	first := value[0]
+	return (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
 }
 
 func (c *webSessionController) registerWebsocket(app *fiber.App) {

@@ -38,48 +38,61 @@ type wireFrame struct {
 }
 
 type wireSess struct {
-	ID                      string    `json:"id"`
-	ProjectID               string    `json:"pid"`
-	WorktreeID              *string   `json:"wid,omitempty"`
-	OrderIndex              float64   `json:"oi"`
-	Agent                   string    `json:"ag"`
-	Model                   string    `json:"md"`
-	ReasoningEffort         string    `json:"re"`
-	WorkflowMode            string    `json:"wm"`
-	PermissionLevel         string    `json:"pl"`
-	Title                   string    `json:"ttl"`
-	Cwd                     string    `json:"cwd"`
-	NativeSessionID         *string   `json:"nsid,omitempty"`
-	Status                  string    `json:"st"`
-	AssistantState          string    `json:"ast,omitempty"`
-	Unread                  bool      `json:"unr"`
-	ArchivedAt              *int64    `json:"aa,omitempty"`
-	ActivityAt              int64     `json:"act"`
-	CreatedAt               int64     `json:"ca"`
-	LastUpdated             int64     `json:"lu"`
-	LastMessageAt           *int64    `json:"lma,omitempty"`
-	AssistantStateUpdatedAt *int64    `json:"asu,omitempty"`
-	SourceKind              string    `json:"sk"`
-	SyncState               string    `json:"ss"`
-	LastSyncMode            string    `json:"lsm,omitempty"`
-	SourceCreatedAt         *int64    `json:"sca,omitempty"`
-	SourceUpdatedAt         *int64    `json:"sua,omitempty"`
-	LastSyncedAt            *int64    `json:"lsa,omitempty"`
-	ThreadPath              *string   `json:"tp,omitempty"`
-	ThreadPreview           *string   `json:"tpv,omitempty"`
-	TurnCount               int       `json:"tc"`
-	ItemCount               int       `json:"ic"`
-	SyncError               *string   `json:"se,omitempty"`
-	Usage                   wireUsage `json:"usa"`
-	Cost                    float64   `json:"cost"`
-	ContextWindowTokens     *int64    `json:"cwt,omitempty"`
-	ContextWindowSource     string    `json:"cws"`
+	ID                      string     `json:"id"`
+	ProjectID               string     `json:"pid"`
+	WorktreeID              *string    `json:"wid,omitempty"`
+	OrderIndex              float64    `json:"oi"`
+	Agent                   string     `json:"ag"`
+	Model                   string     `json:"md"`
+	ReasoningEffort         string     `json:"re"`
+	WorkflowMode            string     `json:"wm"`
+	PermissionLevel         string     `json:"pl"`
+	AutoRetryEnabled        bool       `json:"ae"`
+	AutoRetryScope          string     `json:"ars"`
+	AutoRetryPreset         string     `json:"arp"`
+	Title                   string     `json:"ttl"`
+	Cwd                     string     `json:"cwd"`
+	NativeSessionID         *string    `json:"nsid,omitempty"`
+	Status                  string     `json:"st"`
+	AssistantState          string     `json:"ast,omitempty"`
+	Unread                  bool       `json:"unr"`
+	ArchivedAt              *int64     `json:"aa,omitempty"`
+	ActivityAt              int64      `json:"act"`
+	CreatedAt               int64      `json:"ca"`
+	LastUpdated             int64      `json:"lu"`
+	LastMessageAt           *int64     `json:"lma,omitempty"`
+	AssistantStateUpdatedAt *int64     `json:"asu,omitempty"`
+	SourceKind              string     `json:"sk"`
+	SyncState               string     `json:"ss"`
+	LastSyncMode            string     `json:"lsm,omitempty"`
+	SourceCreatedAt         *int64     `json:"sca,omitempty"`
+	SourceUpdatedAt         *int64     `json:"sua,omitempty"`
+	LastSyncedAt            *int64     `json:"lsa,omitempty"`
+	ThreadPath              *string    `json:"tp,omitempty"`
+	ThreadPreview           *string    `json:"tpv,omitempty"`
+	TurnCount               int        `json:"tc"`
+	ItemCount               int        `json:"ic"`
+	SyncError               *string    `json:"se,omitempty"`
+	Usage                   wireUsage  `json:"usa"`
+	ContextEstimate         wireCtxEst `json:"cea"`
+	ContextEstimateMode     string     `json:"cem"`
+	LastContextCompactionAt *int64     `json:"lcca,omitempty"`
+	Cost                    float64    `json:"cost"`
+	ContextWindowTokens     *int64     `json:"cwt,omitempty"`
+	ContextWindowSource     string     `json:"cws"`
 }
 
 type wireUsage struct {
 	InputTokens       int64 `json:"in"`
 	CachedInputTokens int64 `json:"cin"`
 	OutputTokens      int64 `json:"out"`
+}
+
+type wireCtxEst struct {
+	InputTokens       int64 `json:"in"`
+	CachedInputTokens int64 `json:"cin"`
+	OutputTokens      int64 `json:"out"`
+	UsedTokens        int64 `json:"usd"`
 }
 
 type wireHist struct {
@@ -267,6 +280,11 @@ func mapWireSession(session SessionSummary) *wireSess {
 		value := session.LastSyncedAt.UnixMilli()
 		lastSyncedAt = &value
 	}
+	var lastContextCompactionAt *int64
+	if session.LastContextCompactionAt != nil {
+		value := session.LastContextCompactionAt.UnixMilli()
+		lastContextCompactionAt = &value
+	}
 	return &wireSess{
 		ID:                      session.ID,
 		ProjectID:               session.ProjectID,
@@ -277,6 +295,9 @@ func mapWireSession(session SessionSummary) *wireSess {
 		ReasoningEffort:         string(session.ReasoningEffort),
 		WorkflowMode:            string(session.WorkflowMode),
 		PermissionLevel:         string(session.PermissionLevel),
+		AutoRetryEnabled:        session.AutoRetryEnabled,
+		AutoRetryScope:          string(session.AutoRetryScope),
+		AutoRetryPreset:         string(session.AutoRetryPreset),
 		Title:                   session.Title,
 		Cwd:                     session.Cwd,
 		NativeSessionID:         session.NativeSessionID,
@@ -305,9 +326,17 @@ func mapWireSession(session SessionSummary) *wireSess {
 			CachedInputTokens: session.Usage.CachedInputTokens,
 			OutputTokens:      session.Usage.OutputTokens,
 		},
-		Cost:                session.Usage.Cost,
-		ContextWindowTokens: session.ContextWindowTokens,
-		ContextWindowSource: string(session.ContextWindowSource),
+		ContextEstimate: wireCtxEst{
+			InputTokens:       session.ContextEstimate.InputTokens,
+			CachedInputTokens: session.ContextEstimate.CachedInputTokens,
+			OutputTokens:      session.ContextEstimate.OutputTokens,
+			UsedTokens:        session.ContextEstimate.UsedTokens,
+		},
+		ContextEstimateMode:     string(session.ContextEstimateMode),
+		LastContextCompactionAt: lastContextCompactionAt,
+		Cost:                    session.Usage.Cost,
+		ContextWindowTokens:     session.ContextWindowTokens,
+		ContextWindowSource:     string(session.ContextWindowSource),
 	}
 }
 
