@@ -5,6 +5,7 @@ export type WebSessionDisplayAssistantState =
   | 'working'
   | 'waiting_approval'
   | 'waiting_input'
+  | 'idle'
   | 'unknown';
 
 export type WebSessionDisplayPillState = WebSessionDisplayAssistantState | 'completion';
@@ -12,7 +13,9 @@ export type WebSessionDisplayPillState = WebSessionDisplayAssistantState | 'comp
 export type WebSessionDisplayStatusKey =
   | 'terminal.aiStatusWorking'
   | 'terminal.aiStatusWaitingApproval'
-  | 'terminal.aiStatusWaitingInput';
+  | 'terminal.aiStatusWaitingInput'
+  | 'terminal.aiIdle'
+  | 'terminal.aiStatusDone';
 
 export interface WebSessionDisplayStateInput {
   isDraft: boolean;
@@ -47,9 +50,10 @@ function mapPhaseToAssistantState(
     case 'waiting_plan_approval':
       return 'waiting_approval';
     case 'waiting_input':
+      return 'waiting_input';
     case 'done':
     case 'idle':
-      return 'waiting_input';
+      return 'idle';
     case 'error':
       return 'unknown';
     default:
@@ -83,9 +87,10 @@ function mapStatusToAssistantState(
       return 'waiting_approval';
     case 'idle':
     case 'done':
+      return 'idle';
     case 'err':
     case 'aborting':
-      return 'waiting_input';
+      return 'unknown';
     default:
       return 'unknown';
   }
@@ -104,7 +109,7 @@ export function resolveWebSessionDisplayState(
   const hasUnviewedCompletion =
     input.hasUnread &&
     !hasUnviewedApproval &&
-    assistantStateClass === 'waiting_input' &&
+    assistantStateClass === 'idle' &&
     input.status !== 'err';
   const showStatusDot = !input.isDraft && (input.status === 'err' || input.syncState === 'stale');
 
@@ -123,6 +128,10 @@ export function resolveWebSessionDisplayState(
     case 'waiting_input':
       statusLabelKey = 'terminal.aiStatusWaitingInput';
       statusEmoji = '✓';
+      break;
+    case 'idle':
+      statusLabelKey = hasUnviewedCompletion ? 'terminal.aiStatusDone' : 'terminal.aiIdle';
+      statusEmoji = hasUnviewedCompletion ? '✓' : '';
       break;
     default:
       break;

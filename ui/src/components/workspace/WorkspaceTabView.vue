@@ -13,7 +13,7 @@
             <TerminalOutline />
           </n-icon>
           <span class="tab-label">{{ t('nav.terminal') }}</span>
-          <span v-if="terminalCount > 0" class="terminal-badge">{{ terminalCount }}</span>
+          <span v-if="terminalCount > 0" class="tab-badge">{{ terminalCount }}</span>
         </button>
         <button
           type="button"
@@ -25,7 +25,9 @@
             <ChatbubblesOutline />
           </n-icon>
           <span class="tab-label">{{ t('nav.webSession') }}</span>
-          <span v-if="webSessionCount > 0" class="terminal-badge">{{ webSessionCount }}</span>
+          <span class="tab-badge session-summary-badge">
+            {{ webSessionSummaryText }}
+          </span>
         </button>
         <button
           type="button"
@@ -152,6 +154,10 @@ import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
 import { ChatbubblesOutline, GridOutline, TerminalOutline } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
+import {
+  formatAiStatusTripletWithTotal,
+  summarizeWebSessions,
+} from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
 import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
@@ -198,7 +204,17 @@ const terminalCount = computed(() => {
   return terminalStore.getTabs(props.projectId).length;
 });
 
-const webSessionCount = computed(() => webSessionStore.getSessions(props.projectId).length);
+const webSessionSummary = computed(() =>
+  summarizeWebSessions(webSessionStore.getSessions(props.projectId), sessionId =>
+    webSessionStore.getLiveState(sessionId)
+  )
+);
+const webSessionSummaryText = computed(() =>
+  formatAiStatusTripletWithTotal(
+    webSessionSummary.value,
+    webSessionStore.getSessions(props.projectId).length
+  )
+);
 
 const rightSidebarToggleLabel = computed(() =>
   t(isRightSidebarVisible.value ? 'webSession.hideSidebar' : 'webSession.showSidebar')
@@ -347,7 +363,7 @@ if (typeof window !== 'undefined') {
   white-space: nowrap;
 }
 
-.terminal-badge {
+.tab-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -359,6 +375,12 @@ if (typeof window !== 'undefined') {
   color: #fff;
   font-size: 11px;
   font-weight: 500;
+}
+
+.session-summary-badge {
+  min-width: auto;
+  padding: 0 7px;
+  font-variant-numeric: tabular-nums;
 }
 
 .header-action-btn {

@@ -86,9 +86,32 @@ describe('webSessionSessionState', () => {
       })
     );
 
-    expect(state.assistantStateClass).toBe('waiting_input');
+    expect(state.assistantStateClass).toBe('idle');
     expect(state.hasUnviewedCompletion).toBe(true);
     expect(state.pillStateClass).toBe('completion');
+    expect(state.statusLabelKey).toBe('terminal.aiStatusDone');
+  });
+
+  it('treats done and idle sessions as idle instead of waiting for input', () => {
+    const doneState = resolveWebSessionDisplayState(
+      makeInput({
+        hasUnread: false,
+        livePhase: 'done',
+        status: 'done',
+      })
+    );
+    const idleState = resolveWebSessionDisplayState(
+      makeInput({
+        hasUnread: false,
+        livePhase: 'idle',
+        status: 'idle',
+      })
+    );
+
+    expect(doneState.assistantStateClass).toBe('idle');
+    expect(doneState.statusLabelKey).toBe('terminal.aiIdle');
+    expect(idleState.assistantStateClass).toBe('idle');
+    expect(idleState.statusLabelKey).toBe('terminal.aiIdle');
   });
 
   it('falls back to assistantState when livePhase is unavailable', () => {

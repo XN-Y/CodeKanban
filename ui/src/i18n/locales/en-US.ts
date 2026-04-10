@@ -518,6 +518,7 @@ export default {
     aiStatusWorking: 'Working',
     aiStatusWaitingApproval: 'Awaiting approval',
     aiStatusWaitingInput: 'Waiting for input',
+    aiStatusDone: 'Completed',
     aiAssistantDetected: 'AI Coding Agent',
     statusLabel: 'Status',
     aiCompleted: 'AI Execution Completed',

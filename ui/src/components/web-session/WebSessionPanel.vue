@@ -6496,6 +6496,11 @@ onBeforeUnmount(() => {
   color: #475467;
 }
 
+.ai-status-pill.state-idle {
+  background-color: #eceef2;
+  color: #475467;
+}
+
 .ai-status-pill.state-unknown {
   background-color: #f1f5f9;
   color: #94a3b8;

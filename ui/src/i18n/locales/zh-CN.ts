@@ -505,6 +505,7 @@ export default {
     aiStatusWorking: '正在工作',
     aiStatusWaitingApproval: '等待批准',
     aiStatusWaitingInput: '等待输入',
+    aiStatusDone: '已完成',
     aiAssistantDetected: 'AI 编码助手',
     statusLabel: '状态',
     aiCompleted: 'AI 执行完成',

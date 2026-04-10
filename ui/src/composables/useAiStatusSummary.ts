@@ -1,35 +1,34 @@
 import { computed } from 'vue';
+import {
+  EMPTY_AI_STATUS_SUMMARY,
+  createAiStatusSummary,
+  getWebSessionStatusBucket,
+} from '@/composables/aiStatusSummary';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useWebSessionStore } from '@/stores/webSession';
+import type { AiStatusSummary } from '@/composables/aiStatusSummary';
 
-export interface AiStatusSummary {
-  working: number;
-  blocking: number;
-  unreadCompleted: number;
-}
+export {
+  EMPTY_AI_STATUS_SUMMARY,
+  createAiStatusSummary,
+  formatAiStatusTripletWithTotal,
+  formatAiStatusTitle,
+  formatAiStatusTriplet,
+  getAiStatusSummaryTotal,
+  getWebSessionStatusBucket,
+  hasAiStatusSummary,
+  summarizeWebSessions,
+  type AiStatusSummary,
+} from '@/composables/aiStatusSummary';
 
 type StatusBucket = keyof AiStatusSummary;
-
-const EMPTY_AI_STATUS_SUMMARY: Readonly<AiStatusSummary> = Object.freeze({
-  working: 0,
-  blocking: 0,
-  unreadCompleted: 0,
-});
 
 const BUCKET_PRIORITY: Record<StatusBucket, number> = {
   unreadCompleted: 0,
   working: 1,
   blocking: 2,
 };
-
-function createSummary(): AiStatusSummary {
-  return {
-    working: 0,
-    blocking: 0,
-    unreadCompleted: 0,
-  };
-}
 
 function ensureProjectBuckets(
   projectBuckets: Map<string, Map<string, StatusBucket>>,
@@ -63,22 +62,14 @@ function rememberSessionBucket(
 
 function summarizeProjectBuckets(sessionBuckets?: Map<string, StatusBucket>): AiStatusSummary {
   if (!sessionBuckets) {
-    return createSummary();
+    return createAiStatusSummary();
   }
 
-  const summary = createSummary();
+  const summary = createAiStatusSummary();
   sessionBuckets.forEach(bucket => {
     summary[bucket] += 1;
   });
   return summary;
-}
-
-export function formatAiStatusTitle(summary: AiStatusSummary, appName: string) {
-  const total = summary.working + summary.blocking + summary.unreadCompleted;
-  if (total === 0) {
-    return appName;
-  }
-  return `[${summary.working}/${summary.blocking}/${summary.unreadCompleted}] ${appName}`;
 }
 
 export function useAiStatusSummary() {
@@ -116,24 +107,11 @@ export function useAiStatusSummary() {
 
     projectStore.projects.forEach(project => {
       webSessionStore.getSessions(project.id).forEach(session => {
-        const liveState = webSessionStore.getLiveState(session.id);
-        const sessionKey = `web:${session.id}`;
-
-        if (
-          liveState.phase === 'waiting_approval' ||
-          liveState.phase === 'waiting_plan_approval' ||
-          liveState.phase === 'waiting_input'
-        ) {
-          rememberSessionBucket(buckets, project.id, sessionKey, 'blocking');
+        const bucket = getWebSessionStatusBucket(session, webSessionStore.getLiveState(session.id));
+        if (!bucket) {
           return;
         }
-        if (liveState.running) {
-          rememberSessionBucket(buckets, project.id, sessionKey, 'working');
-          return;
-        }
-        if (session.hasUnread && liveState.phase === 'done') {
-          rememberSessionBucket(buckets, project.id, sessionKey, 'unreadCompleted');
-        }
+        rememberSessionBucket(buckets, project.id, `web:${session.id}`, bucket);
       });
     });
 
@@ -149,7 +127,7 @@ export function useAiStatusSummary() {
   });
 
   const totalSummary = computed(() => {
-    const summary = createSummary();
+    const summary = createAiStatusSummary();
     projectBucketMap.value.forEach(sessionBuckets => {
       const projectSummary = summarizeProjectBuckets(sessionBuckets);
       summary.working += projectSummary.working;
