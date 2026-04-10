@@ -187,8 +187,6 @@
               <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
             </n-space>
           </n-form-item>
-            </n-space>
-          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
