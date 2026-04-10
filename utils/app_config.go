@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -65,6 +66,22 @@ type DeveloperConfig struct {
 	AutoCreateTaskOnStartWork      bool   `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
 	EnableTerminalStateSnapshot    bool   `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
 	WebSessionCodexDefaultSyncMode string `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
+}
+
+type WebSessionQuickInputConfig struct {
+	Pinned []string `json:"pinned" yaml:"pinned"`
+	Recent []string `json:"recent" yaml:"recent"`
+}
+
+type UIConfig struct {
+	WebSessionQuickInput WebSessionQuickInputConfig `json:"webSessionQuickInput" yaml:"webSessionQuickInput"`
+}
+
+const WebSessionQuickInputRecentLimit = 6
+
+var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
+	Pinned: []string{"continue"},
+	Recent: []string{},
 }
 
 // WorktreeConfig Worktree 全局配置。
@@ -159,6 +176,7 @@ type AppConfig struct {
 	Auth                   AuthConfig       `json:"auth" yaml:"auth"`
 	Terminal               TerminalConfig   `json:"terminal" yaml:"terminal"`
 	Developer              DeveloperConfig  `json:"developer" yaml:"developer"`
+	UI                     UIConfig         `json:"ui" yaml:"ui"`
 	Worktree               WorktreeConfig   `json:"worktree" yaml:"worktree"`
 }
 
@@ -247,6 +265,9 @@ func ReadConfig() *AppConfig {
 			EnableTerminalStateSnapshot:    runtime.GOOS != "windows",
 			WebSessionCodexDefaultSyncMode: "fast",
 		},
+		UI: UIConfig{
+			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
+		},
 		Worktree: WorktreeConfig{
 			GlobalBaseDir:        "",
 			GlobalDirNamePattern: "{projectName}-{branch}",
@@ -279,12 +300,46 @@ func ReadConfig() *AppConfig {
 	// 规范化派生值，避免重复计算
 	_ = config.Auth.SessionDuration()
 	_ = config.Terminal.IdleDuration()
+	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
 
 	if config.PrintConfig {
 		configStore.Print()
 	}
 
 	return &config
+}
+
+func NormalizeWebSessionQuickInputConfig(config WebSessionQuickInputConfig) WebSessionQuickInputConfig {
+	return WebSessionQuickInputConfig{
+		Pinned: normalizeWebSessionQuickInputItems(config.Pinned, 0),
+		Recent: normalizeWebSessionQuickInputItems(config.Recent, WebSessionQuickInputRecentLimit),
+	}
+}
+
+func normalizeWebSessionQuickInputItems(items []string, limit int) []string {
+	if len(items) == 0 {
+		return []string{}
+	}
+
+	normalized := make([]string, 0, len(items))
+	seen := make(map[string]struct{}, len(items))
+
+	for _, item := range items {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		normalized = append(normalized, trimmed)
+		seen[trimmed] = struct{}{}
+		if limit > 0 && len(normalized) >= limit {
+			break
+		}
+	}
+
+	return normalized
 }
 
 // WriteConfig 会将当前配置写回磁盘，写入的是启动时实际加载的配置文件路径。

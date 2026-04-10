@@ -7,6 +7,7 @@ import { useLoadingBar } from 'naive-ui';
 import { setupErrorHandler } from '@/utils/errorHandler';
 import { useAppStore } from '@/stores/app';
 import { useAuthStore } from '@/stores/auth';
+import { useSettingsStore } from '@/stores/settings';
 import Apis from '@/api';
 import { useReq, useInit } from '@/api';
 
@@ -15,6 +16,7 @@ const loadingBar = useLoadingBar();
 const teardownErrorHandler = setupErrorHandler();
 const appStore = useAppStore();
 const authStore = useAuthStore();
+const settingsStore = useSettingsStore();
 
 const { send: fetchAppInfo } = useReq(() => Apis.system.version({}));
 
@@ -50,10 +52,18 @@ async function ensureAppInfoLoaded() {
   }
 }
 
+async function ensureSettingsLoaded() {
+  if (!canLoadAppInfo.value) {
+    return;
+  }
+
+  await settingsStore.loadWebSessionQuickInput();
+}
+
 useInit(async () => {
   try {
     await authStore.ensureLoaded();
-    await ensureAppInfoLoaded();
+    await Promise.all([ensureAppInfoLoaded(), ensureSettingsLoaded()]);
   } catch (error) {
     console.error('Failed to initialize auth status:', error);
   }
@@ -64,6 +74,7 @@ watch(
   value => {
     if (value) {
       void ensureAppInfoLoaded();
+      void ensureSettingsLoaded();
     }
   },
   { immediate: true }

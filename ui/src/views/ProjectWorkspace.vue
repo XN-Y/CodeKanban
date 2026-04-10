@@ -224,6 +224,7 @@ const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
 const mobileKanbanEnabled = false;
+let mobileWebSessionComposerFocusFrame: number | null = null;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
 
@@ -399,6 +400,10 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  if (mobileWebSessionComposerFocusFrame != null) {
+    window.cancelAnimationFrame(mobileWebSessionComposerFocusFrame);
+    mobileWebSessionComposerFocusFrame = null;
+  }
   stopProjectSidebarResize();
 });
 
@@ -469,7 +474,22 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
     isMobileWebSessionComposerFocused.value = false;
     return;
   }
-  isMobileWebSessionComposerFocused.value = focused;
+  if (mobileWebSessionComposerFocusFrame != null) {
+    window.cancelAnimationFrame(mobileWebSessionComposerFocusFrame);
+    mobileWebSessionComposerFocusFrame = null;
+  }
+  if (!focused) {
+    isMobileWebSessionComposerFocused.value = false;
+    return;
+  }
+  mobileWebSessionComposerFocusFrame = window.requestAnimationFrame(() => {
+    mobileWebSessionComposerFocusFrame = null;
+    if (!isMobileLayout.value || mobileActiveView.value !== 'webSession') {
+      isMobileWebSessionComposerFocused.value = false;
+      return;
+    }
+    isMobileWebSessionComposerFocused.value = true;
+  });
 }
 
 function handleGoToSettings() {

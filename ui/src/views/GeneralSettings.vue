@@ -144,6 +144,51 @@
               <span class="form-tip">{{ t('settings.webSessionAutoContinuePresetTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.webSessionQuickInputPinned')">
+            <n-space vertical size="small" style="width: 100%">
+              <n-dynamic-input
+                v-model:value="webSessionQuickInputPinnedLocal"
+                :on-create="createWebSessionQuickInputPinnedItem"
+              >
+                <template #default="{ value, index }">
+                  <n-input
+                    type="textarea"
+                    class="web-session-quick-input-textarea"
+                    :value="value"
+                    :autosize="{ minRows: 2, maxRows: 4 }"
+                    :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
+                    @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
+                  />
+                </template>
+                <template #action="{ index, remove, create }">
+                  <n-button-group size="small">
+                    <n-button quaternary circle @click="remove(index)">
+                      <template #icon>
+                        <n-icon>
+                          <Remove />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                    <n-button quaternary circle @click="create(index)">
+                      <template #icon>
+                        <n-icon>
+                          <Add />
+                        </n-icon>
+                      </template>
+                    </n-button>
+                  </n-button-group>
+                </template>
+              </n-dynamic-input>
+              <n-space>
+                <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
+                  {{ t('settings.restoreDefault') }}
+                </n-button>
+              </n-space>
+              <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
+            </n-space>
+          </n-form-item>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.terminalShortcut')">
             <n-space vertical size="small">
               <n-input
@@ -908,6 +953,7 @@ import {
   DEFAULT_TERMINAL_SHORTCUT,
   DEFAULT_NOTEPAD_SHORTCUT,
   DEFAULT_TERMINAL_QUICK_ACTIONS,
+  DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED,
   TERMINAL_FONT_OPTIONS,
   FONT_WEIGHT_OPTIONS,
   type PanelShortcutSetting,
@@ -972,6 +1018,7 @@ const {
   maxTerminalsPerProject,
   terminalShortcut,
   notepadShortcut,
+  webSessionQuickInput,
   terminalQuickActions,
   editorSettings,
   confirmBeforeTerminalClose,
@@ -1810,10 +1857,28 @@ const terminalQuickActionIconButtons = computed(() => {
 const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(
   terminalQuickActions.value.map(item => ({ ...item }))
 );
+const webSessionQuickInputPinnedLocal = ref<string[]>([...webSessionQuickInput.value.pinned]);
+let syncingWebSessionQuickInputPinned = false;
 let syncingTerminalQuickActions = false;
+const debouncedUpdateWebSessionQuickInputPinned = useDebounceFn((items: string[]) => {
+  settingsStore.updateWebSessionQuickInputPinned(items);
+  void settingsStore.syncWebSessionQuickInputToServer();
+}, 300);
 const debouncedUpdateTerminalQuickActions = useDebounceFn((actions: TerminalQuickAction[]) => {
   settingsStore.updateTerminalQuickActions(actions);
 }, 300);
+
+watch(
+  webSessionQuickInput,
+  next => {
+    syncingWebSessionQuickInputPinned = true;
+    webSessionQuickInputPinnedLocal.value = [...next.pinned];
+    setTimeout(() => {
+      syncingWebSessionQuickInputPinned = false;
+    }, 0);
+  },
+  { deep: true }
+);
 
 watch(
   terminalQuickActions,
@@ -1828,6 +1893,17 @@ watch(
 );
 
 watch(
+  webSessionQuickInputPinnedLocal,
+  next => {
+    if (syncingWebSessionQuickInputPinned) {
+      return;
+    }
+    debouncedUpdateWebSessionQuickInputPinned([...next]);
+  },
+  { deep: true }
+);
+
+watch(
   terminalQuickActionsLocal,
   next => {
     if (syncingTerminalQuickActions) {
@@ -1837,6 +1913,21 @@ watch(
   },
   { deep: true }
 );
+
+function createWebSessionQuickInputPinnedItem() {
+  return '';
+}
+
+function handleWebSessionQuickInputPinnedChange(index: number, value: string) {
+  webSessionQuickInputPinnedLocal.value = webSessionQuickInputPinnedLocal.value.map((item, i) =>
+    i === index ? value : item
+  );
+}
+
+function handleResetWebSessionQuickInputPinned() {
+  settingsStore.updateWebSessionQuickInputPinned([...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED]);
+  void settingsStore.syncWebSessionQuickInputToServer();
+}
 
 function createTerminalQuickAction(): TerminalQuickAction {
   return {
@@ -2107,6 +2198,10 @@ function formatShortcutLabel(event: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.web-session-quick-input-textarea {
+  width: 100%;
 }
 
 .terminal-quick-action-row {

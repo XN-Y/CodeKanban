@@ -900,15 +900,61 @@
                 class="composer-input"
                 :autosize="composerAutosize"
                 :placeholder="composerPlaceholder"
+                @mousedown.stop
+                @touchstart.stop
                 @focus="handleComposerFocus"
                 @blur="handleComposerBlur"
                 @keydown.enter.exact="handleComposerEnter"
               />
+              <n-popover
+                v-if="isMobile"
+                v-model:show="showQuickInputPopover"
+                trigger="click"
+                placement="top-start"
+                content-style="padding: 4px 0;"
+              >
+                <template #trigger>
+                  <button
+                    type="button"
+                    class="composer-icon-btn composer-icon-btn-mobile"
+                    :title="quickInputButtonTitle"
+                    :aria-label="quickInputButtonTitle"
+                    @mousedown.stop
+                    @touchstart.stop
+                    @click.stop
+                  >
+                    <n-icon size="14"><FlashOutline /></n-icon>
+                  </button>
+                </template>
+                <div class="quick-input-popover-card">
+                  <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                    {{ t('webSession.quickInputEmpty') }}
+                  </div>
+                  <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                    <div class="quick-input-item-list">
+                      <button
+                        v-for="text in quickInputItems"
+                        :key="text"
+                        type="button"
+                        class="quick-input-item"
+                        :class="{ 'is-selected': isQuickInputSelected(text) }"
+                        @click="handleQuickInputApply(text)"
+                      >
+                        <span class="quick-input-item-text">{{ text }}</span>
+                      </button>
+                    </div>
+                  </n-scrollbar>
+                </div>
+              </n-popover>
               <button
                 v-if="isMobile"
                 type="button"
-                class="composer-icon-btn composer-icon-btn-mobile"
-                @click="openFilePicker"
+                class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                :title="t('webSession.attachImage')"
+                :aria-label="t('webSession.attachImage')"
+                @mousedown.stop
+                @touchstart.stop
+                @click.stop="openFilePicker"
               >
                 <n-icon size="14"><ImageOutline /></n-icon>
               </button>
@@ -916,6 +962,42 @@
 
             <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
               <div v-if="!isMobile" class="composer-footer-left">
+                <n-popover
+                  v-model:show="showQuickInputPopover"
+                  trigger="click"
+                  placement="top-start"
+                  content-style="padding: 4px 0;"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="composer-icon-btn"
+                      :title="quickInputButtonTitle"
+                      :aria-label="quickInputButtonTitle"
+                    >
+                      <n-icon size="14"><FlashOutline /></n-icon>
+                    </button>
+                  </template>
+                  <div class="quick-input-popover-card">
+                    <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                      {{ t('webSession.quickInputEmpty') }}
+                    </div>
+                    <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                      <div class="quick-input-item-list">
+                        <button
+                          v-for="text in quickInputItems"
+                          :key="text"
+                          type="button"
+                          class="quick-input-item"
+                          :class="{ 'is-selected': isQuickInputSelected(text) }"
+                          @click="handleQuickInputApply(text)"
+                        >
+                          <span class="quick-input-item-text">{{ text }}</span>
+                        </button>
+                      </div>
+                    </n-scrollbar>
+                  </div>
+                </n-popover>
                 <button type="button" class="composer-icon-btn" @click="openFilePicker">
                   <n-icon size="14"><ImageOutline /></n-icon>
                 </button>
@@ -1329,6 +1411,7 @@ import {
   ChevronDownOutline,
   ChevronForwardOutline,
   EllipsisHorizontalOutline,
+  FlashOutline,
   ImageOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
@@ -1479,7 +1562,6 @@ type MobileTabRenderOption = {
 };
 
 type MobileTabDropdownOption = DropdownOption | MobileTabRenderOption;
-
 type InlinePlanChoiceOption = {
   label: string;
   isExecute: boolean;
@@ -1552,6 +1634,7 @@ const {
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
   effectiveTerminalThemeId,
+  webSessionQuickInput,
 } = storeToRefs(settingsStore);
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
   DRAFT_SESSION_STORAGE_KEY,
@@ -1574,6 +1657,7 @@ const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
 const expandedTools = ref<Record<string, boolean>>({});
 const showMobileTabSelector = ref(false);
+const showQuickInputPopover = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
@@ -2313,6 +2397,22 @@ const composerHint = computed(() => {
   }
   return t('webSession.composerHintIdle');
 });
+const quickInputPinnedItems = computed(() => webSessionQuickInput.value.pinned);
+const quickInputRecentItems = computed(() => {
+  const pinned = new Set(quickInputPinnedItems.value);
+  return webSessionQuickInput.value.recent.filter(text => !pinned.has(text));
+});
+const hasQuickInputOptions = computed(
+  () => quickInputPinnedItems.value.length > 0 || quickInputRecentItems.value.length > 0
+);
+const quickInputButtonTitle = computed(() =>
+  hasQuickInputOptions.value ? t('webSession.quickInput') : t('webSession.quickInputUnavailable')
+);
+const quickInputItems = computed(() => [
+  ...quickInputPinnedItems.value,
+  ...quickInputRecentItems.value,
+]);
+const normalizedComposerText = computed(() => composerText.value.trim());
 const selectedAgentLabel = computed(
   () =>
     agentOptions.find(option => option.value === selectedAgent.value)?.label ?? selectedAgent.value
@@ -2608,6 +2708,16 @@ function showComposerTransferError(detail?: string) {
     clearComposerTransferError();
   }, 900);
 }
+
+function handleQuickInputApply(text: string) {
+  applyQuickInputText(text);
+  showQuickInputPopover.value = false;
+}
+
+function isQuickInputSelected(text: string) {
+  return normalizedComposerText.value.length > 0 && normalizedComposerText.value === text.trim();
+}
+
 const liveStateLabel = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.liveRecovered');
@@ -5690,6 +5800,23 @@ function getComposerTextarea() {
   return null;
 }
 
+function applyQuickInputText(text: string) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+
+  webSessionStore.setDraftText(props.projectId, sessionId, text);
+
+  nextTick(() => {
+    composerInputRef.value?.focus();
+    const textarea = getComposerTextarea();
+    if (textarea) {
+      textarea.setSelectionRange(text.length, text.length);
+    }
+  });
+}
+
 function insertUploadedImagePlaceholders(uploadedCount: number) {
   const sessionId = currentDraftSessionId.value;
   if (!sessionId || uploadedCount <= 0) {
@@ -5812,6 +5939,8 @@ async function handleSubmit() {
       draftText,
       attachments.map(item => item.id)
     );
+    settingsStore.recordWebSessionRecentInput(draftText);
+    void settingsStore.syncWebSessionQuickInputToServer();
     webSessionStore.clearDraft(props.projectId, draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
@@ -5835,13 +5964,16 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     return;
   }
   try {
+    const draftText = composerText.value;
     const attachments = draftAttachments.value;
     await webSessionStore.sendMessage(
       currentRealSession.value.id,
-      composerText.value,
+      draftText,
       attachments.map(item => item.id),
       mode
     );
+    settingsStore.recordWebSessionRecentInput(draftText);
+    void settingsStore.syncWebSessionQuickInputToServer();
     webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
     isMobileComposerExpanded.value = false;
   } catch (error) {
@@ -7079,11 +7211,13 @@ watch(timelineContentVersion, async () => {
 watch(currentDraftSessionId, () => {
   clearComposerTransferError();
   clearSendConflictConfirmation();
+  showQuickInputPopover.value = false;
 });
 
 watch(
   () => currentSession.value?.id,
   () => {
+    showQuickInputPopover.value = false;
     if (isMobile.value) {
       isMobileComposerExpanded.value = false;
     }
@@ -7157,6 +7291,7 @@ onMounted(() => {
   liveStateClockTimer = window.setInterval(() => {
     liveStateClockMs.value = Date.now();
   }, LIVE_TIME_TICK_MS);
+  void settingsStore.loadWebSessionQuickInput();
   void loadCodexRuntimeConfig();
   if (projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
@@ -10012,6 +10147,7 @@ onBeforeUnmount(() => {
 
 .composer-input-shell.is-mobile {
   min-height: 96px;
+  z-index: 201;
 }
 
 .composer-input-shell.is-mobile .composer-input :deep(.n-input__textarea-el) {
@@ -10144,7 +10280,11 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 2px;
   bottom: -44px;
-  z-index: 1;
+  z-index: 202;
+}
+
+.composer-icon-btn-mobile-secondary {
+  left: 32px;
 }
 
 .composer-hint {
@@ -10198,6 +10338,70 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 2px;
+}
+
+.quick-input-popover-card {
+  width: min(320px, 74vw);
+  padding: 0;
+}
+
+.quick-input-empty {
+  padding: 8px 6px;
+  color: var(--n-text-color-3, #8a8f98);
+  font-size: 11px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.quick-input-item-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.quick-input-item {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    color 0.18s ease;
+}
+
+.quick-input-item:hover {
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+}
+
+.quick-input-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+}
+
+.quick-input-item.is-selected {
+  color: var(--n-primary-color);
+}
+
+.quick-input-item-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--n-text-color-1, #222);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.quick-input-item.is-selected .quick-input-item-text {
+  color: inherit;
+  font-weight: 600;
 }
 
 .pending-input-item {

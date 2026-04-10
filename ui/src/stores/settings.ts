@@ -20,6 +20,7 @@ import {
   sanitizeTerminalConnectionPolicy,
   type TerminalConnectionPolicy,
 } from '@/constants/terminalConnectionPolicy';
+import { http } from '@/api/http';
 
 /**
  * 终端主题跟随应用主题的特殊值
@@ -168,6 +169,15 @@ export interface EditorSettings {
   customCommand: string;
 }
 
+export interface WebSessionQuickInputSettings {
+  pinned: string[];
+  recent: string[];
+}
+
+type ItemResponse<T> = {
+  item?: T;
+};
+
 export type TerminalQuickActionIcon =
   | 'terminal'
   | 'chat'
@@ -205,6 +215,7 @@ interface GeneralSettings {
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
+  webSessionQuickInput: WebSessionQuickInputSettings;
   terminalQuickActions: TerminalQuickAction[];
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
@@ -228,6 +239,7 @@ const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
+export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 6;
 
 const defaultTheme: ThemeSettings = getDefaultPreset().colors;
 
@@ -249,6 +261,13 @@ const DEFAULT_SHORTCUTS: ShortcutSettings = {
 const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
   defaultEditor: 'vscode',
   customCommand: '',
+};
+
+export const DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED = ['continue'] as const;
+
+const DEFAULT_WEB_SESSION_QUICK_INPUT: WebSessionQuickInputSettings = {
+  pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED],
+  recent: [],
 };
 
 export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
@@ -278,6 +297,10 @@ const defaultSettings: GeneralSettings = {
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
+  webSessionQuickInput: {
+    pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
+    recent: [...DEFAULT_WEB_SESSION_QUICK_INPUT.recent],
+  },
   terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
@@ -297,6 +320,9 @@ const defaultSettings: GeneralSettings = {
 
 export const useSettingsStore = defineStore('settings', () => {
   const settings = ref<GeneralSettings>(loadSettings());
+  const webSessionQuickInputLoaded = ref(false);
+  let webSessionQuickInputLoadTask: Promise<void> | null = null;
+  let webSessionQuickInputSyncTask: Promise<void> = Promise.resolve();
 
   const theme = computed(() => settings.value.theme);
   const currentPresetId = computed(() => settings.value.currentPresetId);
@@ -307,6 +333,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const panelShortcuts = computed(() => settings.value.panelShortcuts);
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
+  const webSessionQuickInput = computed(() => settings.value.webSessionQuickInput);
   const terminalQuickActions = computed(() => settings.value.terminalQuickActions);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
@@ -446,6 +473,81 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalQuickActions = sanitizeTerminalQuickActions(actions);
   }
 
+  function updateWebSessionQuickInputPinned(items: string[]) {
+    settings.value.webSessionQuickInput = {
+      ...settings.value.webSessionQuickInput,
+      pinned: sanitizeWebSessionQuickInputItems(items),
+    };
+    webSessionQuickInputLoaded.value = true;
+  }
+
+  function recordWebSessionRecentInput(text: string) {
+    const [normalized] = sanitizeWebSessionQuickInputItems([text], 1);
+    if (!normalized) {
+      return;
+    }
+    settings.value.webSessionQuickInput = {
+      ...settings.value.webSessionQuickInput,
+      recent: sanitizeWebSessionQuickInputItems(
+        [normalized, ...settings.value.webSessionQuickInput.recent],
+        WEB_SESSION_QUICK_INPUT_RECENT_LIMIT
+      ),
+    };
+    webSessionQuickInputLoaded.value = true;
+  }
+
+  async function loadWebSessionQuickInput(force = false) {
+    if (!force && webSessionQuickInputLoaded.value) {
+      return;
+    }
+    if (!force && webSessionQuickInputLoadTask) {
+      return webSessionQuickInputLoadTask;
+    }
+
+    const task = http
+      .Get<ItemResponse<WebSessionQuickInputSettings>>('/system/web-session-quick-input')
+      .send()
+      .then(response => {
+        const next = sanitizeWebSessionQuickInput(response?.item);
+        settings.value.webSessionQuickInput = next;
+        webSessionQuickInputLoaded.value = true;
+      })
+      .catch(error => {
+        console.warn('Failed to load web session quick input settings.', error);
+      })
+      .finally(() => {
+        webSessionQuickInputLoadTask = null;
+      });
+
+    webSessionQuickInputLoadTask = task;
+    return task;
+  }
+
+  async function syncWebSessionQuickInputToServer() {
+    const payload = sanitizeWebSessionQuickInput(settings.value.webSessionQuickInput);
+    settings.value.webSessionQuickInput = payload;
+    const pendingLoadTask = webSessionQuickInputLoadTask;
+
+    const task = webSessionQuickInputSyncTask.then(async () => {
+      if (pendingLoadTask) {
+        await pendingLoadTask;
+      }
+      const response = await http
+        .Post<
+          ItemResponse<WebSessionQuickInputSettings>
+        >('/system/web-session-quick-input/update', payload)
+        .send();
+      settings.value.webSessionQuickInput = sanitizeWebSessionQuickInput(response?.item ?? payload);
+      webSessionQuickInputLoaded.value = true;
+    });
+
+    webSessionQuickInputSyncTask = task.catch(error => {
+      console.warn('Failed to sync web session quick input settings.', error);
+    });
+
+    return task;
+  }
+
   function updateConfirmBeforeTerminalClose(value: boolean) {
     settings.value.confirmBeforeTerminalClose = value;
   }
@@ -486,9 +588,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function updateDefaultTerminalSnapshotIntervalMs(value: number | null) {
-    settings.value.defaultTerminalSnapshotIntervalMs = sanitizeDefaultTerminalSnapshotIntervalMs(
-      value
-    );
+    settings.value.defaultTerminalSnapshotIntervalMs =
+      sanitizeDefaultTerminalSnapshotIntervalMs(value);
   }
 
   function updateDefaultTerminalSnapshotZlibCompression(value: boolean) {
@@ -572,6 +673,8 @@ export const useSettingsStore = defineStore('settings', () => {
     panelShortcuts,
     terminalShortcut,
     notepadShortcut,
+    webSessionQuickInput,
+    webSessionQuickInputLoaded,
     terminalQuickActions,
     editorSettings,
     confirmBeforeTerminalClose,
@@ -597,6 +700,10 @@ export const useSettingsStore = defineStore('settings', () => {
     updateNotepadShortcut,
     resetTerminalShortcut,
     resetNotepadShortcut,
+    loadWebSessionQuickInput,
+    syncWebSessionQuickInputToServer,
+    updateWebSessionQuickInputPinned,
+    recordWebSessionRecentInput,
     updateTerminalQuickActions,
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
@@ -651,6 +758,7 @@ function loadSettings(): GeneralSettings {
         recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
         maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
         panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
+        webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
         terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
         editor: sanitizeEditorSettings(parsed.editor),
         confirmBeforeTerminalClose:
@@ -675,9 +783,7 @@ function loadSettings(): GeneralSettings {
         ),
         defaultTerminalSnapshotZlibCompression:
           parsed.defaultTerminalSnapshotZlibCompression !== false,
-        terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
-          parsed.terminalConnectionPolicy
-        ),
+        terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
         inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
           parsed.inactiveTerminalSnapshotIntervalMs
         ),
@@ -710,6 +816,10 @@ function cloneDefaultSettings(): GeneralSettings {
       terminal: { ...defaultSettings.panelShortcuts.terminal },
       notepad: { ...defaultSettings.panelShortcuts.notepad },
     },
+    webSessionQuickInput: {
+      pinned: [...defaultSettings.webSessionQuickInput.pinned],
+      recent: [...defaultSettings.webSessionQuickInput.recent],
+    },
     terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
@@ -739,10 +849,7 @@ function sanitizeDefaultTerminalSnapshotIntervalMs(value: unknown) {
 }
 
 function sanitizeInactiveSnapshotIntervalMs(value: unknown) {
-  return sanitizeTerminalSnapshotIntervalMs(
-    value,
-    DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS
-  );
+  return sanitizeTerminalSnapshotIntervalMs(value, DEFAULT_INACTIVE_TERMINAL_SNAPSHOT_INTERVAL_MS);
 }
 
 function sanitizeRecentProjectsLimit(value: number | undefined) {
@@ -798,6 +905,47 @@ function sanitizeWebSessionAutoContinuePreset(value: unknown): WebSessionAutoCon
     return value as WebSessionAutoContinuePreset;
   }
   return DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET;
+}
+
+function sanitizeWebSessionQuickInputItems(value: unknown, limit?: number) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const sanitized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of value) {
+    if (typeof raw !== 'string') {
+      continue;
+    }
+    const normalized = raw.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    sanitized.push(normalized);
+    seen.add(normalized);
+    if (typeof limit === 'number' && limit > 0 && sanitized.length >= limit) {
+      break;
+    }
+  }
+
+  return sanitized;
+}
+
+function sanitizeWebSessionQuickInput(
+  value?: Partial<WebSessionQuickInputSettings> | null
+): WebSessionQuickInputSettings {
+  if (value == null) {
+    return {
+      pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
+      recent: [...DEFAULT_WEB_SESSION_QUICK_INPUT.recent],
+    };
+  }
+  return {
+    pinned: sanitizeWebSessionQuickInputItems(value?.pinned),
+    recent: sanitizeWebSessionQuickInputItems(value?.recent, WEB_SESSION_QUICK_INPUT_RECENT_LIMIT),
+  };
 }
 
 function loadLegacyShowWebSessionReasoning() {

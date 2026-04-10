@@ -25,7 +25,11 @@ export class ApiError extends Error {
   }
 }
 
-export const urlBase = import.meta.env.DEV ? '' : window.location.origin;
+export const urlBase = import.meta.env.DEV
+  ? ''
+  : typeof window !== 'undefined'
+    ? window.location.origin
+    : '';
 
 export const alovaInstance = createAlova({
   baseURL: urlBase,
