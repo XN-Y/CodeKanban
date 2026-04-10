@@ -15,6 +15,7 @@ import {
   type WebSessionSnapshotVersion,
   type WebSessionSnapshotVersionInput,
 } from '@/stores/webSessionSnapshotVersion';
+import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
@@ -1340,7 +1341,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
       assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
-      syncState: session.ss ?? 'missing',
+      syncState: normalizeWebSessionSyncState(session.ss),
       lastSyncMode: session.lsm === 'deep' || session.lsm === 'fast' ? session.lsm : null,
       sourceCreatedAt: session.sca ? new Date(session.sca).toISOString() : null,
       sourceUpdatedAt: session.sua ? new Date(session.sua).toISOString() : null,

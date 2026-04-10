@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"code-kanban/model/tables"
-
-	"go.uber.org/zap"
 )
 
 const cacheSyncReadTimeout = 10 * time.Second
@@ -602,79 +600,11 @@ func (m *Manager) SyncSessionWithMode(
 }
 
 func (m *Manager) refreshSessionSourceStates(
-	ctx context.Context,
+	_ context.Context,
 	records []tables.WebSessionTable,
 ) []tables.WebSessionTable {
-	codexByCwd := make(map[string][]int)
-	for index, record := range records {
-		if normalizeAgent(Agent(record.Agent)) != AgentCodex {
-			continue
-		}
-		if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
-			continue
-		}
-		cwd := strings.TrimSpace(record.Cwd)
-		if cwd == "" {
-			continue
-		}
-		codexByCwd[cwd] = append(codexByCwd[cwd], index)
-	}
-
-	for cwd, indexes := range codexByCwd {
-		timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		threads, err := m.listCodexThreadsByCwd(timeoutCtx, cwd, false)
-		cancel()
-		if err != nil {
-			if m.logger != nil {
-				m.logger.Debug("failed to refresh codex thread list",
-					zap.String("cwd", cwd),
-					zap.Error(err))
-			}
-			continue
-		}
-		for _, index := range indexes {
-			record := records[index]
-			threadID := strings.TrimSpace(*record.NativeSessionID)
-			thread, ok := threads[threadID]
-			if !ok {
-				record.SyncState = string(SyncStateMissing)
-				records[index] = record
-				_ = m.updateRuntimeState(ctx, record.ID, map[string]any{
-					"sync_state": SyncStateMissing,
-					"sync_error": nil,
-					"updated_at": time.Now(),
-				})
-				continue
-			}
-
-			nextState := SyncStateFresh
-			if record.LastSyncedAt == nil || thread.UpdatedAt != nil && thread.UpdatedAt.After(*record.LastSyncedAt) {
-				nextState = SyncStateStale
-			}
-			if record.ItemCount == 0 {
-				nextState = SyncStateMissing
-			}
-			record.SourceCreatedAt = thread.CreatedAt
-			record.SourceUpdatedAt = thread.UpdatedAt
-			record.ThreadPath = nilIfEmpty(thread.Path)
-			record.ThreadPreview = nilIfEmpty(thread.Preview)
-			record.SyncState = string(nextState)
-			record.SourceKind = string(defaultSessionBackend(AgentCodex))
-			records[index] = record
-
-			_ = m.updateRuntimeState(ctx, record.ID, map[string]any{
-				"source_kind":       string(defaultSessionBackend(AgentCodex)),
-				"source_created_at": thread.CreatedAt,
-				"source_updated_at": thread.UpdatedAt,
-				"thread_path":       nilIfEmpty(thread.Path),
-				"thread_preview":    nilIfEmpty(thread.Preview),
-				"sync_state":        nextState,
-				"sync_error":        nil,
-				"updated_at":        time.Now(),
-			})
-		}
-	}
-
+	// Passive "source is newer than cache" polling was removed because it mostly
+	// added noisy stale markers while sessions were actively running.
 	return records
 }
 

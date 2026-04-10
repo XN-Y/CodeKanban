@@ -227,4 +227,22 @@ describe('webSessionSnapshotVersion', () => {
       })
     ).toBe(true);
   });
+
+  it('treats legacy stale sync states as fresh for version comparison', () => {
+    const fresh = buildWebSessionSnapshotVersion({
+      session: makeSession({
+        syncState: 'fresh',
+      }),
+      historyTotal: 6,
+    });
+    const stale = buildWebSessionSnapshotVersion({
+      session: makeSession({
+        syncState: 'stale',
+      }),
+      historyTotal: 6,
+    });
+
+    expect(compareWebSessionSnapshotVersion(fresh, stale)).toBe(0);
+    expect(compareWebSessionSnapshotVersion(stale, fresh)).toBe(0);
+  });
 });

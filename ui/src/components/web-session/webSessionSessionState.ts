@@ -31,7 +31,7 @@ export interface WebSessionDisplayState {
   hasUnviewedApproval: boolean;
   hasUnviewedCompletion: boolean;
   showStatusDot: boolean;
-  statusDotClass: WebSessionSummary['status'] | 'stale' | null;
+  statusDotClass: WebSessionSummary['status'] | null;
 }
 
 function mapPhaseToAssistantState(
@@ -106,7 +106,7 @@ export function resolveWebSessionDisplayState(
     !hasUnviewedApproval &&
     assistantStateClass === 'waiting_input' &&
     input.status !== 'err';
-  const showStatusDot = !input.isDraft && (input.status === 'err' || input.syncState === 'stale');
+  const showStatusDot = !input.isDraft && input.status === 'err';
 
   let statusLabelKey: WebSessionDisplayStatusKey | null = null;
   let statusEmoji = '';
@@ -136,6 +136,6 @@ export function resolveWebSessionDisplayState(
     hasUnviewedApproval,
     hasUnviewedCompletion,
     showStatusDot,
-    statusDotClass: showStatusDot ? (input.syncState === 'stale' ? 'stale' : input.status) : null,
+    statusDotClass: showStatusDot ? input.status : null,
   };
 }

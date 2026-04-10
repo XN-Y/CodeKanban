@@ -238,6 +238,42 @@ func TestManagerListSessionsMarksClaudeContextWindowUnavailable(t *testing.T) {
 	}
 }
 
+func TestManagerListSessionsNormalizesLegacyStaleSyncState(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Legacy Stale", 1000)
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"sync_state": string(SyncStateStale),
+			"updated_at": time.Now(),
+		}).Error; err != nil {
+		t.Fatalf("update session sync_state failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	items, err := manager.ListSessions(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListSessions returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(items))
+	}
+	if items[0].SyncState != SyncStateFresh {
+		t.Fatalf(
+			"expected legacy stale sync_state to normalize to %q, got %q",
+			SyncStateFresh,
+			items[0].SyncState,
+		)
+	}
+}
+
 func TestDecodeToolQuestionsPreservesStructuredQuestions(t *testing.T) {
 	questions := []toolRequestQuestion{
 		{

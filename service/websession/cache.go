@@ -20,7 +20,11 @@ import (
 
 func normalizeSyncState(value string) SyncState {
 	switch SyncState(strings.TrimSpace(value)) {
-	case SyncStateFresh, SyncStateStale, SyncStateMissing, SyncStateSyncing, SyncStateError:
+	case SyncStateFresh, SyncStateStale:
+		// Passive stale detection has been retired. Legacy stale values should behave
+		// like a synced cache instead of continuing to surface warning UI.
+		return SyncStateFresh
+	case SyncStateMissing, SyncStateSyncing, SyncStateError:
 		return SyncState(strings.TrimSpace(value))
 	default:
 		return SyncStateMissing

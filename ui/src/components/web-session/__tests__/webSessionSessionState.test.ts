@@ -104,7 +104,7 @@ describe('webSessionSessionState', () => {
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingInput');
   });
 
-  it('shows error dots and prefers stale dots over status dots', () => {
+  it('shows error dots and ignores legacy stale sync state markers', () => {
     const errorState = resolveWebSessionDisplayState(
       makeInput({
         livePhase: 'error',
@@ -121,7 +121,7 @@ describe('webSessionSessionState', () => {
 
     expect(errorState.showStatusDot).toBe(true);
     expect(errorState.statusDotClass).toBe('err');
-    expect(staleState.showStatusDot).toBe(true);
-    expect(staleState.statusDotClass).toBe('stale');
+    expect(staleState.showStatusDot).toBe(false);
+    expect(staleState.statusDotClass).toBeNull();
   });
 });

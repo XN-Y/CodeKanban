@@ -637,7 +637,6 @@ export default {
     syncConfirmTitle: 'Confirm Session Sync',
     syncConfirmContent: 'Update this session history using {mode}.',
     syncClearExisting: 'Fully clear existing records before syncing',
-    syncStateStale: 'Terminal history is newer than the cached session',
     deleteConfirm: 'Delete session "{title}"?',
     jumpToBottom: 'Jump to Bottom',
     inputPlaceholder: 'Type a message, press Enter to send and Shift + Enter for a new line',

@@ -1372,6 +1372,7 @@ import {
   resolveWebSessionDisplayState,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
+import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -3177,14 +3178,7 @@ function normalizeDraftSession(
         : nowIso,
     lastMessageAt: null,
     sourceKind: typeof session.sourceKind === 'string' ? session.sourceKind : 'codex_app_server',
-    syncState:
-      session.syncState === 'fresh' ||
-      session.syncState === 'stale' ||
-      session.syncState === 'missing' ||
-      session.syncState === 'syncing' ||
-      session.syncState === 'error'
-        ? session.syncState
-        : 'missing',
+    syncState: normalizeWebSessionSyncState(session.syncState),
     sourceCreatedAt: null,
     sourceUpdatedAt: null,
     lastSyncedAt: null,
@@ -6326,12 +6320,7 @@ function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return agentName;
   }
-  const suffix =
-    session.syncState === 'stale'
-      ? t('webSession.syncStateStale')
-      : session.syncState === 'error' && session.syncError
-        ? session.syncError
-        : '';
+  const suffix = session.syncState === 'error' && session.syncError ? session.syncError : '';
   const base = label ? `${agentName} · ${label}` : agentName;
   return suffix ? `${base} · ${suffix}` : base;
 }
@@ -7247,11 +7236,6 @@ onBeforeUnmount(() => {
 .status-dot.aborting {
   background-color: var(--n-warning-color, #f59e0b);
   box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
-}
-
-.status-dot.stale {
-  background-color: #f79009;
-  box-shadow: 0 0 0 1px rgba(247, 144, 9, 0.25);
 }
 
 .ai-status-pill {

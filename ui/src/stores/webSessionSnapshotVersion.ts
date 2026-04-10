@@ -1,4 +1,5 @@
 import type { WebSessionSummary } from '@/types/models';
+import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 
 type ComparableSessionFields = Pick<
   WebSessionSummary,
@@ -31,11 +32,9 @@ function normalizeCount(value?: number | null): number {
 }
 
 function syncStateRank(syncState?: WebSessionSummary['syncState'] | null): number {
-  switch (syncState) {
+  switch (normalizeWebSessionSyncState(syncState)) {
     case 'fresh':
       return 4;
-    case 'stale':
-      return 3;
     case 'error':
       return 2;
     case 'missing':

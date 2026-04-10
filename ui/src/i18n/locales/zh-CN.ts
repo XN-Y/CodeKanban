@@ -623,7 +623,6 @@ export default {
     syncConfirmTitle: '确认同步会话',
     syncConfirmContent: '将使用 {mode} 更新当前会话历史。',
     syncClearExisting: '完全清除记录再进行同步',
-    syncStateStale: '终端中有更新，尚未同步',
     deleteConfirm: '确认删除会话「{title}」？',
     jumpToBottom: '回到底部',
     inputPlaceholder: '输入消息，Enter 发送，Shift + Enter 换行',
