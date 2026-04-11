@@ -529,6 +529,33 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionQuickInputDirectSend = value === true;
   }
 
+  function queueWebSessionQuickInputSync(payload: WebSessionQuickInputSettings) {
+    const pendingLoadTask = webSessionQuickInputLoadTask;
+
+    const task = webSessionQuickInputSyncTask.then(async () => {
+      if (pendingLoadTask) {
+        await pendingLoadTask;
+      }
+      const response = await http
+        .Post<
+          ItemResponse<WebSessionQuickInputSettings>
+        >('/system/web-session-quick-input/update', payload)
+        .send();
+      const next = sanitizeWebSessionQuickInput(response?.item ?? payload);
+      settings.value.webSessionQuickInput = next;
+      webSessionQuickInputLoaded.value = true;
+      return next;
+    });
+
+    webSessionQuickInputSyncTask = task
+      .then(() => undefined)
+      .catch(error => {
+        console.warn('Failed to sync web session quick input settings.', error);
+      });
+
+    return task;
+  }
+
   async function loadWebSessionQuickInput(force = false) {
     if (!force && webSessionQuickInputLoaded.value) {
       return;
@@ -559,26 +586,21 @@ export const useSettingsStore = defineStore('settings', () => {
   async function syncWebSessionQuickInputToServer() {
     const payload = sanitizeWebSessionQuickInput(settings.value.webSessionQuickInput);
     settings.value.webSessionQuickInput = payload;
-    const pendingLoadTask = webSessionQuickInputLoadTask;
+    webSessionQuickInputLoaded.value = true;
+    return queueWebSessionQuickInputSync(payload);
+  }
 
-    const task = webSessionQuickInputSyncTask.then(async () => {
-      if (pendingLoadTask) {
-        await pendingLoadTask;
-      }
-      const response = await http
-        .Post<
-          ItemResponse<WebSessionQuickInputSettings>
-        >('/system/web-session-quick-input/update', payload)
-        .send();
-      settings.value.webSessionQuickInput = sanitizeWebSessionQuickInput(response?.item ?? payload);
-      webSessionQuickInputLoaded.value = true;
+  async function saveWebSessionQuickInputPinned(items: string[]) {
+    if (webSessionQuickInputLoadTask) {
+      await webSessionQuickInputLoadTask;
+    } else if (!webSessionQuickInputLoaded.value) {
+      await loadWebSessionQuickInput();
+    }
+    const payload = sanitizeWebSessionQuickInput({
+      ...settings.value.webSessionQuickInput,
+      pinned: items,
     });
-
-    webSessionQuickInputSyncTask = task.catch(error => {
-      console.warn('Failed to sync web session quick input settings.', error);
-    });
-
-    return task;
+    return queueWebSessionQuickInputSync(payload);
   }
 
   function updateConfirmBeforeTerminalClose(value: boolean) {
@@ -742,6 +764,7 @@ export const useSettingsStore = defineStore('settings', () => {
     resetNotepadShortcut,
     loadWebSessionQuickInput,
     syncWebSessionQuickInputToServer,
+    saveWebSessionQuickInputPinned,
     updateWebSessionQuickInputPinned,
     updateWebSessionQuickInputDirectSend,
     recordWebSessionRecentInput,
@@ -790,9 +813,7 @@ function loadSettings(): LoadSettingsResult {
       const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
 
       if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
-        console.warn(
-          `Unsupported settings version "${parsedVersion}", falling back to defaults.`
-        );
+        console.warn(`Unsupported settings version "${parsedVersion}", falling back to defaults.`);
         return {
           settings: cloneDefaultSettings(),
           shouldPersist: false,
@@ -804,7 +825,8 @@ function loadSettings(): LoadSettingsResult {
       };
 
       // 兼容旧版本：如果没有 currentPresetId，根据主题判断
-      let currentPresetId = parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
+      let currentPresetId =
+        parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
       if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
         // 尝试匹配现有主题到预设
         const matchedPreset = THEME_PRESETS.find(
@@ -858,7 +880,9 @@ function loadSettings(): LoadSettingsResult {
           ),
           defaultTerminalSnapshotZlibCompression:
             parsed.defaultTerminalSnapshotZlibCompression !== false,
-          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
+          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
+            parsed.terminalConnectionPolicy
+          ),
           inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
             parsed.inactiveTerminalSnapshotIntervalMs
           ),

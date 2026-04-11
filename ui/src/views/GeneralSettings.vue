@@ -180,6 +180,15 @@
                 </template>
               </n-dynamic-input>
               <n-space>
+                <n-button
+                  size="small"
+                  type="primary"
+                  :loading="webSessionQuickInputPinnedSaving"
+                  :disabled="!webSessionQuickInputPinnedDirty"
+                  @click="handleSaveWebSessionQuickInputPinned"
+                >
+                  {{ t('common.save') }}
+                </n-button>
                 <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
                   {{ t('settings.restoreDefault') }}
                 </n-button>
@@ -641,7 +650,8 @@
                   <n-checkbox
                     v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
                     :disabled="
-                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                      developerLoading ||
+                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
                     "
                   >
                     {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
@@ -649,7 +659,8 @@
                   <n-checkbox
                     v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.command"
                     :disabled="
-                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                      developerLoading ||
+                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
                     "
                   >
                     {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
@@ -657,7 +668,8 @@
                   <n-checkbox
                     v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
                     :disabled="
-                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                      developerLoading ||
+                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
                     "
                   >
                     {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
@@ -1216,7 +1228,8 @@ function sanitizeActiveCallTimeoutConfig(
   value?: Partial<WebSessionActiveCallTimeoutConfig> | null
 ): WebSessionActiveCallTimeoutConfig {
   return {
-    enabledMode: value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
+    enabledMode:
+      value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
     timeoutSeconds: Math.min(3600, Math.max(10, Number(value?.timeoutSeconds) || 60)),
     promptTemplate: value?.promptTemplate?.trim() || DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
     callKinds: {
@@ -1234,8 +1247,11 @@ function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): Devel
     renameSessionTitleEachCommand: value?.renameSessionTitleEachCommand ?? false,
     autoCreateTaskOnStartWork: value?.autoCreateTaskOnStartWork ?? true,
     enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
-    webSessionCodexDefaultSyncMode: value?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast',
-    webSessionActiveCallTimeout: sanitizeActiveCallTimeoutConfig(value?.webSessionActiveCallTimeout),
+    webSessionCodexDefaultSyncMode:
+      value?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast',
+    webSessionActiveCallTimeout: sanitizeActiveCallTimeoutConfig(
+      value?.webSessionActiveCallTimeout
+    ),
   };
 }
 
@@ -1246,14 +1262,18 @@ function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) 
   target.enableTerminalStateSnapshot = source.enableTerminalStateSnapshot;
   target.webSessionCodexDefaultSyncMode = source.webSessionCodexDefaultSyncMode;
   target.webSessionActiveCallTimeout.enabledMode = source.webSessionActiveCallTimeout.enabledMode;
-  target.webSessionActiveCallTimeout.timeoutSeconds = source.webSessionActiveCallTimeout.timeoutSeconds;
-  target.webSessionActiveCallTimeout.promptTemplate = source.webSessionActiveCallTimeout.promptTemplate;
+  target.webSessionActiveCallTimeout.timeoutSeconds =
+    source.webSessionActiveCallTimeout.timeoutSeconds;
+  target.webSessionActiveCallTimeout.promptTemplate =
+    source.webSessionActiveCallTimeout.promptTemplate;
   target.webSessionActiveCallTimeout.callKinds.useDefault =
     source.webSessionActiveCallTimeout.callKinds.useDefault;
-  target.webSessionActiveCallTimeout.callKinds.mcp = source.webSessionActiveCallTimeout.callKinds.mcp;
+  target.webSessionActiveCallTimeout.callKinds.mcp =
+    source.webSessionActiveCallTimeout.callKinds.mcp;
   target.webSessionActiveCallTimeout.callKinds.command =
     source.webSessionActiveCallTimeout.callKinds.command;
-  target.webSessionActiveCallTimeout.callKinds.tool = source.webSessionActiveCallTimeout.callKinds.tool;
+  target.webSessionActiveCallTimeout.callKinds.tool =
+    source.webSessionActiveCallTimeout.callKinds.tool;
 }
 
 function serializeDeveloperConfig(value: DeveloperConfig | null) {
@@ -1273,7 +1293,9 @@ const developerDirty = computed(() => {
   if (!developerOriginal.value) {
     return false;
   }
-  return serializeDeveloperConfig(developerForm) !== serializeDeveloperConfig(developerOriginal.value);
+  return (
+    serializeDeveloperConfig(developerForm) !== serializeDeveloperConfig(developerOriginal.value)
+  );
 });
 
 const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(() =>
@@ -1469,11 +1491,35 @@ async function loadShellsConfig() {
   }
 }
 
+function normalizeWebSessionQuickInputPinnedItems(items: string[]) {
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    normalized.push(trimmed);
+    seen.add(trimmed);
+  }
+
+  return normalized;
+}
+
+function stringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((item, index) => item === right[index]);
+}
+
 useInit(() => {
   loadAIStatus();
   loadDeveloperConfig();
   loadWorktreeSettings();
   loadShellsConfig();
+  void settingsStore.loadWebSessionQuickInput();
 });
 
 const shellSelectOptions = computed(() => {
@@ -2001,27 +2047,12 @@ const terminalQuickActionsLocal = ref<TerminalQuickAction[]>(
   terminalQuickActions.value.map(item => ({ ...item }))
 );
 const webSessionQuickInputPinnedLocal = ref<string[]>([...webSessionQuickInput.value.pinned]);
-let syncingWebSessionQuickInputPinned = false;
+const webSessionQuickInputPinnedOriginal = ref<string[]>([...webSessionQuickInput.value.pinned]);
+const webSessionQuickInputPinnedSaving = ref(false);
 let syncingTerminalQuickActions = false;
-const debouncedUpdateWebSessionQuickInputPinned = useDebounceFn((items: string[]) => {
-  settingsStore.updateWebSessionQuickInputPinned(items);
-  void settingsStore.syncWebSessionQuickInputToServer();
-}, 300);
 const debouncedUpdateTerminalQuickActions = useDebounceFn((actions: TerminalQuickAction[]) => {
   settingsStore.updateTerminalQuickActions(actions);
 }, 300);
-
-watch(
-  webSessionQuickInput,
-  next => {
-    syncingWebSessionQuickInputPinned = true;
-    webSessionQuickInputPinnedLocal.value = [...next.pinned];
-    setTimeout(() => {
-      syncingWebSessionQuickInputPinned = false;
-    }, 0);
-  },
-  { deep: true }
-);
 
 watch(
   terminalQuickActions,
@@ -2035,13 +2066,22 @@ watch(
   { deep: true }
 );
 
+const webSessionQuickInputPinnedDirty = computed(
+  () =>
+    !stringArraysEqual(
+      normalizeWebSessionQuickInputPinnedItems(webSessionQuickInputPinnedLocal.value),
+      normalizeWebSessionQuickInputPinnedItems(webSessionQuickInputPinnedOriginal.value)
+    )
+);
+
 watch(
-  webSessionQuickInputPinnedLocal,
+  () => webSessionQuickInput.value.pinned,
   next => {
-    if (syncingWebSessionQuickInputPinned) {
+    if (webSessionQuickInputPinnedDirty.value || webSessionQuickInputPinnedSaving.value) {
       return;
     }
-    debouncedUpdateWebSessionQuickInputPinned([...next]);
+    webSessionQuickInputPinnedOriginal.value = [...next];
+    webSessionQuickInputPinnedLocal.value = [...next];
   },
   { deep: true }
 );
@@ -2067,9 +2107,28 @@ function handleWebSessionQuickInputPinnedChange(index: number, value: string) {
   );
 }
 
+async function handleSaveWebSessionQuickInputPinned() {
+  if (!webSessionQuickInputPinnedDirty.value) {
+    return;
+  }
+  webSessionQuickInputPinnedSaving.value = true;
+  try {
+    const next = await settingsStore.saveWebSessionQuickInputPinned(
+      webSessionQuickInputPinnedLocal.value
+    );
+    webSessionQuickInputPinnedOriginal.value = [...next.pinned];
+    webSessionQuickInputPinnedLocal.value = [...next.pinned];
+    message.success(t('common.saveSuccess'));
+  } catch (error) {
+    console.error('Failed to save web session quick input settings:', error);
+    message.error(t('common.saveFailed'));
+  } finally {
+    webSessionQuickInputPinnedSaving.value = false;
+  }
+}
+
 function handleResetWebSessionQuickInputPinned() {
-  settingsStore.updateWebSessionQuickInputPinned([...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED]);
-  void settingsStore.syncWebSessionQuickInputToServer();
+  webSessionQuickInputPinnedLocal.value = [...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED];
 }
 
 function createTerminalQuickAction(): TerminalQuickAction {
