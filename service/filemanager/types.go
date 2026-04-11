@@ -1,0 +1,109 @@
+package filemanager
+
+import "time"
+
+type ScopeKind string
+
+const (
+	ScopeKindProject  ScopeKind = "project"
+	ScopeKindWorktree ScopeKind = "worktree"
+)
+
+type EntryKind string
+
+const (
+	EntryKindFile      EntryKind = "file"
+	EntryKindDirectory EntryKind = "directory"
+	EntryKindSymlink   EntryKind = "symlink"
+)
+
+type PreviewKind string
+
+const (
+	PreviewKindImage    PreviewKind = "image"
+	PreviewKindText     PreviewKind = "text"
+	PreviewKindMarkdown PreviewKind = "markdown"
+	PreviewKindPDF      PreviewKind = "pdf"
+	PreviewKindAudio    PreviewKind = "audio"
+	PreviewKindVideo    PreviewKind = "video"
+	PreviewKindBinary   PreviewKind = "binary"
+)
+
+type Scope struct {
+	ID         string    `json:"id"`
+	Kind       ScopeKind `json:"kind"`
+	Label      string    `json:"label"`
+	RootPath   string    `json:"rootPath"`
+	WorktreeID string    `json:"worktreeId,omitempty"`
+}
+
+type Breadcrumb struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+type Entry struct {
+	Name        string      `json:"name"`
+	Path        string      `json:"path"`
+	Kind        EntryKind   `json:"kind"`
+	Size        int64       `json:"size"`
+	ModifiedAt  time.Time   `json:"modifiedAt"`
+	Mime        string      `json:"mime,omitempty"`
+	Extension   string      `json:"extension,omitempty"`
+	PreviewKind PreviewKind `json:"previewKind"`
+	Hidden      bool        `json:"hidden"`
+}
+
+type ListResult struct {
+	Scope       Scope        `json:"scope"`
+	CurrentPath string       `json:"currentPath"`
+	ParentPath  string       `json:"parentPath,omitempty"`
+	Breadcrumbs []Breadcrumb `json:"breadcrumbs"`
+	Entries     []Entry      `json:"entries"`
+}
+
+type PreviewResult struct {
+	Entry       Entry       `json:"entry"`
+	PreviewKind PreviewKind `json:"previewKind"`
+	TextContent string      `json:"textContent,omitempty"`
+	Truncated   bool        `json:"truncated"`
+}
+
+type FileRef struct {
+	Path string `json:"path"`
+	Name string `json:"name"`
+}
+
+type BulkFailure struct {
+	Path    string `json:"path"`
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+type BulkResult struct {
+	Succeeded []FileRef     `json:"succeeded"`
+	Failed    []BulkFailure `json:"failed"`
+}
+
+type ArchiveJob struct {
+	ID        string    `json:"archiveId"`
+	FileName  string    `json:"fileName"`
+	Size      int64     `json:"size"`
+	CreatedAt time.Time `json:"createdAt"`
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+type UploadSession struct {
+	ID         string    `json:"uploadId"`
+	ProjectID  string    `json:"projectId"`
+	ScopeID    string    `json:"scopeId"`
+	Directory  string    `json:"directoryPath"`
+	TargetPath string    `json:"targetPath"`
+	FileName   string    `json:"fileName"`
+	Size       int64     `json:"size"`
+	Offset     int64     `json:"offset"`
+	ChunkSize  int64     `json:"chunkSize"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}

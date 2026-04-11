@@ -1,0 +1,457 @@
+import { ApiError, urlBase } from '@/api';
+import { extractItem, extractItems } from '@/api/response';
+import { http } from '@/api/http';
+import type {
+  FileManagerArchiveJob,
+  FileManagerBulkResult,
+  FileManagerEntry,
+  FileManagerListResult,
+  FileManagerPreviewResult,
+  FileManagerScope,
+  FileManagerUploadSession,
+} from '@/types/fileManager';
+
+type ItemResponse<T> = {
+  item?: T;
+};
+
+type ItemsResponse<T> = {
+  items?: T[];
+};
+
+export interface TransferProgressPayload {
+  loaded: number;
+  total?: number;
+  progress: number | null;
+}
+
+function resolveUrl(path: string) {
+  return urlBase ? new URL(path, urlBase).toString() : path;
+}
+
+function readStoredToken() {
+  return window.localStorage.getItem('token');
+}
+
+function normalizeJsonError(payload: unknown, fallback: string) {
+  if (typeof payload === 'object' && payload !== null && 'detail' in payload) {
+    return String((payload as { detail?: string }).detail || fallback);
+  }
+  if (typeof payload === 'string' && payload.trim()) {
+    return payload;
+  }
+  return fallback;
+}
+
+function parseJSONPayload(xhr: XMLHttpRequest) {
+  if (xhr.response && typeof xhr.response === 'object') {
+    return xhr.response;
+  }
+  if (!xhr.responseText) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(xhr.responseText);
+  } catch {
+    return xhr.responseText;
+  }
+}
+
+function createAbortError(message: string) {
+  try {
+    return new DOMException(message, 'AbortError');
+  } catch {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+  }
+}
+
+export const fileManagerApi = {
+  async listScopes(projectId: string): Promise<FileManagerScope[]> {
+    const payload =
+      (await http
+        .Get<ItemsResponse<FileManagerScope>>(`/projects/${projectId}/files/scopes`)
+        .send(true)) ?? {};
+    return extractItems<FileManagerScope>(payload);
+  },
+
+  async list(projectId: string, scopeId: string, path = ''): Promise<FileManagerListResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    params.set('path', path);
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerListResult>
+        >(`/projects/${projectId}/files/list?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerListResult>(payload);
+    if (!item) {
+      throw new Error('failed to load files');
+    }
+    return item;
+  },
+
+  async preview(
+    projectId: string,
+    scopeId: string,
+    path: string
+  ): Promise<FileManagerPreviewResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    params.set('path', path);
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerPreviewResult>
+        >(`/projects/${projectId}/files/preview?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerPreviewResult>(payload);
+    if (!item) {
+      throw new Error('failed to load file preview');
+    }
+    return item;
+  },
+
+  buildContentUrl(
+    projectId: string,
+    scopeId: string,
+    path: string,
+    disposition: 'inline' | 'attachment'
+  ) {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    params.set('path', path);
+    params.set('disposition', disposition);
+    return resolveUrl(`/api/v1/projects/${projectId}/files/content?${params.toString()}`);
+  },
+
+  async createDirectory(projectId: string, scopeId: string, parentPath: string, name: string) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerEntry>>(`/projects/${projectId}/files/directories`, {
+          scopeId,
+          parentPath,
+          name,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerEntry>(payload);
+    if (!item) {
+      throw new Error('failed to create directory');
+    }
+    return item;
+  },
+
+  async rename(projectId: string, scopeId: string, path: string, newName: string) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerEntry>>(`/projects/${projectId}/files/rename`, {
+          scopeId,
+          path,
+          newName,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerEntry>(payload);
+    if (!item) {
+      throw new Error('failed to rename file');
+    }
+    return item;
+  },
+
+  async copy(projectId: string, scopeId: string, sourcePaths: string[], destinationPath: string) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerBulkResult>>(`/projects/${projectId}/files/copy`, {
+          scopeId,
+          sourcePaths,
+          destinationPath,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerBulkResult>(payload);
+    if (!item) {
+      throw new Error('failed to copy files');
+    }
+    return item;
+  },
+
+  async move(projectId: string, scopeId: string, sourcePaths: string[], destinationPath: string) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerBulkResult>>(`/projects/${projectId}/files/move`, {
+          scopeId,
+          sourcePaths,
+          destinationPath,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerBulkResult>(payload);
+    if (!item) {
+      throw new Error('failed to move files');
+    }
+    return item;
+  },
+
+  async remove(projectId: string, scopeId: string, paths: string[]) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerBulkResult>>(`/projects/${projectId}/files/delete`, {
+          scopeId,
+          paths,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerBulkResult>(payload);
+    if (!item) {
+      throw new Error('failed to delete files');
+    }
+    return item;
+  },
+
+  async createArchive(projectId: string, scopeId: string, paths: string[], fileName = '') {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerArchiveJob>>(`/projects/${projectId}/files/archives`, {
+          scopeId,
+          paths,
+          fileName,
+        })
+        .send()) ?? {};
+    const item = extractItem<FileManagerArchiveJob>(payload);
+    if (!item) {
+      throw new Error('failed to prepare archive');
+    }
+    return item;
+  },
+
+  async createUploadSession(
+    projectId: string,
+    scopeId: string,
+    directoryPath: string,
+    fileName: string,
+    size: number
+  ) {
+    const payload =
+      (await http
+        .Post<ItemResponse<FileManagerUploadSession>>(
+          `/projects/${projectId}/files/upload-sessions`,
+          {
+            scopeId,
+            directoryPath,
+            fileName,
+            size,
+          }
+        )
+        .send()) ?? {};
+    const item = extractItem<FileManagerUploadSession>(payload);
+    if (!item) {
+      throw new Error('failed to start upload session');
+    }
+    return item;
+  },
+
+  async getUploadSession(projectId: string, uploadId: string) {
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerUploadSession>
+        >(`/projects/${projectId}/files/upload-sessions/${uploadId}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerUploadSession>(payload);
+    if (!item) {
+      throw new Error('upload session not found');
+    }
+    return item;
+  },
+
+  uploadChunk(
+    projectId: string,
+    uploadId: string,
+    offset: number,
+    chunk: Blob,
+    options?: {
+      total?: number;
+      onProgress?: (payload: TransferProgressPayload) => void;
+      onXhr?: (xhr: XMLHttpRequest) => void;
+    }
+  ) {
+    return new Promise<FileManagerUploadSession>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      const targetUrl = resolveUrl(
+        `/api/v1/projects/${projectId}/files/upload-sessions/${uploadId}`
+      );
+
+      options?.onXhr?.(xhr);
+      xhr.open('PATCH', targetUrl, true);
+      xhr.withCredentials = true;
+      xhr.responseType = 'json';
+      xhr.setRequestHeader('Upload-Offset', String(offset));
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+      const token = readStoredToken();
+      if (token) {
+        xhr.setRequestHeader('Authorization', token);
+      }
+
+      xhr.upload.onprogress = event => {
+        if (!options?.onProgress) {
+          return;
+        }
+        const loaded = offset + event.loaded;
+        const total = options.total ?? (event.lengthComputable ? offset + event.total : undefined);
+        const progress =
+          typeof total === 'number' && total > 0
+            ? Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))
+            : null;
+        options.onProgress({
+          loaded,
+          total,
+          progress,
+        });
+      };
+
+      xhr.onerror = () => {
+        reject(new Error('network error while uploading chunk'));
+      };
+
+      xhr.onabort = () => {
+        reject(createAbortError('upload aborted'));
+      };
+
+      xhr.onload = () => {
+        const payload = parseJSONPayload(xhr);
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new ApiError(xhr.status, xhr.statusText || 'Upload failed', payload));
+          return;
+        }
+        const item = extractItem<FileManagerUploadSession>(
+          payload as ItemResponse<FileManagerUploadSession>
+        );
+        if (!item?.uploadId) {
+          reject(new Error('upload chunk succeeded but response is invalid'));
+          return;
+        }
+        resolve(item);
+      };
+
+      xhr.send(chunk);
+    });
+  },
+
+  async completeUpload(projectId: string, uploadId: string) {
+    const payload =
+      (await http
+        .Post<
+          ItemResponse<FileManagerEntry>
+        >(`/projects/${projectId}/files/upload-sessions/${uploadId}/complete`, {})
+        .send()) ?? {};
+    const item = extractItem<FileManagerEntry>(payload);
+    if (!item) {
+      throw new Error('failed to finalize upload');
+    }
+    return item;
+  },
+
+  async cancelUpload(projectId: string, uploadId: string) {
+    await http.Delete(`/projects/${projectId}/files/upload-sessions/${uploadId}`).send();
+  },
+
+  async downloadToBlob(
+    sourceUrl: string,
+    options?: {
+      total?: number;
+      signal?: AbortSignal;
+      onProgress?: (payload: TransferProgressPayload) => void;
+    }
+  ) {
+    const response = await fetch(resolveUrl(sourceUrl), {
+      credentials: 'include',
+      headers: readStoredToken() ? { Authorization: readStoredToken() as string } : undefined,
+      signal: options?.signal,
+    });
+    if (!response.ok) {
+      let detail = '';
+      try {
+        detail = normalizeJsonError(await response.json(), '');
+      } catch {
+        try {
+          detail = await response.text();
+        } catch {
+          detail = '';
+        }
+      }
+      throw new Error(detail || `download failed with status ${response.status}`);
+    }
+
+    const totalHeader = response.headers.get('content-length');
+    const total =
+      options?.total ??
+      (totalHeader && Number.isFinite(Number(totalHeader)) ? Number(totalHeader) : undefined);
+
+    if (!response.body) {
+      const blob = await response.blob();
+      options?.onProgress?.({
+        loaded: blob.size,
+        total,
+        progress:
+          typeof total === 'number' && total > 0
+            ? Math.max(0, Math.min(100, Math.round((blob.size / total) * 100)))
+            : null,
+      });
+      return blob;
+    }
+
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let loaded = 0;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (value) {
+        chunks.push(value);
+        loaded += value.byteLength;
+        options?.onProgress?.({
+          loaded,
+          total,
+          progress:
+            typeof total === 'number' && total > 0
+              ? Math.max(0, Math.min(100, Math.round((loaded / total) * 100)))
+              : null,
+        });
+      }
+    }
+
+    return new Blob(chunks);
+  },
+
+  saveBlob(blob: Blob, fileName: string) {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = fileName;
+    anchor.style.display = 'none';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => {
+      URL.revokeObjectURL(objectUrl);
+    }, 1000);
+  },
+
+  startBrowserDownload(sourceUrl: string) {
+    if (typeof document === 'undefined') {
+      throw new Error('browser download is unavailable in the current environment');
+    }
+
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = resolveUrl(sourceUrl);
+    iframe.setAttribute('aria-hidden', 'true');
+    document.body.append(iframe);
+
+    window.setTimeout(() => {
+      iframe.remove();
+    }, 60_000);
+  },
+};

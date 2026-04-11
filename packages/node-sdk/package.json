@@ -1,7 +1,7 @@
 {
   "name": "@codekanban/sdk",
   "version": "0.1.0",
-  "description": "Node SDK and CLI for launching CodeKanban project workflows and reading business sessions.",
+  "description": "Node SDK and CLI for launching CodeKanban coding workflows, terminal sessions, and web sessions.",
   "type": "module",
   "main": "./src/index.js",
   "exports": {

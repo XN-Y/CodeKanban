@@ -1,17 +1,17 @@
 ---
 name: codekanban-project-session
-description: Operate CodeKanban business sessions with `web session` as the default interactive path. Use when the user wants to create, inspect, control, watch, or continue a CodeKanban AI workflow in a project or filesystem path. Prefer `web session` for structured interaction, planning, approvals, user input, and follow-up execution. Use terminal/workflow startup only when the user explicitly wants a PTY-style terminal flow, raw terminal continuation, or startup profiles such as `plan` / `yolo`. This skill is for CodeKanban business sessions, not raw local agent transcript files.
+description: Operate CodeKanban `web session` and `terminal session` flows, with `web session` as the default interactive path. Use when the user wants to create, inspect, control, watch, or continue a CodeKanban programming-assistant workflow in a project or filesystem path. Prefer `web session` for structured interaction, planning, approvals, user input, and follow-up execution. Use terminal/workflow startup only when the user explicitly wants a PTY-style terminal flow, raw terminal continuation, or startup profiles such as `plan` / `yolo`. This skill is for CodeKanban session control, not raw local agent transcript files.
 ---
 
-# CodeKanban Project Session
+# CodeKanban Web And Terminal Sessions
 
 ## Overview
 
-Use this skill to operate on **CodeKanban business sessions** for a project, not raw `codex resume` or local transcript files. Prefer the bundled runner script so session lookups, workflow starts, and web-session control all go through the repository SDK instead of re-implementing HTTP or WebSocket logic in the prompt.
+Use this skill to operate on **CodeKanban web sessions and terminal sessions** for a project, not raw `codex resume` or local transcript files. Prefer the bundled runner script so session lookups, workflow starts, and web-session control all go through the repository SDK instead of re-implementing HTTP or WebSocket logic in the prompt.
 
 Default rule:
 
-- Prefer `web-session` for interactive AI work.
+- Prefer `web-session` for interactive programming-assistant work.
 - Treat `workflow start` and `terminal continue` as secondary paths for explicit PTY / terminal requests.
 
 ## Quick Start
@@ -42,7 +42,7 @@ node skills/codekanban-project-session/scripts/run-codekanban-session.mjs web-se
 node skills/codekanban-project-session/scripts/run-codekanban-session.mjs web-session watch --base-url <BASE_URL> --session-id <WEB_SESSION_ID> --max-events 20
 ```
 
-- Start work in a project or path:
+- Start a coding workflow in a project or path:
 
 ```bash
 node skills/codekanban-project-session/scripts/run-codekanban-session.mjs workflow start --base-url <BASE_URL> --path <PROJECT_PATH> --prompt "<PROMPT>"
@@ -77,7 +77,7 @@ Translate user intent into these operations:
   - Use only when the user identifies a specific AI session or asks to inspect the full conversation.
   - Prefer database `--id`; use `--session-id` when that is the only identifier available.
 - `web-session create`
-  - Default choice for new interactive AI work in CodeKanban.
+  - Default choice for new interactive coding-assistant work in CodeKanban.
   - Prefer this for structured control, snapshots, approvals, user-input handling, event streaming, plan execution, and low-cost follow-up polling.
 - `web-session snapshot` / `web-session history`
   - Use when the user asks for the current state, recent messages, or older paginated history of a web session.
@@ -153,7 +153,7 @@ node skills/codekanban-project-session/scripts/run-codekanban-session.mjs web-se
 
 ## Selection Rule
 
-- If the user wants interactive AI work and did not explicitly ask for terminal / PTY behavior, choose `web-session`.
+- If the user wants interactive programming-assistant work and did not explicitly ask for terminal / PTY behavior, choose `web-session`.
 - If the user needs approvals, structured user input, plan execution, polling, or event watching, choose `web-session`.
 - Use `workflow start` only when a raw terminal-style startup flow is explicitly the point.
 - Use `terminal continue` only for explicit continuation of an existing terminal session.

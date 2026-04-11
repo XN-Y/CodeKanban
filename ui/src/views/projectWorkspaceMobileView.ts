@@ -1,6 +1,6 @@
 export const DEFAULT_MOBILE_VIEW = 'projects' as const;
 
-const MOBILE_VIEWS = ['kanban', 'terminal', 'webSession', 'projects', 'notifications'] as const;
+const MOBILE_VIEWS = ['kanban', 'terminal', 'webSession', 'files', 'projects', 'notifications'] as const;
 
 export type MobileView = (typeof MOBILE_VIEWS)[number];
 

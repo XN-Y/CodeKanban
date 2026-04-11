@@ -11,6 +11,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(normalizeMobileView('projects')).toBe('projects');
     expect(normalizeMobileView('terminal')).toBe('terminal');
     expect(normalizeMobileView('webSession')).toBe('webSession');
+    expect(normalizeMobileView('files')).toBe('files');
     expect(normalizeMobileView('notifications')).toBe('notifications');
   });
 
@@ -30,5 +31,6 @@ describe('projectWorkspaceMobileView', () => {
     expect(restorePersistedMobileView('projects')).toBe('projects');
     expect(restorePersistedMobileView('terminal')).toBe('terminal');
     expect(restorePersistedMobileView('webSession')).toBe('webSession');
+    expect(restorePersistedMobileView('files')).toBe('files');
   });
 });

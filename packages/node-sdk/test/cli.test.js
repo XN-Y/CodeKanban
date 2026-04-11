@@ -70,9 +70,17 @@ async function runCliCaptured(argv, options = {}) {
 test('CLI web-session create prints the created session JSON', { concurrency: false }, async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/worktrees', () =>
+      createJsonResponse({ items: [{ id: 'w-main', projectId: 'p1', isMain: true, path: '/repo/demo' }] })],
     ['POST /api/v1/projects/p1/web-sessions', ({ body }) => {
       assert.equal(body.agent, 'codex');
       assert.equal(body.workflowMode, 'plan');
+      assert.equal(body.worktreeId, 'w-main');
+      assert.equal(body.model, 'gpt-5.4');
+      assert.equal(body.reasoningEffort, 'xhigh');
+      assert.equal(body.autoRetryEnabled, false);
+      assert.equal(body.autoRetryScope, 'network_only');
+      assert.equal(body.autoRetryPreset, 'gentle_stop');
       return createJsonResponse({ item: { id: 'ws-created', projectId: 'p1', title: 'Created' } }, 201);
     }],
   ]);
