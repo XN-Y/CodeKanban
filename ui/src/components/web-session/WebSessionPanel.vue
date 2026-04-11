@@ -312,7 +312,11 @@
                       </button>
                     </div>
 
-                    <div v-else class="tool-card timeline-tool-card" :class="toolCardClass(item.tool)">
+                    <div
+                      v-else
+                      class="tool-card timeline-tool-card"
+                      :class="toolCardClass(item.tool)"
+                    >
                       <button
                         type="button"
                         class="tool-header"
@@ -334,7 +338,9 @@
                       </button>
                       <div v-if="isToolExpanded(item.tool.id)" class="tool-body">
                         <div v-if="isImageViewTool(item.tool)" class="tool-section">
-                          <div class="tool-section-label">{{ t('webSession.imageViewPreview') }}</div>
+                          <div class="tool-section-label">
+                            {{ t('webSession.imageViewPreview') }}
+                          </div>
                           <div class="image-view-preview-card">
                             <div class="image-view-preview-meta">
                               <span class="image-view-preview-name">
@@ -1471,7 +1477,7 @@ import {
   watch,
   type HTMLAttributes,
 } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
@@ -1556,6 +1562,12 @@ import {
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
+import {
+  buildWebSessionRouteQuery,
+  getWebSessionRouteSessionId,
+  isWebSessionRouteQuerySynced,
+  resolveWebSessionDeepLinkTarget,
+} from '@/utils/webSessionRoute';
 
 const MAX_TAB_TITLE_WIDTH = 160;
 const TAB_LABEL_EXTRA_SPACE = 40;
@@ -1696,6 +1708,7 @@ function isArchivedPreviewSession(
 const webSessionStore = useWebSessionStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
+const route = useRoute();
 const router = useRouter();
 const dialog = useDialog();
 const message = useMessage();
@@ -1722,6 +1735,7 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
 );
 const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
 const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
+const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -1866,7 +1880,9 @@ const currentRealSession = computed<WebSessionSummary | null>(() => {
 });
 const sendGuardProjectId = computed(() => currentRealSession.value?.projectId || props.projectId);
 const currentDraftSessionId = computed(() => currentSession.value?.id ?? '');
-const currentSessionAutoRetryEnabled = computed(() => Boolean(currentSession.value?.autoRetryEnabled));
+const currentSessionAutoRetryEnabled = computed(() =>
+  Boolean(currentSession.value?.autoRetryEnabled)
+);
 const webSessionAutoContinueEnabledValue = computed({
   get: () => currentSessionAutoRetryEnabled.value,
   set: value => {
@@ -2907,7 +2923,10 @@ const liveStateWorking = computed(() =>
   ['starting', 'thinking', 'retrying', 'tool'].includes(liveState.value.phase)
 );
 const shouldAutoContinueOnLiveCardClick = computed(
-  () => liveState.value.phase === 'error' && Boolean(currentRealSession.value) && !liveCardContinuePending.value
+  () =>
+    liveState.value.phase === 'error' &&
+    Boolean(currentRealSession.value) &&
+    !liveCardContinuePending.value
 );
 const liveCardAriaLabel = computed(() =>
   shouldAutoContinueOnLiveCardClick.value ? 'continue' : t('webSession.jumpToBottom')
@@ -3864,9 +3883,7 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
     autoRetryEnabled: source?.autoRetryEnabled === true,
     autoRetryScope:
-      source?.autoRetryEnabled === true
-        ? source.autoRetryScope
-        : webSessionAutoContinueScope.value,
+      source?.autoRetryEnabled === true ? source.autoRetryScope : webSessionAutoContinueScope.value,
     autoRetryPreset:
       source?.autoRetryEnabled === true
         ? source.autoRetryPreset
@@ -3999,7 +4016,27 @@ async function activateTabById(sessionId: string, options?: { connectReal?: bool
   return true;
 }
 
-async function openArchivedPreviewSession(session: WebSessionSummary) {
+function buildProjectRouteLocation(projectId: string, sessionId = '') {
+  return {
+    name: 'project' as const,
+    params: { id: projectId },
+    query: buildWebSessionRouteQuery(route.query, sessionId),
+  };
+}
+
+async function syncWebSessionRouteSessionId(sessionId = '') {
+  if (isWebSessionRouteQuerySynced(route.query, sessionId)) {
+    return;
+  }
+  await router.replace({
+    query: buildWebSessionRouteQuery(route.query, sessionId),
+  });
+}
+
+async function openArchivedPreviewSession(
+  session: WebSessionSummary,
+  options?: { snapshotLoaded?: boolean }
+) {
   const anchorId = activeSessionId.value;
   const previousPreviewId = archivedPreviewSession.value?.id ?? '';
   if (previousPreviewId && previousPreviewId !== session.id) {
@@ -4016,9 +4053,11 @@ async function openArchivedPreviewSession(session: WebSessionSummary) {
   } else {
     syncTabNavigationState();
   }
-  await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
-    rememberActive: false,
-  });
+  if (!options?.snapshotLoaded) {
+    await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
+      rememberActive: false,
+    });
+  }
   syncArchivedPreviewSessionSummary(session.id);
   rememberTabVisit(session.id);
 }
@@ -4032,6 +4071,66 @@ async function connectVisibleRealSession(projectId: string, sessionId: string) {
   await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
     rememberActive: true,
   });
+}
+
+async function activateSessionFromRoute(
+  projectId: string,
+  requestedSessionId: string,
+  options?: {
+    loadedSessions?: WebSessionSummary[];
+    showError?: boolean;
+  }
+) {
+  const routeTarget = resolveWebSessionDeepLinkTarget({
+    currentProjectId: projectId,
+    requestedSessionId,
+    loadedSessions: options?.loadedSessions ?? realSessions.value,
+  });
+
+  if (routeTarget.action === 'none') {
+    return false;
+  }
+
+  if (routeTarget.action === 'activate-loaded') {
+    return await activateTabById(routeTarget.sessionId);
+  }
+
+  if (routeTarget.action !== 'load-snapshot') {
+    return false;
+  }
+
+  try {
+    const snapshot = await webSessionStore.loadSessionSnapshot(projectId, routeTarget.sessionId, {
+      rememberActive: false,
+    });
+    const snapshotTarget = resolveWebSessionDeepLinkTarget({
+      currentProjectId: projectId,
+      requestedSessionId: routeTarget.sessionId,
+      snapshotSession: snapshot?.session ?? null,
+    });
+
+    if (snapshotTarget.action === 'activate-real') {
+      return await activateTabById(snapshotTarget.sessionId, {
+        connectReal: false,
+      });
+    }
+
+    if (snapshotTarget.action === 'open-archived-preview' && snapshot?.session) {
+      await openArchivedPreviewSession(snapshot.session, {
+        snapshotLoaded: true,
+      });
+      return true;
+    }
+
+    await syncWebSessionRouteSessionId('');
+  } catch (error) {
+    await syncWebSessionRouteSessionId('');
+    if (options?.showError !== false) {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    }
+  }
+
+  return false;
 }
 
 function removeDraftSessionRecord(sessionId: string, options?: { preserveDraftState?: boolean }) {
@@ -4953,11 +5052,10 @@ function getCompactToolSummary(tool: NonNullable<WebSessionBlock['tool']>) {
   return subtitle;
 }
 
-function contextCompactionPreview(tool: {
-  output?: string;
-  meta?: Record<string, unknown>;
-}) {
-  const preview = String(tool.output ?? tool.meta?.subtitle ?? '').replace(/\s+/g, ' ').trim();
+function contextCompactionPreview(tool: { output?: string; meta?: Record<string, unknown> }) {
+  const preview = String(tool.output ?? tool.meta?.subtitle ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (preview) {
     return preview.slice(0, 120);
   }
@@ -5405,6 +5503,14 @@ async function initializeProjectSessions(projectId: string) {
       mruIds: tabMruIds.value,
     });
     await webSessionStore.openEventStream();
+    if (routeWebSessionId.value) {
+      const handled = await activateSessionFromRoute(projectId, routeWebSessionId.value, {
+        loadedSessions,
+      });
+      if (handled) {
+        return;
+      }
+    }
     if (activeDraftId) {
       await activateTabById(activeDraftId, { connectReal: false });
       return;
@@ -5474,10 +5580,7 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
     if (item.projectId !== props.projectId) {
       webSessionStore.setActiveSession(item.projectId, sessionId);
       projectStore.addRecentProject(item.projectId);
-      await router.push({
-        name: 'project',
-        params: { id: item.projectId },
-      });
+      await router.push(buildProjectRouteLocation(item.projectId, sessionId));
       return;
     }
     await activateTabById(sessionId);
@@ -5492,6 +5595,11 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
     return;
   }
   try {
+    if (item.projectId !== props.projectId) {
+      projectStore.addRecentProject(item.projectId);
+      await router.push(buildProjectRouteLocation(item.projectId, item.session.id));
+      return;
+    }
     if (archivedPreviewSession.value?.id === item.session.id) {
       activeArchivedPreviewId.value = item.session.id;
       rememberTabVisit(item.session.id);
@@ -6075,10 +6183,7 @@ async function continueErroredSession(session: WebSessionSummary) {
   await webSessionStore.sendMessage(prepared.session.id, 'continue', []);
   if (prepared.navigateProjectId) {
     projectStore.addRecentProject(prepared.navigateProjectId);
-    await router.push({
-      name: 'project',
-      params: { id: prepared.navigateProjectId },
-    });
+    await router.push(buildProjectRouteLocation(prepared.navigateProjectId, prepared.session.id));
   }
   autoFollowBottom.value = true;
   scrollToBottom(true);
@@ -6140,10 +6245,7 @@ async function handleSubmit() {
     webSessionStore.clearDraft(props.projectId, draftSessionId);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
-      await router.push({
-        name: 'project',
-        params: { id: prepared.navigateProjectId },
-      });
+      await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
     }
     autoFollowBottom.value = true;
     isMobileComposerExpanded.value = false;
@@ -6392,10 +6494,7 @@ async function handlePlanCardImplement() {
     await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
-      await router.push({
-        name: 'project',
-        params: { id: prepared.navigateProjectId },
-      });
+      await router.push(buildProjectRouteLocation(prepared.navigateProjectId, targetSession.id));
     }
     autoFollowBottom.value = true;
     scrollToBottom(true);
@@ -7158,6 +7257,27 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => routeWebSessionId.value,
+  sessionId => {
+    if (!sessionId || !props.projectId || isProjectSessionInitializing.value) {
+      return;
+    }
+    const session = currentSession.value;
+    if (
+      session &&
+      !isDraftSession(session) &&
+      session.id === sessionId &&
+      session.projectId === props.projectId
+    ) {
+      return;
+    }
+    void activateSessionFromRoute(props.projectId, sessionId).catch(error => {
+      console.error('[Web Session] Failed to activate session from route', error);
+    });
+  }
+);
+
 watch(sendConfirmationSignature, signature => {
   if (!sendConfirmationState.value) {
     return;
@@ -7283,6 +7403,27 @@ watch(
     if (!isDraftSession(session)) {
       markSessionViewed(session.id);
     }
+  },
+  { immediate: true }
+);
+
+watch(
+  () => currentSession.value,
+  session => {
+    if (
+      isProjectSessionInitializing.value &&
+      routeWebSessionId.value &&
+      (!session || isDraftSession(session))
+    ) {
+      return;
+    }
+    const routeSessionId =
+      session && !isDraftSession(session) && session.projectId === props.projectId
+        ? session.id
+        : '';
+    void syncWebSessionRouteSessionId(routeSessionId).catch(error => {
+      console.error('[Web Session] Failed to sync route session id', error);
+    });
   },
   { immediate: true }
 );
@@ -9463,12 +9604,11 @@ onBeforeUnmount(() => {
   min-height: 180px;
   border-radius: 12px;
   overflow: hidden;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%) 0%,
-      color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%) 100%
-    );
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--app-surface-color, #fff) 88%, var(--n-primary-color) 12%) 0%,
+    color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%) 100%
+  );
 }
 
 .image-view-preview-status {

@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import Apis from '@/api';
 import { useReq, useInit } from '@/api';
+import { isWebSessionOnlyRouteChange } from '@/utils/webSessionRoute';
 
 const router = useRouter();
 const loadingBar = useLoadingBar();
@@ -22,6 +23,7 @@ const { send: fetchAppInfo } = useReq(() => Apis.system.version({}));
 
 const canLoadAppInfo = computed(() => authStore.canAccessProtectedContent);
 let appInfoLoaded = false;
+let routeLoadingActive = false;
 
 const handleUnauthorized = () => {
   authStore.markUnauthorized();
@@ -81,14 +83,23 @@ watch(
 );
 
 const removeBeforeEach = router.beforeEach((to, from, next) => {
-  loadingBar?.start();
+  routeLoadingActive = !isWebSessionOnlyRouteChange(to, from);
+  if (routeLoadingActive) {
+    loadingBar?.start();
+  }
   next();
 });
 const removeAfterEach = router.afterEach(() => {
-  loadingBar?.finish();
+  if (routeLoadingActive) {
+    loadingBar?.finish();
+    routeLoadingActive = false;
+  }
 });
 const removeOnError = router.onError(() => {
-  loadingBar?.error();
+  if (routeLoadingActive) {
+    loadingBar?.error();
+    routeLoadingActive = false;
+  }
 });
 
 onBeforeUnmount(() => {

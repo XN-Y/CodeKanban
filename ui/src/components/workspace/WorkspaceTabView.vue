@@ -149,11 +149,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount } from 'vue';
+import { computed, onBeforeUnmount, watch } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
 import { ChatbubblesOutline, GridOutline, TerminalOutline } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
+import { useRoute } from 'vue-router';
 import {
   formatAiStatusTripletWithTotal,
   summarizeWebSessions,
@@ -166,6 +167,7 @@ import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
+import { getWebSessionRouteSessionId } from '@/utils/webSessionRoute';
 
 const props = defineProps<{
   projectId: string;
@@ -176,10 +178,12 @@ type WorkspaceTab = 'kanban' | 'terminal' | 'web';
 const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 
 const { t } = useLocale();
+const route = useRoute();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
+const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 
 function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
   if (value === 'kanban' || value === 'terminal' || value === 'web') {
@@ -198,6 +202,16 @@ const activeTab = computed<WorkspaceTab>({
   },
 });
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
+
+watch(
+  routeWebSessionId,
+  sessionId => {
+    if (sessionId && activeTab.value !== 'web') {
+      activeTab.value = 'web';
+    }
+  },
+  { immediate: true }
+);
 
 // 终端数量
 const terminalCount = computed(() => {

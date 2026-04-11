@@ -201,6 +201,7 @@ import {
   restorePersistedMobileView,
   type MobileView,
 } from '@/views/projectWorkspaceMobileView';
+import { getWebSessionRouteSessionId } from '@/utils/webSessionRoute';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
@@ -325,6 +326,7 @@ provide('terminalPanelRef', terminalPanelRef);
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
+const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 
 const storedMobileViews = useStorage<Record<string, MobileView>>(
   MOBILE_ACTIVE_VIEW_STORAGE_KEY,
@@ -375,6 +377,27 @@ watch(mobileActiveView, view => {
     isMobileWebSessionComposerFocused.value = false;
   }
 });
+
+watch(
+  [currentProjectId, routeWebSessionId, isMobileLayout],
+  ([projectId, sessionId, mobile]) => {
+    if (!projectId || !sessionId) {
+      return;
+    }
+
+    if (mobile) {
+      if (mobileActiveView.value !== 'webSession') {
+        setMobileView('webSession');
+      }
+      return;
+    }
+
+    if (terminalDisplayMode.value !== 'docked') {
+      settingsStore.updateTerminalDisplayMode('docked');
+    }
+  },
+  { immediate: true }
+);
 
 watch(
   () => isMobileLayout.value,
