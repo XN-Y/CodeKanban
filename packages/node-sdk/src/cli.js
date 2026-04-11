@@ -113,10 +113,6 @@ function parseCliArgs(argv) {
         flags.workingDir = readFlagValue(argv, index, token);
         index += 1;
         break;
-      case '--task-id':
-        flags.taskId = readFlagValue(argv, index, token);
-        index += 1;
-        break;
       case '--worktree-id':
         flags.worktreeId = readFlagValue(argv, index, token);
         index += 1;
@@ -364,7 +360,6 @@ export async function runCli(argv, options = {}) {
         extraArgs: flags.extraArgs,
         title: flags.title,
         workingDir: flags.workingDir,
-        taskId: flags.taskId,
       });
     } else if (scope === 'session' && action === 'list') {
       result = await client.listSessions({

@@ -1,13 +1,15 @@
 # `@codekanban/sdk`
 
-Node SDK and CLI for CodeKanban project workflows.
+Node SDK and CLI for CodeKanban coding workflows, terminal sessions, and web sessions.
+
+Use it as a programming-assistant toolkit for launching, observing, and steering CodeKanban work in a registered project or local path, with `web session` as the default structured path and `terminal session` for PTY-style flows.
 
 ## Features
 
 - Resolve CodeKanban projects by `projectId` or local `path`
 - Auto-create projects for new paths
 - Select the main worktree automatically
-- Launch terminal + agent workflows for `codex` or `claude`
+- Launch coding workflows for `codex` or `claude`
 - Support `standard`, `plan`, and `yolo` Codex profiles
 - Read terminal session lists and AI session summaries
 - Read AI conversations and continue existing terminal sessions

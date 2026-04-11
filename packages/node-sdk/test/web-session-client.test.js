@@ -93,12 +93,24 @@ function withAckingWebSocket(assertions) {
 test('CodeKanbanClient web session HTTP methods call the expected endpoints', async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/worktrees', () =>
+      createJsonResponse({ items: [{ id: 'w-main', projectId: 'p1', isMain: true, path: '/repo/demo' }] })],
     ['GET /api/v1/projects/p1/web-sessions', () =>
       createJsonResponse({ items: [{ id: 'ws1', projectId: 'p1', title: 'Session 1' }] })],
     ['POST /api/v1/projects/p1/web-sessions', ({ body }) => {
-      assert.equal(body.agent, 'codex');
-      assert.equal(body.workflowMode, 'plan');
-      assert.equal(body.permissionLevel, 'elevated');
+      assert.deepEqual(body, {
+        worktreeId: 'w-main',
+        agent: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+        workflowMode: 'plan',
+        permissionLevel: 'elevated',
+        autoRetryEnabled: false,
+        autoRetryScope: 'network_only',
+        autoRetryPreset: 'gentle_stop',
+        permissionMode: '',
+        title: '',
+      });
       return createJsonResponse({ item: { id: 'ws2', projectId: 'p1', title: 'Created' } }, 201);
     }],
     ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', ({ url }) => {
@@ -233,6 +245,75 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
 
   const runtimeConfig = await client.getWebSessionRuntimeConfig();
   assert.equal(runtimeConfig.contextWindowTokens, 200000);
+});
+
+test('CodeKanbanClient createWebSession auto-selects main worktree and required defaults without fetching project metadata', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/worktrees', () =>
+      createJsonResponse({
+        items: [
+          { id: 'w-side', projectId: 'p1', isMain: false, path: '/repo/demo-side' },
+          { id: 'w-main', projectId: 'p1', isMain: true, path: '/repo/demo' },
+        ],
+      })],
+    ['POST /api/v1/projects/p1/web-sessions', ({ body }) => {
+      assert.deepEqual(body, {
+        worktreeId: 'w-main',
+        agent: 'codex',
+        model: 'gpt-5.4',
+        reasoningEffort: 'xhigh',
+        workflowMode: 'default',
+        permissionLevel: 'elevated',
+        autoRetryEnabled: false,
+        autoRetryScope: 'network_only',
+        autoRetryPreset: 'gentle_stop',
+        permissionMode: '',
+        title: '',
+      });
+      return createJsonResponse({ item: { id: 'ws-created', projectId: 'p1', worktreeId: 'w-main' } }, 201);
+    }],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const created = await client.createWebSession({
+    projectId: 'p1',
+    agent: 'codex',
+  });
+
+  assert.equal(created.id, 'ws-created');
+  assert.equal(created.worktreeId, 'w-main');
+});
+
+test('CodeKanbanClient getWebSessionState uses projectId directly for polling reads', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'done',
+            assistantState: null,
+          },
+        }),
+      })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.getWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.equal(state.phase, 'done');
 });
 
 test('CodeKanbanClient uploadWebSessionAttachment sends multipart image data with inferred mime type', async t => {
@@ -662,4 +743,43 @@ test('CodeKanbanClient waitForWebSessionState works with simple polling clients'
 
   assert.equal(state.phase, 'done');
   assert.equal(snapshotReads, 2);
+});
+
+test('CodeKanbanClient waitForWebSessionState tolerates transient fetch failures', async () => {
+  let snapshotReads = 0;
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    requestRetry: { attempts: 1 },
+    fetchImpl: async (input, init = {}) => {
+      const url = input instanceof URL ? input : new URL(String(input));
+      const method = (init.method || 'GET').toUpperCase();
+      assert.equal(method, 'GET');
+      assert.equal(url.pathname, '/api/v1/projects/p1/web-sessions/ws1/snapshot');
+      snapshotReads += 1;
+      if (snapshotReads <= 2) {
+        throw new TypeError('fetch failed');
+      }
+      return createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: snapshotReads >= 4 ? 'done' : 'running',
+            assistantState: snapshotReads >= 4 ? null : 'working',
+          },
+        }),
+      });
+    },
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.waitForWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    until: 'done',
+    intervalMs: 1,
+    timeoutMs: 1000,
+  });
+
+  assert.equal(state.phase, 'done');
+  assert.equal(snapshotReads, 4);
 });
