@@ -1,4 +1,8 @@
-import { CodeKanbanConfigError, CodeKanbanError, CodeKanbanValidationError } from './errors.js';
+import {
+  CodeKanbanConfigError,
+  CodeKanbanError,
+  CodeKanbanValidationError,
+} from "./errors.js";
 import {
   WEB_SESSION_PROTOCOL_VERSION,
   buildWebSessionCommandFrame,
@@ -6,8 +10,12 @@ import {
   decodeWebSessionSocketMessage,
   isWebSessionHeartbeatFrame,
   normalizeWebSessionFrame,
-} from './web-session-shared.js';
-import { ensureArrayOfStrings, ensureOptionalString, ensureString } from './utils.js';
+} from "./web-session-shared.js";
+import {
+  ensureArrayOfStrings,
+  ensureOptionalString,
+  ensureString,
+} from "./utils.js";
 
 const SOCKET_OPEN = 1;
 const DEFAULT_OPEN_TIMEOUT_MS = 8000;
@@ -27,10 +35,12 @@ function normalizeHistoryLimit(value) {
 
 export class WebSessionCommandChannel {
   constructor({ url, WebSocketImpl } = {}) {
-    const resolvedUrl = ensureString(url, 'url');
+    const resolvedUrl = ensureString(url, "url");
     const Socket = WebSocketImpl || globalThis.WebSocket;
     if (!Socket) {
-      throw new CodeKanbanConfigError('WebSocket implementation is unavailable');
+      throw new CodeKanbanConfigError(
+        "WebSocket implementation is unavailable",
+      );
     }
 
     this.url = resolvedUrl;
@@ -45,23 +55,28 @@ export class WebSessionCommandChannel {
     });
     this._closed = false;
 
-    this.socket.addEventListener('open', () => {
+    this.socket.addEventListener("open", () => {
       this._resolveOpen?.();
     });
 
-    this.socket.addEventListener('message', event => {
+    this.socket.addEventListener("message", (event) => {
       this._handleMessage(event.data);
     });
 
-    this.socket.addEventListener('error', event => {
-      const error = new CodeKanbanError('web session command websocket error', { event });
+    this.socket.addEventListener("error", (event) => {
+      const error = new CodeKanbanError("web session command websocket error", {
+        event,
+      });
       this._rejectOpen?.(error);
       this._rejectAll(error);
     });
 
-    this.socket.addEventListener('close', event => {
+    this.socket.addEventListener("close", (event) => {
       this._closed = true;
-      const error = new CodeKanbanError('web session command websocket closed', { event });
+      const error = new CodeKanbanError(
+        "web session command websocket closed",
+        { event },
+      );
       this._rejectOpen?.(error);
       this._rejectAll(error);
     });
@@ -75,7 +90,12 @@ export class WebSessionCommandChannel {
       this._openPromise,
       new Promise((_, reject) => {
         setTimeout(
-          () => reject(new CodeKanbanValidationError(`web session command channel did not open within ${timeoutMs}ms`)),
+          () =>
+            reject(
+              new CodeKanbanValidationError(
+                `web session command channel did not open within ${timeoutMs}ms`,
+              ),
+            ),
           timeoutMs,
         );
       }),
@@ -84,9 +104,9 @@ export class WebSessionCommandChannel {
 
   async list(projectId) {
     const ack = await this._executeCommand({
-      operation: 'list',
+      operation: "list",
       payload: {
-        pid: ensureString(projectId, 'projectId'),
+        pid: ensureString(projectId, "projectId"),
       },
     });
     return Array.isArray(ack.payload?.items) ? ack.payload.items : [];
@@ -94,11 +114,11 @@ export class WebSessionCommandChannel {
 
   async create(input = {}) {
     const { frame } = await this._executeCommand({
-      operation: 'create',
+      operation: "create",
       payload: {
-        pid: ensureString(input.projectId, 'projectId'),
+        pid: ensureString(input.projectId, "projectId"),
         wid: ensureOptionalString(input.worktreeId),
-        ag: ensureString(input.agent, 'agent'),
+        ag: ensureString(input.agent, "agent"),
         md: ensureOptionalString(input.model),
         re: ensureOptionalString(input.reasoningEffort),
         wm: ensureOptionalString(input.workflowMode),
@@ -106,135 +126,153 @@ export class WebSessionCommandChannel {
         pm: ensureOptionalString(input.permissionMode),
         ttl: ensureOptionalString(input.title),
       },
-      expectType: 'snapshot',
+      expectType: "snapshot",
     });
     return frame.snapshot;
   }
 
   async connect(sessionId) {
     const { frame } = await this._executeCommand({
-      operation: 'connect',
+      operation: "connect",
       sessionId,
-      expectType: 'snapshot',
+      expectType: "snapshot",
     });
     return frame.snapshot;
   }
 
   async history(sessionId, options = {}) {
     const { frame } = await this._executeCommand({
-      operation: 'hist',
+      operation: "hist",
       sessionId,
       payload: {
         lim: normalizeHistoryLimit(options.limit),
         bc: ensureOptionalString(options.beforeCursor),
       },
-      expectType: 'historyPage',
+      expectType: "historyPage",
     });
     return frame.history;
   }
 
   async sendMessage(sessionId, input = {}) {
     const text = ensureOptionalString(input.text);
-    const attachmentIds = ensureArrayOfStrings(input.attachmentIds, 'attachmentIds');
+    const attachmentIds = ensureArrayOfStrings(
+      input.attachmentIds,
+      "attachmentIds",
+    );
+    const mode = ensureOptionalString(input.mode);
     if (!text && attachmentIds.length === 0) {
-      throw new CodeKanbanValidationError('text or attachmentIds is required');
+      throw new CodeKanbanValidationError("text or attachmentIds is required");
     }
     return await this._executeCommand({
-      operation: 'send',
+      operation: "send",
       sessionId,
       payload: {
         txt: text,
         atts: attachmentIds,
+        ...(mode ? { mode } : {}),
+      },
+    });
+  }
+
+  async removePendingInput(sessionId, input = {}) {
+    return await this._executeCommand({
+      operation: "pending_del",
+      sessionId,
+      payload: {
+        id: ensureString(input.pendingId, "pendingId"),
       },
     });
   }
 
   async abort(sessionId) {
-    return await this._executeCommand({ operation: 'abort', sessionId });
+    return await this._executeCommand({ operation: "abort", sessionId });
   }
 
   async approve(sessionId) {
-    return await this._executeCommand({ operation: 'approve', sessionId });
+    return await this._executeCommand({ operation: "approve", sessionId });
   }
 
   async reject(sessionId) {
-    return await this._executeCommand({ operation: 'reject', sessionId });
+    return await this._executeCommand({ operation: "reject", sessionId });
   }
 
   async answerUserInput(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'user_input',
+      operation: "user_input",
       sessionId,
       payload: {
-        iid: ensureString(input.itemId, 'itemId'),
-        ans: input.answers && typeof input.answers === 'object' ? input.answers : {},
+        iid: ensureString(input.itemId, "itemId"),
+        ans:
+          input.answers && typeof input.answers === "object"
+            ? input.answers
+            : {},
       },
     });
   }
 
   async rename(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'rename',
+      operation: "rename",
       sessionId,
       payload: {
-        ttl: ensureString(input.title, 'title'),
+        ttl: ensureString(input.title, "title"),
       },
     });
   }
 
   async updateModel(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'set_md',
+      operation: "set_md",
       sessionId,
       payload: {
-        md: ensureString(input.model, 'model'),
+        md: ensureString(input.model, "model"),
       },
     });
   }
 
   async updateReasoningEffort(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'set_re',
+      operation: "set_re",
       sessionId,
       payload: {
-        re: ensureString(input.reasoningEffort, 'reasoningEffort'),
+        re: ensureString(input.reasoningEffort, "reasoningEffort"),
       },
     });
   }
 
   async updateWorkflowMode(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'set_wm',
+      operation: "set_wm",
       sessionId,
       payload: {
-        wm: ensureString(input.workflowMode, 'workflowMode'),
+        wm: ensureString(input.workflowMode, "workflowMode"),
       },
     });
   }
 
   async updatePermissionLevel(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'set_pl',
+      operation: "set_pl",
       sessionId,
       payload: {
-        pl: ensureString(input.permissionLevel, 'permissionLevel'),
+        pl: ensureString(input.permissionLevel, "permissionLevel"),
       },
     });
   }
 
   async updateAgent(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'set_ag',
+      operation: "set_ag",
       sessionId,
       payload: {
-        ag: ensureString(input.agent, 'agent'),
+        ag: ensureString(input.agent, "agent"),
       },
     });
   }
 
   async move(sessionId, input = {}) {
     return await this._executeCommand({
-      operation: 'move',
+      operation: "move",
       sessionId,
       payload: {
         prv: ensureOptionalString(input.prevSessionId),
@@ -244,7 +282,7 @@ export class WebSessionCommandChannel {
   }
 
   async delete(sessionId) {
-    return await this._executeCommand({ operation: 'del', sessionId });
+    return await this._executeCommand({ operation: "del", sessionId });
   }
 
   close() {
@@ -258,11 +296,16 @@ export class WebSessionCommandChannel {
     return next;
   }
 
-  async _executeCommand({ operation, sessionId, payload = {}, expectType = null }) {
+  async _executeCommand({
+    operation,
+    sessionId,
+    payload = {},
+    expectType = null,
+  }) {
     return await this._enqueue(async () => {
       await this.waitForOpen();
       if (this._closed || this.socket.readyState !== SOCKET_OPEN) {
-        throw new CodeKanbanError('web session command channel is not open');
+        throw new CodeKanbanError("web session command channel is not open");
       }
 
       const requestId = createRequestId();
@@ -310,20 +353,24 @@ export class WebSessionCommandChannel {
   _handleMessage(data) {
     const rawFrame = decodeWebSessionSocketMessage(data);
     if (isWebSessionHeartbeatFrame(rawFrame)) {
-      if (rawFrame?.op === 'ping' && this.socket.readyState === SOCKET_OPEN) {
-        this.socket.send(JSON.stringify(buildWebSessionHeartbeatFrame('pong')));
+      if (rawFrame?.op === "ping" && this.socket.readyState === SOCKET_OPEN) {
+        this.socket.send(JSON.stringify(buildWebSessionHeartbeatFrame("pong")));
       }
       return;
     }
     const frame = normalizeWebSessionFrame(rawFrame);
 
-    if (frame.type === 'error' && frame.requestId && this._pendingRequests.has(frame.requestId)) {
+    if (
+      frame.type === "error" &&
+      frame.requestId &&
+      this._pendingRequests.has(frame.requestId)
+    ) {
       const pending = this._pendingRequests.get(frame.requestId);
       this._clearAckTimer(pending);
       this._pendingRequests.delete(frame.requestId);
       pending?.reject(
         new CodeKanbanError(frame.message, {
-          name: 'CodeKanbanWebSessionCommandError',
+          name: "CodeKanbanWebSessionCommandError",
           code: frame.code,
           retry: frame.retry,
           frame,
@@ -332,7 +379,11 @@ export class WebSessionCommandChannel {
       return;
     }
 
-    if (frame.type === 'ack' && frame.requestId && this._pendingRequests.has(frame.requestId)) {
+    if (
+      frame.type === "ack" &&
+      frame.requestId &&
+      this._pendingRequests.has(frame.requestId)
+    ) {
       const pending = this._pendingRequests.get(frame.requestId);
       if (!pending) {
         return;
@@ -348,7 +399,8 @@ export class WebSessionCommandChannel {
     if (
       this._pendingFollowUp &&
       frame.type === this._pendingFollowUp.expectedType &&
-      (!this._pendingFollowUp.sessionId || frame.sessionId === this._pendingFollowUp.sessionId)
+      (!this._pendingFollowUp.sessionId ||
+        frame.sessionId === this._pendingFollowUp.sessionId)
     ) {
       const pendingFollowUp = this._pendingFollowUp;
       this._pendingFollowUp = null;
@@ -364,7 +416,7 @@ export class WebSessionCommandChannel {
   }
 
   _rejectAll(error) {
-    this._pendingRequests.forEach(pending => {
+    this._pendingRequests.forEach((pending) => {
       this._clearAckTimer(pending);
       pending.reject(error);
     });

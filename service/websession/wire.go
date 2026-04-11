@@ -28,20 +28,21 @@ type wireHeartbeatFrame struct {
 }
 
 type wireFrame struct {
-	Version   int           `json:"v"`
-	Kind      string        `json:"k"`
-	RequestID string        `json:"rid,omitempty"`
-	SessionID string        `json:"sid,omitempty"`
-	Timestamp int64         `json:"ts"`
-	Operation string        `json:"op,omitempty"`
-	Payload   any           `json:"p,omitempty"`
-	OK        *int          `json:"ok,omitempty"`
-	Session   *wireSess     `json:"s,omitempty"`
-	History   *wireHist     `json:"h,omitempty"`
-	Item      *wireHistItem `json:"i,omitempty"`
-	Code      string        `json:"code,omitempty"`
-	Message   string        `json:"msg,omitempty"`
-	Retry     bool          `json:"retry,omitempty"`
+	Version   int                `json:"v"`
+	Kind      string             `json:"k"`
+	RequestID string             `json:"rid,omitempty"`
+	SessionID string             `json:"sid,omitempty"`
+	Timestamp int64              `json:"ts"`
+	Operation string             `json:"op,omitempty"`
+	Payload   any                `json:"p,omitempty"`
+	OK        *int               `json:"ok,omitempty"`
+	Session   *wireSess          `json:"s,omitempty"`
+	History   *wireHist          `json:"h,omitempty"`
+	Item      *wireHistItem      `json:"i,omitempty"`
+	Pending   []wirePendingInput `json:"pi,omitempty"`
+	Code      string             `json:"code,omitempty"`
+	Message   string             `json:"msg,omitempty"`
+	Retry     bool               `json:"retry,omitempty"`
 }
 
 type wireSess struct {
@@ -163,6 +164,14 @@ type wireHistoryDetail struct {
 	Action    string                `json:"action,omitempty"`
 }
 
+type wirePendingInput struct {
+	ID            string   `json:"id"`
+	Mode          string   `json:"m"`
+	Text          string   `json:"txt,omitempty"`
+	AttachmentIDs []string `json:"atts,omitempty"`
+	CreatedAt     int64    `json:"ca"`
+}
+
 func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
 	ok := 1
 	return wireFrame{
@@ -216,6 +225,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 			BeforeCursor: snap.History.BeforeCursor,
 			Total:        snap.History.Total,
 		},
+		Pending: mapWirePendingInputs(snap.PendingInputs),
 	}
 }
 
@@ -262,6 +272,17 @@ func newSessionFrame(sessionID string, summary SessionSummary) wireFrame {
 		Timestamp: nowUnixMilli(),
 		Operation: "session",
 		Session:   mapWireSession(summary),
+	}
+}
+
+func newPendingFrame(sessionID string, items []PendingInput) wireFrame {
+	return wireFrame{
+		Version:   protocolVersion,
+		Kind:      "evt",
+		SessionID: sessionID,
+		Timestamp: nowUnixMilli(),
+		Operation: "pending",
+		Pending:   mapWirePendingInputs(items),
 	}
 }
 
@@ -354,6 +375,23 @@ func mapWireSession(session SessionSummary) *wireSess {
 		ContextWindowTokens:     session.ContextWindowTokens,
 		ContextWindowSource:     string(session.ContextWindowSource),
 	}
+}
+
+func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
+	if len(items) == 0 {
+		return []wirePendingInput{}
+	}
+	wireItems := make([]wirePendingInput, 0, len(items))
+	for _, item := range items {
+		wireItems = append(wireItems, wirePendingInput{
+			ID:            item.ID,
+			Mode:          string(item.Mode),
+			Text:          item.Text,
+			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
+			CreatedAt:     item.CreatedAt.UnixMilli(),
+		})
+	}
+	return wireItems
 }
 
 func mapWireHistoryItem(item HistoryItem) wireHistItem {

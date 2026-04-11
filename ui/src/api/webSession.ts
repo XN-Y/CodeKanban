@@ -44,9 +44,18 @@ export type WebSessionHistoryWindow = {
   total: number;
 };
 
+export type WebSessionPendingInputRecord = {
+  id?: string;
+  mode?: 'redirect' | 'queue' | string;
+  text?: string;
+  attachmentIds?: string[];
+  createdAt?: string | number | null;
+};
+
 export type WebSessionSnapshot = {
   session: WebSessionSummary;
   history: WebSessionHistoryWindow;
+  pendingInputs?: WebSessionPendingInputRecord[];
 };
 
 export const webSessionApi = {

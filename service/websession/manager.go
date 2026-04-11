@@ -66,6 +66,9 @@ type Manager struct {
 	runs               map[string]*activeRun
 	clients            map[*client]struct{}
 	autoRetryTimers    map[string]*time.Timer
+	pendingInputs      map[string][]PendingInput
+	pendingProcessing  map[string]bool
+	pendingDirty       map[string]bool
 	codexContextWindow codexContextWindowResolver
 }
 
@@ -252,15 +255,18 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		cfg:             cfg,
-		logger:          logger.Named("web-session-manager"),
-		store:           eventStore,
-		projectSvc:      model.NewProjectService(),
-		worktreeSvc:     service.NewWorktreeService(),
-		aiSessionSvc:    service.NewAISessionService(),
-		runs:            make(map[string]*activeRun),
-		clients:         make(map[*client]struct{}),
-		autoRetryTimers: make(map[string]*time.Timer),
+		cfg:               cfg,
+		logger:            logger.Named("web-session-manager"),
+		store:             eventStore,
+		projectSvc:        model.NewProjectService(),
+		worktreeSvc:       service.NewWorktreeService(),
+		aiSessionSvc:      service.NewAISessionService(),
+		runs:              make(map[string]*activeRun),
+		clients:           make(map[*client]struct{}),
+		autoRetryTimers:   make(map[string]*time.Timer),
+		pendingInputs:     make(map[string][]PendingInput),
+		pendingProcessing: make(map[string]bool),
+		pendingDirty:      make(map[string]bool),
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
@@ -727,8 +733,9 @@ func (m *Manager) loadSnapshotLocal(
 		summary.HasUnread = false
 	}
 	return SessionSnapshot{
-		Session: summary,
-		History: history,
+		Session:       summary,
+		History:       history,
+		PendingInputs: m.pendingInputsSnapshot(record.ID),
 	}, nil
 }
 
@@ -975,6 +982,7 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 		return SessionSummary{}, err
 	}
 	m.cancelAutoRetryTimer(sessionID)
+	m.clearPendingInputs(sessionID)
 	archived, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSummary{}, err
@@ -1015,6 +1023,7 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (Sessi
 func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	_ = m.AbortSession(sessionID)
 	m.cancelAutoRetryTimer(sessionID)
+	m.clearPendingInputs(sessionID)
 	db := model.GetDB()
 	if db == nil {
 		return model.ErrDBNotInitialized
@@ -1214,6 +1223,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleApprovalCommand(client, frame, "reject")
 	case "user_input":
 		return m.handleUserInputCommand(client, frame)
+	case "pending_del":
+		return m.handlePendingDeleteCommand(client, frame)
 	case "del":
 		return m.handleDeleteCommand(ctx, client, frame)
 	case "list":
@@ -1445,6 +1456,22 @@ func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame)
 	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
 }
 
+func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFrame) error {
+	var payload struct {
+		PendingID string `json:"id"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid pending delete payload", false))
+	}
+	if strings.TrimSpace(payload.PendingID) == "" {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "pending id is required", false))
+	}
+	if !m.removePendingInput(frame.SessionID, payload.PendingID) {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", "pending input not found", false))
+	}
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+}
+
 func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		Title string `json:"ttl"`
@@ -1648,17 +1675,23 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 	var payload struct {
 		Text        string   `json:"txt"`
 		Attachments []string `json:"atts"`
+		Mode        string   `json:"mode"`
+		PendingID   string   `json:"pid"`
 	}
 	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid send payload", false))
 	}
-	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
-		return err
-	}
-	if err := m.SendMessage(ctx, frame.SessionID, payload.Text, payload.Attachments); err != nil {
+	if err := m.sendMessageWithMode(
+		ctx,
+		frame.SessionID,
+		payload.Text,
+		payload.Attachments,
+		PendingInputMode(payload.Mode),
+		payload.PendingID,
+	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return nil
+	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {
@@ -1675,6 +1708,9 @@ func (m *Manager) sendMessageInternal(
 	record, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return err
+	}
+	if record.ArchivedAt != nil {
+		return fmt.Errorf("session is archived")
 	}
 	m.cancelAutoRetryTimer(sessionID)
 	if m.hasActiveRun(sessionID) {
@@ -1797,6 +1833,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		m.mu.Lock()
 		delete(m.runs, session.ID)
 		m.mu.Unlock()
+		m.triggerPendingProcessing(session.ID)
 	}()
 
 	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
@@ -2402,6 +2439,9 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 		}
 	} else if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
 		m.broadcast(newSessionFrame(sessionID, *summary))
+	}
+	if event.Type == "tool_end" {
+		m.maybeInterruptForRedirect(sessionID)
 	}
 	return event, nil
 }

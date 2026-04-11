@@ -83,6 +83,14 @@ type WireSession = {
   cws?: WebSessionContextWindowSource;
 };
 
+type WirePendingInput = {
+  id?: string;
+  m?: 'redirect' | 'queue' | string;
+  txt?: string;
+  atts?: string[];
+  ca?: number | null;
+};
+
 type WireHistoryItem = {
   id: string;
   stid?: string | null;
@@ -146,6 +154,7 @@ type WireFrame = {
     tot: number;
   };
   i?: WireHistoryItem;
+  pi?: WirePendingInput[];
   code?: string;
   msg?: string;
   retry?: boolean;
@@ -849,9 +858,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reject: (reason?: unknown) => void;
     }
   >();
-  const redirectAbortSessions = new Set<string>();
-  const pendingFlushTimers = new Map<string, number>();
-  const flushingSessions = new Set<string>();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
@@ -1016,6 +1022,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     summary: WebSessionSummary,
     items: WebSessionBlock[],
+    pendingInputs: WebSessionPendingInput[],
     history: {
       hasMore: boolean;
       beforeCursor?: string;
@@ -1024,6 +1031,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   ) {
     upsertSession(summary);
     resetSessionEvents(sessionId, items);
+    setPendingInputs(sessionId, pendingInputs);
     historyBySession.value = {
       ...historyBySession.value,
       [sessionId]: {
@@ -1409,6 +1417,50 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
+  function normalizePendingInput(item: {
+    id?: string;
+    mode?: 'redirect' | 'queue' | string;
+    text?: string;
+    attachmentIds?: string[];
+    createdAt?: string | number | null;
+  }): WebSessionPendingInput | null {
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    if (!id) {
+      return null;
+    }
+    const mode = item.mode === 'redirect' ? 'redirect' : item.mode === 'queue' ? 'queue' : '';
+    if (!mode) {
+      return null;
+    }
+    const createdAt =
+      typeof item.createdAt === 'number'
+        ? item.createdAt
+        : Date.parse(typeof item.createdAt === 'string' ? item.createdAt : '');
+    return {
+      id,
+      mode,
+      text: typeof item.text === 'string' ? item.text : '',
+      attachmentIds: Array.isArray(item.attachmentIds)
+        ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
+        : [],
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    };
+  }
+
+  function insertPendingInput(
+    items: WebSessionPendingInput[],
+    item: WebSessionPendingInput
+  ): WebSessionPendingInput[] {
+    if (item.mode !== 'redirect') {
+      return [...items, item];
+    }
+    const insertAt = items.findIndex(existing => existing.mode !== 'redirect');
+    if (insertAt < 0) {
+      return [...items, item];
+    }
+    return [...items.slice(0, insertAt), item, ...items.slice(insertAt)];
+  }
+
   function normalizeHistoryItem(item: WireHistoryItem | Record<string, unknown>): WebSessionBlock {
     const record = asRecord(item) ?? {};
     const rawTimestamp = parseHistoryTimeValue(record.ts2 ?? record.timestamp);
@@ -1630,13 +1682,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
     completedTransitionVersionBySession.delete(sessionId);
-    redirectAbortSessions.delete(sessionId);
-    flushingSessions.delete(sessionId);
-    const timer = pendingFlushTimers.get(sessionId);
-    if (timer != null) {
-      window.clearTimeout(timer);
-      pendingFlushTimers.delete(sessionId);
-    }
     if (projectId) {
       clearDraft(projectId, sessionId);
     }
@@ -1689,87 +1734,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
-    pendingInputsBySession.value = {
-      ...pendingInputsBySession.value,
-      [sessionId]: items,
-    };
-  }
-
-  function enqueuePendingInput(
-    sessionId: string,
-    text: string,
-    attachmentIds: string[],
-    mode: 'redirect' | 'queue'
-  ) {
-    const item: WebSessionPendingInput = {
-      id: `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      mode,
-      text,
-      attachmentIds: [...attachmentIds],
-      createdAt: Date.now(),
-    };
-    setPendingInputs(sessionId, [...getPendingInputs(sessionId), item]);
-    return item;
-  }
-
-  function removePendingInput(sessionId: string, pendingId: string) {
-    setPendingInputs(
-      sessionId,
-      getPendingInputs(sessionId).filter(item => item.id !== pendingId)
-    );
-  }
-
-  function schedulePendingFlush(sessionId: string, delay = 80) {
-    const previous = pendingFlushTimers.get(sessionId);
-    if (previous != null) {
-      window.clearTimeout(previous);
+    const nextPendingInputs = { ...pendingInputsBySession.value };
+    if (items.length === 0) {
+      delete nextPendingInputs[sessionId];
+    } else {
+      nextPendingInputs[sessionId] = items;
     }
-    const timer = window.setTimeout(() => {
-      pendingFlushTimers.delete(sessionId);
-      void flushPendingInput(sessionId);
-    }, delay);
-    pendingFlushTimers.set(sessionId, timer);
-  }
-
-  async function flushPendingInput(sessionId: string) {
-    if (flushingSessions.has(sessionId)) {
-      return;
-    }
-    const session = findSessionById(sessionId);
-    if (!session || session.status === 'running') {
-      return;
-    }
-    const items = getPendingInputs(sessionId);
-    const next = items[0];
-    if (!next) {
-      return;
-    }
-    flushingSessions.add(sessionId);
-    setPendingInputs(sessionId, items.slice(1));
-    try {
-      await sendCommand('send', sessionId, { txt: next.text, atts: next.attachmentIds });
-    } catch (error) {
-      setPendingInputs(sessionId, [next, ...getPendingInputs(sessionId)]);
-      schedulePendingFlush(sessionId, 240);
-      throw error;
-    } finally {
-      flushingSessions.delete(sessionId);
-    }
-  }
-
-  function maybeAbortForRedirect(sessionId: string) {
-    const session = findSessionById(sessionId);
-    if (!session || session.status !== 'running' || redirectAbortSessions.has(sessionId)) {
-      return;
-    }
-    const next = getPendingInputs(sessionId)[0];
-    if (!next || next.mode !== 'redirect') {
-      return;
-    }
-    redirectAbortSessions.add(sessionId);
-    void abortSession(sessionId).catch(() => {
-      redirectAbortSessions.delete(sessionId);
-    });
+    pendingInputsBySession.value = nextPendingInputs;
   }
 
   function mergeEvents(sessionId: string, incoming: WebSessionBlock[]) {
@@ -2131,6 +2102,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     const nextState = getLiveState(sessionId);
     const nextApproval = getPendingApproval(sessionId);
+    const hasPendingInputs = getPendingInputs(sessionId).length > 0;
     const approvalForNotification =
       nextApproval ??
       (nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval'
@@ -2166,7 +2138,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       } satisfies WebSessionApprovalEvent);
     }
 
-    if (nextState.phase === 'done' && previousState.phase !== 'done') {
+    if (nextState.phase === 'done' && previousState.phase !== 'done' && !hasPendingInputs) {
       const completionVersion = Math.max(
         nextState.updatedAt,
         Date.parse(session.updatedAt || '') || 0,
@@ -2243,6 +2215,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
         frame.sid,
         summary,
         Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : [],
+        Array.isArray(frame.pi)
+          ? frame.pi
+              .map(item =>
+                normalizePendingInput({
+                  id: item.id,
+                  mode: item.m,
+                  text: item.txt,
+                  attachmentIds: item.atts,
+                  createdAt: item.ca,
+                })
+              )
+              .filter((item): item is WebSessionPendingInput => item != null)
+          : [],
         {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
@@ -2257,6 +2242,26 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const previousApproval = getPendingApproval(frame.sid);
       if (frame.s) {
         upsertSession(normalizeSession(frame.s));
+      }
+      if (frame.op === 'pending') {
+        setPendingInputs(
+          frame.sid,
+          Array.isArray(frame.pi)
+            ? frame.pi
+                .map(item =>
+                  normalizePendingInput({
+                    id: item.id,
+                    mode: item.m,
+                    text: item.txt,
+                    attachmentIds: item.atts,
+                    createdAt: item.ca,
+                  })
+                )
+                .filter((item): item is WebSessionPendingInput => item != null)
+            : []
+        );
+        emitStateTransition(frame.sid, previousState, previousApproval);
+        return;
       }
 
       if (frame.op === 'hist_page' && frame.h) {
@@ -2279,23 +2284,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (frame.op === 'hist_item' && frame.i) {
         const item = normalizeHistoryItem(frame.i);
         mergeEvents(frame.sid, [item]);
-        if (item.kind === 'tool' && item.tool?.status !== 'running') {
-          maybeAbortForRedirect(frame.sid);
-        }
-      }
-
-      const session = findSessionById(frame.sid);
-      if (session?.status === 'done' || session?.status === 'err' || session?.status === 'idle') {
-        redirectAbortSessions.delete(frame.sid);
-        schedulePendingFlush(frame.sid);
-      }
-
-      if (
-        frame.op === 'hist_item' &&
-        frame.i &&
-        normalizeHistoryItem(frame.i).tool?.status !== 'running'
-      ) {
-        maybeAbortForRedirect(frame.sid);
       }
 
       emitStateTransition(frame.sid, previousState, previousApproval);
@@ -2389,11 +2377,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     socket.send(buildHeartbeatPayload(op));
   }
 
-  function handleSocketHeartbeat(
-    kind: WebSessionSocketKind,
-    socket: WebSocket,
-    frame: WireFrame
-  ) {
+  function handleSocketHeartbeat(kind: WebSessionSocketKind, socket: WebSocket, frame: WireFrame) {
     if (frame.k !== 'hb') {
       return false;
     }
@@ -2675,6 +2659,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           Array.isArray(snapshot.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
             : [],
+          Array.isArray(snapshot.pendingInputs)
+            ? snapshot.pendingInputs
+                .map(item => normalizePendingInput(item))
+                .filter((item): item is WebSessionPendingInput => item != null)
+            : [],
           {
             hasMore: Boolean(snapshot.history?.hasMore),
             beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
@@ -2702,6 +2691,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   async function archiveSession(projectId: string, sessionId: string) {
     const summary = await webSessionApi.archive(projectId, sessionId);
     removeCurrentSessionRecord(projectId, sessionId);
+    setPendingInputs(sessionId, []);
     upsertArchivedSession(summary, { includeInList: false });
     return summary;
   }
@@ -2737,6 +2727,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           snapshot.session,
           Array.isArray(snapshot?.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+            : [],
+          Array.isArray(snapshot.pendingInputs)
+            ? snapshot.pendingInputs
+                .map(item => normalizePendingInput(item))
+                .filter((item): item is WebSessionPendingInput => item != null)
             : [],
           {
             hasMore: Boolean(snapshot?.history?.hasMore),
@@ -2776,11 +2771,40 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    let optimisticPendingId = '';
     if (session?.status === 'running' && mode) {
-      enqueuePendingInput(sessionId, text, attachmentIds, mode);
-      return;
+      optimisticPendingId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      setPendingInputs(
+        sessionId,
+        insertPendingInput(getPendingInputs(sessionId), {
+          id: optimisticPendingId,
+          mode,
+          text,
+          attachmentIds: [...attachmentIds],
+          createdAt: Date.now(),
+        })
+      );
     }
-    await sendCommand('send', sessionId, { txt: text, atts: attachmentIds });
+
+    try {
+      await sendCommand('send', sessionId, {
+        txt: text,
+        atts: attachmentIds,
+        ...(mode ? { mode, pid: optimisticPendingId } : {}),
+      });
+    } catch (error) {
+      if (optimisticPendingId) {
+        setPendingInputs(
+          sessionId,
+          getPendingInputs(sessionId).filter(item => item.id !== optimisticPendingId)
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function removePendingInput(sessionId: string, pendingId: string) {
+    await sendCommand('pending_del', sessionId, { id: pendingId });
   }
 
   async function abortSession(sessionId: string) {

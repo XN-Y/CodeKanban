@@ -6462,11 +6462,15 @@ function pendingInputPreview(item: WebSessionPendingInput) {
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
 }
 
-function handleRemovePendingInput(pendingId: string) {
+async function handleRemovePendingInput(pendingId: string) {
   if (!currentRealSession.value) {
     return;
   }
-  webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  try {
+    await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
 }
 
 function userInputPlaceholder(question: WebSessionUserInputQuestion) {
