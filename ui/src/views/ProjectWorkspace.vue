@@ -657,6 +657,18 @@ function setMobileView(view: MobileView) {
   min-height: 0;
 }
 
+.mobile-files-view {
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: var(--workspace-mobile-bottom-nav-space);
+}
+
+.mobile-files-view > * {
+  flex: 1;
+  min-height: 0;
+}
+
 /* 移动端底部导航 */
 .mobile-bottom-nav {
   position: fixed;

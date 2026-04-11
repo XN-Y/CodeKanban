@@ -50,9 +50,6 @@
             </button>
           </div>
         </n-popover>
-        <n-button tertiary @click="handleSelectVisible" :disabled="visibleTreeNodes.length === 0">
-          {{ t('fileManager.selectVisible') }}
-        </n-button>
         <n-button tertiary @click="handleRefresh" :loading="loading">
           {{ t('fileManager.refresh') }}
         </n-button>
@@ -173,77 +170,53 @@
         </n-spin>
       </div>
 
-      <aside class="file-preview-pane">
-        <div v-if="previewLoading" class="file-preview-empty">
-          <n-spin size="small" />
-        </div>
-        <div v-else-if="previewError" class="file-preview-empty">
-          <n-alert type="error" :show-icon="false">{{ previewError }}</n-alert>
-        </div>
-        <template v-else-if="previewResult">
-          <div class="file-preview-header">
-            <div>
-              <div class="file-preview-title">{{ previewResult.entry.name }}</div>
-              <div class="file-preview-meta">{{ buildPreviewMeta(previewResult.entry) }}</div>
-            </div>
-            <n-button tertiary size="small" @click="downloadPreviewItem">
-              {{ t('fileManager.download') }}
-            </n-button>
-          </div>
-
-          <div class="file-preview-content">
-            <img
-              v-if="previewResult.previewKind === 'image'"
-              :src="previewResult.inlineUrl"
-              :alt="previewResult.entry.name"
-              class="file-preview-image"
-              @click="openImagePreviewModal"
-            />
-            <div
-              v-else-if="previewResult.previewKind === 'markdown'"
-              class="file-preview-markdown chat-markdown"
-              v-html="renderedMarkdown"
-            ></div>
-            <pre v-else-if="previewResult.previewKind === 'text'" class="file-preview-text">{{
-              previewResult.textContent
-            }}</pre>
-            <iframe
-              v-else-if="previewResult.previewKind === 'pdf'"
-              :src="previewResult.inlineUrl"
-              class="file-preview-frame"
-              :title="previewResult.entry.name"
-            ></iframe>
-            <audio
-              v-else-if="previewResult.previewKind === 'audio'"
-              :src="previewResult.inlineUrl"
-              controls
-              class="file-preview-media"
-            ></audio>
-            <video
-              v-else-if="previewResult.previewKind === 'video'"
-              :src="previewResult.inlineUrl"
-              controls
-              class="file-preview-media"
-            ></video>
-            <pre
-              v-else-if="previewResult.previewKind === 'binary' && previewFallbackText"
-              class="file-preview-text"
-              >{{ previewFallbackText }}</pre
-            >
-            <div v-else class="file-preview-binary">
-              {{ t('fileManager.binaryPreviewHint') }}
-            </div>
-          </div>
-
-          <div v-if="previewResult.truncated" class="file-preview-truncated">
-            {{ t('fileManager.previewTruncated') }}
-          </div>
-        </template>
-        <div v-else class="file-preview-empty">
-          {{ t('fileManager.previewEmpty') }}
-        </div>
+      <aside v-if="!useMobilePreview" class="file-preview-pane">
+        <FilePreviewSurface
+          :preview-result="previewResult"
+          :preview-loading="previewLoading"
+          :preview-error="previewError"
+          :preview-fallback-text="previewFallbackText"
+          :rendered-markdown="renderedMarkdown"
+          :preview-meta="previewMetaText"
+          :empty-label="t('fileManager.previewEmpty')"
+          :binary-preview-hint="t('fileManager.binaryPreviewHint')"
+          :preview-truncated-label="t('fileManager.previewTruncated')"
+          :download-label="t('fileManager.download')"
+          @download="downloadPreviewItem"
+          @image-preview="openImagePreviewModal"
+        />
       </aside>
     </div>
+
+    <n-modal
+      :show="mobilePreviewVisible"
+      preset="card"
+      class="file-mobile-preview-modal"
+      :bordered="false"
+      :closable="false"
+      @update:show="handleMobilePreviewVisibilityChange"
+    >
+      <FilePreviewSurface
+        class="file-mobile-preview-surface"
+        :preview-result="previewResult"
+        :preview-loading="previewLoading"
+        :preview-error="previewError"
+        :preview-fallback-text="previewFallbackText"
+        :rendered-markdown="renderedMarkdown"
+        :preview-meta="previewMetaText"
+        :empty-label="t('fileManager.previewEmpty')"
+        :binary-preview-hint="t('fileManager.binaryPreviewHint')"
+        :preview-truncated-label="t('fileManager.previewTruncated')"
+        :download-label="t('fileManager.download')"
+        :back-label="t('common.back')"
+        :fallback-title="t('fileManager.previewTitle')"
+        :mobile="true"
+        :show-back-button="true"
+        @close="closeMobilePreview"
+        @download="downloadPreviewItem"
+        @image-preview="openImagePreviewModal"
+      />
+    </n-modal>
 
     <n-modal
       v-model:show="imagePreviewVisible"
@@ -348,7 +321,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, h, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useDialog, useMessage, NInput } from 'naive-ui';
 import {
   DocumentOutline,
@@ -360,15 +333,20 @@ import {
 } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
 import { useLocale } from '@/composables/useLocale';
+import { useResponsive } from '@/composables/useResponsive';
 import { useProjectStore } from '@/stores/project';
 import { useFileManagerStore } from '@/stores/fileManager';
 import { fileManagerApi } from '@/api/fileManager';
 import { renderMarkdown } from '@/utils/markdown';
+import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
 import type {
   FileManagerEntry,
   FileManagerListResult,
   FileManagerPreviewResult,
 } from '@/types/fileManager';
+
+const MOBILE_PREVIEW_MAX_WIDTH = 900;
+const MOBILE_PREVIEW_HISTORY_STATE_KEY = '__codekanbanFilePreview';
 
 const props = withDefaults(
   defineProps<{
@@ -386,6 +364,7 @@ const projectStore = useProjectStore();
 const fileManagerStore = useFileManagerStore();
 const { selectedWorktreeId } = storeToRefs(projectStore);
 const { t } = useLocale();
+const { windowWidth } = useResponsive();
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const selectedPaths = ref<string[]>([]);
@@ -393,6 +372,9 @@ const previewResult = ref<FileManagerPreviewResult | null>(null);
 const previewLoading = ref(false);
 const previewError = ref('');
 const previewFallbackText = ref('');
+const mobilePreviewVisible = ref(false);
+const mobilePreviewHistoryActive = ref(false);
+const mobilePreviewClosingFromHistory = ref(false);
 const imagePreviewVisible = ref(false);
 const searchKeyword = ref('');
 const isDragOver = ref(false);
@@ -488,7 +470,11 @@ const renderedMarkdown = computed(() =>
     ? renderMarkdown(previewResult.value.textContent ?? '')
     : ''
 );
+const previewMetaText = computed(() =>
+  previewResult.value ? buildPreviewMeta(previewResult.value.entry) : ''
+);
 const normalizedSearch = computed(() => searchKeyword.value.trim().toLowerCase());
+const useMobilePreview = computed(() => windowWidth.value <= MOBILE_PREVIEW_MAX_WIDTH);
 
 const visibleTreeNodes = computed<VisibleTreeNode[]>(() => {
   const output: VisibleTreeNode[] = [];
@@ -625,6 +611,7 @@ async function handleNavigate(path: string) {
     previewResult.value = null;
     previewError.value = '';
     previewFallbackText.value = '';
+    mobilePreviewVisible.value = false;
     imagePreviewVisible.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -646,6 +633,9 @@ async function handleScopeChange(scopeId: string | null) {
     selectedPaths.value = [];
     previewResult.value = null;
     previewError.value = '';
+    previewFallbackText.value = '';
+    mobilePreviewVisible.value = false;
+    imagePreviewVisible.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -661,12 +651,6 @@ function toggleSelection(path: string, checked: boolean) {
 
 function handleEntryCheckboxChange(path: string, event: Event) {
   toggleSelection(path, (event.target as HTMLInputElement | null)?.checked === true);
-}
-
-function handleSelectVisible() {
-  selectedPaths.value = Array.from(
-    new Set([...selectedPaths.value, ...visibleTreeNodes.value.map(node => node.path)])
-  );
 }
 
 function clearSelection() {
@@ -705,6 +689,9 @@ function toggleTreeMetaField(field: TreeMetaField) {
 async function handleRowClick(entry: FileManagerEntry) {
   if (entry.kind === 'directory') {
     return;
+  }
+  if (useMobilePreview.value) {
+    mobilePreviewVisible.value = true;
   }
   previewLoading.value = true;
   previewError.value = '';
@@ -920,6 +907,46 @@ function openImagePreviewModal() {
     return;
   }
   imagePreviewVisible.value = true;
+}
+
+function pushMobilePreviewHistoryEntry() {
+  if (typeof window === 'undefined' || mobilePreviewHistoryActive.value || !useMobilePreview.value) {
+    return;
+  }
+  const nextState =
+    window.history.state && typeof window.history.state === 'object'
+      ? { ...window.history.state, [MOBILE_PREVIEW_HISTORY_STATE_KEY]: true }
+      : { [MOBILE_PREVIEW_HISTORY_STATE_KEY]: true };
+  window.history.pushState(nextState, '', window.location.href);
+  mobilePreviewHistoryActive.value = true;
+}
+
+function handleMobilePreviewPopState() {
+  if (!mobilePreviewHistoryActive.value) {
+    return;
+  }
+  mobilePreviewClosingFromHistory.value = true;
+  mobilePreviewHistoryActive.value = false;
+  mobilePreviewVisible.value = false;
+  imagePreviewVisible.value = false;
+}
+
+function handleMobilePreviewVisibilityChange(show: boolean) {
+  if (show) {
+    mobilePreviewVisible.value = true;
+    return;
+  }
+  closeMobilePreview();
+}
+
+function closeMobilePreview() {
+  if (!mobilePreviewVisible.value && !mobilePreviewHistoryActive.value) {
+    return;
+  }
+  mobilePreviewVisible.value = false;
+  if (useMobilePreview.value) {
+    imagePreviewVisible.value = false;
+  }
 }
 
 function openFilePicker() {
@@ -1214,6 +1241,7 @@ watch(
       previewResult.value = null;
       previewError.value = '';
       previewFallbackText.value = '';
+      mobilePreviewVisible.value = false;
       imagePreviewVisible.value = false;
     }
   }
@@ -1228,10 +1256,50 @@ watch(
   }
 );
 
+watch(
+  () => useMobilePreview.value,
+  useMobile => {
+    if (!useMobile) {
+      mobilePreviewVisible.value = false;
+    }
+  }
+);
+
+watch(
+  () => mobilePreviewVisible.value,
+  (visible, wasVisible) => {
+    if (visible) {
+      pushMobilePreviewHistoryEntry();
+      return;
+    }
+    if (!wasVisible) {
+      return;
+    }
+    if (mobilePreviewClosingFromHistory.value) {
+      mobilePreviewClosingFromHistory.value = false;
+      return;
+    }
+    if (mobilePreviewHistoryActive.value && typeof window !== 'undefined') {
+      window.history.back();
+      return;
+    }
+    mobilePreviewHistoryActive.value = false;
+  }
+);
+
 onMounted(() => {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('popstate', handleMobilePreviewPopState);
+  }
   void nextTick(async () => {
     await ensureLoaded();
   });
+});
+
+onBeforeUnmount(() => {
+  if (typeof window !== 'undefined') {
+    window.removeEventListener('popstate', handleMobilePreviewPopState);
+  }
 });
 </script>
 
@@ -1451,6 +1519,7 @@ onMounted(() => {
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 8px;
 }
 
@@ -1584,8 +1653,7 @@ onMounted(() => {
 }
 
 .file-manager-empty,
-.file-manager-error,
-.file-preview-empty {
+.file-manager-error {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1603,78 +1671,25 @@ onMounted(() => {
   min-height: 0;
 }
 
-.file-preview-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  padding: 16px;
-  border-bottom: 1px solid rgba(24, 35, 51, 0.08);
-}
-
-.file-preview-title {
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.file-preview-meta {
-  margin-top: 4px;
-  color: rgba(34, 46, 67, 0.62);
-  font-size: 12px;
-}
-
-.file-preview-content {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 16px;
-}
-
-.file-preview-image,
-.file-preview-frame,
-.file-preview-media {
-  width: 100%;
-  border-radius: 14px;
-  background: #f4f7fb;
-}
-
-.file-preview-image {
-  display: block;
-  object-fit: contain;
-  cursor: zoom-in;
-}
-
-.file-preview-frame {
-  min-height: 420px;
-  border: none;
-}
-
-.file-preview-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.55;
-}
-
-.file-preview-markdown {
-  font-size: 14px;
-}
-
-.file-preview-binary,
-.file-preview-truncated {
-  color: rgba(34, 46, 67, 0.7);
-  font-size: 13px;
-}
-
-.file-preview-truncated {
-  padding: 0 16px 16px;
-}
-
 .file-image-modal {
   width: min(92vw, 1100px);
+}
+
+.file-mobile-preview-modal {
+  width: min(100vw, 720px);
+}
+
+.file-mobile-preview-modal :deep(.n-card) {
+  width: 100%;
+}
+
+.file-mobile-preview-modal :deep(.n-card__content) {
+  padding: 0;
+}
+
+.file-mobile-preview-surface {
+  min-height: min(100vh, 100dvh);
+  background: rgba(255, 255, 255, 0.98);
 }
 
 .file-image-modal-title {
@@ -1716,6 +1731,7 @@ onMounted(() => {
   gap: 10px;
   max-height: 220px;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .file-transfer-item {
@@ -1769,7 +1785,8 @@ onMounted(() => {
   .file-browser.file-browser--meta-1,
   .file-browser.file-browser--meta-2,
   .file-browser.file-browser--meta-3 {
-    flex-basis: auto;
+    flex: 1 1 auto;
+    width: 100%;
     max-width: none;
   }
 
@@ -1796,6 +1813,16 @@ onMounted(() => {
 }
 
 @media (max-width: 820px) {
+  .file-mobile-preview-modal {
+    width: 100vw;
+    margin: 0;
+  }
+
+  .file-mobile-preview-modal :deep(.n-card) {
+    min-height: 100dvh;
+    border-radius: 0;
+  }
+
   .file-manager-toolbar {
     flex-wrap: wrap;
   }
@@ -1833,7 +1860,7 @@ onMounted(() => {
   }
 
   .file-manager-body {
-    overflow-y: auto;
+    overflow: hidden;
   }
 }
 </style>
