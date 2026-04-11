@@ -30,6 +30,17 @@
         <button
           type="button"
           class="tab-item"
+          :class="{ active: activeTab === 'files' }"
+          @click="activeTab = 'files'"
+        >
+          <n-icon size="16">
+            <FolderOpenOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.files') }}</span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
           :class="{ active: activeTab === 'kanban' }"
           @click="activeTab = 'kanban'"
         >
@@ -142,6 +153,9 @@
           </div>
         </div>
       </div>
+      <div v-show="activeTab === 'files'" class="tab-pane files-pane">
+        <FileManagerPanel :project-id="projectId" :is-active="activeTab === 'files'" />
+      </div>
     </div>
   </div>
 </template>
@@ -150,12 +164,18 @@
 import { computed, onBeforeUnmount } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
-import { ChatbubblesOutline, GridOutline, TerminalOutline } from '@vicons/ionicons5';
+import {
+  ChatbubblesOutline,
+  FolderOpenOutline,
+  GridOutline,
+  TerminalOutline,
+} from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
 import { useLocale } from '@/composables/useLocale';
 import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
+import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
@@ -165,7 +185,7 @@ const props = defineProps<{
   projectId: string;
 }>();
 
-type WorkspaceTab = 'kanban' | 'terminal' | 'web';
+type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'files';
 
 const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 
@@ -176,7 +196,7 @@ const webSessionStore = useWebSessionStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
 
 function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
-  if (value === 'kanban' || value === 'terminal' || value === 'web') {
+  if (value === 'kanban' || value === 'terminal' || value === 'web' || value === 'files') {
     return value;
   }
   return 'terminal';
@@ -410,6 +430,7 @@ if (typeof window !== 'undefined') {
 
 .tab-content {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   position: relative;
 }
@@ -417,6 +438,9 @@ if (typeof window !== 'undefined') {
 .tab-pane {
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -434,6 +458,10 @@ if (typeof window !== 'undefined') {
 .web-pane {
   display: flex;
   flex-direction: column;
+}
+
+.files-pane {
+  background-color: var(--app-surface-color, #ffffff);
 }
 
 .web-main {

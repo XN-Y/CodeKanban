@@ -52,7 +52,7 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CorsAllowOrigins,
-		AllowMethods:     "GET,POST",
+		AllowMethods:     "GET,POST,PATCH,DELETE,OPTIONS",
 		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
 		AllowCredentials: cfg.CorsAllowOrigins != "*",
 	}))
@@ -92,6 +92,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerFSRoutes(v1)
 	registerSystemRoutes(v1, cfg, terminalManager)
 	registerUploadRoutes(app, v1, cfg, theLogger)
+	if err := registerFileManagerRoutes(app, cfg, theLogger, ctx); err != nil {
+		return err
+	}
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
 	registerCaptureDebugRoute(app, terminalManager, theLogger)
 	mountStatic(app, cfg, assets, theLogger)
