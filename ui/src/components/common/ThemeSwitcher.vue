@@ -13,17 +13,34 @@
 <script setup lang="ts">
 import { computed, h } from 'vue';
 import { storeToRefs } from 'pinia';
-import { NIcon } from 'naive-ui';
+import { NIcon, useDialog } from 'naive-ui';
 import { MoonOutline, SunnyOutline, CheckmarkOutline } from '@vicons/ionicons5';
 import { useSettingsStore } from '@/stores/settings';
 import { THEME_PRESETS, getPresetById } from '@/constants/themes';
 import { useLocale } from '@/composables/useLocale';
 import { useThemeOptions } from '@/composables/useThemeOptions';
+import {
+  createThemeMaintenanceWarningController,
+  createThemeSelectionController,
+} from '@/utils/themeMaintenanceWarning';
 import type { DropdownOption } from 'naive-ui';
 
 const { t } = useLocale();
+const dialog = useDialog();
 const settingsStore = useSettingsStore();
 const { currentPresetId, followSystemTheme } = storeToRefs(settingsStore);
+const themeWarningController = createThemeMaintenanceWarningController({
+  t,
+  warning: options => dialog.warning(options),
+});
+const themeSelectionController = createThemeSelectionController({
+  getCurrentPresetId: () => currentPresetId.value,
+  isFollowSystemTheme: () => followSystemTheme.value,
+  selectPreset: presetId => settingsStore.selectPreset(presetId),
+  toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
+  confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
+  confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
+});
 
 // 判断当前是否为暗色主题
 const isDarkTheme = computed(() => {
@@ -79,24 +96,18 @@ const themeOptions = computed<DropdownOption[]>(() => {
   ];
 });
 
-const handleSelect = (key: string) => {
+const handleSelect = async (key: string) => {
   if (key === 'follow-system') {
-    settingsStore.toggleFollowSystemTheme(!followSystemTheme.value);
+    await themeSelectionController.toggleFollowSystemThemeWithConfirmation(
+      !followSystemTheme.value
+    );
   } else {
-    settingsStore.selectPreset(key);
+    await themeSelectionController.selectPresetWithConfirmation(key);
   }
 };
 
 // 快速切换 dark/light 主题
-const handleQuickToggle = () => {
-  const currentId = currentPresetId.value;
-
-  // 只在 dark 和 light 之间切换
-  if (currentId === 'dark') {
-    settingsStore.selectPreset('light');
-  } else if (currentId === 'light') {
-    settingsStore.selectPreset('dark');
-  }
-  // 其他主题不做任何操作
+const handleQuickToggle = async () => {
+  await themeSelectionController.quickToggleLightDark();
 };
 </script>

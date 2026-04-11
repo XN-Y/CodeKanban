@@ -1,0 +1,155 @@
+import { storeToRefs } from 'pinia';
+import { createPinia, setActivePinia } from 'pinia';
+import { nextTick } from 'vue';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { getPresetById } from '@/constants/themes';
+import { useSettingsStore } from '@/stores/settings';
+
+const SETTINGS_STORAGE_KEY = 'general_settings';
+
+function createStorageMock(initial: Record<string, string> = {}) {
+  const store = new Map<string, string>(Object.entries(initial));
+  return {
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value));
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+    clear() {
+      store.clear();
+    },
+  };
+}
+
+describe('settings theme storage', () => {
+  let localStorageMock: ReturnType<typeof createStorageMock>;
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    localStorageMock = createStorageMock();
+    vi.stubGlobal('localStorage', localStorageMock);
+    vi.stubGlobal('window', {
+      localStorage: localStorageMock,
+      matchMedia: vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('defaults follow-system theme to disabled when no settings exist', () => {
+    const store = useSettingsStore();
+    const { followSystemTheme } = storeToRefs(store);
+
+    expect(followSystemTheme.value).toBe(false);
+  });
+
+  it('migrates legacy settings to the default follow-system tier without resetting the active preset', () => {
+    const darkPreset = getPresetById('dark');
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        currentPresetId: 'dark',
+        followSystemTheme: true,
+        theme: darkPreset?.colors,
+      })
+    );
+
+    const store = useSettingsStore();
+    const { activeTheme, currentPresetId, followSystemTheme } = storeToRefs(store);
+
+    expect(followSystemTheme.value).toBe(false);
+    expect(currentPresetId.value).toBe('dark');
+    expect(activeTheme.value.bodyColor).toBe(darkPreset?.colors.bodyColor);
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      followSystemTheme?: number;
+    };
+
+    expect(persisted.version).toBe(2);
+    expect(persisted.followSystemTheme).toBe(-1);
+  });
+
+  it('persists the explicit enabled tier after a migrated user re-enables follow-system mode', async () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        currentPresetId: 'dark',
+        followSystemTheme: true,
+      })
+    );
+
+    let store = useSettingsStore();
+    let refs = storeToRefs(store);
+
+    expect(refs.followSystemTheme.value).toBe(false);
+
+    store.toggleFollowSystemTheme(true);
+    await nextTick();
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      followSystemTheme?: number;
+    };
+
+    expect(persisted.version).toBe(2);
+    expect(persisted.followSystemTheme).toBe(1);
+
+    setActivePinia(createPinia());
+    store = useSettingsStore();
+    refs = storeToRefs(store);
+
+    expect(refs.followSystemTheme.value).toBe(true);
+  });
+
+  it('migrates version-1 boolean settings to the default tier', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        currentPresetId: 'light',
+        followSystemTheme: true,
+      })
+    );
+
+    const store = useSettingsStore();
+    const { followSystemTheme } = storeToRefs(store);
+
+    expect(followSystemTheme.value).toBe(false);
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      followSystemTheme?: number;
+    };
+
+    expect(persisted.version).toBe(2);
+    expect(persisted.followSystemTheme).toBe(-1);
+  });
+
+  it('keeps follow-system mode enabled for version-2 settings', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        currentPresetId: 'light',
+        followSystemTheme: 1,
+      })
+    );
+
+    const store = useSettingsStore();
+    const { followSystemTheme } = storeToRefs(store);
+
+    expect(followSystemTheme.value).toBe(true);
+  });
+});

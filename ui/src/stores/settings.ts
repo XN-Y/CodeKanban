@@ -206,11 +206,12 @@ export type WebSessionAutoContinueScope =
   | 'all_failures';
 
 export type WebSessionAutoContinuePreset = 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+export type FollowSystemThemeSetting = -1 | 0 | 1;
 
 interface GeneralSettings {
   theme: ThemeSettings;
   currentPresetId: string;
-  followSystemTheme: boolean;
+  followSystemThemeSetting: FollowSystemThemeSetting;
   customTheme: ThemeSettings | null;
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
@@ -233,13 +234,27 @@ interface GeneralSettings {
   inactiveTerminalSnapshotIntervalMs: number;
 }
 
+type PersistedGeneralSettings = Omit<GeneralSettings, 'followSystemThemeSetting'> & {
+  version: number;
+  followSystemTheme: FollowSystemThemeSetting;
+};
+
+type LoadSettingsResult = {
+  settings: GeneralSettings;
+  shouldPersist: boolean;
+};
+
 const STORAGE_KEY = 'general_settings';
+const STORAGE_VERSION = 2;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
 export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 6;
+const FOLLOW_SYSTEM_THEME_DEFAULT: FollowSystemThemeSetting = -1;
+const FOLLOW_SYSTEM_THEME_DISABLED: FollowSystemThemeSetting = 0;
+const FOLLOW_SYSTEM_THEME_ENABLED: FollowSystemThemeSetting = 1;
 
 const defaultTheme: ThemeSettings = getDefaultPreset().colors;
 
@@ -292,7 +307,7 @@ export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
 const defaultSettings: GeneralSettings = {
   theme: { ...defaultTheme },
   currentPresetId: DEFAULT_PRESET_ID,
-  followSystemTheme: true,
+  followSystemThemeSetting: FOLLOW_SYSTEM_THEME_DEFAULT,
   customTheme: null,
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
@@ -319,14 +334,22 @@ const defaultSettings: GeneralSettings = {
 };
 
 export const useSettingsStore = defineStore('settings', () => {
-  const settings = ref<GeneralSettings>(loadSettings());
+  const loadedSettings = loadSettings();
+  const settings = ref<GeneralSettings>(loadedSettings.settings);
   const webSessionQuickInputLoaded = ref(false);
   let webSessionQuickInputLoadTask: Promise<void> | null = null;
   let webSessionQuickInputSyncTask: Promise<void> = Promise.resolve();
 
+  if (loadedSettings.shouldPersist) {
+    saveSettings(loadedSettings.settings);
+  }
+
   const theme = computed(() => settings.value.theme);
   const currentPresetId = computed(() => settings.value.currentPresetId);
-  const followSystemTheme = computed(() => settings.value.followSystemTheme);
+  const followSystemThemeSetting = computed(() => settings.value.followSystemThemeSetting);
+  const followSystemTheme = computed(() =>
+    isFollowSystemThemeEnabled(settings.value.followSystemThemeSetting)
+  );
   const customTheme = computed(() => settings.value.customTheme);
   const recentProjectsLimit = computed(() => settings.value.recentProjectsLimit);
   const maxTerminalsPerProject = computed(() => settings.value.maxTerminalsPerProject);
@@ -378,7 +401,7 @@ export const useSettingsStore = defineStore('settings', () => {
    */
   const activeTheme = computed<ThemeSettings>(() => {
     // 优先级 1: 跟随系统主题
-    if (settings.value.followSystemTheme) {
+    if (isFollowSystemThemeEnabled(settings.value.followSystemThemeSetting)) {
       // SSR 安全检查
       if (typeof window === 'undefined') {
         return defaultTheme;
@@ -418,7 +441,7 @@ export const useSettingsStore = defineStore('settings', () => {
     // 重置为默认预设主题，并清理自定义/系统跟随状态，保持与 activeTheme 计算逻辑一致
     const preset = getPresetById(DEFAULT_PRESET_ID) ?? getDefaultPreset();
     settings.value.currentPresetId = preset.id;
-    settings.value.followSystemTheme = false;
+    settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
     settings.value.customTheme = null;
     settings.value.theme = { ...preset.colors };
     // 重置终端主题为"跟随主题"
@@ -608,13 +631,33 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.terminalFont = { ...DEFAULT_TERMINAL_FONT };
   }
 
+  function setFollowSystemThemeSetting(value: FollowSystemThemeSetting) {
+    const next = sanitizeFollowSystemThemeSetting(value);
+    settings.value.followSystemThemeSetting = next;
+    if (next === FOLLOW_SYSTEM_THEME_ENABLED) {
+      // 切换到跟随系统模式时，清除自定义主题
+      settings.value.customTheme = null;
+      // 根据当前系统主题更新预设ID
+      const prefersDark =
+        typeof window !== 'undefined'
+          ? window.matchMedia('(prefers-color-scheme: dark)').matches
+          : false;
+      const autoPresetId = prefersDark ? 'dark' : 'light';
+      const preset = getPresetById(autoPresetId);
+      if (preset) {
+        settings.value.currentPresetId = autoPresetId;
+        settings.value.theme = { ...preset.colors };
+      }
+    }
+  }
+
   function selectPreset(presetId: string) {
     const preset = getPresetById(presetId);
     if (preset) {
       settings.value.currentPresetId = presetId;
       settings.value.theme = { ...preset.colors };
       settings.value.customTheme = null;
-      settings.value.followSystemTheme = false;
+      settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
       // 终端主题保持用户选择不变
       // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
     }
@@ -633,24 +676,9 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function toggleFollowSystemTheme(enabled: boolean) {
-    settings.value.followSystemTheme = enabled;
-    if (enabled) {
-      // 切换到跟随系统模式时，清除自定义主题
-      settings.value.customTheme = null;
-      // 根据当前系统主题更新预设ID
-      const prefersDark =
-        typeof window !== 'undefined'
-          ? window.matchMedia('(prefers-color-scheme: dark)').matches
-          : false;
-      const autoPresetId = prefersDark ? 'dark' : 'light';
-      const preset = getPresetById(autoPresetId);
-      if (preset) {
-        settings.value.currentPresetId = autoPresetId;
-        settings.value.theme = { ...preset.colors };
-        // 终端主题保持用户选择不变
-        // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
-      }
-    }
+    setFollowSystemThemeSetting(
+      enabled ? FOLLOW_SYSTEM_THEME_ENABLED : FOLLOW_SYSTEM_THEME_DISABLED
+    );
   }
 
   function applyCustomTheme(themeColors: Partial<ThemeSettings>) {
@@ -659,12 +687,13 @@ export const useSettingsStore = defineStore('settings', () => {
       ...themeColors,
     };
     settings.value.theme = settings.value.customTheme;
-    settings.value.followSystemTheme = false;
+    settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
   }
 
   return {
     theme,
     currentPresetId,
+    followSystemThemeSetting,
     followSystemTheme,
     customTheme,
     activeTheme,
@@ -720,6 +749,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTerminalConnectionPolicy,
     updateInactiveTerminalSnapshotIntervalMs,
     resetTerminalFont,
+    setFollowSystemThemeSetting,
     selectPreset,
     applySystemThemePreset,
     toggleFollowSystemTheme,
@@ -727,17 +757,43 @@ export const useSettingsStore = defineStore('settings', () => {
   };
 });
 
-function loadSettings(): GeneralSettings {
+function loadSettings(): LoadSettingsResult {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      const parsed = JSON.parse(stored) as Partial<GeneralSettings> & {
+      const parsed = JSON.parse(stored) as
+        | (Partial<PersistedGeneralSettings> & {
+            panelShortcut?: PanelShortcutSetting;
+            followSystemTheme?: unknown;
+          })
+        | null;
+
+      if (!parsed || typeof parsed !== 'object') {
+        return {
+          settings: cloneDefaultSettings(),
+          shouldPersist: false,
+        };
+      }
+
+      const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
+
+      if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
+        console.warn(
+          `Unsupported settings version "${parsedVersion}", falling back to defaults.`
+        );
+        return {
+          settings: cloneDefaultSettings(),
+          shouldPersist: false,
+        };
+      }
+
+      const legacyParsed = parsed as Partial<GeneralSettings> & {
         panelShortcut?: PanelShortcutSetting;
       };
 
       // 兼容旧版本：如果没有 currentPresetId，根据主题判断
-      let currentPresetId = parsed.currentPresetId ?? DEFAULT_PRESET_ID;
-      if (!parsed.currentPresetId && parsed.theme) {
+      let currentPresetId = parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
+      if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
         // 尝试匹配现有主题到预设
         const matchedPreset = THEME_PRESETS.find(
           p => p.colors.primaryColor === parsed.theme?.primaryColor
@@ -748,56 +804,71 @@ function loadSettings(): GeneralSettings {
       }
 
       return {
-        theme: {
-          ...defaultTheme,
-          ...parsed.theme,
+        settings: {
+          theme: {
+            ...defaultTheme,
+            ...parsed.theme,
+          },
+          currentPresetId,
+          followSystemThemeSetting:
+            parsedVersion === STORAGE_VERSION
+              ? sanitizeFollowSystemThemeSetting(parsed.followSystemTheme)
+              : FOLLOW_SYSTEM_THEME_DEFAULT,
+          customTheme: parsed.customTheme ?? null,
+          recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
+          maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
+          panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
+          webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
+          terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
+          editor: sanitizeEditorSettings(parsed.editor),
+          confirmBeforeTerminalClose:
+            parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
+          showWebSessionReasoning: sanitizeShowWebSessionReasoning(
+            parsed.showWebSessionReasoning,
+            loadLegacyShowWebSessionReasoning()
+          ),
+          webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
+            parsed.webSessionAutoContinueScope
+          ),
+          webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
+            parsed.webSessionAutoContinuePreset
+          ),
+          terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
+          terminalFont: sanitizeTerminalFont(parsed.terminalFont),
+          terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
+          terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
+          defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
+          defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
+            parsed.defaultTerminalSnapshotIntervalMs
+          ),
+          defaultTerminalSnapshotZlibCompression:
+            parsed.defaultTerminalSnapshotZlibCompression !== false,
+          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
+          inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
+            parsed.inactiveTerminalSnapshotIntervalMs
+          ),
         },
-        currentPresetId,
-        followSystemTheme: parsed.followSystemTheme ?? false,
-        customTheme: parsed.customTheme ?? null,
-        recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
-        maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
-        panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
-        webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
-        terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
-        editor: sanitizeEditorSettings(parsed.editor),
-        confirmBeforeTerminalClose:
-          parsed.confirmBeforeTerminalClose ?? defaultSettings.confirmBeforeTerminalClose,
-        showWebSessionReasoning: sanitizeShowWebSessionReasoning(
-          parsed.showWebSessionReasoning,
-          loadLegacyShowWebSessionReasoning()
-        ),
-        webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
-          parsed.webSessionAutoContinueScope
-        ),
-        webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
-          parsed.webSessionAutoContinuePreset
-        ),
-        terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
-        terminalFont: sanitizeTerminalFont(parsed.terminalFont),
-        terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
-        terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
-        defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
-        defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
-          parsed.defaultTerminalSnapshotIntervalMs
-        ),
-        defaultTerminalSnapshotZlibCompression:
-          parsed.defaultTerminalSnapshotZlibCompression !== false,
-        terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
-        inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
-          parsed.inactiveTerminalSnapshotIntervalMs
-        ),
+        shouldPersist: parsedVersion !== STORAGE_VERSION,
       };
     }
   } catch (error) {
     console.warn('Failed to load settings, falling back to defaults.', error);
   }
-  return cloneDefaultSettings();
+  return {
+    settings: cloneDefaultSettings(),
+    shouldPersist: false,
+  };
 }
 
 function saveSettings(settings: GeneralSettings) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    const { followSystemThemeSetting, ...restSettings } = settings;
+    const persisted: PersistedGeneralSettings = {
+      version: STORAGE_VERSION,
+      ...restSettings,
+      followSystemTheme: followSystemThemeSetting,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
   } catch (error) {
     console.error('Failed to persist settings:', error);
   }
@@ -807,7 +878,7 @@ function cloneDefaultSettings(): GeneralSettings {
   return {
     theme: { ...defaultSettings.theme },
     currentPresetId: defaultSettings.currentPresetId,
-    followSystemTheme: defaultSettings.followSystemTheme,
+    followSystemThemeSetting: defaultSettings.followSystemThemeSetting,
     terminalThemeId: defaultSettings.terminalThemeId,
     customTheme: defaultSettings.customTheme,
     recentProjectsLimit: defaultSettings.recentProjectsLimit,
@@ -839,6 +910,23 @@ function cloneDefaultSettings(): GeneralSettings {
       defaultSettings.inactiveTerminalSnapshotIntervalMs
     ),
   };
+}
+
+function sanitizeFollowSystemThemeSetting(value: unknown): FollowSystemThemeSetting {
+  if (value === FOLLOW_SYSTEM_THEME_DEFAULT) {
+    return FOLLOW_SYSTEM_THEME_DEFAULT;
+  }
+  if (value === FOLLOW_SYSTEM_THEME_DISABLED) {
+    return FOLLOW_SYSTEM_THEME_DISABLED;
+  }
+  if (value === FOLLOW_SYSTEM_THEME_ENABLED) {
+    return FOLLOW_SYSTEM_THEME_ENABLED;
+  }
+  return FOLLOW_SYSTEM_THEME_DEFAULT;
+}
+
+function isFollowSystemThemeEnabled(value: FollowSystemThemeSetting) {
+  return value === FOLLOW_SYSTEM_THEME_ENABLED;
 }
 
 function sanitizeDefaultTerminalSnapshotIntervalMs(value: unknown) {

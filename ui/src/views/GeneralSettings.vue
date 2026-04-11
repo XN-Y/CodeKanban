@@ -655,15 +655,25 @@
         <n-form label-placement="left" label-width="140">
           <n-form-item :label="t('theme.presetTheme')">
             <n-select
-              v-model:value="currentPresetValue"
+              :value="currentPresetValue"
               :options="presetOptions"
               :disabled="followSystemValue"
               style="max-width: 240px"
+              @update:value="handlePresetThemeChange"
             />
           </n-form-item>
           <n-form-item :label="t('theme.followSystem')">
             <n-space vertical size="small">
-              <n-switch v-model:value="followSystemValue" />
+              <n-radio-group
+                :value="followSystemModeValue"
+                @update:value="handleFollowSystemModeChange"
+              >
+                <n-space>
+                  <n-radio :value="-1">{{ t('common.default') }}</n-radio>
+                  <n-radio :value="0">{{ t('common.no') }}</n-radio>
+                  <n-radio :value="1">{{ t('common.yes') }}</n-radio>
+                </n-space>
+              </n-radio-group>
               <span class="form-tip">{{ t('theme.followSystemHint') }}</span>
             </n-space>
           </n-form-item>
@@ -981,6 +991,10 @@ import {
   isDarkHex,
   getReadableTextColor,
 } from '@/utils/color';
+import {
+  createThemeMaintenanceWarningController,
+  createThemeSelectionController,
+} from '@/utils/themeMaintenanceWarning';
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
@@ -990,6 +1004,7 @@ import type {
   AvailableShellsResponse,
   WorktreeConfig,
 } from '@/types/models';
+import type { FollowSystemThemeSetting } from '@/stores/settings';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -1010,6 +1025,7 @@ const settingsStore = useSettingsStore();
 const {
   theme,
   currentPresetId,
+  followSystemThemeSetting,
   followSystemTheme,
   customTheme,
   recentProjectsLimit,
@@ -1033,6 +1049,18 @@ const {
   inactiveTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
 const capturingTarget = ref<ShortcutTarget | null>(null);
+const themeWarningController = createThemeMaintenanceWarningController({
+  t,
+  warning: options => dialog.warning(options),
+});
+const themeSelectionController = createThemeSelectionController({
+  getCurrentPresetId: () => currentPresetId.value,
+  isFollowSystemTheme: () => followSystemTheme.value,
+  selectPreset: presetId => settingsStore.selectPreset(presetId),
+  toggleFollowSystemTheme: enabled => settingsStore.toggleFollowSystemTheme(enabled),
+  confirmPresetThemeChange: themeWarningController.confirmPresetThemeChange,
+  confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
+});
 const authSaving = ref(false);
 const enablePassword = ref('');
 const enablePasswordConfirm = ref('');
@@ -1046,23 +1074,26 @@ const presetOptions = useThemeOptions();
 const terminalThemeOptions = useTerminalThemeOptions();
 
 // 当前预设 ID
-const currentPresetValue = computed({
-  get: () => currentPresetId.value,
-  set: (value: string) => {
-    settingsStore.selectPreset(value);
-  },
-});
+const currentPresetValue = computed(() => currentPresetId.value);
 
 // 跟随系统主题
-const followSystemValue = computed({
-  get: () => followSystemTheme.value,
-  set: (value: boolean) => {
-    settingsStore.toggleFollowSystemTheme(value);
-  },
-});
+const followSystemValue = computed(() => followSystemTheme.value);
+const followSystemModeValue = computed(() => followSystemThemeSetting.value);
 
 // 是否有自定义主题
 const hasCustomTheme = computed(() => customTheme.value !== null);
+
+async function handlePresetThemeChange(value: string) {
+  await themeSelectionController.selectPresetWithConfirmation(value);
+}
+
+async function handleFollowSystemModeChange(value: FollowSystemThemeSetting) {
+  if (value === 1) {
+    await themeSelectionController.toggleFollowSystemThemeWithConfirmation(true);
+    return;
+  }
+  settingsStore.setFollowSystemThemeSetting(value);
+}
 
 // AI Assistant Status Tracking
 const aiStatusForm = reactive<AIAssistantStatusConfig>({
