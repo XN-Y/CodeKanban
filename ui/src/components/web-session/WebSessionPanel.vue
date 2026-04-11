@@ -1562,6 +1562,7 @@ import {
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
+import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import {
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
@@ -1705,6 +1706,15 @@ function isArchivedPreviewSession(
   return Boolean(session && 'isArchivedPreview' in session && session.isArchivedPreview);
 }
 
+function isAbortLikeError(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'name' in error &&
+      String((error as { name?: unknown }).name || '') === 'AbortError'
+  );
+}
+
 const webSessionStore = useWebSessionStore();
 const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
@@ -1808,6 +1818,7 @@ const composerTransferErrorDetail = ref('');
 let composerTransferErrorTimer: number | null = null;
 let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
+const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
@@ -4020,24 +4031,30 @@ async function activateTabById(sessionId: string, options?: { connectReal?: bool
   }
 
   if (isDraftSession(session)) {
+    realSessionSnapshotLoadController.cancel();
     replaceDraftSessionState(draftSessions.value, session.id);
     activeArchivedPreviewId.value = '';
     webSessionStore.setActiveSession(props.projectId, '');
+    rememberTabVisit(session.id);
+    return true;
   } else if (isArchivedPreviewSession(session)) {
+    realSessionSnapshotLoadController.cancel();
     replaceDraftSessionState(draftSessions.value, '');
     activeArchivedPreviewId.value = session.id;
+    rememberTabVisit(session.id);
+    return true;
   } else {
     replaceDraftSessionState(draftSessions.value, '');
     activeArchivedPreviewId.value = '';
+    rememberTabVisit(session.id);
     if (options?.connectReal === false) {
+      realSessionSnapshotLoadController.cancel();
       webSessionStore.setActiveSession(props.projectId, session.id);
+      return true;
     } else {
-      await connectVisibleRealSession(props.projectId, session.id);
+      return await connectVisibleRealSession(props.projectId, session.id);
     }
   }
-
-  rememberTabVisit(session.id);
-  return true;
 }
 
 function buildProjectRouteLocation(projectId: string, sessionId = '') {
@@ -4088,13 +4105,25 @@ async function openArchivedPreviewSession(
 
 async function connectVisibleRealSession(projectId: string, sessionId: string) {
   if (!projectId || !sessionId) {
-    return;
+    return false;
   }
+  const snapshotLoad = realSessionSnapshotLoadController.begin();
   activeArchivedPreviewId.value = '';
   webSessionStore.setActiveSession(projectId, sessionId);
-  await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
-    rememberActive: true,
-  });
+  try {
+    await webSessionStore.loadSessionSnapshot(projectId, sessionId, {
+      rememberActive: false,
+      signal: snapshotLoad.signal,
+    });
+    return realSessionSnapshotLoadController.isCurrent(snapshotLoad);
+  } catch (error) {
+    if (isAbortLikeError(error) || !realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
+      return false;
+    }
+    throw error;
+  } finally {
+    realSessionSnapshotLoadController.release(snapshotLoad);
+  }
 }
 
 async function activateSessionFromRoute(
@@ -4123,10 +4152,15 @@ async function activateSessionFromRoute(
     return false;
   }
 
+  const snapshotLoad = realSessionSnapshotLoadController.begin();
   try {
     const snapshot = await webSessionStore.loadSessionSnapshot(projectId, routeTarget.sessionId, {
       rememberActive: false,
+      signal: snapshotLoad.signal,
     });
+    if (!realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
+      return false;
+    }
     const snapshotTarget = resolveWebSessionDeepLinkTarget({
       currentProjectId: projectId,
       requestedSessionId: routeTarget.sessionId,
@@ -4148,10 +4182,15 @@ async function activateSessionFromRoute(
 
     await syncWebSessionRouteSessionId('');
   } catch (error) {
+    if (isAbortLikeError(error) || !realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
+      return false;
+    }
     await syncWebSessionRouteSessionId('');
     if (options?.showError !== false) {
       message.error(error instanceof Error ? error.message : t('common.error'));
     }
+  } finally {
+    realSessionSnapshotLoadController.release(snapshotLoad);
   }
 
   return false;
@@ -5510,6 +5549,7 @@ async function initializeProjectSessions(projectId: string) {
     return;
   }
   isProjectSessionInitializing.value = true;
+  realSessionSnapshotLoadController.cancel();
   try {
     clearArchivedPreviewSession();
     activeArchivedPreviewId.value = '';
@@ -5584,8 +5624,9 @@ async function handleSessionSelect(sessionId: string) {
     return;
   }
   try {
-    await activateTabById(sessionId);
-    scrollToBottom(true);
+    if (await activateTabById(sessionId)) {
+      scrollToBottom(true);
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -5607,8 +5648,9 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
       await router.push(buildProjectRouteLocation(item.projectId, sessionId));
       return;
     }
-    await activateTabById(sessionId);
-    scrollToBottom(true);
+    if (await activateTabById(sessionId)) {
+      scrollToBottom(true);
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -7684,6 +7726,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  realSessionSnapshotLoadController.cancel();
   if (liveStateClockTimer != null) {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;

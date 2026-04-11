@@ -349,6 +349,7 @@ type SyncSessionOptions = {
 
 type LoadSessionSnapshotOptions = {
   rememberActive?: boolean;
+  signal?: AbortSignal;
 };
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
@@ -2524,7 +2525,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
     setHistoryLoading(sessionId, true);
     try {
-      const snapshot = await webSessionApi.snapshot(projectId, sessionId);
+      const snapshot = options?.signal
+        ? await webSessionApi.snapshot(projectId, sessionId, {
+            signal: options.signal,
+          })
+        : await webSessionApi.snapshot(projectId, sessionId);
       if (snapshot?.session) {
         applySessionSnapshot(
           sessionId,

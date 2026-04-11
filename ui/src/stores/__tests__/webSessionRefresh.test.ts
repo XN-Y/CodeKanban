@@ -277,6 +277,34 @@ describe('webSession loading behavior', () => {
     expect(store.getBlocks(archivedSession.id)).toHaveLength(1);
   });
 
+  it('passes abort signals through snapshot loads triggered by tab activation', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-signal',
+      title: 'Signal Session',
+    });
+    const controller = new AbortController();
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id, {
+      signal: controller.signal,
+    });
+
+    expect(snapshotMock).toHaveBeenCalledWith(session.projectId, session.id, {
+      signal: controller.signal,
+    });
+  });
+
   it('loads older history pages over HTTP and merges them into the session timeline', async () => {
     const store = useWebSessionStore();
     const session = makeSession({

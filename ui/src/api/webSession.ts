@@ -11,6 +11,15 @@ type ItemResponse<T> = {
   item?: T;
 };
 
+function createAbortError() {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError');
+  }
+  const error = new Error('The operation was aborted.');
+  error.name = 'AbortError';
+  return error;
+}
+
 export type WebSessionAttachmentUploadProgress = {
   loaded: number;
   total?: number;
@@ -130,13 +139,34 @@ export const webSessionApi = {
     return body.item;
   },
 
-  async snapshot(projectId: string, sessionId: string, limit = 80): Promise<WebSessionSnapshot> {
-    const body =
-      (await http
-        .Get<
-          ItemResponse<WebSessionSnapshot>
-        >(`/projects/${projectId}/web-sessions/${sessionId}/snapshot?limit=${limit}`)
-        .send(true)) ?? {};
+  async snapshot(
+    projectId: string,
+    sessionId: string,
+    options?: {
+      limit?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<WebSessionSnapshot> {
+    const limit =
+      typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : 80;
+    const method = http.Get<ItemResponse<WebSessionSnapshot>>(
+      `/projects/${projectId}/web-sessions/${sessionId}/snapshot?limit=${limit}`
+    );
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError();
+    }
+
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let body: ItemResponse<WebSessionSnapshot> = {};
+    try {
+      body = (await method.send(true)) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
     if (!body.item) {
       throw new Error('failed to load web session snapshot');
     }
