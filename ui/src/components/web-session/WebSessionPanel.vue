@@ -211,7 +211,9 @@
                 >
                   <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
                     <span class="item-role">{{ timelineRoleLabel(item) }}</span>
-                    <span class="item-time">{{ formatTime(item.timestamp) }}</span>
+                    <span class="item-time" :title="formatDateTime(item.timestamp)">{{
+                      formatTime(item.timestamp)
+                    }}</span>
                   </div>
 
                   <div
@@ -312,7 +314,9 @@
                             >
                               x{{ getCompactToolCount(item.tool) }}
                             </span>
-                            <span class="command-tool-time">{{ formatTime(item.timestamp) }}</span>
+                            <span class="command-tool-time" :title="formatDateTime(item.timestamp)">
+                              {{ formatTime(item.timestamp) }}
+                            </span>
                           </span>
                           <span
                             class="command-tool-command"
@@ -434,7 +438,9 @@
                         <span class="approval-badge" :class="historyInteractionBadgeClass(item)">
                           {{ historyInteractionTitle(item) }}
                         </span>
-                        <span class="approval-time">{{ formatTime(item.timestamp) }}</span>
+                        <span class="approval-time" :title="formatDateTime(item.timestamp)">
+                          {{ formatTime(item.timestamp) }}
+                        </span>
                       </div>
 
                       <div
@@ -658,9 +664,11 @@
                   >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
-                      <span class="approval-time">{{
-                        formatTime(pendingApproval.requestedAt)
-                      }}</span>
+                      <span
+                        class="approval-time"
+                        :title="formatDateTime(pendingApproval.requestedAt)"
+                        >{{ formatTime(pendingApproval.requestedAt) }}</span
+                      >
                     </div>
                     <div class="approval-prompt">
                       {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
@@ -703,9 +711,11 @@
                   >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.userInputTitle') }}</span>
-                      <span class="approval-time">{{
-                        formatTime(pendingUserInput.requestedAt)
-                      }}</span>
+                      <span
+                        class="approval-time"
+                        :title="formatDateTime(pendingUserInput.requestedAt)"
+                        >{{ formatTime(pendingUserInput.requestedAt) }}</span
+                      >
                     </div>
                     <div class="approval-prompt">
                       {{ pendingUserInput.prompt || t('webSession.userInputPromptFallback') }}
@@ -1464,7 +1474,10 @@
               <span class="tool-state-dot"></span>
               {{ toolStateLabel(detailItem) }}
             </span>
-            <span class="command-execution-detail-item-time">
+            <span
+              class="command-execution-detail-item-time"
+              :title="formatCommandExecutionDetailDateTime(detailItem)"
+            >
               {{ formatCommandExecutionDetailTime(detailItem) }}
             </span>
           </summary>
@@ -1603,6 +1616,10 @@ import {
   resolveWebSessionDisplayState,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
+import {
+  formatWebSessionDateTime,
+  formatWebSessionTimestamp,
+} from '@/components/web-session/webSessionTimeFormat';
 import {
   buildOrderedTabSessions,
   clampTabAnchorIndex,
@@ -4878,17 +4895,11 @@ function defaultModelForAgent(agent: 'claude' | 'codex') {
 }
 
 function formatTime(timestamp: number) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '';
-  }
-  return new Date(timestamp).toLocaleTimeString();
+  return formatWebSessionTimestamp(timestamp, locale.value);
 }
 
 function formatDateTime(timestamp: number) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '';
-  }
-  return new Date(timestamp).toLocaleString();
+  return formatWebSessionDateTime(timestamp, locale.value);
 }
 
 function formatElapsedDuration(startedAt: number, endedAt: number) {
@@ -5494,6 +5505,14 @@ function formatCommandExecutionDetailTime(item: CommandExecutionDetailItem) {
     return '';
   }
   return formatTime(value);
+}
+
+function formatCommandExecutionDetailDateTime(item: CommandExecutionDetailItem) {
+  const value = Date.parse(item.completedAt || item.startedAt || item.timestamp || '');
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  return formatDateTime(value);
 }
 
 function isToolExpanded(toolId: string) {
