@@ -91,31 +91,30 @@
                     <n-tag
                       v-if="getProjectSessionBadge(project.id)"
                       size="small"
-                      :type="
-                        getProjectSessionBadge(project.id)?.kind === 'terminal' ? 'success' : 'info'
-                      "
+                      :type="getProjectSessionBadgeType(project.id)"
                       :bordered="false"
                       class="terminal-tag"
                       :class="{
+                        'terminal-tag--combined': isCombinedProjectSessionBadge(project.id),
                         clickable:
                           getProjectSessionBadge(project.id)?.kind === 'terminal' &&
                           project.id === currentProjectId,
                       }"
-                      :title="
-                        formatProjectBadgeLabel(
-                          getProjectSessionBadge(project.id)?.kind || 'terminal',
-                          getProjectSessionBadge(project.id)?.count || 0
-                        )
-                      "
+                      :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
                       @click.stop="
-                        handleProjectBadgeClick(
-                          project.id,
-                          getProjectSessionBadge(project.id)?.kind || 'terminal'
-                        )
+                        handleProjectBadgeClick(project.id, getProjectSessionBadge(project.id))
                       "
                     >
                       <template #icon>
-                        <n-icon size="14">
+                        <n-icon
+                          v-if="isCombinedProjectSessionBadge(project.id)"
+                          size="14"
+                          class="terminal-tag-combined-icon"
+                          :class="getCombinedProjectSessionActiveIconClass()"
+                        >
+                          <component :is="getCombinedProjectSessionActiveIcon()" />
+                        </n-icon>
+                        <n-icon v-else size="14">
                           <component
                             :is="
                               getProjectSessionBadge(project.id)?.kind === 'terminal'
@@ -125,7 +124,22 @@
                           />
                         </n-icon>
                       </template>
-                      {{ getProjectSessionBadge(project.id)?.count }}
+                      <span
+                        v-if="isCombinedProjectSessionBadge(project.id)"
+                        class="terminal-tag-combined-counts"
+                      >
+                        <span
+                          class="terminal-tag-combined-count terminal-tag-combined-count--terminal"
+                        >
+                          {{ getCombinedTerminalCount(project.id) }}
+                        </span>
+                        <span class="terminal-tag-combined-count terminal-tag-combined-count--web">
+                          {{ getCombinedWebSessionCount(project.id) }}
+                        </span>
+                      </span>
+                      <template v-else>
+                        {{ getSingleProjectSessionCount(project.id) }}
+                      </template>
                     </n-tag>
                     <n-text class="project-name" strong>{{ project.name }}</n-text>
                   </div>
@@ -247,7 +261,7 @@ import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSumm
 import {
   resolvePreferredProjectSessionKind,
   resolveProjectSessionBadge,
-  type ProjectSessionBadgeKind,
+  type ProjectSessionBadge,
 } from '@/utils/projectSessionBadge';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
@@ -548,13 +562,52 @@ const getProjectSessionBadge = (projectId: string) =>
     preferredKind: preferredSessionKind.value,
   });
 
-const formatProjectBadgeLabel = (kind: ProjectSessionBadgeKind, count: number) =>
-  kind === 'terminal'
-    ? `${t('project.terminalCount')}: ${count}`
-    : `${t('project.webSessionCount')}: ${count}`;
+const isCombinedProjectSessionBadge = (projectId: string) =>
+  getProjectSessionBadge(projectId)?.kind === 'combined';
 
-const handleProjectBadgeClick = (projectId: string, kind: ProjectSessionBadgeKind) => {
-  if (kind === 'terminal') {
+const getCombinedTerminalCount = (projectId: string) => {
+  const badge = getProjectSessionBadge(projectId);
+  return badge?.kind === 'combined' ? badge.terminalCount : 0;
+};
+
+const getCombinedWebSessionCount = (projectId: string) => {
+  const badge = getProjectSessionBadge(projectId);
+  return badge?.kind === 'combined' ? badge.webSessionCount : 0;
+};
+
+const getCombinedProjectSessionActiveIcon = () =>
+  preferredSessionKind.value === 'webSession' ? ChatbubblesOutline : TerminalOutline;
+
+const getCombinedProjectSessionActiveIconClass = () =>
+  preferredSessionKind.value === 'webSession' ? 'is-web-session' : 'is-terminal';
+
+const getSingleProjectSessionCount = (projectId: string) => {
+  const badge = getProjectSessionBadge(projectId);
+  return badge && badge.kind !== 'combined' ? badge.count : 0;
+};
+
+const getProjectSessionBadgeType = (projectId: string) => {
+  const badge = getProjectSessionBadge(projectId);
+  if (!badge || badge.kind === 'combined') {
+    return undefined;
+  }
+  return badge.kind === 'terminal' ? 'success' : 'info';
+};
+
+const formatProjectBadgeLabel = (badge: ProjectSessionBadge) => {
+  if (!badge) {
+    return '';
+  }
+  if (badge.kind === 'combined') {
+    return `${t('project.terminalCount')}: ${badge.terminalCount} · ${t('project.webSessionCount')}: ${badge.webSessionCount}`;
+  }
+  return badge.kind === 'terminal'
+    ? `${t('project.terminalCount')}: ${badge.count}`
+    : `${t('project.webSessionCount')}: ${badge.count}`;
+};
+
+const handleProjectBadgeClick = (projectId: string, badge: ProjectSessionBadge) => {
+  if (badge?.kind === 'terminal') {
     handleTerminalTagClick(projectId);
   }
 };
@@ -688,6 +741,65 @@ onMounted(() => {
   transition:
     opacity 0.2s,
     transform 0.2s;
+}
+
+.terminal-tag--combined {
+  --terminal-tag-terminal-color: #18a058;
+  --terminal-tag-terminal-bg: #eaf8e3;
+  --terminal-tag-web-color: #2080f0;
+  --terminal-tag-web-bg: #e7edf5;
+  --terminal-tag-combined-split: 23px;
+  --n-padding: 0 4px 0 5px;
+  color: rgba(15, 23, 42, 0.92);
+  background: linear-gradient(
+    90deg,
+    var(--terminal-tag-terminal-bg) 0%,
+    var(--terminal-tag-terminal-bg) var(--terminal-tag-combined-split),
+    var(--terminal-tag-web-bg) var(--terminal-tag-combined-split),
+    var(--terminal-tag-web-bg) 100%
+  ) !important;
+}
+
+.terminal-tag--combined :deep(.n-tag__content) {
+  display: inline-flex;
+  align-items: center;
+}
+
+.terminal-tag--combined :deep(.n-tag__icon) {
+  margin-right: 2px;
+}
+
+.terminal-tag-combined-icon {
+  color: var(--terminal-tag-terminal-color);
+}
+
+.terminal-tag-combined-icon.is-web-session {
+  color: var(--terminal-tag-web-color);
+}
+
+.terminal-tag-combined-counts {
+  min-width: 8px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 0.82;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.terminal-tag-combined-count {
+  display: block;
+}
+
+.terminal-tag-combined-count--terminal {
+  color: var(--terminal-tag-terminal-color);
+}
+
+.terminal-tag-combined-count--web {
+  color: var(--terminal-tag-web-color);
 }
 
 .terminal-tag.clickable {

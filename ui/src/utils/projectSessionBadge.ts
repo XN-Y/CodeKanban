@@ -1,4 +1,5 @@
 export type ProjectSessionBadgeKind = 'terminal' | 'webSession';
+export type CombinedProjectSessionBadgeKind = 'combined';
 
 type PreferredProjectSessionKindInput = {
   isMobile: boolean;
@@ -13,10 +14,17 @@ type ProjectSessionBadgeInput = {
   preferredKind: ProjectSessionBadgeKind;
 };
 
-export type ProjectSessionBadge = {
-  kind: ProjectSessionBadgeKind;
-  count: number;
-} | null;
+export type ProjectSessionBadge =
+  | {
+      kind: ProjectSessionBadgeKind;
+      count: number;
+    }
+  | {
+      kind: CombinedProjectSessionBadgeKind;
+      terminalCount: number;
+      webSessionCount: number;
+    }
+  | null;
 
 function normalizeCount(value: number | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -50,7 +58,9 @@ export function resolveProjectSessionBadge(input: ProjectSessionBadgeInput): Pro
   if (webSessionCount > 0 && terminalCount <= 0) {
     return { kind: 'webSession', count: webSessionCount };
   }
-  return input.preferredKind === 'webSession'
-    ? { kind: 'webSession', count: webSessionCount }
-    : { kind: 'terminal', count: terminalCount };
+  return {
+    kind: 'combined',
+    terminalCount,
+    webSessionCount,
+  };
 }

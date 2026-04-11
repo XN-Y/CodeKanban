@@ -26,24 +26,32 @@ describe('projectSessionBadge', () => {
     ).toEqual({ kind: 'webSession', count: 3 });
   });
 
-  it('prefers terminal when both exist and terminal is preferred', () => {
+  it('returns combined when both terminal and web sessions exist', () => {
     expect(
       resolveProjectSessionBadge({
         terminalCount: 4,
         webSessionCount: 2,
         preferredKind: 'terminal',
       })
-    ).toEqual({ kind: 'terminal', count: 4 });
+    ).toEqual({
+      kind: 'combined',
+      terminalCount: 4,
+      webSessionCount: 2,
+    });
   });
 
-  it('prefers web session when both exist and web session is preferred', () => {
+  it('returns combined regardless of preferred kind when both types exist', () => {
     expect(
       resolveProjectSessionBadge({
         terminalCount: 4,
         webSessionCount: 2,
         preferredKind: 'webSession',
       })
-    ).toEqual({ kind: 'webSession', count: 2 });
+    ).toEqual({
+      kind: 'combined',
+      terminalCount: 4,
+      webSessionCount: 2,
+    });
   });
 
   it('returns null when neither type exists', () => {
@@ -52,6 +60,23 @@ describe('projectSessionBadge', () => {
         terminalCount: 0,
         webSessionCount: 0,
         preferredKind: 'terminal',
+      })
+    ).toBeNull();
+  });
+
+  it('normalizes invalid counts before resolving the badge state', () => {
+    expect(
+      resolveProjectSessionBadge({
+        terminalCount: Number.NaN,
+        webSessionCount: 2.8,
+        preferredKind: 'terminal',
+      })
+    ).toEqual({ kind: 'webSession', count: 2 });
+    expect(
+      resolveProjectSessionBadge({
+        terminalCount: -3,
+        webSessionCount: Number.POSITIVE_INFINITY,
+        preferredKind: 'webSession',
       })
     ).toBeNull();
   });
