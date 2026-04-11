@@ -3038,10 +3038,15 @@ const mobileSessionCategory = ref<'current' | 'archived'>('current');
 const mobileCurrentSessions = computed<SessionTab[]>(() =>
   sessions.value.filter(session => !isArchivedPreviewSession(session))
 );
+const mobileArchivedProjectIds = computed(() => (props.projectId ? [props.projectId] : []));
+const mobileArchivedScopeKey = computed(() => String(props.projectId || '').trim());
+const mobileArchivedMeta = computed(() =>
+  webSessionStore.getArchivedMeta(mobileArchivedProjectIds.value)
+);
 const mobileArchivedSessions = computed<SessionTab[]>(() => {
-  const items = crossProjectArchivedSessions.value
-    .filter(item => item.projectId === props.projectId)
-    .map(item => item.session as SessionTab);
+  const items = webSessionStore
+    .getArchivedSessions(mobileArchivedProjectIds.value)
+    .map(item => item as SessionTab);
   if (
     archivedPreviewSession.value &&
     !items.some(session => session.id === archivedPreviewSession.value?.id)
@@ -3158,6 +3163,19 @@ const mobileTabOptions = computed<MobileTabDropdownOption[]>(
               },
             },
           ]),
+      ...(mobileSessionCategory.value === 'archived' &&
+      (mobileArchivedMeta.value.hasMore || mobileArchivedMeta.value.loading)
+        ? [
+            {
+              type: 'render' as const,
+              key: 'mobile-session-load-more-archived',
+              render: renderMobileTabLoadMore,
+              props: {
+                class: 'mobile-tab-load-more-render',
+              },
+            },
+          ]
+        : []),
     ] satisfies MobileTabDropdownOption[]
 );
 
@@ -3170,6 +3188,11 @@ function mobileTabDropdownMenuProps() {
 function getMobileTabOptionNodeProps(option: DropdownOption): HTMLAttributes {
   const mobileOption = option as MobileTabOption;
   const classes = ['web-session-mobile-option'];
+  if (!mobileOption?.session) {
+    return {
+      class: classes.join(' '),
+    };
+  }
   if (mobileOption.key === activeSessionId.value) {
     classes.push('is-selected');
   }
@@ -3194,9 +3217,7 @@ function renderMobileTabCategoryHeader() {
 function renderMobileTabCategoryButton(section: 'current' | 'archived') {
   const active = mobileSessionCategory.value === section;
   const count =
-    section === 'current'
-      ? mobileCurrentSessions.value.length
-      : mobileArchivedSessions.value.length;
+    section === 'current' ? mobileCurrentSessions.value.length : mobileArchivedMeta.value.total;
   const label =
     section === 'current' ? t('webSession.currentSessions') : t('webSession.archivedSessions');
 
@@ -3227,8 +3248,31 @@ function renderMobileTabEmptyState() {
     'div',
     { class: 'mobile-tab-empty-state' },
     mobileSessionCategory.value === 'archived'
-      ? t('webSession.archivedSessionsEmpty')
+      ? mobileArchivedMeta.value.loading
+        ? t('common.loading')
+        : t('webSession.archivedSessionsEmpty')
       : t('webSession.currentSessionsEmpty')
+  );
+}
+
+function renderMobileTabLoadMore() {
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: ['mobile-tab-load-more', mobileArchivedMeta.value.loading && 'is-loading'],
+      disabled: mobileArchivedMeta.value.loading,
+      onClick: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void loadMoreMobileArchivedSessions();
+      },
+      onMousedown: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+      },
+    },
+    mobileArchivedMeta.value.loading ? t('common.loading') : t('webSession.loadMoreArchived')
   );
 }
 
@@ -3307,18 +3351,39 @@ function getMobileTabOptionProjectBadge(session: SessionTab) {
 
 async function setMobileSessionCategory(section: 'current' | 'archived') {
   mobileSessionCategory.value = section;
+  if (section !== 'archived') {
+    return;
+  }
   if (
-    section === 'archived' &&
-    mobileArchivedSessions.value.length === 0 &&
-    archivedSidebarMeta.value.hasMore
+    mobileArchivedMeta.value.loading ||
+    !mobileArchivedScopeKey.value ||
+    mobileArchivedMeta.value.scopeKey === mobileArchivedScopeKey.value
   ) {
-    try {
-      await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
-        limit: 20,
-      });
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    }
+    return;
+  }
+  try {
+    await webSessionStore.loadArchivedSessions(mobileArchivedProjectIds.value, {
+      limit: 20,
+    });
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function loadMoreMobileArchivedSessions() {
+  if (
+    !mobileArchivedScopeKey.value ||
+    mobileArchivedMeta.value.loading ||
+    !mobileArchivedMeta.value.hasMore
+  ) {
+    return;
+  }
+  try {
+    await webSessionStore.loadArchivedSessions(mobileArchivedProjectIds.value, {
+      limit: 20,
+    });
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
   }
 }
 
@@ -4072,8 +4137,12 @@ function syncArchivedPreviewSessionSummary(sessionId: string) {
   }
   const latest =
     webSessionStore
+      .getArchivedSessions(mobileArchivedProjectIds.value)
+      .find(item => item.id === sessionId) ??
+    webSessionStore
       .getArchivedSessions(sidebarProjectIdsToLoad.value)
-      .find(item => item.id === sessionId) ?? archivedPreviewSession.value;
+      .find(item => item.id === sessionId) ??
+    archivedPreviewSession.value;
   archivedPreviewSession.value = {
     ...latest,
     isArchivedPreview: true,
@@ -8473,6 +8542,26 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--n-border-color) 10%, transparent);
   font-size: 12px;
   text-align: center;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-load-more-render) {
+  padding: 6px 2px 2px;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-load-more) {
+  width: 100%;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
+  color: var(--n-primary-color);
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-load-more.is-loading) {
+  cursor: progress;
+  opacity: 0.82;
 }
 
 :global(.web-session-mobile-dropdown .mobile-tab-option-body) {

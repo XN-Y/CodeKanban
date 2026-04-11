@@ -354,6 +354,12 @@ type ArchivedListMeta = {
   loading: boolean;
 };
 
+type ArchivedListScopeState = {
+  projectIds: string[];
+  sessionIds: string[];
+  meta: ArchivedListMeta;
+};
+
 type SyncSessionOptions = {
   rememberActive?: boolean;
 };
@@ -808,9 +814,9 @@ function normalizeProjectScope(projectIds: string[]) {
   };
 }
 
-function defaultArchivedListMeta(): ArchivedListMeta {
+function defaultArchivedListMeta(scopeKey = ''): ArchivedListMeta {
   return {
-    scopeKey: '',
+    scopeKey,
     total: 0,
     offset: 0,
     hasMore: false,
@@ -821,8 +827,7 @@ function defaultArchivedListMeta(): ArchivedListMeta {
 export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
   const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
-  const archivedSessionIds = ref<string[]>([]);
-  const archivedListMeta = ref<ArchivedListMeta>(defaultArchivedListMeta());
+  const archivedScopeStates = ref<Record<string, ArchivedListScopeState>>({});
   const eventsBySession = ref<Record<string, WebSessionBlock[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
@@ -868,7 +873,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Object.values(sessionsByProject.value).forEach(items => {
       items.forEach(item => ids.add(item.id));
     });
-    archivedSessionIds.value.forEach(sessionId => ids.add(sessionId));
+    Object.values(archivedScopeStates.value).forEach(scopeState => {
+      scopeState.sessionIds.forEach(sessionId => ids.add(sessionId));
+    });
     return ids;
   });
 
@@ -887,22 +894,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return cachedCounts.get(projectId) ?? 0;
   }
 
+  function getArchivedScopeState(scope: { ids: string[]; key: string }) {
+    if (!scope.key) {
+      return null;
+    }
+    return archivedScopeStates.value[scope.key] ?? null;
+  }
+
   function getArchivedSessions(projectIds: string[]) {
     const scope = normalizeProjectScope(projectIds);
-    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+    const scopeState = getArchivedScopeState(scope);
+    if (!scopeState) {
       return [];
     }
-    return archivedSessionIds.value
+    return scopeState.sessionIds
       .map(sessionId => archivedSessionsById.value[sessionId])
       .filter((session): session is WebSessionSummary => Boolean(session));
   }
 
   function getArchivedMeta(projectIds: string[]): ArchivedListMeta {
     const scope = normalizeProjectScope(projectIds);
-    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+    const scopeState = getArchivedScopeState(scope);
+    if (!scopeState) {
       return defaultArchivedListMeta();
     }
-    return archivedListMeta.value;
+    return scopeState.meta;
   }
 
   function getActiveSessionId(projectId: string) {
@@ -1592,12 +1608,102 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return right.id.localeCompare(left.id);
   }
 
-  function isArchivedScopeProject(projectId: string) {
-    const scopeKey = archivedListMeta.value.scopeKey;
-    if (!scopeKey || !projectId) {
-      return false;
+  function areStringArraysEqual(left: string[], right: string[]) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
+  function reconcileArchivedListMeta(meta: ArchivedListMeta, total: number, offset: number) {
+    const nextTotal = Math.max(0, total);
+    const nextOffset = Math.max(0, Math.min(offset, nextTotal));
+    return {
+      ...meta,
+      total: nextTotal,
+      offset: nextOffset,
+      hasMore: nextOffset < nextTotal,
+    };
+  }
+
+  function getMatchingArchivedScopeKeys(projectId: string) {
+    if (!projectId) {
+      return [];
     }
-    return scopeKey.split('::').includes(projectId);
+    return Object.entries(archivedScopeStates.value)
+      .filter(([, scopeState]) => scopeState.projectIds.includes(projectId))
+      .map(([scopeKey]) => scopeKey);
+  }
+
+  function sortArchivedScopeContainingSession(sessionId: string) {
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    Object.entries(archivedScopeStates.value).forEach(([scopeKey, scopeState]) => {
+      if (!scopeState.sessionIds.includes(sessionId)) {
+        return;
+      }
+      const nextSessionIds = sortArchivedSessionIds(scopeState.sessionIds);
+      if (areStringArraysEqual(nextSessionIds, scopeState.sessionIds)) {
+        return;
+      }
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
+  }
+
+  function addArchivedSessionToMatchingScopes(summary: WebSessionSummary) {
+    const matchingScopeKeys = getMatchingArchivedScopeKeys(summary.projectId);
+    if (matchingScopeKeys.length === 0) {
+      return;
+    }
+
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    matchingScopeKeys.forEach(scopeKey => {
+      const scopeState = archivedScopeStates.value[scopeKey];
+      if (!scopeState) {
+        return;
+      }
+
+      const alreadyIncluded = scopeState.sessionIds.includes(summary.id);
+      const nextSessionIds = sortArchivedSessionIds(
+        alreadyIncluded ? scopeState.sessionIds : [...scopeState.sessionIds, summary.id]
+      );
+      const nextMeta = alreadyIncluded
+        ? reconcileArchivedListMeta(scopeState.meta, scopeState.meta.total, scopeState.meta.offset)
+        : reconcileArchivedListMeta(
+            scopeState.meta,
+            scopeState.meta.total + 1,
+            scopeState.meta.offset + 1
+          );
+
+      if (
+        alreadyIncluded &&
+        areStringArraysEqual(nextSessionIds, scopeState.sessionIds) &&
+        nextMeta.total === scopeState.meta.total &&
+        nextMeta.offset === scopeState.meta.offset &&
+        nextMeta.hasMore === scopeState.meta.hasMore
+      ) {
+        return;
+      }
+
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+        meta: nextMeta,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
   }
 
   function sortArchivedSessionIds(ids: string[]) {
@@ -1619,7 +1725,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertArchivedSession(
     summary: WebSessionSummary,
-    options?: { includeInList?: boolean }
+    options?: { includeInMatchingScopes?: boolean }
   ) {
     const previous = archivedSessionsById.value[summary.id];
     archivedSessionsById.value = {
@@ -1630,19 +1736,63 @@ export const useWebSessionStore = defineStore('web-session', () => {
       },
     };
 
-    const includeInList = options?.includeInList ?? isArchivedScopeProject(summary.projectId);
-    if (!includeInList) {
+    if (options?.includeInMatchingScopes) {
+      addArchivedSessionToMatchingScopes(summary);
       return;
     }
 
-    const nextIds = archivedSessionIds.value.includes(summary.id)
-      ? archivedSessionIds.value
-      : [...archivedSessionIds.value, summary.id];
-    archivedSessionIds.value = sortArchivedSessionIds(nextIds);
+    if (!previous) {
+      return;
+    }
+
+    sortArchivedScopeContainingSession(summary.id);
   }
 
   function removeArchivedSessionRecord(sessionId: string, options?: { clearSummary?: boolean }) {
-    archivedSessionIds.value = archivedSessionIds.value.filter(id => id !== sessionId);
+    const archived = archivedSessionsById.value[sessionId];
+    const projectId = archived?.projectId ?? '';
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    Object.entries(archivedScopeStates.value).forEach(([scopeKey, scopeState]) => {
+      const containsSession = scopeState.sessionIds.includes(sessionId);
+      const matchesProject = Boolean(projectId) && scopeState.projectIds.includes(projectId);
+      if (!containsSession && !matchesProject) {
+        return;
+      }
+
+      const nextSessionIds = containsSession
+        ? scopeState.sessionIds.filter(id => id !== sessionId)
+        : scopeState.sessionIds;
+      const nextMeta = matchesProject
+        ? reconcileArchivedListMeta(
+            scopeState.meta,
+            scopeState.meta.total - 1,
+            scopeState.meta.offset - (containsSession ? 1 : 0)
+          )
+        : scopeState.meta;
+
+      if (
+        areStringArraysEqual(nextSessionIds, scopeState.sessionIds) &&
+        nextMeta.total === scopeState.meta.total &&
+        nextMeta.offset === scopeState.meta.offset &&
+        nextMeta.hasMore === scopeState.meta.hasMore
+      ) {
+        return;
+      }
+
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+        meta: nextMeta,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
+
     if (options?.clearSummary !== false) {
       const next = { ...archivedSessionsById.value };
       delete next[sessionId];
@@ -1708,8 +1858,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertSession(summary: WebSessionSummary) {
     if (summary.archivedAt) {
+      const wasCurrentSession = Boolean(
+        (sessionsByProject.value[summary.projectId] ?? []).some(item => item.id === summary.id)
+      );
       removeCurrentSessionRecord(summary.projectId, summary.id);
-      upsertArchivedSession(summary);
+      upsertArchivedSession(summary, {
+        includeInMatchingScopes: wasCurrentSession,
+      });
       return;
     }
     removeArchivedSessionRecord(summary.id);
@@ -2072,7 +2227,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         ...archivedSessionsById.value,
         [sessionId]: updater(archived),
       };
-      archivedSessionIds.value = sortArchivedSessionIds(archivedSessionIds.value);
+      sortArchivedScopeContainingSession(sessionId);
     }
   }
 
@@ -2573,8 +2728,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function invalidateArchivedSessions() {
-    archivedSessionIds.value = [];
-    archivedListMeta.value = defaultArchivedListMeta();
+    archivedScopeStates.value = {};
   }
 
   async function loadArchivedSessions(
@@ -2591,16 +2745,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     const limit = Math.max(1, options?.limit ?? 20);
-    const reset = options?.reset === true || archivedListMeta.value.scopeKey !== scope.key;
-    const previousMeta = getArchivedMeta(scope.ids);
+    const previousScopeState = getArchivedScopeState(scope);
+    const previousMeta = previousScopeState?.meta ?? defaultArchivedListMeta(scope.key);
+    const reset = options?.reset === true || !previousScopeState;
     const offset = reset ? 0 : previousMeta.offset;
 
-    archivedListMeta.value = {
-      scopeKey: scope.key,
-      total: reset ? 0 : previousMeta.total,
-      offset,
-      hasMore: reset ? false : previousMeta.hasMore,
-      loading: true,
+    archivedScopeStates.value = {
+      ...archivedScopeStates.value,
+      [scope.key]: {
+        projectIds: [...scope.ids],
+        sessionIds: [...(previousScopeState?.sessionIds ?? [])],
+        meta: {
+          scopeKey: scope.key,
+          total: reset ? 0 : previousMeta.total,
+          offset,
+          hasMore: reset ? false : previousMeta.hasMore,
+          loading: true,
+        },
+      },
     };
 
     try {
@@ -2610,28 +2772,47 @@ export const useWebSessionStore = defineStore('web-session', () => {
         limit,
       });
       result.items.forEach(item => {
-        upsertArchivedSession(item, { includeInList: false });
+        upsertArchivedSession(item);
       });
-      archivedSessionIds.value = sortArchivedSessionIds(
+      const nextSessionIds = sortArchivedSessionIds(
         reset
           ? result.items.map(item => item.id)
-          : Array.from(new Set([...archivedSessionIds.value, ...result.items.map(item => item.id)]))
+          : Array.from(
+              new Set([
+                ...(previousScopeState?.sessionIds ?? []),
+                ...result.items.map(item => item.id),
+              ])
+            )
       );
-      archivedListMeta.value = {
-        scopeKey: scope.key,
-        total: result.total,
-        offset: result.nextOffset,
-        hasMore: result.hasMore,
-        loading: false,
+      archivedScopeStates.value = {
+        ...archivedScopeStates.value,
+        [scope.key]: {
+          projectIds: [...scope.ids],
+          sessionIds: nextSessionIds,
+          meta: {
+            scopeKey: scope.key,
+            total: result.total,
+            offset: result.nextOffset,
+            hasMore: result.hasMore,
+            loading: false,
+          },
+        },
       };
       return getArchivedSessions(scope.ids);
     } catch (error) {
-      archivedListMeta.value = {
-        scopeKey: scope.key,
-        total: reset ? 0 : previousMeta.total,
-        offset,
-        hasMore: reset ? false : previousMeta.hasMore,
-        loading: false,
+      archivedScopeStates.value = {
+        ...archivedScopeStates.value,
+        [scope.key]: {
+          projectIds: [...scope.ids],
+          sessionIds: [...(previousScopeState?.sessionIds ?? [])],
+          meta: {
+            scopeKey: scope.key,
+            total: reset ? 0 : previousMeta.total,
+            offset,
+            hasMore: reset ? false : previousMeta.hasMore,
+            loading: false,
+          },
+        },
       };
       throw error;
     }
@@ -2692,7 +2873,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const summary = await webSessionApi.archive(projectId, sessionId);
     removeCurrentSessionRecord(projectId, sessionId);
     setPendingInputs(sessionId, []);
-    upsertArchivedSession(summary, { includeInList: false });
+    upsertArchivedSession(summary, { includeInMatchingScopes: true });
     return summary;
   }
 
