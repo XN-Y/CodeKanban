@@ -107,6 +107,8 @@ describe('webSession counts', () => {
       },
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
     });
     countsMock.mockReset();
     listMock.mockReset();

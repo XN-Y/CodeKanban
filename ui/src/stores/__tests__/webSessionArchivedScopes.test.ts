@@ -111,6 +111,8 @@ describe('webSession archived scopes', () => {
       },
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
     });
     listMock.mockReset();
     queryArchivedMock.mockReset();

@@ -1590,6 +1590,10 @@ import {
   scheduleWebSessionUserInputSlowHint,
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
+  buildWebSessionUserInputDraftSyncKey,
+  reconcileWebSessionUserInputLocalState,
+} from '@/components/web-session/webSessionUserInputDraftSync';
+import {
   buildWebSessionSendConfirmationSignature,
   findWebSessionSendConflicts,
   resolveWebSessionSendConfirmation,
@@ -2355,6 +2359,9 @@ const pendingApproval = computed(() =>
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
+const pendingUserInputSyncKey = computed(() =>
+  buildWebSessionUserInputDraftSyncKey(currentRealSession.value?.id, pendingUserInput.value)
+);
 const currentUserInputSubmitOwnerId = computed(() =>
   currentRealSession.value && pendingUserInput.value
     ? buildWebSessionUserInputSubmitOwnerId(
@@ -3104,21 +3111,20 @@ const hasNextSession = computed(
 );
 
 watch(
-  pendingUserInput,
-  value => {
-    if (!value) {
+  pendingUserInputSyncKey,
+  syncKey => {
+    const request = pendingUserInput.value;
+    if (!syncKey || !request) {
       userInputSelections.value = {};
       userInputDrafts.value = {};
       return;
     }
-    const nextSelections: Record<string, string[]> = {};
-    const nextDrafts: Record<string, string> = {};
-    value.questions.forEach(question => {
-      nextSelections[question.id] = [...(userInputSelections.value[question.id] ?? [])];
-      nextDrafts[question.id] = userInputDrafts.value[question.id] ?? '';
+    const nextState = reconcileWebSessionUserInputLocalState(request.questions, {
+      selections: userInputSelections.value,
+      drafts: userInputDrafts.value,
     });
-    userInputSelections.value = nextSelections;
-    userInputDrafts.value = nextDrafts;
+    userInputSelections.value = nextState.selections;
+    userInputDrafts.value = nextState.drafts;
   },
   { immediate: true }
 );
