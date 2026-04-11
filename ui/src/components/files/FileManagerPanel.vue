@@ -251,7 +251,7 @@
             <div class="file-transfer-meta">
               {{ t(`fileManager.transferDirection.${task.direction}`) }}
               ·
-              {{ t(`fileManager.transferStatus.${task.status}`) }}
+              {{ formatTransferStatus(task) }}
               <span v-if="task.total"
                 >· {{ formatBytes(task.loaded) }} / {{ formatBytes(task.total) }}</span
               >
@@ -262,7 +262,7 @@
               :type="'line'"
               :percentage="task.progress ?? 0"
               :show-indicator="false"
-              :status="task.status === 'failed' ? 'error' : 'default'"
+              :status="resolveTransferProgressStatus(task)"
             />
             <div v-if="task.error" class="file-transfer-error">{{ task.error }}</div>
           </div>
@@ -343,6 +343,7 @@ import type {
   FileManagerEntry,
   FileManagerListResult,
   FileManagerPreviewResult,
+  FileTransferTask,
 } from '@/types/fileManager';
 
 const MOBILE_PREVIEW_MAX_WIDTH = 900;
@@ -831,6 +832,26 @@ function formatSpeed(value?: number) {
   return `${formatBytes(value)}/s`;
 }
 
+function formatTransferStatus(task: FileTransferTask) {
+  if (task.status === 'running' && task.retryAttempt && task.retryMaxAttempts) {
+    return t('fileManager.autoRetryProgress', {
+      attempt: task.retryAttempt,
+      max: task.retryMaxAttempts,
+    });
+  }
+  return t(`fileManager.transferStatus.${task.status}`);
+}
+
+function resolveTransferProgressStatus(task: FileTransferTask) {
+  if (task.status === 'failed') {
+    return 'error' as const;
+  }
+  if (task.status === 'completed') {
+    return 'success' as const;
+  }
+  return 'default' as const;
+}
+
 function formatEntrySize(entry: FileManagerEntry) {
   if (entry.kind === 'directory') {
     return t('fileManager.folderLabel');
@@ -910,7 +931,11 @@ function openImagePreviewModal() {
 }
 
 function pushMobilePreviewHistoryEntry() {
-  if (typeof window === 'undefined' || mobilePreviewHistoryActive.value || !useMobilePreview.value) {
+  if (
+    typeof window === 'undefined' ||
+    mobilePreviewHistoryActive.value ||
+    !useMobilePreview.value
+  ) {
     return;
   }
   const nextState =

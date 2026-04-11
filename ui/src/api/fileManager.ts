@@ -1,4 +1,4 @@
-import { urlBase } from '@/api';
+import { ApiError, urlBase } from '@/api';
 import { extractItem, extractItems } from '@/api/response';
 import { http } from '@/api/http';
 import type {
@@ -70,9 +70,9 @@ function createAbortError(message: string) {
 export const fileManagerApi = {
   async listScopes(projectId: string): Promise<FileManagerScope[]> {
     const payload =
-      (await http.Get<ItemsResponse<FileManagerScope>>(`/projects/${projectId}/files/scopes`).send(
-        true
-      )) ?? {};
+      (await http
+        .Get<ItemsResponse<FileManagerScope>>(`/projects/${projectId}/files/scopes`)
+        .send(true)) ?? {};
     return extractItems<FileManagerScope>(payload);
   },
 
@@ -82,9 +82,9 @@ export const fileManagerApi = {
     params.set('path', path);
     const payload =
       (await http
-        .Get<ItemResponse<FileManagerListResult>>(
-          `/projects/${projectId}/files/list?${params.toString()}`
-        )
+        .Get<
+          ItemResponse<FileManagerListResult>
+        >(`/projects/${projectId}/files/list?${params.toString()}`)
         .send(true)) ?? {};
     const item = extractItem<FileManagerListResult>(payload);
     if (!item) {
@@ -93,15 +93,19 @@ export const fileManagerApi = {
     return item;
   },
 
-  async preview(projectId: string, scopeId: string, path: string): Promise<FileManagerPreviewResult> {
+  async preview(
+    projectId: string,
+    scopeId: string,
+    path: string
+  ): Promise<FileManagerPreviewResult> {
     const params = new URLSearchParams();
     params.set('scopeId', scopeId);
     params.set('path', path);
     const payload =
       (await http
-        .Get<ItemResponse<FileManagerPreviewResult>>(
-          `/projects/${projectId}/files/preview?${params.toString()}`
-        )
+        .Get<
+          ItemResponse<FileManagerPreviewResult>
+        >(`/projects/${projectId}/files/preview?${params.toString()}`)
         .send(true)) ?? {};
     const item = extractItem<FileManagerPreviewResult>(payload);
     if (!item) {
@@ -110,7 +114,12 @@ export const fileManagerApi = {
     return item;
   },
 
-  buildContentUrl(projectId: string, scopeId: string, path: string, disposition: 'inline' | 'attachment') {
+  buildContentUrl(
+    projectId: string,
+    scopeId: string,
+    path: string,
+    disposition: 'inline' | 'attachment'
+  ) {
     const params = new URLSearchParams();
     params.set('scopeId', scopeId);
     params.set('path', path);
@@ -222,12 +231,15 @@ export const fileManagerApi = {
   ) {
     const payload =
       (await http
-        .Post<ItemResponse<FileManagerUploadSession>>(`/projects/${projectId}/files/upload-sessions`, {
-          scopeId,
-          directoryPath,
-          fileName,
-          size,
-        })
+        .Post<ItemResponse<FileManagerUploadSession>>(
+          `/projects/${projectId}/files/upload-sessions`,
+          {
+            scopeId,
+            directoryPath,
+            fileName,
+            size,
+          }
+        )
         .send()) ?? {};
     const item = extractItem<FileManagerUploadSession>(payload);
     if (!item) {
@@ -239,9 +251,9 @@ export const fileManagerApi = {
   async getUploadSession(projectId: string, uploadId: string) {
     const payload =
       (await http
-        .Get<ItemResponse<FileManagerUploadSession>>(
-          `/projects/${projectId}/files/upload-sessions/${uploadId}`
-        )
+        .Get<
+          ItemResponse<FileManagerUploadSession>
+        >(`/projects/${projectId}/files/upload-sessions/${uploadId}`)
         .send(true)) ?? {};
     const item = extractItem<FileManagerUploadSession>(payload);
     if (!item) {
@@ -263,7 +275,9 @@ export const fileManagerApi = {
   ) {
     return new Promise<FileManagerUploadSession>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
-      const targetUrl = resolveUrl(`/api/v1/projects/${projectId}/files/upload-sessions/${uploadId}`);
+      const targetUrl = resolveUrl(
+        `/api/v1/projects/${projectId}/files/upload-sessions/${uploadId}`
+      );
 
       options?.onXhr?.(xhr);
       xhr.open('PATCH', targetUrl, true);
@@ -305,10 +319,12 @@ export const fileManagerApi = {
       xhr.onload = () => {
         const payload = parseJSONPayload(xhr);
         if (xhr.status < 200 || xhr.status >= 300) {
-          reject(new Error(normalizeJsonError(payload, `upload failed with status ${xhr.status}`)));
+          reject(new ApiError(xhr.status, xhr.statusText || 'Upload failed', payload));
           return;
         }
-        const item = extractItem<FileManagerUploadSession>(payload as ItemResponse<FileManagerUploadSession>);
+        const item = extractItem<FileManagerUploadSession>(
+          payload as ItemResponse<FileManagerUploadSession>
+        );
         if (!item?.uploadId) {
           reject(new Error('upload chunk succeeded but response is invalid'));
           return;
@@ -323,10 +339,9 @@ export const fileManagerApi = {
   async completeUpload(projectId: string, uploadId: string) {
     const payload =
       (await http
-        .Post<ItemResponse<FileManagerEntry>>(
-          `/projects/${projectId}/files/upload-sessions/${uploadId}/complete`,
-          {}
-        )
+        .Post<
+          ItemResponse<FileManagerEntry>
+        >(`/projects/${projectId}/files/upload-sessions/${uploadId}/complete`, {})
         .send()) ?? {};
     const item = extractItem<FileManagerEntry>(payload);
     if (!item) {

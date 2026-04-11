@@ -84,6 +84,7 @@ export default {
     pause: '暂停',
     resume: '继续',
     retry: '重试',
+    autoRetryProgress: '重试中 {attempt}/{max}',
     folderLabel: '文件夹',
     symlinkLabel: '符号链接',
     currentDirectory: '当前目录',

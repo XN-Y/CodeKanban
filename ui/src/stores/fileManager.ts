@@ -14,6 +14,7 @@ type UploadRuntime = {
   directoryPath: string;
   uploadId?: string;
   xhr?: XMLHttpRequest | null;
+  retryController?: AbortController | null;
   pauseRequested: boolean;
   cancelRequested: boolean;
   lastSampleAt: number;
@@ -34,6 +35,8 @@ type TransferRuntime = UploadRuntime | DownloadRuntime;
 
 const UPLOAD_CONCURRENCY = 2;
 const DOWNLOAD_CONCURRENCY = 2;
+const UPLOAD_RETRY_LIMIT = 3;
+const UPLOAD_RETRY_DELAY_MS = 1000;
 
 function makeScopePathKey(projectId: string, scopeId: string) {
   return `${projectId}:${scopeId}`;
@@ -45,6 +48,43 @@ function createTaskID() {
 
 function isAbortError(error: unknown) {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function createAbortError(message: string) {
+  try {
+    return new DOMException(message, 'AbortError');
+  } catch {
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+  }
+}
+
+function waitForDelay(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = globalThis.setTimeout(() => {
+      signal?.removeEventListener('abort', handleAbort);
+      resolve();
+    }, ms);
+
+    const handleAbort = () => {
+      globalThis.clearTimeout(timer);
+      signal?.removeEventListener('abort', handleAbort);
+      reject(createAbortError('upload retry aborted'));
+    };
+
+    if (signal) {
+      if (signal.aborted) {
+        handleAbort();
+        return;
+      }
+      signal.addEventListener('abort', handleAbort, { once: true });
+    }
+  });
+}
+
+function isUploadSessionMissingError(error: unknown) {
+  return error instanceof Error && error.message === 'upload session not found';
 }
 
 export const useFileManagerStore = defineStore('fileManager', () => {
@@ -125,6 +165,10 @@ export const useFileManagerStore = defineStore('fileManager', () => {
       return transferTasks.value;
     }
     return transferTasks.value.filter(task => task.projectId === projectId);
+  }
+
+  function getTaskByID(taskId: string) {
+    return transferTasks.value.find(task => task.id === taskId) ?? null;
   }
 
   function updateTask(taskId: string, patch: Partial<FileTransferTask>) {
@@ -208,7 +252,11 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     setProjectError(projectId, '');
     try {
       await ensureScopes(projectId);
-      const scope = chooseScope(projectId, options?.preferredWorktreeId ?? undefined, options?.scopeId);
+      const scope = chooseScope(
+        projectId,
+        options?.preferredWorktreeId ?? undefined,
+        options?.scopeId
+      );
       if (!scope) {
         setCurrentList(projectId, null);
         return null;
@@ -237,7 +285,12 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     });
   }
 
-  async function createDirectory(projectId: string, scopeId: string, parentPath: string, name: string) {
+  async function createDirectory(
+    projectId: string,
+    scopeId: string,
+    parentPath: string,
+    name: string
+  ) {
     await fileManagerApi.createDirectory(projectId, scopeId, parentPath, name);
     await refreshProject(projectId);
   }
@@ -302,6 +355,136 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     });
   }
 
+  function isUploadLikelyComplete(taskId: string, runtime: UploadRuntime) {
+    const task = getTaskByID(taskId);
+    const loaded = Math.max(task?.loaded ?? 0, runtime.lastSampleLoaded, 0);
+    return runtime.file.size > 0 && loaded >= runtime.file.size;
+  }
+
+  async function didUploadedFileReachTarget(
+    task: FileTransferTask,
+    runtime: UploadRuntime
+  ): Promise<boolean> {
+    try {
+      const list = await fileManagerApi.list(task.projectId, task.scopeId, runtime.directoryPath);
+      return list.entries.some(
+        entry =>
+          entry.kind === 'file' &&
+          entry.name === runtime.file.name &&
+          entry.size === runtime.file.size
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  async function shouldTreatUploadAsCompleted(
+    taskId: string,
+    task: FileTransferTask,
+    runtime: UploadRuntime,
+    error: unknown
+  ) {
+    if (isAbortError(error) || !isUploadLikelyComplete(taskId, runtime)) {
+      return false;
+    }
+    return didUploadedFileReachTarget(task, runtime);
+  }
+
+  async function createOrResumeUploadSession(
+    taskId: string,
+    task: FileTransferTask,
+    runtime: UploadRuntime
+  ) {
+    if (runtime.uploadId) {
+      try {
+        return await fileManagerApi.getUploadSession(task.projectId, runtime.uploadId);
+      } catch (error) {
+        if (!isUploadSessionMissingError(error) || isUploadLikelyComplete(taskId, runtime)) {
+          throw error;
+        }
+        runtime.uploadId = undefined;
+      }
+    }
+
+    const session = await fileManagerApi.createUploadSession(
+      task.projectId,
+      task.scopeId,
+      runtime.directoryPath,
+      runtime.file.name,
+      runtime.file.size
+    );
+    runtime.uploadId = session.uploadId;
+    return session;
+  }
+
+  async function runUploadAttempt(taskId: string, task: FileTransferTask, runtime: UploadRuntime) {
+    let session = await createOrResumeUploadSession(taskId, task, runtime);
+    runtime.uploadId = session.uploadId;
+    runtime.lastSampleAt = Date.now();
+    runtime.lastSampleLoaded = session.offset;
+    updateTransferMetrics(taskId, session.offset, session.size);
+
+    while (session.offset < session.size) {
+      if (runtime.pauseRequested || runtime.cancelRequested) {
+        throw createAbortError('upload aborted');
+      }
+      const nextEnd = Math.min(session.offset + session.chunkSize, runtime.file.size);
+      const chunk = runtime.file.slice(session.offset, nextEnd);
+      try {
+        session = await fileManagerApi.uploadChunk(
+          task.projectId,
+          session.uploadId,
+          session.offset,
+          chunk,
+          {
+            total: session.size,
+            onProgress: payload => {
+              updateTransferMetrics(taskId, payload.loaded, payload.total);
+            },
+            onXhr: xhr => {
+              runtime.xhr = xhr;
+            },
+          }
+        );
+      } finally {
+        runtime.xhr = null;
+      }
+      updateTransferMetrics(taskId, session.offset, session.size);
+    }
+
+    await fileManagerApi.completeUpload(task.projectId, session.uploadId);
+  }
+
+  async function finalizeUploadSuccess(
+    taskId: string,
+    task: FileTransferTask,
+    runtime: UploadRuntime
+  ) {
+    runtime.xhr = null;
+    runtime.retryController = null;
+    runtime.uploadId = undefined;
+    updateTask(taskId, {
+      status: 'completed',
+      loaded: task.total ?? runtime.file.size,
+      progress: 100,
+      speed: 0,
+      error: '',
+      retryAttempt: undefined,
+      retryMaxAttempts: undefined,
+    });
+
+    const currentList = getList(task.projectId);
+    if (
+      currentList &&
+      currentList.scope.id === task.scopeId &&
+      currentList.currentPath === runtime.directoryPath
+    ) {
+      try {
+        await refreshProject(task.projectId);
+      } catch {}
+    }
+  }
+
   async function enqueueUploads(
     projectId: string,
     scopeId: string,
@@ -330,6 +513,7 @@ export const useFileManagerStore = defineStore('fileManager', () => {
           kind: 'upload',
           file,
           directoryPath,
+          retryController: null,
           pauseRequested: false,
           cancelRequested: false,
           lastSampleAt: Date.now(),
@@ -430,7 +614,7 @@ export const useFileManagerStore = defineStore('fileManager', () => {
 
   async function runUploadTask(taskId: string) {
     const runtime = runtimes.get(taskId);
-    const task = transferTasks.value.find(item => item.id === taskId);
+    const task = getTaskByID(taskId);
     if (!runtime || runtime.kind !== 'upload' || !task) {
       return;
     }
@@ -438,88 +622,81 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     updateTask(taskId, {
       status: 'running',
       error: '',
+      retryAttempt: undefined,
+      retryMaxAttempts: undefined,
     });
 
     try {
-      let session = runtime.uploadId
-        ? await fileManagerApi.getUploadSession(task.projectId, runtime.uploadId)
-        : await fileManagerApi.createUploadSession(
-            task.projectId,
-            task.scopeId,
-            runtime.directoryPath,
-            runtime.file.name,
-            runtime.file.size
-          );
-      runtime.uploadId = session.uploadId;
-      runtime.lastSampleAt = Date.now();
-      runtime.lastSampleLoaded = session.offset;
-      updateTransferMetrics(taskId, session.offset, session.size);
+      let retryAttempt = 0;
 
-      while (session.offset < session.size) {
-        if (runtime.pauseRequested || runtime.cancelRequested) {
-          return;
-        }
-        const nextEnd = Math.min(session.offset + session.chunkSize, runtime.file.size);
-        const chunk = runtime.file.slice(session.offset, nextEnd);
-        session = await fileManagerApi.uploadChunk(task.projectId, session.uploadId, session.offset, chunk, {
-          total: session.size,
-          onProgress: payload => {
-            updateTransferMetrics(taskId, payload.loaded, payload.total);
-          },
-          onXhr: xhr => {
-            runtime.xhr = xhr;
-          },
-        });
-        runtime.xhr = null;
-        updateTransferMetrics(taskId, session.offset, session.size);
-      }
-
-      await fileManagerApi.completeUpload(task.projectId, session.uploadId);
-      updateTask(taskId, {
-        status: 'completed',
-        loaded: task.total ?? runtime.file.size,
-        progress: 100,
-        speed: 0,
-      });
-
-      const currentList = getList(task.projectId);
-      if (
-        currentList &&
-        currentList.scope.id === task.scopeId &&
-        currentList.currentPath === runtime.directoryPath
-      ) {
-        await refreshProject(task.projectId);
-      }
-    } catch (error) {
-      runtime.xhr = null;
-      if (isAbortError(error) && runtime.pauseRequested) {
-        updateTask(taskId, {
-          status: 'paused',
-          speed: 0,
-        });
-        return;
-      }
-      if (isAbortError(error) && runtime.cancelRequested) {
+      while (true) {
         try {
-          if (runtime.uploadId) {
-            await fileManagerApi.cancelUpload(task.projectId, runtime.uploadId);
+          await runUploadAttempt(taskId, task, runtime);
+          await finalizeUploadSuccess(taskId, task, runtime);
+          return;
+        } catch (error) {
+          runtime.xhr = null;
+          runtime.retryController = null;
+
+          if (isAbortError(error) && runtime.pauseRequested) {
+            updateTask(taskId, {
+              status: 'paused',
+              speed: 0,
+              retryAttempt: undefined,
+              retryMaxAttempts: undefined,
+            });
+            return;
           }
-        } catch {}
-        updateTask(taskId, {
-          status: 'canceled',
-          speed: 0,
-        });
-        return;
+          if (isAbortError(error) && runtime.cancelRequested) {
+            try {
+              if (runtime.uploadId) {
+                await fileManagerApi.cancelUpload(task.projectId, runtime.uploadId);
+              }
+            } catch {}
+            runtime.uploadId = undefined;
+            updateTask(taskId, {
+              status: 'canceled',
+              speed: 0,
+              retryAttempt: undefined,
+              retryMaxAttempts: undefined,
+            });
+            return;
+          }
+          if (await shouldTreatUploadAsCompleted(taskId, task, runtime, error)) {
+            await finalizeUploadSuccess(taskId, task, runtime);
+            return;
+          }
+          if (retryAttempt >= UPLOAD_RETRY_LIMIT) {
+            updateTask(taskId, {
+              status: 'failed',
+              error: error instanceof Error ? error.message : 'Upload failed',
+              speed: 0,
+              retryAttempt: undefined,
+              retryMaxAttempts: undefined,
+            });
+            return;
+          }
+
+          retryAttempt += 1;
+          updateTask(taskId, {
+            status: 'running',
+            error: '',
+            speed: 0,
+            retryAttempt,
+            retryMaxAttempts: UPLOAD_RETRY_LIMIT,
+          });
+          runtime.lastSampleAt = Date.now();
+          runtime.lastSampleLoaded = getTaskByID(taskId)?.loaded ?? runtime.lastSampleLoaded;
+          runtime.retryController = new AbortController();
+          try {
+            await waitForDelay(UPLOAD_RETRY_DELAY_MS, runtime.retryController.signal);
+          } finally {
+            runtime.retryController = null;
+          }
+        }
       }
-      updateTask(taskId, {
-        status: 'failed',
-        error: error instanceof Error ? error.message : 'Upload failed',
-        speed: 0,
-      });
     } finally {
-      if (runtime.cancelRequested && runtime.uploadId) {
-        runtimes.delete(taskId);
-      }
+      runtime.retryController = null;
       void pumpUploads();
     }
   }
@@ -571,8 +748,8 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     uploadPumpActive = true;
     try {
       while (
-        transferTasks.value.filter(task => task.direction === 'upload' && task.status === 'running').length <
-        UPLOAD_CONCURRENCY
+        transferTasks.value.filter(task => task.direction === 'upload' && task.status === 'running')
+          .length < UPLOAD_CONCURRENCY
       ) {
         const nextTask = transferTasks.value.find(
           task => task.direction === 'upload' && task.status === 'queued'
@@ -594,8 +771,9 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     downloadPumpActive = true;
     try {
       while (
-        transferTasks.value.filter(task => task.direction === 'download' && task.status === 'running').length <
-        DOWNLOAD_CONCURRENCY
+        transferTasks.value.filter(
+          task => task.direction === 'download' && task.status === 'running'
+        ).length < DOWNLOAD_CONCURRENCY
       ) {
         const nextTask = transferTasks.value.find(
           task => task.direction === 'download' && task.status === 'queued'
@@ -617,7 +795,12 @@ export const useFileManagerStore = defineStore('fileManager', () => {
       return;
     }
     if (task.status === 'queued') {
-      updateTask(taskId, { status: 'paused', speed: 0 });
+      updateTask(taskId, {
+        status: 'paused',
+        speed: 0,
+        retryAttempt: undefined,
+        retryMaxAttempts: undefined,
+      });
       return;
     }
     if (task.status !== 'running') {
@@ -625,6 +808,7 @@ export const useFileManagerStore = defineStore('fileManager', () => {
     }
     runtime.pauseRequested = true;
     runtime.cancelRequested = false;
+    runtime.retryController?.abort();
     runtime.xhr?.abort();
   }
 
@@ -643,6 +827,8 @@ export const useFileManagerStore = defineStore('fileManager', () => {
       status: 'queued',
       speed: 0,
       error: '',
+      retryAttempt: undefined,
+      retryMaxAttempts: undefined,
     });
     if (runtime.kind === 'upload') {
       void pumpUploads();
@@ -669,6 +855,8 @@ export const useFileManagerStore = defineStore('fileManager', () => {
       status: 'queued',
       error: '',
       speed: 0,
+      retryAttempt: undefined,
+      retryMaxAttempts: undefined,
     });
     if (runtime.kind === 'upload') {
       void pumpUploads();
@@ -697,13 +885,17 @@ export const useFileManagerStore = defineStore('fileManager', () => {
               await fileManagerApi.cancelUpload(task.projectId, runtime.uploadId);
             }
           } catch {}
+          runtime.uploadId = undefined;
           updateTask(taskId, {
             status: 'canceled',
             speed: 0,
+            retryAttempt: undefined,
+            retryMaxAttempts: undefined,
           });
         })();
         return;
       }
+      runtime.retryController?.abort();
       runtime.xhr?.abort();
       return;
     }
@@ -712,6 +904,8 @@ export const useFileManagerStore = defineStore('fileManager', () => {
       updateTask(taskId, {
         status: 'canceled',
         speed: 0,
+        retryAttempt: undefined,
+        retryMaxAttempts: undefined,
       });
       return;
     }

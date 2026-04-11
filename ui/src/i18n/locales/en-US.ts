@@ -84,6 +84,7 @@ export default {
     pause: 'Pause',
     resume: 'Resume',
     retry: 'Retry',
+    autoRetryProgress: 'Retrying {attempt}/{max}',
     folderLabel: 'Folder',
     symlinkLabel: 'Symlink',
     currentDirectory: 'Current Directory',

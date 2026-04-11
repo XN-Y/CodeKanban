@@ -111,6 +111,8 @@ export interface FileTransferTask {
   progress: number | null;
   speed: number;
   error?: string;
+  retryAttempt?: number;
+  retryMaxAttempts?: number;
   createdAt: number;
   updatedAt: number;
 }
