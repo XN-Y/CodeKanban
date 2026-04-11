@@ -36,24 +36,34 @@
               </n-button>
             </n-dropdown>
           </n-button-group>
-          <n-tooltip trigger="hover" placement="bottom">
+          <n-popover trigger="hover" placement="bottom" :disabled="!refreshDisabledReason">
             <template #trigger>
-              <n-button
-                text
-                size="tiny"
-                @click.stop="emit('refresh', worktree.id)"
-                class="action-button"
+              <n-tooltip
+                trigger="hover"
+                placement="bottom"
+                :disabled="Boolean(refreshDisabledReason)"
               >
-                <n-icon :size="14"><RefreshOutline /></n-icon>
-              </n-button>
+                <template #trigger>
+                  <n-button
+                    text
+                    size="tiny"
+                    :disabled="!canRefresh"
+                    @click.stop="emit('refresh', worktree.id)"
+                    class="action-button"
+                  >
+                    <n-icon :size="14"><RefreshOutline /></n-icon>
+                  </n-button>
+                </template>
+                <div>
+                  <div>{{ t('worktree.refreshStatus') }}</div>
+                  <div style="font-size: 12px; opacity: 0.7">
+                    {{ formatRefreshTime(worktree.statusUpdatedAt) }}
+                  </div>
+                </div>
+              </n-tooltip>
             </template>
-            <div>
-              <div>{{ t('worktree.refreshStatus') }}</div>
-              <div style="font-size: 12px; opacity: 0.7">
-                {{ formatRefreshTime(worktree.statusUpdatedAt) }}
-              </div>
-            </div>
-          </n-tooltip>
+            <span>{{ refreshDisabledReason }}</span>
+          </n-popover>
           <n-tooltip trigger="hover" placement="bottom">
             <template #trigger>
               <n-button
@@ -188,9 +198,11 @@ const props = withDefaults(
   defineProps<{
     worktree: Worktree;
     selected?: boolean;
+    canRefresh?: boolean;
     canSync?: boolean;
     canMerge?: boolean;
     canCommit?: boolean;
+    refreshDisabledReason?: string;
     syncDisabledReason?: string;
     mergeDisabledReason?: string;
     commitDisabledReason?: string;
@@ -201,6 +213,8 @@ const props = withDefaults(
   {
     defaultEditor: DEFAULT_EDITOR,
     editorOptions: () => EDITOR_OPTIONS.map(option => ({ ...option })),
+    canRefresh: true,
+    refreshDisabledReason: '',
     syncDisabledReason: '',
     mergeDisabledReason: '',
     commitDisabledReason: '',

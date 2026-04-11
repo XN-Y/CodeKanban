@@ -183,6 +183,8 @@ export default {
     refreshFailed: '刷新失败',
     loadProjectFailed: '加载项目失败',
     fetchBranchesFailed: '获取分支失败',
+    notGitRepoShort: '当前项目不是 Git 仓库',
+    notGitRepoDetails: '分支管理仅适用于 Git 项目。',
     commitMessageRequired: '请输入提交信息',
     // Branch List Item
     remote: '远程',
@@ -322,6 +324,8 @@ export default {
     noWorktrees: '暂无 Worktree',
     featureUnavailable: 'Worktree 功能不可用',
     notGitRepo: '当前项目目录不是 Git 仓库，无法创建或刷新 Worktree；仍可使用任务等其他功能。',
+    notGitRepoShort: '当前项目不是 Git 仓库',
+    notGitRepoDetails: '分支与 Worktree 不可用，但任务、终端等功能仍可使用。',
     openInEditor: '在编辑器中打开',
     openInExplorer: '在文件管理器中打开',
     openInExplorer2: '打开文件管理器',
@@ -345,6 +349,7 @@ export default {
     createFailed: '创建失败',
     // Refresh messages
     notGitRepoCannotRefresh: '当前项目不是 Git 仓库，无法刷新 Worktree 状态',
+    refreshDisabledGit: '仅 Git 项目支持刷新状态',
     allWorktreesRefreshed: '已刷新所有 Worktree 状态',
     statusRefreshed: '状态已刷新',
     // Delete messages
@@ -378,6 +383,7 @@ export default {
     conflictFiles: '冲突文件：{files}',
     hasConflictsManual: '存在冲突，请手动处理',
     rebaseDescription: '将在 Worktree「{branch}」中执行 rebase，来源分支：{source}',
+    mergeDisabledGit: '仅 Git 项目支持合并',
     // Disabled reasons
     actionDisabledGeneric: '当前操作不可用，请检查 Worktree 状态后重试。',
     rebaseDisabledNoDefault: '请先在项目设置中配置默认分支，再执行 Rebase。',
@@ -1036,7 +1042,8 @@ export default {
     warm: '暖色',
     presetTheme: '预设主题',
     followSystem: '跟随系统主题',
-    followSystemHint: '默认等同关闭，仅表示未显式设置；选择“是”后将根据系统深色/浅色模式自动切换主题',
+    followSystemHint:
+      '默认等同关闭，仅表示未显式设置；选择“是”后将根据系统深色/浅色模式自动切换主题',
     maintenanceWarningTitle: '主题警告',
     maintenanceWarningPreset:
       '除默认亮色主题外，其余主题均缺乏维护，视觉效果不稳定。是否继续切换？',

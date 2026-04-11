@@ -7,7 +7,7 @@
           <n-button
             text
             size="small"
-            :disabled="!projectStore.currentProject"
+            :disabled="!projectStore.currentProject || !gitFeaturesAvailable"
             @click="goToBranchManagement"
           >
             <template #icon>
@@ -40,14 +40,18 @@
       </n-space>
     </div>
 
-    <n-alert
-      v-if="showGitWarning"
-      type="warning"
-      class="git-warning"
-      :title="t('worktree.featureUnavailable')"
-      :show-icon="false"
-    >
-      {{ t('worktree.notGitRepo') }}
+    <n-alert v-if="showGitWarning" type="warning" class="git-warning" :show-icon="false">
+      <n-space align="center" size="small">
+        <span>{{ t('worktree.notGitRepoShort') }}</span>
+        <n-popover trigger="hover" placement="bottom-start">
+          <template #trigger>
+            <n-button text circle size="tiny" class="git-warning__details-btn">
+              <n-icon :size="16"><InformationCircleOutline /></n-icon>
+            </n-button>
+          </template>
+          <span>{{ t('worktree.notGitRepoDetails') }}</span>
+        </n-popover>
+      </n-space>
     </n-alert>
 
     <n-scrollbar class="worktree-scrollbar">
@@ -57,9 +61,11 @@
           :key="worktree.id"
           :worktree="worktree"
           :selected="projectStore.selectedWorktreeId === worktree.id"
+          :can-refresh="gitFeaturesAvailable"
           :can-sync="canSyncWorktree(worktree)"
           :can-merge="canMergeWorktree(worktree)"
           :can-commit="canCommitWorktree(worktree)"
+          :refresh-disabled-reason="gitFeaturesAvailable ? '' : t('worktree.refreshDisabledGit')"
           :sync-disabled-reason="getSyncDisabledReason(worktree)"
           :merge-disabled-reason="getMergeDisabledReason(worktree)"
           :commit-disabled-reason="getCommitDisabledReason(worktree)"
@@ -188,7 +194,12 @@ import { computed, reactive, ref, watch } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useRouter } from 'vue-router';
 import { useDialog, useMessage } from 'naive-ui';
-import { AddOutline, GitBranchOutline, RefreshOutline } from '@vicons/ionicons5';
+import {
+  AddOutline,
+  GitBranchOutline,
+  InformationCircleOutline,
+  RefreshOutline,
+} from '@vicons/ionicons5';
 import WorktreeCard from './WorktreeCard.vue';
 import WorktreeCreateDialog from './WorktreeCreateDialog.vue';
 import { useProjectStore } from '@/stores/project';
@@ -200,6 +211,7 @@ import { extractItem } from '@/api/response';
 import type { BranchListResult, MergeResult, Worktree } from '@/types/models';
 import type { EditorPreference } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, EDITOR_LABEL_MAP } from '@/constants/editor';
+import { projectSupportsGit } from '@/utils/projectGitCapability';
 
 const emit = defineEmits<{
   'open-terminal': [payload: Worktree];
@@ -244,18 +256,11 @@ const defaultBranch = computed(() => projectStore.currentProject?.defaultBranch 
 const mainWorktree = computed(
   () => projectStore.worktrees.find(worktree => worktree.isMain) ?? null
 );
-const hasMainWorktree = computed(() => Boolean(mainWorktree.value));
-const gitFeaturesAvailable = computed(() => {
-  if (!projectStore.currentProject) {
-    return false;
-  }
-  if (projectStore.loading) {
-    return true;
-  }
-  return hasMainWorktree.value;
-});
+const gitFeaturesAvailable = computed(() =>
+  projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+);
 const showGitWarning = computed(
-  () => Boolean(projectStore.currentProject) && !projectStore.loading && !hasMainWorktree.value
+  () => Boolean(projectStore.currentProject) && !projectStore.loading && !gitFeaturesAvailable.value
 );
 
 // 判断worktree是否有未提交的更改
@@ -272,6 +277,7 @@ function canSyncWorktree(worktree: Worktree): boolean {
   // 需要有默认分支，worktree是干净的，且当前分支不是默认分支
   // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
   return (
+    gitFeaturesAvailable.value &&
     Boolean(defaultBranch.value) &&
     !hasTrackedChanges(worktree) &&
     worktree.branchName !== defaultBranch.value
@@ -283,6 +289,7 @@ function canMergeWorktree(worktree: Worktree): boolean {
   // 需要有主worktree，worktree是干净的，且当前分支不是默认分支
   // 注意：isMain 是指主worktree（项目根目录），不是main分支，所以要用 branchName 判断
   return (
+    gitFeaturesAvailable.value &&
     Boolean(mainWorktree.value) &&
     !hasTrackedChanges(worktree) &&
     worktree.branchName !== defaultBranch.value
@@ -299,6 +306,9 @@ function getSyncDisabledReason(worktree: Worktree): string {
   if (canSyncWorktree(worktree)) {
     return '';
   }
+  if (!gitFeaturesAvailable.value) {
+    return t('worktree.notGitRepoShort');
+  }
   if (!defaultBranch.value) {
     return t('worktree.rebaseDisabledNoDefault');
   }
@@ -314,6 +324,9 @@ function getSyncDisabledReason(worktree: Worktree): string {
 function getMergeDisabledReason(worktree: Worktree): string {
   if (canMergeWorktree(worktree)) {
     return '';
+  }
+  if (!gitFeaturesAvailable.value) {
+    return t('worktree.mergeDisabledGit');
   }
   if (!mainWorktree.value) {
     return t('worktree.mergeDisabledNoMainWorktree');
@@ -415,13 +428,15 @@ const mergeTargetOptions = computed(() =>
 );
 
 watch(
-  () => projectStore.currentProject?.id,
-  id => {
-    if (id) {
-      branchListReq.send(id);
-    } else {
-      branchListReq.data.value = undefined as any;
+  [() => projectStore.currentProject?.id, gitFeaturesAvailable],
+  ([id, gitEnabled]) => {
+    if (id && gitEnabled) {
+      void branchListReq.send(id).catch(() => {
+        branchListReq.data.value = undefined as any;
+      });
+      return;
     }
+    branchListReq.data.value = undefined as any;
   },
   { immediate: true }
 );
@@ -631,6 +646,10 @@ function handleSelectWorktree(worktreeId: string) {
 function goToBranchManagement() {
   if (!projectStore.currentProject) {
     message.warning(t('project.selectProjectFirst'));
+    return;
+  }
+  if (!gitFeaturesAvailable.value) {
+    message.warning(t('worktree.notGitRepoShort'));
     return;
   }
   router.push({ name: 'project-branches', params: { id: projectStore.currentProject.id } });
@@ -937,7 +956,7 @@ h3 {
 }
 
 .git-warning {
-  margin: 8px 16px;
+  margin: 8px;
 }
 
 .worktree-empty {

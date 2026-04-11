@@ -22,7 +22,7 @@
           <LanguageSwitcher />
           <n-button
             quaternary
-            :disabled="!currentProjectId"
+            :disabled="!currentProjectId || !gitFeaturesAvailable"
             :loading="projectStore.loading"
             @click="reloadBranches(true)"
           >
@@ -31,7 +31,11 @@
             </template>
             {{ t('branch.refresh') }}
           </n-button>
-          <n-button type="primary" :disabled="!currentProjectId" @click="openCreateModal()">
+          <n-button
+            type="primary"
+            :disabled="!currentProjectId || !gitFeaturesAvailable"
+            @click="openCreateModal()"
+          >
             <template #icon>
               <n-icon><AddOutline /></n-icon>
             </template>
@@ -41,7 +45,7 @@
       </template>
     </n-page-header>
 
-    <n-space class="branch-toolbar" align="center">
+    <n-space v-if="gitFeaturesAvailable || !currentProjectId" class="branch-toolbar" align="center">
       <n-input
         ref="searchInputRef"
         v-model:value="searchInput"
@@ -69,8 +73,22 @@
       {{ branchError }}
     </n-alert>
 
+    <n-alert v-if="showGitWarning" type="warning" class="branch-alert" :show-icon="false">
+      <n-space align="center" size="small">
+        <span>{{ t('branch.notGitRepoShort') }}</span>
+        <n-popover trigger="hover" placement="bottom-start">
+          <template #trigger>
+            <n-button text circle size="tiny">
+              <n-icon><InformationCircleOutline /></n-icon>
+            </n-button>
+          </template>
+          <span>{{ t('branch.notGitRepoDetails') }}</span>
+        </n-popover>
+      </n-space>
+    </n-alert>
+
     <n-spin :show="branchLoading">
-      <n-grid cols="24" x-gap="16" y-gap="16">
+      <n-grid v-if="gitFeaturesAvailable || !currentProjectId" cols="24" x-gap="16" y-gap="16">
         <n-gi :span="24" :lg="12">
           <n-card :title="t('branch.localBranches')">
             <template #header-extra>
@@ -307,7 +325,13 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useDialog, useMessage, type FormInst, type FormRules, type InputInst } from 'naive-ui';
-import { AddOutline, ChevronBackOutline, RefreshOutline, SearchOutline } from '@vicons/ionicons5';
+import {
+  AddOutline,
+  ChevronBackOutline,
+  InformationCircleOutline,
+  RefreshOutline,
+  SearchOutline,
+} from '@vicons/ionicons5';
 import type { BranchInfo, BranchListResult, MergeResult } from '@/types/models';
 import { useProjectStore } from '@/stores/project';
 import { useLocale } from '@/composables/useLocale';
@@ -318,6 +342,7 @@ import { useReq } from '@/api/composable';
 import { extractItem } from '@/api/response';
 import BranchListItem from '@/components/branch/BranchListItem.vue';
 import { useHotkeys } from '@/composables/useHotkeys';
+import { projectSupportsGit } from '@/utils/projectGitCapability';
 
 const route = useRoute();
 const router = useRouter();
@@ -333,6 +358,12 @@ const pageHeading = computed(() =>
   projectStore.currentProject
     ? `${projectStore.currentProject.name} · ${t('branch.title')}`
     : t('branch.title')
+);
+const gitFeaturesAvailable = computed(() =>
+  projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+);
+const showGitWarning = computed(
+  () => Boolean(projectStore.currentProject) && !projectStore.loading && !gitFeaturesAvailable.value
 );
 
 const branchListReq = useReq(
@@ -470,6 +501,11 @@ async function initializeProject(id: string) {
   try {
     await projectStore.fetchProject(id);
     createForm.base = projectStore.currentProject?.defaultBranch ?? '';
+    if (!gitFeaturesAvailable.value) {
+      branchError.value = null;
+      branchListReq.data.value = undefined as never;
+      return;
+    }
     await reloadBranches(true);
   } catch (error: any) {
     branchError.value = error?.message ?? t('branch.loadProjectFailed');
@@ -477,7 +513,9 @@ async function initializeProject(id: string) {
 }
 
 async function reloadBranches(force = false) {
-  if (!currentProjectId.value) {
+  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+    branchError.value = null;
+    branchListReq.data.value = undefined as never;
     return;
   }
   branchError.value = null;
@@ -558,7 +596,8 @@ function closeCreateModal() {
 }
 
 async function submitCreateBranch() {
-  if (!currentProjectId.value) {
+  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+    message.warning(t('branch.notGitRepoShort'));
     return;
   }
   try {
@@ -589,7 +628,8 @@ function handleCheckoutRemote(branch: BranchInfo) {
 }
 
 async function handleDeleteBranch(branch: BranchInfo) {
-  if (!currentProjectId.value) {
+  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+    message.warning(t('branch.notGitRepoShort'));
     return;
   }
   const requiresForce = Boolean(branch.hasWorktree);
@@ -614,7 +654,8 @@ async function handleDeleteBranch(branch: BranchInfo) {
 }
 
 async function handleCreateWorktree(branch: BranchInfo) {
-  if (!currentProjectId.value) {
+  if (!currentProjectId.value || !gitFeaturesAvailable.value) {
+    message.warning(t('branch.notGitRepoShort'));
     return;
   }
   try {
@@ -645,6 +686,10 @@ function handleOpenWorktree(branch: BranchInfo) {
 }
 
 async function submitMerge() {
+  if (!gitFeaturesAvailable.value) {
+    message.warning(t('branch.notGitRepoShort'));
+    return;
+  }
   const worktreeId = mergeForm.worktreeId;
   const targetBranch = mergeForm.targetBranch.trim();
   const sourceBranch = mergeForm.sourceBranch;
@@ -708,6 +753,10 @@ async function submitMerge() {
 }
 
 async function refreshMergeStatus() {
+  if (!gitFeaturesAvailable.value) {
+    message.warning(t('branch.notGitRepoShort'));
+    return;
+  }
   if (!mergeForm.worktreeId) {
     return;
   }
@@ -724,7 +773,10 @@ async function refreshMergeStatus() {
 }
 
 const canMerge = computed(
-  () => projectStore.worktrees.length > 0 && branchList.value.local.length > 1
+  () =>
+    gitFeaturesAvailable.value &&
+    projectStore.worktrees.length > 0 &&
+    branchList.value.local.length > 1
 );
 
 const canExecuteMerge = computed(() => {

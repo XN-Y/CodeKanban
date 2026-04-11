@@ -37,6 +37,19 @@ func TestDetectRepository(t *testing.T) {
 	}
 }
 
+func TestIsRepositoryPath(t *testing.T) {
+	repoDir := initTestRepo(t)
+	plainDir := t.TempDir()
+
+	if !IsRepositoryPath(repoDir) {
+		t.Fatalf("expected git repository path to return true")
+	}
+
+	if IsRepositoryPath(plainDir) {
+		t.Fatalf("expected plain directory to return false")
+	}
+}
+
 func TestBranchAndWorktreeOperations(t *testing.T) {
 	repoDir := initTestRepo(t)
 	repo, err := DetectRepository(repoDir)
@@ -134,9 +147,9 @@ func testGitEnv() []string {
 		"GIT_AUTHOR_EMAIL=test@example.com",
 		"GIT_COMMITTER_NAME=Test User",
 		"GIT_COMMITTER_EMAIL=test@example.com",
-		"GIT_CONFIG_NOSYSTEM=1",              // 忽略系统级配置
-		"GIT_CONFIG_GLOBAL=/dev/null",        // 忽略全局配置
-		"HOME=" + os.TempDir(),               // 防止读取用户目录下的配置
+		"GIT_CONFIG_NOSYSTEM=1",       // 忽略系统级配置
+		"GIT_CONFIG_GLOBAL=/dev/null", // 忽略全局配置
+		"HOME=" + os.TempDir(),        // 防止读取用户目录下的配置
 	}
 }
 

@@ -4,6 +4,7 @@ import { projectApi, systemApi, worktreeApi } from '@/api/project';
 import type { Project, Worktree } from '@/types/models';
 import { useSettingsStore } from '@/stores/settings';
 import type { EditorPreference } from '@/stores/settings';
+import { projectSupportsGit } from '@/utils/projectGitCapability';
 
 const RECENT_PROJECTS_KEY = 'recent_projects';
 const DEFAULT_MAX_RECENT_PROJECTS = 10;
@@ -148,10 +149,22 @@ export const useProjectStore = defineStore('project', () => {
 
   async function fetchWorktrees(projectId: string) {
     worktrees.value = await worktreeApi.list(projectId);
-    refreshWorktreeCommitInfo(projectId);
+    if (
+      currentProject.value?.id === projectId &&
+      projectSupportsGit(currentProject.value, worktrees.value)
+    ) {
+      void refreshWorktreeCommitInfo(projectId);
+    }
   }
 
   async function refreshWorktreeCommitInfo(projectId: string) {
+    if (
+      currentProject.value?.id === projectId &&
+      !projectSupportsGit(currentProject.value, worktrees.value)
+    ) {
+      return;
+    }
+
     try {
       const refreshed = await worktreeApi.refreshCommitInfo(projectId);
       if (currentProject.value?.id === projectId) {
@@ -170,7 +183,7 @@ export const useProjectStore = defineStore('project', () => {
       createBranch?: boolean;
       location?: 'project' | 'global';
       globalBaseDirOverride?: string;
-    },
+    }
   ) {
     const worktree = await worktreeApi.create(projectId, payload);
     // 创建成功后立即刷新列表，确保 UI 能及时更新

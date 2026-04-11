@@ -310,6 +310,17 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 		return nil, err
 	}
 
+	project, err := q.ProjectGetByID(ctx, worktree.ProjectId)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, model.ErrProjectNotFound
+		}
+		return nil, err
+	}
+	if !git.IsRepositoryPath(project.Path) {
+		return worktree, nil
+	}
+
 	status, err := git.GetWorktreeStatus(worktree.Path)
 	if err != nil {
 		return nil, err
@@ -364,6 +375,21 @@ func (s *WorktreeService) RefreshWorktreeStatus(ctx context.Context, id string) 
 func (s *WorktreeService) RefreshAllWorktrees(ctx context.Context, projectID string) (updated, failed int, err error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	q, err := model.ResolveQueries(nil)
+	if err != nil {
+		return 0, 0, err
+	}
+	project, err := q.ProjectGetByID(ctx, projectID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, model.ErrProjectNotFound
+		}
+		return 0, 0, err
+	}
+	if !git.IsRepositoryPath(project.Path) {
+		return 0, 0, nil
 	}
 
 	worktrees, err := s.ListWorktrees(ctx, projectID)

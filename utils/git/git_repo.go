@@ -28,25 +28,18 @@ var (
 	errEmptyPath = errors.New("path is required")
 )
 
+// IsRepositoryPath reports whether the provided path can be opened as a Git
+// repository without loading additional metadata such as git config.
+func IsRepositoryPath(path string) bool {
+	_, _, err := openRepository(path)
+	return err == nil
+}
+
 // DetectRepository returns a GitRepo if the given path is a valid git repository.
 func DetectRepository(path string) (*GitRepo, error) {
-	p := strings.TrimSpace(path)
-	if p == "" {
-		return nil, errEmptyPath
-	}
-
-	absPath, err := filepath.Abs(p)
+	absPath, repo, err := openRepository(path)
 	if err != nil {
-		return nil, fmt.Errorf("resolve git path: %w", err)
-	}
-
-	if _, err := os.Stat(absPath); err != nil {
-		return nil, fmt.Errorf("stat git path: %w", err)
-	}
-
-	repo, err := goGit.PlainOpen(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("not a git repository: %w", err)
+		return nil, err
 	}
 
 	return &GitRepo{
@@ -54,6 +47,29 @@ func DetectRepository(path string) (*GitRepo, error) {
 		Repository: repo,
 		Config:     loadGitConfig(absPath),
 	}, nil
+}
+
+func openRepository(path string) (string, *goGit.Repository, error) {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return "", nil, errEmptyPath
+	}
+
+	absPath, err := filepath.Abs(p)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve git path: %w", err)
+	}
+
+	if _, err := os.Stat(absPath); err != nil {
+		return "", nil, fmt.Errorf("stat git path: %w", err)
+	}
+
+	repo, err := goGit.PlainOpen(absPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("not a git repository: %w", err)
+	}
+
+	return absPath, repo, nil
 }
 
 // GetRemotes lists configured remotes, returning the first URL for each remote.

@@ -51,6 +51,7 @@ import { useMessage, type FormInst, type FormRules } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import type { Worktree } from '@/types/models';
 import { useLocale } from '@/composables/useLocale';
+import { projectSupportsGit } from '@/utils/projectGitCapability';
 
 const { t } = useLocale();
 
@@ -149,6 +150,10 @@ watch(visible, newVal => {
 async function handleCreate() {
   if (!projectStore.currentProject) {
     message.error(t('project.selectProjectFirst'));
+    return false;
+  }
+  if (!projectSupportsGit(projectStore.currentProject, projectStore.worktrees)) {
+    message.warning(t('worktree.notGitRepoShort'));
     return false;
   }
 

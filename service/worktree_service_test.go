@@ -171,6 +171,46 @@ func TestWorktreeServiceRefreshAll(t *testing.T) {
 	}
 }
 
+func TestWorktreeServiceRefreshAllNonGitProject(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	projectService := &model.ProjectService{}
+	projectPath := t.TempDir()
+	project, err := projectService.CreateProject(context.Background(), model.CreateProjectParams{
+		Name: "Plain Folder",
+		Path: projectPath,
+	})
+	if err != nil {
+		t.Fatalf("create project failed: %v", err)
+	}
+
+	svc := NewWorktreeService()
+	worktrees, err := svc.ListWorktrees(context.Background(), project.Id)
+	if err != nil {
+		t.Fatalf("ListWorktrees failed: %v", err)
+	}
+	if len(worktrees) != 1 {
+		t.Fatalf("expected virtual main worktree, got %d", len(worktrees))
+	}
+
+	updated, failed, err := svc.RefreshAllWorktrees(context.Background(), project.Id)
+	if err != nil {
+		t.Fatalf("RefreshAllWorktrees returned error: %v", err)
+	}
+	if updated != 0 || failed != 0 {
+		t.Fatalf("expected no refresh work for non-git project, got updated=%d failed=%d", updated, failed)
+	}
+
+	refreshed, err := svc.RefreshWorktreeStatus(context.Background(), worktrees[0].Id)
+	if err != nil {
+		t.Fatalf("RefreshWorktreeStatus returned error: %v", err)
+	}
+	if refreshed.Id != worktrees[0].Id {
+		t.Fatalf("expected same worktree to be returned")
+	}
+}
+
 func TestWorktreeServiceCommit(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

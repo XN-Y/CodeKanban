@@ -187,6 +187,8 @@ export default {
     refreshFailed: 'Failed to refresh',
     loadProjectFailed: 'Failed to load project',
     fetchBranchesFailed: 'Failed to fetch branches',
+    notGitRepoShort: 'Current project is not a Git repository',
+    notGitRepoDetails: 'Branch management is available only for Git projects.',
     commitMessageRequired: 'Please enter commit message',
     // Branch List Item
     remote: 'Remote',
@@ -328,6 +330,9 @@ export default {
     featureUnavailable: 'Worktree Feature Unavailable',
     notGitRepo:
       'The current project directory is not a Git repository, unable to create or refresh Worktrees; other features like tasks are still available.',
+    notGitRepoShort: 'Current project is not a Git repository',
+    notGitRepoDetails:
+      'Branches and Worktrees are unavailable, but tasks and terminals still work.',
     openInEditor: 'Open in Editor',
     openInExplorer: 'Open in Explorer',
     openInExplorer2: 'Open File Manager',
@@ -352,6 +357,7 @@ export default {
     // Refresh messages
     notGitRepoCannotRefresh:
       'Current project is not a Git repository, cannot refresh Worktree status',
+    refreshDisabledGit: 'Refresh is available only for Git projects',
     allWorktreesRefreshed: 'All Worktree statuses refreshed',
     statusRefreshed: 'Status refreshed',
     // Delete messages
@@ -386,6 +392,7 @@ export default {
     conflictFiles: 'Conflict files: {files}',
     hasConflictsManual: 'Conflicts detected, please resolve manually',
     rebaseDescription: 'Will execute rebase in Worktree "{branch}", source branch: {source}',
+    mergeDisabledGit: 'Merge is available only for Git projects',
     // Disabled reasons
     actionDisabledGeneric: 'This action is currently unavailable for the selected Worktree.',
     rebaseDisabledNoDefault: 'Configure a default branch for the project before running Rebase.',
