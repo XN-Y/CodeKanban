@@ -217,6 +217,7 @@ interface GeneralSettings {
   maxTerminalsPerProject: number;
   panelShortcuts: ShortcutSettings;
   webSessionQuickInput: WebSessionQuickInputSettings;
+  webSessionQuickInputDirectSend: boolean;
   terminalQuickActions: TerminalQuickAction[];
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
@@ -284,6 +285,7 @@ const DEFAULT_WEB_SESSION_QUICK_INPUT: WebSessionQuickInputSettings = {
   pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT_PINNED],
   recent: [],
 };
+const DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND = false;
 
 export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
   {
@@ -316,6 +318,7 @@ const defaultSettings: GeneralSettings = {
     pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
     recent: [...DEFAULT_WEB_SESSION_QUICK_INPUT.recent],
   },
+  webSessionQuickInputDirectSend: DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND,
   terminalQuickActions: DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action })),
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
@@ -357,6 +360,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
   const webSessionQuickInput = computed(() => settings.value.webSessionQuickInput);
+  const webSessionQuickInputDirectSend = computed(
+    () => settings.value.webSessionQuickInputDirectSend
+  );
   const terminalQuickActions = computed(() => settings.value.terminalQuickActions);
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
@@ -517,6 +523,10 @@ export const useSettingsStore = defineStore('settings', () => {
       ),
     };
     webSessionQuickInputLoaded.value = true;
+  }
+
+  function updateWebSessionQuickInputDirectSend(value: boolean) {
+    settings.value.webSessionQuickInputDirectSend = value === true;
   }
 
   async function loadWebSessionQuickInput(force = false) {
@@ -703,6 +713,7 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalShortcut,
     notepadShortcut,
     webSessionQuickInput,
+    webSessionQuickInputDirectSend,
     webSessionQuickInputLoaded,
     terminalQuickActions,
     editorSettings,
@@ -732,6 +743,7 @@ export const useSettingsStore = defineStore('settings', () => {
     loadWebSessionQuickInput,
     syncWebSessionQuickInputToServer,
     updateWebSessionQuickInputPinned,
+    updateWebSessionQuickInputDirectSend,
     recordWebSessionRecentInput,
     updateTerminalQuickActions,
     updateEditorSettings,
@@ -819,6 +831,9 @@ function loadSettings(): LoadSettingsResult {
           maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
           panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
           webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
+          webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
+            parsed.webSessionQuickInputDirectSend
+          ),
           terminalQuickActions: sanitizeTerminalQuickActions(parsed.terminalQuickActions),
           editor: sanitizeEditorSettings(parsed.editor),
           confirmBeforeTerminalClose:
@@ -891,6 +906,7 @@ function cloneDefaultSettings(): GeneralSettings {
       pinned: [...defaultSettings.webSessionQuickInput.pinned],
       recent: [...defaultSettings.webSessionQuickInput.recent],
     },
+    webSessionQuickInputDirectSend: defaultSettings.webSessionQuickInputDirectSend,
     terminalQuickActions: defaultSettings.terminalQuickActions.map(action => ({ ...action })),
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
@@ -1034,6 +1050,10 @@ function sanitizeWebSessionQuickInput(
     pinned: sanitizeWebSessionQuickInputItems(value?.pinned),
     recent: sanitizeWebSessionQuickInputItems(value?.recent, WEB_SESSION_QUICK_INPUT_RECENT_LIMIT),
   };
+}
+
+function sanitizeWebSessionQuickInputDirectSend(value: unknown) {
+  return value === true;
 }
 
 function loadLegacyShowWebSessionReasoning() {

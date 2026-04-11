@@ -646,6 +646,7 @@ export default {
     quickInput: 'Quick Input',
     quickInputPinned: 'Pinned',
     quickInputRecent: 'Recent',
+    quickInputDirectSend: 'Send Immediately',
     quickInputEmpty: 'Quick input has no content',
     quickInputUnavailable: 'No quick input items yet',
     attachImage: 'Attach image',

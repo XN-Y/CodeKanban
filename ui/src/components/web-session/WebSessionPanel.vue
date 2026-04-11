@@ -975,10 +975,21 @@
                   </button>
                 </template>
                 <div class="quick-input-popover-card">
+                  <div class="quick-input-popover-header">
+                    <n-checkbox
+                      v-model:checked="quickInputDirectSendEnabled"
+                      size="small"
+                      @mousedown.stop
+                      @touchstart.stop
+                      @click.stop
+                    >
+                      {{ t('webSession.quickInputDirectSend') }}
+                    </n-checkbox>
+                  </div>
                   <div v-if="quickInputItems.length === 0" class="quick-input-empty">
                     {{ t('webSession.quickInputEmpty') }}
                   </div>
-                  <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                  <div v-else class="quick-input-scroll">
                     <div class="quick-input-item-list">
                       <button
                         v-for="text in quickInputItems"
@@ -991,7 +1002,7 @@
                         <span class="quick-input-item-text">{{ text }}</span>
                       </button>
                     </div>
-                  </n-scrollbar>
+                  </div>
                 </div>
               </n-popover>
               <button
@@ -1027,10 +1038,21 @@
                     </button>
                   </template>
                   <div class="quick-input-popover-card">
+                    <div class="quick-input-popover-header">
+                      <n-checkbox
+                        v-model:checked="quickInputDirectSendEnabled"
+                        size="small"
+                        @mousedown.stop
+                        @touchstart.stop
+                        @click.stop
+                      >
+                        {{ t('webSession.quickInputDirectSend') }}
+                      </n-checkbox>
+                    </div>
                     <div v-if="quickInputItems.length === 0" class="quick-input-empty">
                       {{ t('webSession.quickInputEmpty') }}
                     </div>
-                    <n-scrollbar v-else style="max-height: min(48vh, 320px)">
+                    <div v-else class="quick-input-scroll">
                       <div class="quick-input-item-list">
                         <button
                           v-for="text in quickInputItems"
@@ -1043,7 +1065,7 @@
                           <span class="quick-input-item-text">{{ text }}</span>
                         </button>
                       </div>
-                    </n-scrollbar>
+                    </div>
                   </div>
                 </n-popover>
                 <button type="button" class="composer-icon-btn" @click="openFilePicker">
@@ -1688,6 +1710,7 @@ const {
   webSessionAutoContinuePreset,
   effectiveTerminalThemeId,
   webSessionQuickInput,
+  webSessionQuickInputDirectSend,
 } = storeToRefs(settingsStore);
 const persistedDraftSessionsByProject = useStorage<Record<string, DraftSessionTab[]>>(
   DRAFT_SESSION_STORAGE_KEY,
@@ -2463,6 +2486,12 @@ const hasQuickInputOptions = computed(
 const quickInputButtonTitle = computed(() =>
   hasQuickInputOptions.value ? t('webSession.quickInput') : t('webSession.quickInputUnavailable')
 );
+const quickInputDirectSendEnabled = computed({
+  get: () => webSessionQuickInputDirectSend.value,
+  set: value => {
+    settingsStore.updateWebSessionQuickInputDirectSend(value === true);
+  },
+});
 const quickInputItems = computed(() => [
   ...quickInputPinnedItems.value,
   ...quickInputRecentItems.value,
@@ -2764,9 +2793,13 @@ function showComposerTransferError(detail?: string) {
   }, 900);
 }
 
-function handleQuickInputApply(text: string) {
-  applyQuickInputText(text);
+async function handleQuickInputApply(text: string) {
   showQuickInputPopover.value = false;
+  const applied = await applyQuickInputText(text);
+  if (!applied || !quickInputDirectSendEnabled.value) {
+    return;
+  }
+  await triggerPrimaryComposerAction();
 }
 
 function isQuickInputSelected(text: string) {
@@ -5963,21 +5996,21 @@ function getComposerTextarea() {
   return null;
 }
 
-function applyQuickInputText(text: string) {
+async function applyQuickInputText(text: string) {
   const sessionId = currentDraftSessionId.value;
   if (!sessionId) {
-    return;
+    return false;
   }
 
   webSessionStore.setDraftText(props.projectId, sessionId, text);
 
-  nextTick(() => {
-    composerInputRef.value?.focus();
-    const textarea = getComposerTextarea();
-    if (textarea) {
-      textarea.setSelectionRange(text.length, text.length);
-    }
-  });
+  await nextTick();
+  composerInputRef.value?.focus();
+  const textarea = getComposerTextarea();
+  if (textarea) {
+    textarea.setSelectionRange(text.length, text.length);
+  }
+  return true;
 }
 
 function insertUploadedImagePlaceholders(uploadedCount: number) {
@@ -6144,6 +6177,21 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
   }
 }
 
+async function triggerPrimaryComposerAction() {
+  if (isDraftAttachmentUploading.value) {
+    return;
+  }
+  if (isRunActive.value) {
+    if (canStageDuringRun.value) {
+      await handlePreinput('redirect');
+    }
+    return;
+  }
+  if (canSend.value) {
+    await handleSubmit();
+  }
+}
+
 function handleComposerFocus() {
   if (!isMobile.value) {
     return;
@@ -6166,18 +6214,11 @@ function handleComposerEnter(event: KeyboardEvent) {
     }
     return;
   }
-  if (isRunActive.value) {
-    if (hasDraftContent.value) {
-      event.preventDefault();
-      void handlePreinput('redirect');
-    }
-    return;
-  }
   if (!hasDraftContent.value) {
     return;
   }
   event.preventDefault();
-  void handleSubmit();
+  void triggerPrimaryComposerAction();
 }
 
 function getSendConflictSessionTitle(title: string) {
@@ -10584,11 +10625,32 @@ onBeforeUnmount(() => {
 
 .quick-input-popover-card {
   width: min(320px, 74vw);
+  box-sizing: border-box;
   padding: 0;
 }
 
+.quick-input-popover-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 10px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
+}
+
+.quick-input-popover-header :deep(.n-checkbox__label) {
+  font-size: 12px;
+}
+
+.quick-input-scroll {
+  max-height: min(48vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: 4px 6px 4px 4px;
+  box-sizing: border-box;
+}
+
 .quick-input-empty {
-  padding: 8px 6px;
+  padding: 10px 8px;
   color: var(--n-text-color-3, #8a8f98);
   font-size: 11px;
   line-height: 1.45;

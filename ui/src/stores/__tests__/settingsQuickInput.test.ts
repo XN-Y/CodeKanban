@@ -33,15 +33,16 @@ describe('settings web session quick input', () => {
 
   it('falls back to default quick input settings when storage is missing', () => {
     const store = useSettingsStore();
-    const { webSessionQuickInput } = storeToRefs(store);
+    const { webSessionQuickInput, webSessionQuickInputDirectSend } = storeToRefs(store);
 
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['continue'],
       recent: [],
     });
+    expect(webSessionQuickInputDirectSend.value).toBe(false);
   });
 
-  it('sanitizes persisted pinned and recent quick input items', () => {
+  it('sanitizes persisted pinned, recent, and direct-send quick input settings', () => {
     localStorage.setItem(
       'general_settings',
       JSON.stringify({
@@ -49,16 +50,18 @@ describe('settings web session quick input', () => {
           pinned: ['  Alpha  ', '', 'Beta', 'Alpha'],
           recent: ['  One ', 'Two', 'One', '', 'Three', 'Four', 'Five', 'Six', 'Seven'],
         },
+        webSessionQuickInputDirectSend: true,
       })
     );
 
     const store = useSettingsStore();
-    const { webSessionQuickInput } = storeToRefs(store);
+    const { webSessionQuickInput, webSessionQuickInputDirectSend } = storeToRefs(store);
 
     expect(webSessionQuickInput.value).toEqual({
       pinned: ['Alpha', 'Beta'],
       recent: ['One', 'Two', 'Three', 'Four', 'Five', 'Six'],
     });
+    expect(webSessionQuickInputDirectSend.value).toBe(true);
   });
 
   it('sanitizes pinned quick input updates', () => {
@@ -88,5 +91,16 @@ describe('settings web session quick input', () => {
       'item 4',
       'item 3',
     ]);
+  });
+
+  it('updates quick input direct-send setting', () => {
+    const store = useSettingsStore();
+    const { webSessionQuickInputDirectSend } = storeToRefs(store);
+
+    store.updateWebSessionQuickInputDirectSend(true);
+    expect(webSessionQuickInputDirectSend.value).toBe(true);
+
+    store.updateWebSessionQuickInputDirectSend(false);
+    expect(webSessionQuickInputDirectSend.value).toBe(false);
   });
 });

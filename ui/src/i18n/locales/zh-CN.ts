@@ -632,6 +632,7 @@ export default {
     quickInput: '快捷输入',
     quickInputPinned: '常驻项',
     quickInputRecent: '最近输入',
+    quickInputDirectSend: '是否直接发送',
     quickInputEmpty: '快捷输入无内容',
     quickInputUnavailable: '暂无快捷输入内容',
     attachImage: '添加图片',
