@@ -19,7 +19,9 @@ import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
-type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err';
+type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err' | 'hb';
+type WireHeartbeatOp = 'ping' | 'pong';
+type WebSessionSocketKind = 'event' | 'command';
 type SessionStatus = WebSessionSummary['status'];
 type SessionAssistantState =
   | 'working'
@@ -356,6 +358,9 @@ const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
 const COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
 const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
+const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
+const WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS = WEB_SESSION_HEARTBEAT_INTERVAL_MS * 2 + 5000;
+const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
@@ -823,13 +828,20 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const emitter = new EventEmitter();
 
   const connectionState = ref<'idle' | 'connecting' | 'open' | 'closed'>('idle');
+  const eventLastSeenAt = ref(0);
+  const eventLastDisconnectReason = ref<string | null>(null);
+  const eventRecoveryVersion = ref(0);
   const lastError = ref<string | null>(null);
 
   let eventSocket: WebSocket | null = null;
   let eventConnectPromise: Promise<void> | null = null;
   let eventReconnectTimer: number | null = null;
+  let eventWatchdogTimer: number | null = null;
+  let eventHasConnectedOnce = false;
   let commandSocket: WebSocket | null = null;
   let commandConnectPromise: Promise<void> | null = null;
+  let commandWatchdogTimer: number | null = null;
+  let commandLastSeenAt = 0;
   const pending = new Map<
     string,
     {
@@ -2176,6 +2188,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function applyFrame(frame: WireFrame) {
+    if (frame.k === 'hb') {
+      return;
+    }
+
     if (frame.k === 'err') {
       lastError.value = frame.msg ?? 'Unknown websocket error';
       if (frame.rid && pending.has(frame.rid)) {
@@ -2293,6 +2309,105 @@ export const useWebSessionStore = defineStore('web-session', () => {
     pending.clear();
   }
 
+  function buildHeartbeatPayload(op: WireHeartbeatOp) {
+    return JSON.stringify({
+      v: 1,
+      k: 'hb',
+      ts: Date.now(),
+      op,
+    });
+  }
+
+  function setSocketLastSeen(kind: WebSessionSocketKind, timestamp = Date.now()) {
+    if (kind === 'event') {
+      eventLastSeenAt.value = timestamp;
+      return;
+    }
+    commandLastSeenAt = timestamp;
+  }
+
+  function getSocketLastSeen(kind: WebSessionSocketKind) {
+    return kind === 'event' ? eventLastSeenAt.value : commandLastSeenAt;
+  }
+
+  function clearSocketWatchdog(kind: WebSessionSocketKind) {
+    const timer = kind === 'event' ? eventWatchdogTimer : commandWatchdogTimer;
+    if (timer != null) {
+      window.clearInterval(timer);
+    }
+    if (kind === 'event') {
+      eventWatchdogTimer = null;
+      return;
+    }
+    commandWatchdogTimer = null;
+  }
+
+  function closeSocketForHeartbeatTimeout(kind: WebSessionSocketKind, socket: WebSocket) {
+    if (kind === 'event') {
+      eventLastDisconnectReason.value = 'heartbeat_timeout';
+      lastError.value = 'web session event websocket heartbeat timed out';
+      connectionState.value = 'closed';
+    } else {
+      rejectPendingCommands(new Error('websocket command channel heartbeat timed out'));
+    }
+    clearSocketWatchdog(kind);
+    try {
+      socket.close();
+    } catch (error) {
+      console.error('[Web Session] Failed to close websocket after heartbeat timeout', error);
+    }
+  }
+
+  function startSocketWatchdog(kind: WebSessionSocketKind, socket: WebSocket) {
+    clearSocketWatchdog(kind);
+    setSocketLastSeen(kind);
+    const timer = window.setInterval(() => {
+      const activeSocket = kind === 'event' ? eventSocket : commandSocket;
+      if (activeSocket !== socket || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const lastSeen = getSocketLastSeen(kind);
+      if (lastSeen <= 0) {
+        setSocketLastSeen(kind);
+        return;
+      }
+      if (Date.now() - lastSeen > WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS) {
+        closeSocketForHeartbeatTimeout(kind, socket);
+      }
+    }, WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS);
+    if (kind === 'event') {
+      eventWatchdogTimer = timer;
+      return;
+    }
+    commandWatchdogTimer = timer;
+  }
+
+  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp) {
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    socket.send(buildHeartbeatPayload(op));
+  }
+
+  function handleSocketHeartbeat(
+    kind: WebSessionSocketKind,
+    socket: WebSocket,
+    frame: WireFrame
+  ) {
+    if (frame.k !== 'hb') {
+      return false;
+    }
+    setSocketLastSeen(kind);
+    if (frame.op === 'ping') {
+      try {
+        sendSocketHeartbeat(socket, 'pong');
+      } catch (error) {
+        console.error('[Web Session] Failed to reply to websocket heartbeat', error);
+      }
+    }
+    return true;
+  }
+
   function openEventStream(): Promise<void> {
     if (eventSocket && eventSocket.readyState === WebSocket.OPEN) {
       connectionState.value = 'open';
@@ -2309,12 +2424,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
         settled = true;
         eventSocket = ws;
         connectionState.value = 'open';
+        eventLastDisconnectReason.value = null;
+        startSocketWatchdog('event', ws);
         eventConnectPromise = null;
+        if (eventHasConnectedOnce) {
+          eventRecoveryVersion.value += 1;
+          emitter.emit('web-session:event-stream-recovered', {
+            recoveredAt: new Date().toISOString(),
+          });
+        }
+        eventHasConnectedOnce = true;
         resolve();
       };
       ws.onmessage = event => {
         try {
           const frame = JSON.parse(event.data) as WireFrame;
+          setSocketLastSeen('event');
+          if (handleSocketHeartbeat('event', ws, frame)) {
+            return;
+          }
           applyFrame(frame);
         } catch (error) {
           console.error('[Web Session] Failed to parse event websocket frame', error);
@@ -2326,6 +2454,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ws.onclose = () => {
         eventSocket = null;
         connectionState.value = 'closed';
+        if (!eventLastDisconnectReason.value) {
+          eventLastDisconnectReason.value = 'socket_closed';
+        }
+        clearSocketWatchdog('event');
         eventConnectPromise = null;
         if (!settled) {
           reject(new Error('websocket event stream closed before opening'));
@@ -2362,12 +2494,17 @@ export const useWebSessionStore = defineStore('web-session', () => {
       ws.onopen = () => {
         settled = true;
         commandSocket = ws;
+        startSocketWatchdog('command', ws);
         commandConnectPromise = null;
         resolve();
       };
       ws.onmessage = event => {
         try {
           const frame = JSON.parse(event.data) as WireFrame;
+          setSocketLastSeen('command');
+          if (handleSocketHeartbeat('command', ws, frame)) {
+            return;
+          }
           applyFrame(frame);
         } catch (error) {
           console.error('[Web Session] Failed to parse command websocket frame', error);
@@ -2378,6 +2515,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       };
       ws.onclose = () => {
         commandSocket = null;
+        clearSocketWatchdog('command');
         commandConnectPromise = null;
         if (!settled) {
           reject(new Error('websocket command channel closed before opening'));
@@ -2907,6 +3045,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   return {
     connectionState,
+    eventLastSeenAt,
+    eventLastDisconnectReason,
+    eventRecoveryVersion,
     lastError,
     getDraft,
     getSessions,

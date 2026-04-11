@@ -624,6 +624,15 @@ func (c *webSessionController) serveCommandWebsocket(w http.ResponseWriter, r *h
 			}
 			return
 		}
+		client.MarkSeen()
+		handled, heartbeatErr := c.manager.HandleHeartbeatPayload(client, payload)
+		if handled {
+			if heartbeatErr != nil {
+				c.logger.Debug("failed to handle web session heartbeat", zap.Error(heartbeatErr))
+				return
+			}
+			continue
+		}
 		if err := c.manager.HandleCommand(ctx, client, payload); err != nil {
 			c.logger.Debug("failed to handle web session command", zap.Error(err))
 		}
@@ -642,12 +651,22 @@ func (c *webSessionController) serveEventWebsocket(w http.ResponseWriter, r *htt
 	defer c.manager.UnregisterClient(client)
 
 	for {
-		if _, _, err := conn.ReadMessage(); err != nil {
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
 			if !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) &&
 				!errors.Is(err, context.Canceled) {
 				c.logger.Debug("web session event ws read failed", zap.Error(err))
 			}
 			return
+		}
+		client.MarkSeen()
+		handled, heartbeatErr := c.manager.HandleHeartbeatPayload(client, payload)
+		if handled {
+			if heartbeatErr != nil {
+				c.logger.Debug("failed to handle web session event heartbeat", zap.Error(heartbeatErr))
+				return
+			}
+			continue
 		}
 	}
 }

@@ -2,7 +2,9 @@ import { EventEmitter } from 'node:events';
 
 import { CodeKanbanConfigError, CodeKanbanError, CodeKanbanValidationError } from './errors.js';
 import {
+  buildWebSessionHeartbeatFrame,
   decodeWebSessionSocketMessage,
+  isWebSessionHeartbeatFrame,
   normalizeWebSessionFrame,
   shouldEmitWebSessionFrame,
 } from './web-session-shared.js';
@@ -158,9 +160,17 @@ export class WebSessionEventStream {
   }
 
   _handleMessage(data) {
+    let rawFrame;
     let frame;
     try {
-      frame = normalizeWebSessionFrame(decodeWebSessionSocketMessage(data));
+      rawFrame = decodeWebSessionSocketMessage(data);
+      if (isWebSessionHeartbeatFrame(rawFrame)) {
+        if (rawFrame?.op === 'ping' && this.socket.readyState === SOCKET_OPEN) {
+          this.socket.send(JSON.stringify(buildWebSessionHeartbeatFrame('pong')));
+        }
+        return;
+      }
+      frame = normalizeWebSessionFrame(rawFrame);
     } catch (error) {
       const payload = {
         type: 'error',

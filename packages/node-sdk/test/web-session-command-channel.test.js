@@ -186,3 +186,57 @@ test('WebSessionCommandChannel rejects sendMessage when the server follows the a
   await assert.rejects(promise, /session is already running/);
   channel.close();
 });
+
+test('WebSessionCommandChannel replies to heartbeat ping without disturbing pending commands', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const channel = new WebSessionCommandChannel({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/ws',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await channel.waitForOpen();
+  const promise = channel.connect('ws1');
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const socket = FakeWebSocket.instances[0];
+  socket.emitJson({
+    v: 1,
+    k: 'hb',
+    ts: 1710000000001,
+    op: 'ping',
+  });
+
+  assert.equal(socket.sent.length, 2);
+  assert.equal(socket.sent[1].k, 'hb');
+  assert.equal(socket.sent[1].op, 'pong');
+
+  socket.emitJson({
+    v: 1,
+    k: 'ack',
+    rid: socket.sent[0].rid,
+    sid: 'ws1',
+    ts: 1710000000002,
+    op: 'connect',
+    ok: 1,
+  });
+  socket.emitJson({
+    v: 1,
+    k: 'snap',
+    sid: 'ws1',
+    ts: 1710000000003,
+    s: sampleWireSession(),
+    h: {
+      its: [],
+      hm: false,
+      tot: 0,
+    },
+  });
+
+  const snapshot = await promise;
+  assert.equal(snapshot.session.id, 'ws1');
+  channel.close();
+});

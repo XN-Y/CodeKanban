@@ -20,6 +20,13 @@ type wireCommandFrame struct {
 	Payload   json.RawMessage `json:"p,omitempty"`
 }
 
+type wireHeartbeatFrame struct {
+	Version   int    `json:"v"`
+	Kind      string `json:"k"`
+	Timestamp int64  `json:"ts"`
+	Operation string `json:"op"`
+}
+
 type wireFrame struct {
 	Version   int           `json:"v"`
 	Kind      string        `json:"k"`
@@ -180,6 +187,15 @@ func newErrorFrame(requestID, sessionID, code, message string, retry bool) wireF
 		Code:      code,
 		Message:   message,
 		Retry:     retry,
+	}
+}
+
+func newHeartbeatFrame(op string) wireFrame {
+	return wireFrame{
+		Version:   protocolVersion,
+		Kind:      "hb",
+		Timestamp: nowUnixMilli(),
+		Operation: op,
 	}
 }
 

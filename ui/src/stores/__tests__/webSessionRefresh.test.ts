@@ -162,6 +162,7 @@ class FakeWebSocket {
 
   url: string;
   readyState = 0;
+  sent: unknown[] = [];
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
@@ -176,7 +177,9 @@ class FakeWebSocket {
     });
   }
 
-  send(_payload: string) {}
+  send(payload: string) {
+    this.sent.push(JSON.parse(payload));
+  }
 
   dispatch(frame: unknown) {
     this.onmessage?.({
@@ -207,6 +210,8 @@ describe('webSession loading behavior', () => {
       },
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
     });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     FakeWebSocket.instances = [];
@@ -218,6 +223,7 @@ describe('webSession loading behavior', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -485,5 +491,70 @@ describe('webSession loading behavior', () => {
         size: 42,
       }),
     ]);
+  });
+
+  it('replies to websocket heartbeat pings on the event stream', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-heartbeat',
+      status: 'running',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'hb',
+      ts: Date.now(),
+      op: 'ping',
+    });
+
+    expect(eventSocket?.sent).toEqual([
+      expect.objectContaining({
+        k: 'hb',
+        op: 'pong',
+      }),
+    ]);
+  });
+
+  it('forces a reconnect when the event stream stops receiving heartbeats', async () => {
+    vi.useFakeTimers();
+    window.setTimeout = setTimeout;
+    window.clearTimeout = clearTimeout;
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-watchdog',
+      status: 'running',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    const openPromise = store.openEventStream();
+    await Promise.resolve();
+    await openPromise;
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(store.connectionState).toBe('open');
+
+    await vi.advanceTimersByTimeAsync(40001);
+    expect(store.connectionState).toBe('closed');
+
+    await vi.advanceTimersByTimeAsync(1200);
+    await Promise.resolve();
+
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(store.connectionState).toBe('open');
+    expect(store.eventRecoveryVersion).toBe(1);
+    expect(store.eventLastDisconnectReason).toBeNull();
   });
 });

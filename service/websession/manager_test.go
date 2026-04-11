@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -37,6 +38,48 @@ func (c *captureWSConn) WriteJSON(v any) error {
 
 func (c *captureWSConn) Close() error {
 	return nil
+}
+
+type heartbeatWSConn struct {
+	mu      sync.Mutex
+	frames  []wireFrame
+	closed  chan struct{}
+	closeMu sync.Once
+}
+
+func newHeartbeatWSConn() *heartbeatWSConn {
+	return &heartbeatWSConn{
+		closed: make(chan struct{}),
+	}
+}
+
+func (c *heartbeatWSConn) ReadMessage() (messageType int, p []byte, err error) {
+	<-c.closed
+	return 0, nil, io.EOF
+}
+
+func (c *heartbeatWSConn) WriteJSON(v any) error {
+	frame, ok := v.(wireFrame)
+	if !ok {
+		return fmt.Errorf("unexpected frame type %T", v)
+	}
+	c.mu.Lock()
+	c.frames = append(c.frames, frame)
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *heartbeatWSConn) Close() error {
+	c.closeMu.Do(func() {
+		close(c.closed)
+	})
+	return nil
+}
+
+func (c *heartbeatWSConn) snapshotFrames() []wireFrame {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]wireFrame(nil), c.frames...)
 }
 
 func attachmentExtensionFromMime(mimeType string) string {
@@ -145,6 +188,71 @@ func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
 	}
 	if eventConn.frames[0].Kind != "evt" || eventConn.frames[0].Operation != "session" {
 		t.Fatalf("expected session event frame, got kind=%q op=%q", eventConn.frames[0].Kind, eventConn.frames[0].Operation)
+	}
+}
+
+func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterEventClient(conn)
+	defer manager.UnregisterClient(client)
+
+	handled, err := manager.HandleHeartbeatPayload(client, []byte(`{"v":1,"k":"hb","ts":1710000000000,"op":"ping"}`))
+	if err != nil {
+		t.Fatalf("HandleHeartbeatPayload returned error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected heartbeat payload to be handled")
+	}
+	if len(conn.frames) != 1 {
+		t.Fatalf("expected one heartbeat response frame, got %d", len(conn.frames))
+	}
+	if conn.frames[0].Kind != "hb" || conn.frames[0].Operation != "pong" {
+		t.Fatalf("expected heartbeat pong response, got %#v", conn.frames[0])
+	}
+}
+
+func TestManagerClientHeartbeatClosesIdleConnections(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	originalInterval := webSessionHeartbeatInterval
+	originalTimeout := webSessionHeartbeatTimeout
+	webSessionHeartbeatInterval = 10 * time.Millisecond
+	webSessionHeartbeatTimeout = 25 * time.Millisecond
+	defer func() {
+		webSessionHeartbeatInterval = originalInterval
+		webSessionHeartbeatTimeout = originalTimeout
+	}()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	conn := newHeartbeatWSConn()
+	client := manager.RegisterEventClient(conn)
+	defer manager.UnregisterClient(client)
+
+	select {
+	case <-conn.closed:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected idle heartbeat client to be closed")
+	}
+
+	frames := conn.snapshotFrames()
+	if len(frames) == 0 {
+		t.Fatal("expected at least one heartbeat ping before close")
+	}
+	if frames[0].Kind != "hb" || frames[0].Operation != "ping" {
+		t.Fatalf("expected first heartbeat frame to be ping, got %#v", frames[0])
 	}
 }
 

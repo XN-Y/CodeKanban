@@ -132,3 +132,33 @@ test('WebSessionEventStream waitFor resolves a normalized history item event', a
   assert.equal(event.item.tool.output, '/repo/demo');
   stream.close();
 });
+
+test('WebSessionEventStream replies to heartbeat ping without emitting a business event', async () => {
+  FakeWebSocket.reset();
+  FakeWebSocket.setFactory(socket => {
+    queueMicrotask(() => socket.open());
+  });
+
+  const stream = new WebSessionEventStream({
+    url: 'ws://127.0.0.1:3000/api/v1/web-sessions/events',
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  await stream.waitForOpen();
+  const socket = FakeWebSocket.instances[0];
+  const iterator = stream[Symbol.asyncIterator]();
+  await iterator.next();
+
+  socket.emitJson({
+    v: 1,
+    k: 'hb',
+    ts: 1710000300000,
+    op: 'ping',
+  });
+
+  assert.equal(socket.sent.length, 1);
+  assert.equal(socket.sent[0].k, 'hb');
+  assert.equal(socket.sent[0].op, 'pong');
+
+  stream.close();
+});

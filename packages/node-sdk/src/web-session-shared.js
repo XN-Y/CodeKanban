@@ -6,6 +6,7 @@ import { ensureArrayOfStrings, ensureOptionalString, ensureString } from './util
 export const WEB_SESSION_PROTOCOL_VERSION = 1;
 export const WEB_SESSION_COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
 export const WEB_SESSION_EVENTS_WS_PATH = '/api/v1/web-sessions/events';
+export const WEB_SESSION_HEARTBEAT_KIND = 'hb';
 
 const IMAGE_MIME_BY_EXT = new Map([
   ['.apng', 'image/apng'],
@@ -504,6 +505,14 @@ export function normalizeWebSessionFrame(rawFrame) {
     };
   }
 
+  if (rawFrame?.k === WEB_SESSION_HEARTBEAT_KIND) {
+    return {
+      ...base,
+      type: 'heartbeat',
+      heartbeatType: trimmedString(rawFrame?.op) || null,
+    };
+  }
+
   if (rawFrame?.k === 'snap') {
     return {
       ...base,
@@ -560,6 +569,19 @@ export function buildWebSessionCommandFrame({ requestId, sessionId, operation, p
   };
 }
 
+export function buildWebSessionHeartbeatFrame(operation) {
+  return {
+    v: WEB_SESSION_PROTOCOL_VERSION,
+    k: WEB_SESSION_HEARTBEAT_KIND,
+    ts: Date.now(),
+    op: ensureString(operation, 'operation'),
+  };
+}
+
+export function isWebSessionHeartbeatFrame(rawFrame) {
+  return rawFrame?.k === WEB_SESSION_HEARTBEAT_KIND;
+}
+
 export function normalizeWebSessionAttachment(value) {
   if (!value || typeof value !== 'object') {
     return null;
@@ -592,13 +614,16 @@ export function ensureImageMimeType(value, fileName) {
 export function shouldEmitWebSessionFrame(frame, sessionIdFilter) {
   const normalizedFilter = ensureOptionalString(sessionIdFilter);
   if (!normalizedFilter) {
-    return true;
+    return frame?.type !== 'heartbeat';
   }
   if (!frame || typeof frame !== 'object') {
     return false;
   }
   if (frame.type === 'open' || frame.type === 'close' || frame.type === 'error') {
     return true;
+  }
+  if (frame.type === 'heartbeat') {
+    return false;
   }
   return ensureOptionalString(frame.sessionId) === normalizedFilter;
 }

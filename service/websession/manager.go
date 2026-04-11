@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -37,6 +38,11 @@ const (
 	planPromptPreamble            = "You are operating in planning mode. Inspect the project first, summarize the goal, and propose a concrete plan before making changes. Do not mutate files until the user confirms execution or explicitly asks you to proceed immediately. If additional permissions are needed, call them out explicitly."
 	recoveryReasonProcessRestart  = "process_restart"
 	recoveryMessageProcessRestart = "Session runtime was interrupted because the app restarted. Send a new message to continue."
+)
+
+var (
+	webSessionHeartbeatInterval = 15 * time.Second
+	webSessionHeartbeatTimeout  = 45 * time.Second
 )
 
 type Config struct {
@@ -73,10 +79,13 @@ const (
 var ErrSessionHistoryUnavailable = errors.New("session history not found")
 
 type client struct {
-	conn    wsConn
-	logger  *zap.Logger
-	kind    clientKind
-	writeMu sync.Mutex
+	conn       wsConn
+	logger     *zap.Logger
+	kind       clientKind
+	writeMu    sync.Mutex
+	done       chan struct{}
+	once       sync.Once
+	lastSeenAt atomic.Int64
 }
 
 type wsConn interface {
@@ -273,10 +282,13 @@ func (m *Manager) registerClient(conn wsConn, kind clientKind) *client {
 		conn:   conn,
 		logger: m.logger.Named("client"),
 		kind:   kind,
+		done:   make(chan struct{}),
 	}
+	client.MarkSeen()
 	m.mu.Lock()
 	m.clients[client] = struct{}{}
 	m.mu.Unlock()
+	client.startHeartbeat()
 	return client
 }
 
@@ -370,9 +382,79 @@ func (m *Manager) UnregisterClient(client *client) {
 	if client == nil {
 		return
 	}
+	client.stop()
 	m.mu.Lock()
 	delete(m.clients, client)
 	m.mu.Unlock()
+}
+
+func (c *client) MarkSeen() {
+	if c == nil {
+		return
+	}
+	c.lastSeenAt.Store(time.Now().UnixMilli())
+}
+
+func (c *client) stop() {
+	if c == nil {
+		return
+	}
+	c.once.Do(func() {
+		close(c.done)
+	})
+}
+
+func (c *client) closeWithReason(reason string) {
+	if c == nil {
+		return
+	}
+	if c.logger != nil && strings.TrimSpace(reason) != "" {
+		c.logger.Debug("closing web session websocket", zap.String("reason", reason))
+	}
+	c.stop()
+	_ = c.conn.Close()
+}
+
+func (c *client) startHeartbeat() {
+	if c == nil {
+		return
+	}
+	go func() {
+		interval := webSessionHeartbeatInterval
+		if interval <= 0 {
+			interval = 15 * time.Second
+		}
+		timeout := webSessionHeartbeatTimeout
+		if timeout <= interval {
+			timeout = interval * 3
+		}
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-c.done:
+				return
+			case <-ticker.C:
+				lastSeenAt := c.lastSeenAt.Load()
+				if lastSeenAt <= 0 {
+					c.MarkSeen()
+					lastSeenAt = c.lastSeenAt.Load()
+				}
+				if time.Since(time.UnixMilli(lastSeenAt)) > timeout {
+					c.closeWithReason("heartbeat-timeout")
+					return
+				}
+				if err := c.send(newHeartbeatFrame("ping")); err != nil {
+					if c.logger != nil {
+						c.logger.Debug("failed to send web session heartbeat", zap.Error(err))
+					}
+					c.closeWithReason("heartbeat-send-failed")
+					return
+				}
+			}
+		}
+	}()
 }
 
 func (m *Manager) ListSessions(ctx context.Context, projectID string) ([]SessionSummary, error) {
@@ -1137,6 +1219,25 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleListCommand(ctx, client, frame)
 	default:
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "unknown operation", false))
+	}
+}
+
+func (m *Manager) HandleHeartbeatPayload(client *client, payload []byte) (bool, error) {
+	var frame wireHeartbeatFrame
+	if err := json.Unmarshal(payload, &frame); err != nil {
+		return false, nil
+	}
+	if frame.Kind != "hb" {
+		return false, nil
+	}
+	client.MarkSeen()
+	switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
+	case "ping":
+		return true, client.send(newHeartbeatFrame("pong"))
+	case "pong":
+		return true, nil
+	default:
+		return true, nil
 	}
 }
 
@@ -2866,6 +2967,7 @@ func (m *Manager) broadcast(frame wireFrame) {
 	for _, client := range clients {
 		if err := client.send(frame); err != nil {
 			m.logger.Debug("failed to send ws frame", zap.Error(err))
+			client.closeWithReason("broadcast-send-failed")
 		}
 	}
 }

@@ -2,7 +2,9 @@ import { CodeKanbanConfigError, CodeKanbanError, CodeKanbanValidationError } fro
 import {
   WEB_SESSION_PROTOCOL_VERSION,
   buildWebSessionCommandFrame,
+  buildWebSessionHeartbeatFrame,
   decodeWebSessionSocketMessage,
+  isWebSessionHeartbeatFrame,
   normalizeWebSessionFrame,
 } from './web-session-shared.js';
 import { ensureArrayOfStrings, ensureOptionalString, ensureString } from './utils.js';
@@ -307,6 +309,12 @@ export class WebSessionCommandChannel {
 
   _handleMessage(data) {
     const rawFrame = decodeWebSessionSocketMessage(data);
+    if (isWebSessionHeartbeatFrame(rawFrame)) {
+      if (rawFrame?.op === 'ping' && this.socket.readyState === SOCKET_OPEN) {
+        this.socket.send(JSON.stringify(buildWebSessionHeartbeatFrame('pong')));
+      }
+      return;
+    }
     const frame = normalizeWebSessionFrame(rawFrame);
 
     if (frame.type === 'error' && frame.requestId && this._pendingRequests.has(frame.requestId)) {

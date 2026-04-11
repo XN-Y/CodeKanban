@@ -7651,7 +7651,22 @@ watch(
   active => {
     if (!active) {
       emitMobileComposerFocusChange(false);
+      return;
     }
+    if (!isDocumentVisible() || !currentRealSession.value?.id) {
+      return;
+    }
+    void refreshWebSessionCatchUp('panel-active');
+  }
+);
+
+watch(
+  () => webSessionStore.eventRecoveryVersion,
+  version => {
+    if (version <= 0 || !props.isActive || !isDocumentVisible()) {
+      return;
+    }
+    void refreshWebSessionCatchUp('event-stream-recovered');
   }
 );
 
