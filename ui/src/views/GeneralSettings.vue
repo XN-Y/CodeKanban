@@ -271,18 +271,19 @@
             </n-space>
           </n-form-item>
           <n-form-item v-if="showCustomEditorInput" :label="t('settings.customCommand')">
-            <n-space vertical size="small">
+            <div class="settings-field-stack">
               <n-input
                 v-model:value="customEditorCommandValue"
+                class="settings-command-input"
                 :placeholder="customCommandPlaceholder"
               />
               <span class="form-tip">
-                {{ t('settings.customCommandTip') }}
+                {{ customCommandTip }}
               </span>
-            </n-space>
+            </div>
           </n-form-item>
           <n-form-item :label="t('settings.terminalShell')">
-            <n-space vertical size="small">
+            <div class="settings-field-stack">
               <n-spin :show="shellsLoading" size="small">
                 <n-select
                   v-model:value="selectedShellValue"
@@ -293,19 +294,21 @@
                 />
               </n-spin>
               <n-collapse-transition :show="showCustomShellInput">
-                <n-input
-                  v-model:value="customShellCommand"
-                  :placeholder="t('settings.customShellPlaceholder')"
-                  :status="customShellStatus"
-                  style="max-width: 320px; margin-top: 8px"
-                  @blur="handleCustomShellBlur"
-                />
+                <div class="settings-collapsible-field">
+                  <n-input
+                    v-model:value="customShellCommand"
+                    class="settings-command-input settings-command-input--shell"
+                    :placeholder="t('settings.customShellPlaceholder')"
+                    :status="customShellStatus"
+                    @blur="handleCustomShellBlur"
+                  />
+                </div>
               </n-collapse-transition>
               <span class="form-tip">{{ t('settings.terminalShellTip') }}</span>
               <span v-if="shellsData?.platform" class="form-tip">
                 {{ t('settings.currentPlatform') }}: {{ platformDisplayName }}
               </span>
-            </n-space>
+            </div>
           </n-form-item>
         </n-form>
       </n-card>
@@ -1841,7 +1844,13 @@ const previewPanelStyle = computed(() => {
 });
 
 const editorOptions = EDITOR_OPTIONS;
-const customCommandPlaceholder = computed(() => t('settings.customCommandPlaceholder'));
+const customCommandPathToken = '${path}';
+const customCommandTip = computed(() =>
+  t('settings.customCommandTip', { path: customCommandPathToken })
+);
+const customCommandPlaceholder = computed(() =>
+  t('settings.customCommandPlaceholder', { path: customCommandPathToken })
+);
 
 const defaultEditorValue = computed<EditorPreference>({
   get: () => editorSettings.value.defaultEditor,
@@ -2358,6 +2367,11 @@ function formatShortcutLabel(event: KeyboardEvent) {
   align-items: center;
 }
 
+:deep(.n-form-item-blank) {
+  width: 100%;
+  min-width: 0;
+}
+
 .preview-panel {
   border-radius: 12px;
   overflow: hidden;
@@ -2382,6 +2396,28 @@ function formatShortcutLabel(event: KeyboardEvent) {
 .form-tip {
   font-size: 12px;
   color: var(--n-text-color-3, #8a8fa3);
+}
+
+.settings-field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-command-input {
+  width: 100%;
+  max-width: 560px;
+}
+
+.settings-command-input--shell {
+  max-width: 320px;
+}
+
+.settings-collapsible-field {
+  width: 100%;
+  margin-top: 8px;
 }
 
 .shortcut-hint {
@@ -2506,6 +2542,11 @@ function formatShortcutLabel(event: KeyboardEvent) {
   .preview-banner {
     padding: 12px;
     font-size: 14px;
+  }
+
+  .settings-command-input,
+  .settings-command-input--shell {
+    max-width: none;
   }
 
   /* 表单项间距 */

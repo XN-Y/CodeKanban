@@ -1087,8 +1087,8 @@ export default {
     defaultEditorTip: 'Used for "Open in Editor" action on Worktree cards',
     customCommand: 'Custom Command',
     customCommandTip:
-      'Use {{path}} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
-    customCommandPlaceholder: 'For example: code --reuse-window {{path}}',
+      'Use {path} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
+    customCommandPlaceholder: 'For example: code --reuse-window {path}',
     recordNewKey: 'Record New Key',
     recording: 'Recording...',
     restoreDefault: 'Restore Default',

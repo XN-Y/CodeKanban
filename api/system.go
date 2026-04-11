@@ -55,7 +55,7 @@ type openEditorInput struct {
 	Body struct {
 		Path          string `json:"path" doc:"目标路径" required:"true"`
 		Editor        string `json:"editor" doc:"目标编辑器(vscode/cursor/trae/zed/custom)" required:"true"`
-		CustomCommand string `json:"customCommand,omitempty" doc:"自定义命令，使用 {{path}} 作为路径占位符"`
+		CustomCommand string `json:"customCommand,omitempty" doc:"自定义命令，使用 ${path} 作为路径占位符"`
 	} `json:"body"`
 }
 
