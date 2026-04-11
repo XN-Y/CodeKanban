@@ -3364,6 +3364,26 @@ const approvalColors = computed(() => {
     glow: isDarkTheme ? 'rgba(251, 146, 60, 0.24)' : 'rgba(249, 115, 22, 0.16)',
   };
 });
+const approvalTabColors = computed(() => {
+  const theme = activeTheme.value;
+  const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
+  if (isDarkTheme) {
+    return {
+      bg: 'var(--web-session-approval-bg)',
+      border: 'var(--web-session-approval-border)',
+      activeBg:
+        'color-mix(in srgb, var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) 78%, var(--app-surface-color, #fff) 22%)',
+      activeBorder:
+        'color-mix(in srgb, var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) 88%, transparent 12%)',
+    };
+  }
+  return {
+    bg: 'rgba(247, 144, 9, 0.14)',
+    border: 'rgba(247, 144, 9, 0.44)',
+    activeBg: 'rgba(247, 144, 9, 0.22)',
+    activeBorder: 'rgba(247, 144, 9, 0.6)',
+  };
+});
 const planApprovalColors = computed(() => {
   const theme = activeTheme.value;
   const isDarkTheme = isDarkHex(theme.bodyColor || '#ffffff');
@@ -3383,6 +3403,10 @@ const webSessionStyleVars = computed(
       '--web-session-approval-accent': approvalColors.value.accent,
       '--web-session-approval-accent-strong': approvalColors.value.accentStrong,
       '--web-session-approval-glow': approvalColors.value.glow,
+      '--web-session-approval-tab-bg': approvalTabColors.value.bg,
+      '--web-session-approval-tab-border': approvalTabColors.value.border,
+      '--web-session-approval-tab-active-bg': approvalTabColors.value.activeBg,
+      '--web-session-approval-tab-active-border': approvalTabColors.value.activeBorder,
       '--web-session-plan-approval-bg': planApprovalColors.value.bg,
       '--web-session-plan-approval-border': planApprovalColors.value.border,
       '--web-session-plan-approval-accent': planApprovalColors.value.accent,
@@ -8012,21 +8036,27 @@ onBeforeUnmount(() => {
 }
 
 .panel-header :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval) {
-  background-color: var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) !important;
-  border-color: var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) !important;
+  background-color: var(--web-session-approval-tab-bg, rgba(247, 144, 9, 0.16)) !important;
+  border-color: var(--web-session-approval-tab-border, rgba(247, 144, 9, 0.42)) !important;
 }
 
 .panel-header
   :deep(.n-tabs .n-tabs-nav--card-type .n-tabs-tab.has-unviewed-approval.n-tabs-tab--active) {
-  background-color: color-mix(
-    in srgb,
-    var(--web-session-approval-bg, rgba(247, 144, 9, 0.16)) 78%,
-    var(--app-surface-color, #fff) 22%
+  background-color: var(
+    --web-session-approval-tab-active-bg,
+    color-mix(
+      in srgb,
+      var(--web-session-approval-tab-bg, rgba(247, 144, 9, 0.16)) 78%,
+      var(--app-surface-color, #fff) 22%
+    )
   ) !important;
-  border-color: color-mix(
-    in srgb,
-    var(--web-session-approval-border, rgba(247, 144, 9, 0.42)) 88%,
-    transparent 12%
+  border-color: var(
+    --web-session-approval-tab-active-border,
+    color-mix(
+      in srgb,
+      var(--web-session-approval-tab-border, rgba(247, 144, 9, 0.42)) 88%,
+      transparent 12%
+    )
   ) !important;
 }
 
