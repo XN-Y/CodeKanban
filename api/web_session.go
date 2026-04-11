@@ -12,7 +12,6 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/service/websession"
-	"code-kanban/utils"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/gofiber/fiber/v2"
@@ -40,19 +39,7 @@ type webSessionCountsResponse struct {
 	} `json:"body"`
 }
 
-func registerWebSessionRoutes(app *fiber.App, group *huma.Group, cfg *utils.AppConfig, logger *zap.Logger) {
-	manager, err := websession.NewManager(websession.Config{
-		DataDir:             utils.GetDataDir(),
-		AttachmentSizeLimit: cfg.AttachmentSizeLimit * 1024,
-		DefaultCodexSyncMode: func() websession.SyncMode {
-			return websession.SyncMode(cfg.Developer.WebSessionCodexDefaultSyncMode)
-		},
-	}, logger)
-	if err != nil {
-		logger.Error("failed to initialize web session manager", zap.Error(err))
-		return
-	}
-
+func registerWebSessionRoutes(app *fiber.App, group *huma.Group, manager *websession.Manager, logger *zap.Logger) {
 	ctrl := &webSessionController{
 		manager: manager,
 		logger:  logger.Named("web-session-controller"),

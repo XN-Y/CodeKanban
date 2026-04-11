@@ -13,6 +13,7 @@ import (
 
 	"code-kanban/model"
 	"code-kanban/model/tables"
+	"code-kanban/utils"
 
 	"go.uber.org/zap"
 )
@@ -1238,6 +1239,295 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 	}
 	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
 		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
+	}
+}
+
+func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:    utils.SettingModeOn,
+		TimeoutSeconds: 10,
+		PromptTemplate: "The ${call} call timed out after ${duration}. Continue.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			Command:    true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_command_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindCommand)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after active call timeout recovery, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(rawEvents, "run_abort") == 0 {
+		t.Fatalf("expected run_abort event after active call timeout, got %#v", rawEvents)
+	}
+
+	var timeoutAbort Event
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			timeoutAbort = event
+			break
+		}
+	}
+	if timeoutAbort.Type != "run_abort" {
+		t.Fatalf("expected active timeout run_abort payload, got %#v", rawEvents)
+	}
+	if got := stringValue(timeoutAbort.Payload["callKind"]); got != string(activeCallTimeoutKindCommand) {
+		t.Fatalf("expected callKind %q, got %q", activeCallTimeoutKindCommand, got)
+	}
+	if got := stringValue(timeoutAbort.Payload["call"]); !strings.Contains(got, "pnpm dev --host 127.0.0.1 --port 4173") {
+		t.Fatalf("expected timeout payload call label to include command text, got %q", got)
+	}
+
+	messages := userMessageTexts(rawEvents)
+	if len(messages) < 2 {
+		t.Fatalf("expected timeout recovery to append a follow-up user message, got %#v", rawEvents)
+	}
+	if got := messages[len(messages)-1]; !strings.Contains(got, "pnpm dev --host 127.0.0.1 --port 4173") || !strings.Contains(got, "timed out after") {
+		t.Fatalf("expected rendered prompt with placeholders, got %q", got)
+	}
+}
+
+func TestActiveCallTimeoutUsesLatestTrackedCall(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:    utils.SettingModeOn,
+		TimeoutSeconds: 10,
+		PromptTemplate: "Continue after ${call}.",
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_latest_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	waitForTrackedActiveCallCount(t, manager, created.ID, 2)
+	commandCall := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindCommand)
+	mcpCall := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindMCP)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, commandCall.ToolID, time.Now().Add(-20*time.Second))
+	setTrackedActiveCallStartedAt(t, manager, created.ID, mcpCall.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	var timeoutAbort Event
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			timeoutAbort = event
+			break
+		}
+	}
+	if timeoutAbort.Type != "run_abort" {
+		t.Fatalf("expected active timeout run_abort payload, got %#v", rawEvents)
+	}
+	if got := stringValue(timeoutAbort.Payload["callKind"]); got != string(activeCallTimeoutKindMCP) {
+		t.Fatalf("expected latest timed-out callKind %q, got %q", activeCallTimeoutKindMCP, got)
+	}
+	if got := stringValue(timeoutAbort.Payload["call"]); !strings.Contains(strings.ToLower(got), "settings") {
+		t.Fatalf("expected timeout payload to mention MCP call, got %q", got)
+	}
+}
+
+func TestActiveCallTimeoutPausesDuringApproval(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:    utils.SettingModeOn,
+		TimeoutSeconds: 10,
+		PromptTemplate: "Continue after ${call}.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			Tool:       true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_approval_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "apply the patch", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval)
+	if request == nil {
+		t.Fatal("expected pending approval request")
+	}
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindTool)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+	time.Sleep(150 * time.Millisecond)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(rawEvents, "run_abort") != 0 {
+		t.Fatalf("expected no timeout abort while approval is pending, got %#v", rawEvents)
+	}
+
+	if err := manager.respondToApproval(created.ID, "approve"); err != nil {
+		t.Fatalf("respondToApproval returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(rawEvents, "run_abort") == 0 {
+		t.Fatalf("expected timeout abort after approval resumed execution, got %#v", rawEvents)
+	}
+}
+
+func TestActiveCallTimeoutPausesDuringUserInput(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:    utils.SettingModeOn,
+		TimeoutSeconds: 10,
+		PromptTemplate: "Continue after ${call}.",
+		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
+			UseDefault: false,
+			MCP:        true,
+		},
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_user_input_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect scope", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestUserInput)
+	if request == nil {
+		t.Fatal("expected pending user input request")
+	}
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindMCP)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+	time.Sleep(150 * time.Millisecond)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(rawEvents, "run_abort") != 0 {
+		t.Fatalf("expected no timeout abort while user input is pending, got %#v", rawEvents)
+	}
+
+	if err := manager.respondToUserInput(created.ID, request.ItemID, map[string][]string{
+		"scope": []string{"Continue"},
+	}); err != nil {
+		t.Fatalf("respondToUserInput returned error: %v", err)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if countEventsByType(rawEvents, "run_abort") == 0 {
+		t.Fatalf("expected timeout abort after user input resumed execution, got %#v", rawEvents)
 	}
 }
 
@@ -2565,6 +2855,103 @@ function emitPlan() {
   });
 }
 
+function emitCommandExecutionStart() {
+  send({
+    method: 'item/started',
+    params: {
+      item: {
+        type: 'commandExecution',
+        id: 'cmd_timeout',
+        command: 'pnpm dev --host 127.0.0.1 --port 4173',
+      },
+      threadId,
+      turnId,
+    },
+  });
+}
+
+function emitMcpToolCallStart() {
+  send({
+    method: 'item/started',
+    params: {
+      item: {
+        type: 'mcpToolCall',
+        id: 'mcp_timeout',
+        tool_name: 'settings',
+      },
+      threadId,
+      turnId,
+    },
+  });
+}
+
+function emitFileChangeStart() {
+  send({
+    method: 'item/started',
+    params: {
+      item: {
+        type: 'fileChange',
+        id: 'file_change_timeout',
+        path: 'README.md',
+      },
+      threadId,
+      turnId,
+    },
+  });
+}
+
+function startTimedOutTurn(kind) {
+  if (kind === 'command') {
+    emitCommandExecutionStart();
+    return;
+  }
+  if (kind === 'mcp') {
+    emitMcpToolCallStart();
+    return;
+  }
+  if (kind === 'approval') {
+    emitFileChangeStart();
+    awaiting = 'req_approval_timeout';
+    send({
+      id: awaiting,
+      method: 'item/fileChange/requestApproval',
+      params: {
+        threadId,
+        turnId,
+        itemId: 'file_change_timeout',
+        reason: 'Need approval before continuing.',
+      },
+    });
+    return;
+  }
+  if (kind === 'user_input') {
+    emitMcpToolCallStart();
+    awaiting = 'req_user_timeout';
+    send({
+      id: awaiting,
+      method: 'item/tool/requestUserInput',
+      params: {
+        threadId,
+        turnId,
+        itemId: 'mcp_timeout',
+        questions: [
+          {
+            id: 'scope',
+            header: 'Scope',
+            question: 'Which scope should I use?',
+            isOther: false,
+            isSecret: false,
+            options: [
+              { label: 'Continue', description: 'Continue the turn.' },
+              { label: 'Pause', description: 'Pause the turn.' },
+            ],
+          },
+        ],
+      },
+    });
+  }
+}
+
 function finishTurn(text) {
   emitReasoning();
   if (mode === 'plan') {
@@ -2726,6 +3113,62 @@ rl.on('line', line => {
       return;
     }
 
+    if (mode === 'active_call_timeout_command_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        startTimedOutTurn('command');
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
+
+    if (mode === 'active_call_timeout_mcp_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        startTimedOutTurn('mcp');
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
+
+    if (mode === 'active_call_timeout_latest_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        emitCommandExecutionStart();
+        setTimeout(() => emitMcpToolCallStart(), 25);
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
+
+    if (mode === 'active_call_timeout_approval_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        startTimedOutTurn('approval');
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
+
+    if (mode === 'active_call_timeout_user_input_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        startTimedOutTurn('user_input');
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
+
     if (mode === 'user_input') {
       awaiting = 'req_user_1';
       send({
@@ -2770,6 +3213,10 @@ rl.on('line', line => {
   }
 
   if (awaiting && message.id === awaiting) {
+    if (mode === 'active_call_timeout_approval_then_success' || mode === 'active_call_timeout_user_input_then_success') {
+      awaiting = null;
+      return;
+    }
     finishTurn(mode === 'user_input' ? 'answered' : 'approved');
     awaiting = null;
   }
@@ -2823,15 +3270,136 @@ func waitForPendingServerRequest(
 		manager.mu.RUnlock()
 		if run != nil {
 			if request, ok := run.pendingApprovalRequest(); ok && request.Kind == kind {
-				return request
+				if waitForAssistantState(t, manager, sessionID, AssistantStateWaitingApproval, deadline) {
+					return request
+				}
 			}
 			if request, ok := run.pendingUserInputRequest(); ok && request.Kind == kind {
-				return request
+				if waitForAssistantState(t, manager, sessionID, AssistantStateWaitingInput, deadline) {
+					return request
+				}
 			}
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	return nil
+}
+
+func waitForAssistantState(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	state AssistantState,
+	deadline time.Time,
+) bool {
+	t.Helper()
+
+	for time.Now().Before(deadline) {
+		record, err := manager.GetSession(context.Background(), sessionID)
+		if err == nil && record.AssistantState == string(state) {
+			return true
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func waitForTrackedActiveCall(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	kind activeCallTimeoutKind,
+) trackedActiveCall {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.RLock()
+		run := manager.runs[sessionID]
+		manager.mu.RUnlock()
+		if run != nil {
+			run.mu.Lock()
+			for _, call := range run.activeCalls {
+				if call.Kind == kind {
+					run.mu.Unlock()
+					return call
+				}
+			}
+			run.mu.Unlock()
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for tracked active call kind %q", kind)
+	return trackedActiveCall{}
+}
+
+func waitForTrackedActiveCallCount(t *testing.T, manager *Manager, sessionID string, count int) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.RLock()
+		run := manager.runs[sessionID]
+		manager.mu.RUnlock()
+		if run != nil {
+			run.mu.Lock()
+			size := len(run.activeCalls)
+			run.mu.Unlock()
+			if size >= count {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d tracked active calls", count)
+}
+
+func setTrackedActiveCallStartedAt(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	toolID string,
+	startedAt time.Time,
+) {
+	t.Helper()
+
+	manager.mu.RLock()
+	run := manager.runs[sessionID]
+	manager.mu.RUnlock()
+	if run == nil {
+		t.Fatalf("expected active run for session %s", sessionID)
+	}
+
+	run.mu.Lock()
+	call, ok := run.activeCalls[toolID]
+	if !ok {
+		run.mu.Unlock()
+		t.Fatalf("tracked active call %s not found", toolID)
+	}
+	call.StartedAt = startedAt
+	call.PauseTotal = 0
+	run.activeCalls[toolID] = call
+	run.mu.Unlock()
+}
+
+func countEventsByType(events []Event, eventType string) int {
+	count := 0
+	for _, event := range events {
+		if event.Type == eventType {
+			count += 1
+		}
+	}
+	return count
+}
+
+func userMessageTexts(events []Event) []string {
+	items := make([]string, 0, len(events))
+	for _, event := range events {
+		if event.Type == "msg_u" {
+			items = append(items, stringValue(event.Payload["txt"]))
+		}
+	}
+	return items
 }
 
 func historyHasEvent(events []Event, eventType string) bool {

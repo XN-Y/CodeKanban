@@ -1060,6 +1060,22 @@ export default {
     webSessionCodexDefaultSyncMode: 'Default Codex Sync Mode',
     webSessionCodexDefaultSyncModeTip:
       'Fast sync keeps using app-server for lower latency. Deep sync rebuilds the timeline from ai_session rollout logs and preserves tool calls and timestamps.',
+    webSessionActiveCallTimeout: 'Timed-out active call recovery',
+    webSessionActiveCallTimeoutTip:
+      'Backend-only Codex safeguard. When a monitored active call keeps running past the threshold, CodeKanban interrupts the run and sends a follow-up prompt automatically.',
+    webSessionActiveCallTimeoutSeconds: 'Active call timeout (seconds)',
+    webSessionActiveCallTimeoutSecondsTip:
+      'Applies to the currently active Codex call. Valid range: 10-3600 seconds. Default is 60 seconds.',
+    webSessionActiveCallTimeoutCallKinds: 'Active call categories',
+    webSessionActiveCallTimeoutCallKindsTip:
+      'Use Default follows the built-in monitored set for this version. Disable Default to choose specific Codex call categories manually.',
+    webSessionActiveCallTimeoutKindDefault: 'Default monitored set',
+    webSessionActiveCallTimeoutKindMcp: 'MCP calls',
+    webSessionActiveCallTimeoutKindCommand: 'Command execution',
+    webSessionActiveCallTimeoutKindTool: 'Other tools',
+    webSessionActiveCallTimeoutPrompt: 'Automatic continue prompt',
+    webSessionActiveCallTimeoutPromptTip:
+      'Supports ${call} and ${duration}. These variables are replaced before the automatic follow-up message is sent.',
     webSessionSyncModeFast: 'Fast Sync',
     webSessionSyncModeDeep: 'Deep Sync',
     terminalServerStateSnapshot: 'Server Terminal State Snapshot',

@@ -160,7 +160,30 @@ export interface DeveloperConfig {
   $schema?: string;
   autoCreateTaskOnStartWork: boolean;
   enableTerminalScrollback: boolean;
+  enableTerminalStateSnapshot: boolean;
   renameSessionTitleEachCommand: boolean;
+  webSessionCodexDefaultSyncMode: string;
+  webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
+}
+export interface WebSessionActiveCallTimeoutConfig {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  callKinds: WebSessionActiveCallTimeoutKindsConfig;
+  enabledMode: string;
+  promptTemplate: string;
+  timeoutSeconds: number;
+}
+export interface WebSessionActiveCallTimeoutKindsConfig {
+  /**
+   * A URL to the JSON Schema for this object.
+   */
+  $schema?: string;
+  command: boolean;
+  mcp: boolean;
+  tool: boolean;
+  useDefault: boolean;
 }
 export interface OpenEditorInputBody {
   /**

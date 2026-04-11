@@ -21,6 +21,7 @@ import (
 
 	"code-kanban/api/h"
 	"code-kanban/service/terminal"
+	"code-kanban/service/websession"
 	"code-kanban/utils"
 )
 
@@ -80,6 +81,21 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	}, theLogger)
 	terminalManager.StartBackground(ctx)
 
+	webSessionManager, err := websession.NewManager(websession.Config{
+		DataDir:             utils.GetDataDir(),
+		AttachmentSizeLimit: cfg.AttachmentSizeLimit * 1024,
+		DefaultCodexSyncMode: func() websession.SyncMode {
+			return websession.SyncMode(cfg.Developer.WebSessionCodexDefaultSyncMode)
+		},
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return cfg.Developer.WebSessionActiveCallTimeout
+		},
+	}, theLogger)
+	if err != nil {
+		theLogger.Error("failed to initialize web session manager", zap.Error(err))
+		return err
+	}
+
 	registerAuthRoutes(app, cfg)
 	registerHealthRoutes(app, humaAPI)
 	registerProjectRoutes(v1)
@@ -88,9 +104,9 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	registerTaskRoutes(v1)
 	registerNotePadRoutes(v1)
 	registerAISessionRoutes(app, v1)
-	registerWebSessionRoutes(app, v1, cfg, theLogger)
+	registerWebSessionRoutes(app, v1, webSessionManager, theLogger)
 	registerFSRoutes(v1)
-	registerSystemRoutes(v1, cfg, terminalManager)
+	registerSystemRoutes(v1, cfg, terminalManager, webSessionManager)
 	registerUploadRoutes(app, v1, cfg, theLogger)
 	registerTerminalRoutes(app, v1, cfg, terminalManager, theLogger)
 	registerCaptureDebugRoute(app, terminalManager, theLogger)

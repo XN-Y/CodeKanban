@@ -463,6 +463,7 @@ func (m *Manager) runCodexAppServerSession(
 				m.broadcastSessionSummary(context.Background(), session.ID)
 				_ = client.closeStdin()
 				m.maybeSyncSessionAfterRun(session)
+				run.resetActiveCallTracking()
 			}
 		case waitErr = <-waitCh:
 			processExited = true
@@ -473,6 +474,7 @@ func (m *Manager) runCodexAppServerSession(
 	<-stderrDone
 
 	if ctx.Err() != nil {
+		abortPayload := activeCallTimeoutAbortPayload(session, run.abortEventPayload())
 		now := time.Now()
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -480,6 +482,7 @@ func (m *Manager) runCodexAppServerSession(
 			Type:      "run_abort",
 			RunID:     run.runID,
 			Timestamp: now,
+			Payload:   abortPayload,
 		})
 		_ = m.updateRuntimeState(
 			context.Background(),
@@ -742,6 +745,9 @@ func (m *Manager) handleCodexAppServerItemStarted(
 			},
 		})
 	default:
+		toolName := codexToolName(item)
+		toolInput := codexToolInput(item)
+		toolMeta := codexToolMeta(item)
 		toolID := firstNonEmpty(stringValue(item["id"]), utils.NewID())
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -752,12 +758,13 @@ func (m *Manager) handleCodexAppServerItemStarted(
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
-				"name": codexToolName(item),
+				"name": toolName,
 				"kind": itemType,
-				"in":   codexToolInput(item),
-				"meta": codexToolMeta(item),
+				"in":   toolInput,
+				"meta": toolMeta,
 			},
 		})
+		m.trackActiveCodexToolStart(run, toolID, itemType, toolName, toolInput, toolMeta)
 	}
 }
 
@@ -870,6 +877,7 @@ func (m *Manager) handleCodexAppServerItemCompleted(
 				"meta": codexToolMeta(item),
 			},
 		})
+		m.trackActiveCodexToolComplete(run, toolID)
 	}
 }
 
@@ -916,6 +924,7 @@ func (m *Manager) handleCodexAppServerUserInputRequest(
 		Questions: questions,
 	}
 	run.setPendingServerRequest(request)
+	m.pauseActiveCallTimeout(run)
 	now := time.Now()
 	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),
@@ -950,6 +959,7 @@ func (m *Manager) handleCodexAppServerApprovalRequest(
 ) error {
 	request := decodePendingApprovalRequest(message)
 	run.setPendingServerRequest(request)
+	m.pauseActiveCallTimeout(run)
 	now := time.Now()
 	_, err := m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 		ID:        utils.NewID(),

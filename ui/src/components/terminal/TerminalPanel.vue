@@ -813,12 +813,45 @@ const developerConfigState = reactive<DeveloperConfig>({
   autoCreateTaskOnStartWork: true,
   enableTerminalStateSnapshot: false,
   webSessionCodexDefaultSyncMode: 'fast',
+  webSessionActiveCallTimeout: {
+    enabledMode: 'default',
+    timeoutSeconds: 60,
+    promptTemplate:
+      'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.',
+    callKinds: {
+      useDefault: true,
+      mcp: true,
+      command: true,
+      tool: true,
+    },
+  },
 });
 const developerConfigLoaded = ref(false);
 const developerConfigLoading = ref(false);
 const renameTitleToggleLoading = ref(false);
 const autoCreateTaskToggleLoading = ref(false);
 let developerConfigLoadPromise: Promise<boolean> | null = null;
+
+function cloneDeveloperConfigState(): DeveloperConfig {
+  return {
+    enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
+    renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
+    autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
+    enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
+    webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
+    webSessionActiveCallTimeout: {
+      enabledMode: developerConfigState.webSessionActiveCallTimeout.enabledMode,
+      timeoutSeconds: developerConfigState.webSessionActiveCallTimeout.timeoutSeconds,
+      promptTemplate: developerConfigState.webSessionActiveCallTimeout.promptTemplate,
+      callKinds: {
+        useDefault: developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault,
+        mcp: developerConfigState.webSessionActiveCallTimeout.callKinds.mcp,
+        command: developerConfigState.webSessionActiveCallTimeout.callKinds.command,
+        tool: developerConfigState.webSessionActiveCallTimeout.callKinds.tool,
+      },
+    },
+  };
+}
 
 // 右键菜单相关状态
 const contextMenuTab = ref<string | null>(null);
@@ -1233,6 +1266,26 @@ async function ensureDeveloperConfigLoaded() {
         config?.enableTerminalStateSnapshot ?? false;
       developerConfigState.webSessionCodexDefaultSyncMode =
         config?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast';
+      developerConfigState.webSessionActiveCallTimeout.enabledMode =
+        config?.webSessionActiveCallTimeout?.enabledMode === 'on' ||
+        config?.webSessionActiveCallTimeout?.enabledMode === 'off'
+          ? config.webSessionActiveCallTimeout.enabledMode
+          : 'default';
+      developerConfigState.webSessionActiveCallTimeout.timeoutSeconds = Math.max(
+        10,
+        Number(config?.webSessionActiveCallTimeout?.timeoutSeconds) || 60
+      );
+      developerConfigState.webSessionActiveCallTimeout.promptTemplate =
+        config?.webSessionActiveCallTimeout?.promptTemplate?.trim() ||
+        developerConfigState.webSessionActiveCallTimeout.promptTemplate;
+      developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault =
+        config?.webSessionActiveCallTimeout?.callKinds?.useDefault !== false;
+      developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
+        config?.webSessionActiveCallTimeout?.callKinds?.mcp !== false;
+      developerConfigState.webSessionActiveCallTimeout.callKinds.command =
+        config?.webSessionActiveCallTimeout?.callKinds?.command !== false;
+      developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
+        config?.webSessionActiveCallTimeout?.callKinds?.tool !== false;
       developerConfigLoaded.value = true;
       return true;
     } catch (error) {
@@ -1258,15 +1311,9 @@ async function toggleRenameTitleEachCommandSetting() {
   renameTitleToggleLoading.value = true;
   const nextValue = !developerConfigState.renameSessionTitleEachCommand;
   try {
-    await http
-      .Post('/system/developer-config/update', {
-        enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
-        renameSessionTitleEachCommand: nextValue,
-        autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
-        enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
-        webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
-      })
-      .send();
+    const payload = cloneDeveloperConfigState();
+    payload.renameSessionTitleEachCommand = nextValue;
+    await http.Post('/system/developer-config/update', payload).send();
     developerConfigState.renameSessionTitleEachCommand = nextValue;
     message.success(t('common.saveSuccess'));
   } catch (error) {
@@ -1288,15 +1335,9 @@ async function toggleAutoCreateTaskOnStartWorkSetting() {
   autoCreateTaskToggleLoading.value = true;
   const nextValue = !developerConfigState.autoCreateTaskOnStartWork;
   try {
-    await http
-      .Post('/system/developer-config/update', {
-        enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
-        renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
-        autoCreateTaskOnStartWork: nextValue,
-        enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
-        webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
-      })
-      .send();
+    const payload = cloneDeveloperConfigState();
+    payload.autoCreateTaskOnStartWork = nextValue;
+    await http.Post('/system/developer-config/update', payload).send();
     developerConfigState.autoCreateTaskOnStartWork = nextValue;
     message.success(t('common.saveSuccess'));
   } catch (error) {

@@ -40,11 +40,12 @@ const (
 )
 
 type Config struct {
-	DataDir              string
-	AttachmentSizeLimit  int64
-	ClaudePath           string
-	CodexPath            string
-	DefaultCodexSyncMode func() SyncMode
+	DataDir                 string
+	AttachmentSizeLimit     int64
+	ClaudePath              string
+	CodexPath               string
+	DefaultCodexSyncMode    func() SyncMode
+	ActiveCallTimeoutConfig func() utils.WebSessionActiveCallTimeoutConfig
 }
 
 type Manager struct {
@@ -110,6 +111,11 @@ type activeRun struct {
 	commandGroupFirst  int64
 	commandGroupCount  int
 	commandGroupTools  map[string]struct{}
+	abortPayload       map[string]any
+	activeCalls        map[string]trackedActiveCall
+	activeCallPausedAt *time.Time
+	activeCallTimer    *time.Timer
+	activeCallInFlight bool
 }
 
 type attachmentMeta struct {
@@ -1681,6 +1687,7 @@ func (m *Manager) sendMessageInternal(
 
 func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables.WebSessionTable, text string, attachments []Attachment) {
 	defer func() {
+		run.resetActiveCallTracking()
 		run.closeInput()
 		run.clearPendingApproval()
 		run.clearPendingServerRequest()
@@ -1746,6 +1753,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	waitErr := cmd.Wait()
 	<-stderrDone
 	if ctx.Err() != nil {
+		abortPayload := activeCallTimeoutAbortPayload(session, run.abortEventPayload())
 		now := time.Now()
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
@@ -1753,6 +1761,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			Type:      "run_abort",
 			RunID:     run.runID,
 			Timestamp: now,
+			Payload:   abortPayload,
 		})
 		_ = m.updateRuntimeState(
 			context.Background(),
@@ -1835,6 +1844,9 @@ func (m *Manager) handleRunFailureWithCode(
 	code string,
 	err error,
 ) {
+	if run != nil {
+		run.resetActiveCallTracking()
+	}
 	message := strings.TrimSpace(err.Error())
 	if message == "" {
 		message = "runtime failed"
@@ -2127,6 +2139,10 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 		if stringValue(item["type"]) == "agent_message" {
 			return
 		}
+		toolKind := normalizeCodexItemType(stringValue(item["type"]))
+		toolName := codexToolName(item)
+		toolInput := codexToolInput(item)
+		toolMeta := codexToolMeta(item)
 		toolID := stringValue(item["id"])
 		if toolID == "" {
 			toolID = utils.NewID()
@@ -2140,12 +2156,13 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 			Timestamp: time.Now(),
 			Payload: map[string]any{
 				"tid":  toolID,
-				"name": codexToolName(item),
+				"name": toolName,
 				"kind": stringValue(item["type"]),
-				"in":   codexToolInput(item),
-				"meta": codexToolMeta(item),
+				"in":   toolInput,
+				"meta": toolMeta,
 			},
 		})
+		m.trackActiveCodexToolStart(run, toolID, toolKind, toolName, toolInput, toolMeta)
 	case "item.completed":
 		item, _ := raw["item"].(map[string]any)
 		if stringValue(item["type"]) == "agent_message" {
@@ -2213,6 +2230,7 @@ func (m *Manager) handleCodexEvent(session tables.WebSessionTable, run *activeRu
 				"meta": codexToolMeta(item),
 			},
 		})
+		m.trackActiveCodexToolComplete(run, toolID)
 	case "turn.completed":
 		usage, _ := raw["usage"].(map[string]any)
 		in := int64(numberValue(usage["input_tokens"]))
@@ -2712,6 +2730,7 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 			return err
 		}
 		run.clearPendingServerRequest()
+		m.resumeActiveCallTimeout(run)
 		record, err := m.GetSession(context.Background(), sessionID)
 		if err != nil {
 			return err
@@ -2797,6 +2816,7 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 		return err
 	}
 	run.clearPendingServerRequest()
+	m.resumeActiveCallTimeout(run)
 
 	record, err := m.GetSession(context.Background(), sessionID)
 	if err != nil {

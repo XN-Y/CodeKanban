@@ -218,12 +218,27 @@ export interface AIAssistantStatusConfig {
   copilot: boolean;
 }
 
+export interface WebSessionActiveCallTimeoutKindsConfig {
+  useDefault: boolean;
+  mcp: boolean;
+  command: boolean;
+  tool: boolean;
+}
+
+export interface WebSessionActiveCallTimeoutConfig {
+  enabledMode: 'default' | 'on' | 'off';
+  timeoutSeconds: number;
+  promptTemplate: string;
+  callKinds: WebSessionActiveCallTimeoutKindsConfig;
+}
+
 export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
   autoCreateTaskOnStartWork: boolean;
   enableTerminalStateSnapshot: boolean;
   webSessionCodexDefaultSyncMode: 'fast' | 'deep';
+  webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;
 }
 
 export interface WorktreeConfig {

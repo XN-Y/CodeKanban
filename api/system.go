@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"code-kanban/service/websession"
+
 	"github.com/danielgtaylor/huma/v2"
 
 	"code-kanban/api/h"
@@ -57,7 +59,12 @@ type openEditorInput struct {
 	} `json:"body"`
 }
 
-func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManager systemTerminalManager) {
+func registerSystemRoutes(
+	group *huma.Group,
+	cfg *utils.AppConfig,
+	terminalManager systemTerminalManager,
+	webSessionManager *websession.Manager,
+) {
 	huma.Get(group, "/system/version", func(ctx context.Context, input *struct{}) (*versionResponse, error) {
 		resp := &versionResponse{}
 		resp.Body.Name = appInfo.Name
@@ -185,7 +192,7 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 	})
 
 	huma.Get(group, "/system/developer-config", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.DeveloperConfig], error) {
-		resp := h.NewItemResponse(cfg.Developer)
+		resp := h.NewItemResponse(utils.NormalizeDeveloperConfig(cfg.Developer))
 		resp.Status = http.StatusOK
 		return resp, nil
 	}, func(op *huma.Operation) {
@@ -198,18 +205,23 @@ func registerSystemRoutes(group *huma.Group, cfg *utils.AppConfig, terminalManag
 	huma.Post(group, "/system/developer-config/update", func(ctx context.Context, input *struct {
 		Body utils.DeveloperConfig `json:"body"`
 	}) (*h.MessageResponse, error) {
+		normalized := utils.MergeDeveloperConfig(cfg.Developer, input.Body)
+
 		// 原子更新：在锁内完成修改+写盘
 		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
-			c.Developer = input.Body
+			c.Developer = normalized
 		}); err != nil {
 			return nil, huma.Error500InternalServerError("failed to save configuration")
 		}
 
 		if terminalManager != nil {
-			terminalManager.UpdateScrollbackEnabled(input.Body.EnableTerminalScrollback)
-			terminalManager.UpdateTerminalStateSnapshotEnabled(input.Body.EnableTerminalStateSnapshot)
-			terminalManager.UpdateRenameTitleEachCommand(input.Body.RenameSessionTitleEachCommand)
-			terminalManager.UpdateAutoCreateTaskOnStartWork(input.Body.AutoCreateTaskOnStartWork)
+			terminalManager.UpdateScrollbackEnabled(normalized.EnableTerminalScrollback)
+			terminalManager.UpdateTerminalStateSnapshotEnabled(normalized.EnableTerminalStateSnapshot)
+			terminalManager.UpdateRenameTitleEachCommand(normalized.RenameSessionTitleEachCommand)
+			terminalManager.UpdateAutoCreateTaskOnStartWork(normalized.AutoCreateTaskOnStartWork)
+		}
+		if webSessionManager != nil {
+			webSessionManager.RefreshDeveloperConfig()
 		}
 
 		resp := h.NewMessageResponse("Developer config updated.")

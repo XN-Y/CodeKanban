@@ -61,11 +61,34 @@ type TerminalShellConfig struct {
 }
 
 type DeveloperConfig struct {
-	EnableTerminalScrollback       bool   `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
-	RenameSessionTitleEachCommand  bool   `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
-	AutoCreateTaskOnStartWork      bool   `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
-	EnableTerminalStateSnapshot    bool   `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
-	WebSessionCodexDefaultSyncMode string `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
+	EnableTerminalScrollback       bool                              `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
+	RenameSessionTitleEachCommand  bool                              `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
+	AutoCreateTaskOnStartWork      bool                              `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
+	EnableTerminalStateSnapshot    bool                              `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
+	WebSessionCodexDefaultSyncMode string                            `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
+	WebSessionActiveCallTimeout    WebSessionActiveCallTimeoutConfig `json:"webSessionActiveCallTimeout" yaml:"webSessionActiveCallTimeout"`
+}
+
+type SettingMode string
+
+const (
+	SettingModeDefault SettingMode = "default"
+	SettingModeOn      SettingMode = "on"
+	SettingModeOff     SettingMode = "off"
+)
+
+type WebSessionActiveCallTimeoutKindsConfig struct {
+	UseDefault bool `json:"useDefault" yaml:"useDefault"`
+	MCP        bool `json:"mcp" yaml:"mcp"`
+	Command    bool `json:"command" yaml:"command"`
+	Tool       bool `json:"tool" yaml:"tool"`
+}
+
+type WebSessionActiveCallTimeoutConfig struct {
+	EnabledMode    SettingMode                            `json:"enabledMode" yaml:"enabledMode"`
+	TimeoutSeconds int                                    `json:"timeoutSeconds" yaml:"timeoutSeconds"`
+	PromptTemplate string                                 `json:"promptTemplate" yaml:"promptTemplate"`
+	CallKinds      WebSessionActiveCallTimeoutKindsConfig `json:"callKinds" yaml:"callKinds"`
 }
 
 type WebSessionQuickInputConfig struct {
@@ -82,6 +105,25 @@ const WebSessionQuickInputRecentLimit = 6
 var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
 	Pinned: []string{"continue"},
 	Recent: []string{},
+}
+
+const (
+	defaultWebSessionActiveCallTimeoutSeconds = 60
+	minWebSessionActiveCallTimeoutSeconds     = 10
+	maxWebSessionActiveCallTimeoutSeconds     = 3600
+	DefaultWebSessionActiveCallTimeoutPrompt  = "The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue."
+)
+
+var defaultWebSessionActiveCallTimeoutConfig = WebSessionActiveCallTimeoutConfig{
+	EnabledMode:    SettingModeDefault,
+	TimeoutSeconds: defaultWebSessionActiveCallTimeoutSeconds,
+	PromptTemplate: DefaultWebSessionActiveCallTimeoutPrompt,
+	CallKinds: WebSessionActiveCallTimeoutKindsConfig{
+		UseDefault: true,
+		MCP:        true,
+		Command:    true,
+		Tool:       true,
+	},
 }
 
 // WorktreeConfig Worktree 全局配置。
@@ -264,6 +306,7 @@ func ReadConfig() *AppConfig {
 			AutoCreateTaskOnStartWork:      true,
 			EnableTerminalStateSnapshot:    runtime.GOOS != "windows",
 			WebSessionCodexDefaultSyncMode: "fast",
+			WebSessionActiveCallTimeout:    NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),
 		},
 		UI: UIConfig{
 			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
@@ -301,6 +344,7 @@ func ReadConfig() *AppConfig {
 	_ = config.Auth.SessionDuration()
 	_ = config.Terminal.IdleDuration()
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
+	config.Developer = NormalizeDeveloperConfig(config.Developer)
 
 	if config.PrintConfig {
 		configStore.Print()
@@ -314,6 +358,74 @@ func NormalizeWebSessionQuickInputConfig(config WebSessionQuickInputConfig) WebS
 		Pinned: normalizeWebSessionQuickInputItems(config.Pinned, 0),
 		Recent: normalizeWebSessionQuickInputItems(config.Recent, WebSessionQuickInputRecentLimit),
 	}
+}
+
+func NormalizeDeveloperConfig(config DeveloperConfig) DeveloperConfig {
+	switch strings.ToLower(strings.TrimSpace(config.WebSessionCodexDefaultSyncMode)) {
+	case "deep":
+		config.WebSessionCodexDefaultSyncMode = "deep"
+	default:
+		config.WebSessionCodexDefaultSyncMode = "fast"
+	}
+	config.WebSessionActiveCallTimeout = NormalizeWebSessionActiveCallTimeoutConfig(config.WebSessionActiveCallTimeout)
+	return config
+}
+
+func MergeDeveloperConfig(current DeveloperConfig, incoming DeveloperConfig) DeveloperConfig {
+	if incoming.WebSessionActiveCallTimeout == (WebSessionActiveCallTimeoutConfig{}) {
+		incoming.WebSessionActiveCallTimeout = current.WebSessionActiveCallTimeout
+	}
+	return NormalizeDeveloperConfig(incoming)
+}
+
+func NormalizeWebSessionActiveCallTimeoutConfig(config WebSessionActiveCallTimeoutConfig) WebSessionActiveCallTimeoutConfig {
+	normalized := defaultWebSessionActiveCallTimeoutConfig
+	normalized.EnabledMode = normalizeSettingMode(config.EnabledMode)
+	if config.TimeoutSeconds != 0 {
+		normalized.TimeoutSeconds = clampWebSessionActiveCallTimeoutSeconds(config.TimeoutSeconds)
+	}
+	if strings.TrimSpace(config.PromptTemplate) != "" {
+		normalized.PromptTemplate = strings.TrimSpace(config.PromptTemplate)
+	}
+	if config.CallKinds != (WebSessionActiveCallTimeoutKindsConfig{}) {
+		normalized.CallKinds = normalizeWebSessionActiveCallTimeoutKindsConfig(config.CallKinds)
+	}
+	return normalized
+}
+
+func normalizeWebSessionActiveCallTimeoutKindsConfig(
+	config WebSessionActiveCallTimeoutKindsConfig,
+) WebSessionActiveCallTimeoutKindsConfig {
+	if config.UseDefault {
+		config.MCP = true
+		config.Command = true
+		config.Tool = true
+	}
+	return config
+}
+
+func normalizeSettingMode(value SettingMode) SettingMode {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(SettingModeOn):
+		return SettingModeOn
+	case string(SettingModeOff):
+		return SettingModeOff
+	default:
+		return SettingModeDefault
+	}
+}
+
+func clampWebSessionActiveCallTimeoutSeconds(value int) int {
+	if value <= 0 {
+		return defaultWebSessionActiveCallTimeoutSeconds
+	}
+	if value < minWebSessionActiveCallTimeoutSeconds {
+		return minWebSessionActiveCallTimeoutSeconds
+	}
+	if value > maxWebSessionActiveCallTimeoutSeconds {
+		return maxWebSessionActiveCallTimeoutSeconds
+	}
+	return value
 }
 
 func normalizeWebSessionQuickInputItems(items []string, limit int) []string {

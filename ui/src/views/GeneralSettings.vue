@@ -598,6 +598,90 @@
                 <span class="form-tip">{{ t('settings.webSessionCodexDefaultSyncModeTip') }}</span>
               </n-space>
             </n-form-item>
+            <n-form-item :label="t('settings.webSessionActiveCallTimeout')">
+              <n-space vertical size="small">
+                <n-radio-group
+                  v-model:value="developerForm.webSessionActiveCallTimeout.enabledMode"
+                  :disabled="developerLoading"
+                >
+                  <n-space>
+                    <n-radio value="default">{{ t('common.default') }}</n-radio>
+                    <n-radio value="on">{{ t('common.yes') }}</n-radio>
+                    <n-radio value="off">{{ t('common.no') }}</n-radio>
+                  </n-space>
+                </n-radio-group>
+                <span class="form-tip">{{ t('settings.webSessionActiveCallTimeoutTip') }}</span>
+              </n-space>
+            </n-form-item>
+            <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
+              <n-space vertical size="small">
+                <n-input-number
+                  v-model:value="developerForm.webSessionActiveCallTimeout.timeoutSeconds"
+                  :min="10"
+                  :max="3600"
+                  :step="10"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">
+                  {{ t('settings.webSessionActiveCallTimeoutSecondsTip') }}
+                </span>
+              </n-space>
+            </n-form-item>
+            <n-form-item :label="t('settings.webSessionActiveCallTimeoutCallKinds')">
+              <n-space vertical size="small">
+                <n-space>
+                  <n-checkbox
+                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.useDefault"
+                    :disabled="developerLoading"
+                  >
+                    {{ t('settings.webSessionActiveCallTimeoutKindDefault') }}
+                  </n-checkbox>
+                </n-space>
+                <n-space>
+                  <n-checkbox
+                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
+                    :disabled="
+                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                    "
+                  >
+                    {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
+                  </n-checkbox>
+                  <n-checkbox
+                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.command"
+                    :disabled="
+                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                    "
+                  >
+                    {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
+                  </n-checkbox>
+                  <n-checkbox
+                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
+                    :disabled="
+                      developerLoading || developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                    "
+                  >
+                    {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
+                  </n-checkbox>
+                </n-space>
+                <span class="form-tip">
+                  {{ t('settings.webSessionActiveCallTimeoutCallKindsTip') }}
+                </span>
+              </n-space>
+            </n-form-item>
+            <n-form-item :label="t('settings.webSessionActiveCallTimeoutPrompt')">
+              <n-space vertical size="small" style="width: 100%">
+                <n-input
+                  v-model:value="developerForm.webSessionActiveCallTimeout.promptTemplate"
+                  type="textarea"
+                  :autosize="{ minRows: 3, maxRows: 6 }"
+                  :placeholder="DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT"
+                  :disabled="developerLoading"
+                />
+                <span class="form-tip">
+                  {{ t('settings.webSessionActiveCallTimeoutPromptTip') }}
+                </span>
+              </n-space>
+            </n-form-item>
             <n-form-item :label="t('settings.terminalServerStateSnapshot')">
               <n-space vertical size="small">
                 <n-switch
@@ -1002,6 +1086,7 @@ import type {
   AIAssistantStatusConfig,
   DeveloperConfig,
   AvailableShellsResponse,
+  WebSessionActiveCallTimeoutConfig,
   WorktreeConfig,
 } from '@/types/models';
 import type { FollowSystemThemeSetting } from '@/stores/settings';
@@ -1010,6 +1095,8 @@ type ShortcutTarget = 'terminal' | 'notepad';
 
 const SHELL_AUTO_VALUE = '__auto__';
 const SHELL_CUSTOM_VALUE = '__custom__';
+const DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT =
+  'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.';
 
 type ItemResponse<T> = {
   item?: T;
@@ -1125,13 +1212,58 @@ const { send: updateAIStatus, loading: saveLoading } = useReq((config: AIAssista
   Apis.system.aiAssistantStatusUpdate({ data: config })
 );
 
-const developerForm = reactive<DeveloperConfig>({
-  enableTerminalScrollback: false,
-  renameSessionTitleEachCommand: false,
-  autoCreateTaskOnStartWork: true,
-  enableTerminalStateSnapshot: false,
-  webSessionCodexDefaultSyncMode: 'fast',
-});
+function sanitizeActiveCallTimeoutConfig(
+  value?: Partial<WebSessionActiveCallTimeoutConfig> | null
+): WebSessionActiveCallTimeoutConfig {
+  return {
+    enabledMode: value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
+    timeoutSeconds: Math.min(3600, Math.max(10, Number(value?.timeoutSeconds) || 60)),
+    promptTemplate: value?.promptTemplate?.trim() || DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
+    callKinds: {
+      useDefault: value?.callKinds?.useDefault !== false,
+      mcp: value?.callKinds?.mcp !== false,
+      command: value?.callKinds?.command !== false,
+      tool: value?.callKinds?.tool !== false,
+    },
+  };
+}
+
+function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): DeveloperConfig {
+  return {
+    enableTerminalScrollback: value?.enableTerminalScrollback ?? false,
+    renameSessionTitleEachCommand: value?.renameSessionTitleEachCommand ?? false,
+    autoCreateTaskOnStartWork: value?.autoCreateTaskOnStartWork ?? true,
+    enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
+    webSessionCodexDefaultSyncMode: value?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast',
+    webSessionActiveCallTimeout: sanitizeActiveCallTimeoutConfig(value?.webSessionActiveCallTimeout),
+  };
+}
+
+function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) {
+  target.enableTerminalScrollback = source.enableTerminalScrollback;
+  target.renameSessionTitleEachCommand = source.renameSessionTitleEachCommand;
+  target.autoCreateTaskOnStartWork = source.autoCreateTaskOnStartWork;
+  target.enableTerminalStateSnapshot = source.enableTerminalStateSnapshot;
+  target.webSessionCodexDefaultSyncMode = source.webSessionCodexDefaultSyncMode;
+  target.webSessionActiveCallTimeout.enabledMode = source.webSessionActiveCallTimeout.enabledMode;
+  target.webSessionActiveCallTimeout.timeoutSeconds = source.webSessionActiveCallTimeout.timeoutSeconds;
+  target.webSessionActiveCallTimeout.promptTemplate = source.webSessionActiveCallTimeout.promptTemplate;
+  target.webSessionActiveCallTimeout.callKinds.useDefault =
+    source.webSessionActiveCallTimeout.callKinds.useDefault;
+  target.webSessionActiveCallTimeout.callKinds.mcp = source.webSessionActiveCallTimeout.callKinds.mcp;
+  target.webSessionActiveCallTimeout.callKinds.command =
+    source.webSessionActiveCallTimeout.callKinds.command;
+  target.webSessionActiveCallTimeout.callKinds.tool = source.webSessionActiveCallTimeout.callKinds.tool;
+}
+
+function serializeDeveloperConfig(value: DeveloperConfig | null) {
+  if (!value) {
+    return '';
+  }
+  return JSON.stringify(sanitizeDeveloperConfig(value));
+}
+
+const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const webSessionSyncModeOptions = computed(() => [
   { label: t('settings.webSessionSyncModeFast'), value: 'fast' },
@@ -1141,16 +1273,7 @@ const developerDirty = computed(() => {
   if (!developerOriginal.value) {
     return false;
   }
-  return (
-    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback ||
-    developerForm.renameSessionTitleEachCommand !==
-      developerOriginal.value.renameSessionTitleEachCommand ||
-    developerForm.autoCreateTaskOnStartWork !== developerOriginal.value.autoCreateTaskOnStartWork ||
-    developerForm.enableTerminalStateSnapshot !==
-      developerOriginal.value.enableTerminalStateSnapshot ||
-    developerForm.webSessionCodexDefaultSyncMode !==
-      developerOriginal.value.webSessionCodexDefaultSyncMode
-  );
+  return serializeDeveloperConfig(developerForm) !== serializeDeveloperConfig(developerOriginal.value);
 });
 
 const { send: fetchDeveloperConfig, loading: developerLoading } = useReq(() =>
@@ -1188,30 +1311,21 @@ async function handleSaveAIStatus() {
 async function loadDeveloperConfig() {
   try {
     const resp = await fetchDeveloperConfig();
-    const config = resp?.item;
-    if (config !== undefined && config !== null) {
-      developerForm.enableTerminalScrollback = config.enableTerminalScrollback ?? false;
-      developerForm.renameSessionTitleEachCommand = config.renameSessionTitleEachCommand ?? false;
-      developerForm.autoCreateTaskOnStartWork = config.autoCreateTaskOnStartWork ?? true;
-      developerForm.enableTerminalStateSnapshot = config.enableTerminalStateSnapshot ?? false;
-      developerForm.webSessionCodexDefaultSyncMode =
-        config.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast';
-      developerOriginal.value = { ...developerForm };
-    } else {
-      // 如果后端没有返回配置，使用默认值并标记为已加载
-      developerOriginal.value = { ...developerForm };
-    }
+    const next = sanitizeDeveloperConfig(resp?.item);
+    applyDeveloperConfig(developerForm, next);
+    developerOriginal.value = sanitizeDeveloperConfig(next);
   } catch (error) {
     console.error('Failed to load developer config:', error);
-    // 即使失败，也设置 original 值，避免按钮一直禁用
-    developerOriginal.value = { ...developerForm };
+    developerOriginal.value = sanitizeDeveloperConfig(developerForm);
   }
 }
 
 async function handleSaveDeveloperConfig() {
   try {
-    await updateDeveloperConfig({ ...developerForm });
-    developerOriginal.value = { ...developerForm };
+    const payload = sanitizeDeveloperConfig(developerForm);
+    await updateDeveloperConfig(payload);
+    applyDeveloperConfig(developerForm, payload);
+    developerOriginal.value = sanitizeDeveloperConfig(payload);
     message.success(t('common.saveSuccess'));
   } catch (error) {
     console.error('Failed to save developer config:', error);

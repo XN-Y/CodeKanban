@@ -1018,6 +1018,22 @@ export default {
     webSessionCodexDefaultSyncMode: 'Codex 会话默认同步方式',
     webSessionCodexDefaultSyncModeTip:
       '快速同步继续走 app-server，速度更快；深度同步从 ai_session 原始日志重建完整时间线，速度更慢但能保留工具调用与时间信息。',
+    webSessionActiveCallTimeout: '活跃调用超时自动恢复',
+    webSessionActiveCallTimeoutTip:
+      '仅作用于后端 Codex 会话。当受监控的活跃调用持续超过阈值时，CodeKanban 会自动打断当前 run，并补发一条继续 prompt。',
+    webSessionActiveCallTimeoutSeconds: '活跃调用超时阈值（秒）',
+    webSessionActiveCallTimeoutSecondsTip:
+      '按当前活跃的 Codex 调用计时。可设置范围 10-3600 秒，默认 60 秒。',
+    webSessionActiveCallTimeoutCallKinds: '活跃调用分类',
+    webSessionActiveCallTimeoutCallKindsTip:
+      '勾选“默认”时，跟随当前版本内置监控集合；取消后可以手动选择要监控的 Codex 调用类型。',
+    webSessionActiveCallTimeoutKindDefault: '默认监控集合',
+    webSessionActiveCallTimeoutKindMcp: 'MCP 调用',
+    webSessionActiveCallTimeoutKindCommand: '命令执行',
+    webSessionActiveCallTimeoutKindTool: '其他工具',
+    webSessionActiveCallTimeoutPrompt: '自动继续 prompt',
+    webSessionActiveCallTimeoutPromptTip:
+      '支持 ${call} 和 ${duration} 占位符；自动补发 follow-up 消息前会先做简单替换。',
     webSessionSyncModeFast: '快速同步',
     webSessionSyncModeDeep: '深度同步',
     terminalServerStateSnapshot: '服务端终端状态快照',
