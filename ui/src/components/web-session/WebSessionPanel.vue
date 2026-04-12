@@ -2669,6 +2669,8 @@ const mobileComposerSummaryTokens = computed(() => {
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
+const contextUsageDisclaimer =
+  '这个数据是我从codex那边读的然后原样显示，数据肯定是不对的，但我也不知道为什么他这样给显示，有明白的大佬麻烦告知';
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
   if (!session) {
@@ -2751,6 +2753,7 @@ const contextUsageIndicator = computed(() => {
     }),
     title: t('webSession.contextUsageTitle'),
     lines: [
+      contextUsageDisclaimer,
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),
