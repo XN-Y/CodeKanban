@@ -538,8 +538,11 @@
                         : undefined
                     "
                     :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
-                    @click="activateTimelineRawBlock(item, 'message')"
+                    @mouseenter="handleMessageBubbleMouseEnter(item)"
+                    @mouseleave="handleMessageBubbleMouseLeave(item)"
+                    @click="handleMessageBubbleClick(item)"
                     @focusin="activateTimelineRawBlock(item, 'message')"
+                    @focusout="handleMessageBubbleFocusOut(item, $event)"
                     @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
                     @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
@@ -1590,6 +1593,7 @@ import {
   resolveActivatedTimelineRawBlockKey,
   shouldClearActiveTimelineRawBlockKey,
   shouldShowTimelineRawToggle as shouldShowTimelineRawToggleForBlock,
+  toggleExclusiveTimelineRawBlock,
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
 import {
@@ -2245,6 +2249,45 @@ function activateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSu
     getTimelineRawModeKey(block, surface)
   );
 }
+function deactivateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const key = getTimelineRawModeKey(block, surface);
+  if (activeRawTimelineBlockKey.value === key) {
+    activeRawTimelineBlockKey.value = '';
+  }
+}
+function handleMessageBubbleMouseEnter(block: WebSessionBlock) {
+  if (isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  activateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleMouseLeave(block: WebSessionBlock) {
+  if (isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  deactivateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleClick(block: WebSessionBlock) {
+  if (!isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  activateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleFocusOut(block: WebSessionBlock, event: FocusEvent) {
+  if (!shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  const currentTarget = event.currentTarget;
+  const relatedTarget = event.relatedTarget;
+  if (
+    currentTarget instanceof Element &&
+    relatedTarget instanceof Node &&
+    currentTarget.contains(relatedTarget)
+  ) {
+    return;
+  }
+  deactivateTimelineRawBlock(block, 'message');
+}
 function shouldShowTimelineRawToggle(block: WebSessionBlock, surface: TimelineRawSurface) {
   const rawCapable =
     surface === 'message' ? shouldShowMessageRawToggle(block) : shouldShowPlanRawToggle(block);
@@ -2260,10 +2303,7 @@ function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
 }
 function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   const key = getTimelineRawModeKey(block, surface);
-  rawTimelineBlocks.value = {
-    ...rawTimelineBlocks.value,
-    [key]: !rawTimelineBlocks.value[key],
-  };
+  rawTimelineBlocks.value = toggleExclusiveTimelineRawBlock(rawTimelineBlocks.value, key);
 }
 function isExecutePlanOption(option: WebSessionUserInputOption) {
   const text = normalizeChoiceText(`${option.label} ${option.description}`);
@@ -9385,10 +9425,6 @@ onBeforeUnmount(() => {
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
-}
-
-.item-bubble.is-raw-capable {
-  cursor: pointer;
 }
 
 .item-bubble.is-raw-active {
