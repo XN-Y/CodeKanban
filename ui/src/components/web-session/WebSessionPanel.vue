@@ -1633,6 +1633,10 @@ import {
   clampTabAnchorIndex,
   resolveTabAnchorInsertIndex,
 } from '@/components/web-session/webSessionTabOrder';
+import {
+  collapseProjectDraftTabs,
+  pickPreferredDraftTab,
+} from '@/components/web-session/webSessionDraftTabs';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import {
@@ -3490,7 +3494,7 @@ const mobileActionMenuOptions = computed<DropdownOption[]>(() =>
 
 async function handleSessionActionSelect(action: string, session: SessionTab | null) {
   if (action === 'new') {
-    handleStartDraftSession();
+    await handleStartDraftSession();
     return;
   }
   if (!session) {
@@ -5736,11 +5740,19 @@ async function initializeProjectSessions(projectId: string) {
     archivedPreviewAnchorIndex.value = -1;
     tabOrderIds.value = loadPersistedTabOrderIds(projectId);
     tabMruIds.value = loadPersistedTabMruIds(projectId);
-    const restoredDrafts = loadPersistedDraftSessions(projectId);
-    const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
-    const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
-      ? storedActiveDraftId
-      : '';
+    const restoredDraftState = collapseProjectDraftTabs({
+      drafts: loadPersistedDraftSessions(projectId),
+      activeDraftId: persistedActiveDraftSessionIdByProject.value[projectId] ?? '',
+      orderIds: tabOrderIds.value,
+      mruIds: tabMruIds.value,
+    });
+    restoredDraftState.removedDraftIds.forEach(draftId => {
+      webSessionStore.clearDraft(projectId, draftId);
+    });
+    tabOrderIds.value = restoredDraftState.orderIds;
+    tabMruIds.value = restoredDraftState.mruIds;
+    const restoredDrafts = restoredDraftState.drafts;
+    const activeDraftId = restoredDraftState.activeDraftId;
     replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
     const loadedSessions = await webSessionStore.loadSessions(projectId);
     syncTabNavigationState(projectId, {
@@ -5971,7 +5983,22 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   }
 }
 
-function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  const existingDraft = pickPreferredDraftTab(draftSessions.value, {
+    activeDraftId: activeDraftSessionId.value,
+    mruIds: tabMruIds.value,
+  });
+  if (existingDraft) {
+    await activateTabById(existingDraft.id, { connectReal: false });
+    showMobileTabSelector.value = false;
+    contextMenuSession.value = null;
+    expandedTools.value = {};
+    autoFollowBottom.value = true;
+    scrollToBottom(true);
+    updateActiveTabIndicator();
+    focusComposer();
+    return;
+  }
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
