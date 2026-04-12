@@ -9084,11 +9084,13 @@ onBeforeUnmount(() => {
   width: 18px;
   height: 18px;
   font-size: 10px;
-  border-width: 1px;
+  color: #ffffff;
+  background: var(--badge-color, #3b82f6);
+  background-image: none;
+  border: 1px solid
+    color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
   margin-left: 2px;
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.12),
-    0 3px 8px color-mix(in srgb, var(--badge-color, #3b82f6) 16%, transparent);
+  box-shadow: none;
 }
 
 .project-index-badge.session-project-badge.is-single-project {
@@ -9104,10 +9106,12 @@ onBeforeUnmount(() => {
   justify-content: center;
   line-height: 0;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  background: var(--n-primary-color);
   color: #ffffff;
-  border: 1px solid rgba(59, 130, 246, 0.9);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  border: 1px solid
+    color-mix(in srgb, var(--n-primary-color) 78%, var(--app-surface-color, #fff) 22%);
+  box-shadow: none;
+  animation: none;
 }
 
 .session-current-indicator.is-hidden {
