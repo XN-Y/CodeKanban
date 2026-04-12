@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url';
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
 import vueJsx from '@vitejs/plugin-vue-jsx';
+import tailwindcss from '@tailwindcss/vite';
 // import vueDevTools from 'vite-plugin-vue-devtools'
 import AutoImport from 'unplugin-auto-import/vite';
 import { NaiveUiResolver } from 'unplugin-vue-components/resolvers';
@@ -79,61 +80,57 @@ const resolveApiProxyTarget = () => {
 const apiProxyTarget = resolveApiProxyTarget();
 
 // https://vite.dev/config/
-export default defineConfig(async () => {
-  const { default: tailwindcss } = await import('@tailwindcss/vite');
-
-  return {
-    base: './',
-    server: {
-      allowedHosts: true,
-      proxy: {
-        '/api': {
-          target: apiProxyTarget,
-          changeOrigin: true,
-          ws: true,
-        },
+export default defineConfig({
+  base: './',
+  server: {
+    allowedHosts: true,
+    proxy: {
+      '/api': {
+        target: apiProxyTarget,
+        changeOrigin: true,
+        ws: true,
       },
     },
-    build: {
-      rollupOptions: {
-        output: {
-          chunkFileNames: 'assets/[name]-[hash].js',
-          entryFileNames: 'assets/[name]-[hash].js',
-          assetFileNames: 'assets/[name]-[hash].[ext]',
-        },
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]',
       },
     },
-    plugins: [
-      vue(),
-      vueJsx(),
-      tailwindcss(),
-      // vueDevTools(),
-      AutoImport({
-        imports: [
-          {
-            'naive-ui': ['useDialog', 'useMessage', 'useNotification', 'useLoadingBar'],
-          },
-        ],
-      }),
-      Components({
-        resolvers: [NaiveUiResolver()],
-      }),
-    ],
-    resolve: {
-      alias: [
+  },
+  plugins: [
+    vue(),
+    vueJsx(),
+    ...tailwindcss(),
+    // vueDevTools(),
+    AutoImport({
+      imports: [
         {
-          find: '@',
-          replacement: fileURLToPath(new URL('./src', import.meta.url)),
-        },
-        {
-          find: 'highlight.js/lib/core',
-          replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/core.js', import.meta.url)),
-        },
-        {
-          find: 'highlight.js/lib/languages',
-          replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/languages', import.meta.url)),
+          'naive-ui': ['useDialog', 'useMessage', 'useNotification', 'useLoadingBar'],
         },
       ],
-    },
-  };
+    }),
+    Components({
+      resolvers: [NaiveUiResolver()],
+    }),
+  ],
+  resolve: {
+    alias: [
+      {
+        find: '@',
+        replacement: fileURLToPath(new URL('./src', import.meta.url)),
+      },
+      {
+        find: 'highlight.js/lib/core',
+        replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/core.js', import.meta.url)),
+      },
+      {
+        find: 'highlight.js/lib/languages',
+        replacement: fileURLToPath(new URL('./node_modules/highlight.js/es/languages', import.meta.url)),
+      },
+    ],
+  },
 });
