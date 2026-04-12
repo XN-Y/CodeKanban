@@ -983,23 +983,6 @@
               :actions="['confirm']"
             />
           </n-form-item>
-
-          <n-divider style="margin: 16px 0">{{ t('theme.floatingButtonColors') }}</n-divider>
-
-          <n-form-item :label="t('settings.terminalFloatingButtonBg')">
-            <n-color-picker
-              v-model:value="terminalFloatingButtonBg"
-              :modes="['hex']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalFloatingButtonFg')">
-            <n-color-picker
-              v-model:value="terminalFloatingButtonFg"
-              :modes="['hex']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
         </n-form>
       </n-card>
 
@@ -1812,20 +1795,6 @@ const terminalTabApprovalBorder = computed({
     settingsStore.applyCustomTheme({
       terminalTabApprovalBorder: value || 'rgba(247, 144, 9, 0.5)',
     });
-  },
-});
-
-const terminalFloatingButtonBg = computed({
-  get: () => theme.value.terminalFloatingButtonBg || '#1a1a1a',
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalFloatingButtonBg: value || '#1a1a1a' });
-  },
-});
-
-const terminalFloatingButtonFg = computed({
-  get: () => theme.value.terminalFloatingButtonFg || '#ffffff',
-  set: value => {
-    settingsStore.applyCustomTheme({ terminalFloatingButtonFg: value || '#ffffff' });
   },
 });
 

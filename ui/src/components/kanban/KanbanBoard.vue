@@ -150,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue';
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useClipboard } from '@vueuse/core';
 import { NInput, useDialog, useMessage } from 'naive-ui';
@@ -169,7 +169,6 @@ import { useProjectStore } from '@/stores/project';
 import { useLocale } from '@/composables/useLocale';
 import { extractItems, extractItem } from '@/api/response';
 import type { Task } from '@/types/models';
-import type TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import type { StartWorkAction } from '@/types/startWork';
 
 const { t } = useLocale();
@@ -197,9 +196,6 @@ const message = useMessage();
 const dialog = useDialog();
 const { copy: copyTaskTitle, isSupported: clipboardSupported } = useClipboard();
 const { listTasks, moveTask, deleteTask } = taskActions;
-
-// 注入终端面板引用
-const terminalPanelRef = inject<Ref<InstanceType<typeof TerminalPanel> | null>>('terminalPanelRef');
 
 const showCreateDialog = ref(false);
 const showDetailDrawer = ref(false);
@@ -434,11 +430,7 @@ function focusLinkedTerminal(task: Task): boolean {
   if (!session) {
     return false;
   }
-  if (terminalPanelRef?.value?.focusTerminal) {
-    terminalPanelRef.value.focusTerminal(session.id);
-  } else {
-    terminalStore.focusSession(currentProjectId.value, session.id);
-  }
+  terminalStore.focusSession(currentProjectId.value, session.id);
   return true;
 }
 
@@ -638,14 +630,6 @@ async function handleTaskStartWork(task: Task, action: StartWorkAction = 'termin
     };
 
     const createTaskTerminal = async (): Promise<string | undefined> => {
-      if (terminalPanelRef?.value?.createTerminal) {
-        const sessionId = await terminalPanelRef.value.createTerminal(terminalOptions);
-        if (sessionId) {
-          terminalStore.focusSession(currentProjectId.value, sessionId);
-        }
-        return sessionId;
-      }
-
       const sessionId = await terminalStore.createSession(currentProjectId.value, terminalOptions);
       terminalStore.focusSession(currentProjectId.value, sessionId);
       return sessionId;

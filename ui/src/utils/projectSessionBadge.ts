@@ -3,9 +3,9 @@ export type CombinedProjectSessionBadgeKind = 'combined';
 
 type PreferredProjectSessionKindInput = {
   isMobile: boolean;
-  isDockMode: boolean;
+  isProjectWorkspace?: boolean;
   mobileActiveView?: string | null;
-  dockedActiveTab?: string | null;
+  workspaceActiveTab?: string | null;
 };
 
 type ProjectSessionBadgeInput = {
@@ -39,8 +39,8 @@ export function resolvePreferredProjectSessionKind(
   if (input.isMobile) {
     return input.mobileActiveView === 'webSession' ? 'webSession' : 'terminal';
   }
-  if (input.isDockMode) {
-    return input.dockedActiveTab === 'web' ? 'webSession' : 'terminal';
+  if (input.isProjectWorkspace) {
+    return input.workspaceActiveTab === 'web' ? 'webSession' : 'terminal';
   }
   return 'terminal';
 }

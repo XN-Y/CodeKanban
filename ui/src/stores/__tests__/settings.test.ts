@@ -77,7 +77,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +103,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +133,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(2);
+    expect(persisted.version).toBe(3);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -151,5 +151,55 @@ describe('settings theme storage', () => {
     const { followSystemTheme } = storeToRefs(store);
 
     expect(followSystemTheme.value).toBe(true);
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      followSystemTheme?: number;
+    };
+
+    expect(persisted.version).toBe(3);
+    expect(persisted.followSystemTheme).toBe(1);
+  });
+
+  it('drops floating terminal settings and floating theme colors during v3 migration', () => {
+    const lightPreset = getPresetById('light');
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        currentPresetId: 'light',
+        followSystemTheme: 1,
+        terminalDisplayMode: 'floating',
+        theme: {
+          ...lightPreset?.colors,
+          terminalFloatingButtonBg: '#111111',
+          terminalFloatingButtonFg: '#fefefe',
+        },
+        customTheme: {
+          ...lightPreset?.colors,
+          terminalFloatingButtonBg: '#222222',
+          terminalFloatingButtonFg: '#ededed',
+        },
+      })
+    );
+
+    const store = useSettingsStore();
+    const { activeTheme, customTheme, followSystemTheme } = storeToRefs(store);
+
+    expect(followSystemTheme.value).toBe(true);
+    expect((activeTheme.value as Record<string, unknown>).terminalFloatingButtonBg).toBeUndefined();
+    expect((customTheme.value as Record<string, unknown>).terminalFloatingButtonFg).toBeUndefined();
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      terminalDisplayMode?: string;
+      theme?: Record<string, unknown>;
+      customTheme?: Record<string, unknown>;
+    };
+
+    expect(persisted.version).toBe(3);
+    expect(persisted.terminalDisplayMode).toBeUndefined();
+    expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
+    expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
   });
 });

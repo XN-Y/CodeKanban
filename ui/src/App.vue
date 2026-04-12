@@ -23,12 +23,7 @@ const settingsStore = useSettingsStore();
 const authStore = useAuthStore();
 const projectStore = useProjectStore();
 const reminderStore = useTerminalReminderStore();
-const {
-  activeTheme: theme,
-  followSystemTheme,
-  currentPresetId,
-  terminalDisplayMode,
-} = storeToRefs(settingsStore);
+const { activeTheme: theme, followSystemTheme, currentPresetId } = storeToRefs(settingsStore);
 const { totalSummary } = useAiStatusSummary();
 const isDarkTheme = computed(() => isDarkHex(theme.value.bodyColor || '#ffffff'));
 const { isMobile } = useResponsive();
@@ -64,8 +59,7 @@ const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
     return false;
   }
-  // Dock 模式下，AI 通知嵌入到终端右侧，不再使用全局浮层。
-  if (terminalDisplayMode.value === 'docked' && route.name === 'project') {
+  if (route.name === 'project') {
     return false;
   }
   return true;
@@ -187,11 +181,6 @@ const cssVarsToSet = computed(() => ({
     theme.value.terminalTabApprovalBorder ||
     presetTerminalTabColors.value.approvalBorder ||
     defaultApprovalBorder,
-  // 浮动按钮颜色
-  '--kanban-terminal-floating-button-bg':
-    theme.value.terminalFloatingButtonBg || theme.value.surfaceColor,
-  '--kanban-terminal-floating-button-fg':
-    theme.value.terminalFloatingButtonFg || theme.value.textColor,
   // 空终端引导文字颜色
   '--kanban-terminal-empty-guide-fg': theme.value.terminalEmptyGuideFg || theme.value.terminalFg,
   // AI 通知按钮颜色

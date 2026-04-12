@@ -522,8 +522,6 @@ export default {
     resetNotificationWidth: 'Reset Notification Width',
     showNotificationSidebar: 'Show Right Sidebar',
     hideNotificationSidebar: 'Hide Right Sidebar',
-    switchToDocked: 'Dock to Page',
-    switchToFloating: 'Switch to Floating',
     duplicateSuffix: ' Copy',
     emptyGuideTitle: 'No Terminal',
     emptyGuideDescription: 'Click the button below to create a new terminal',
@@ -942,8 +940,6 @@ export default {
     terminalTabCompletionBorder: 'Completion Alert Border',
     terminalTabApprovalBg: 'Approval Alert Background',
     terminalTabApprovalBorder: 'Approval Alert Border',
-    terminalFloatingButtonBg: 'Floating Button Background',
-    terminalFloatingButtonFg: 'Floating Button Text',
     fontSize: 'Font Size',
     fontFamily: 'Font Family',
     resetTheme: 'Reset Default Theme',
@@ -1080,7 +1076,8 @@ export default {
     webglDisableTip:
       'Force disable WebGL renderer, use Canvas instead. Better compatibility but slightly lower performance',
     terminalShortcut: 'Terminal Shortcut',
-    terminalShortcutTip: 'Used to expand/collapse the bottom terminal panel, default `',
+    terminalShortcutTip:
+      'Used to switch between the current workspace tab and the previous one, default `.',
     notepadShortcut: 'Notepad Shortcut',
     notepadShortcutTip: 'Used to expand/collapse the right notepad panel, default 1',
     defaultEditor: 'Default Editor',
@@ -1189,7 +1186,6 @@ export default {
     customThemeHint: 'Customizing colors will override preset theme settings',
     terminalColors: 'Terminal Colors',
     statusColors: 'Terminal Tab Status Alerts',
-    floatingButtonColors: 'Terminal Floating Buttons',
   },
   message: {
     saveSuccess: 'Saved successfully',

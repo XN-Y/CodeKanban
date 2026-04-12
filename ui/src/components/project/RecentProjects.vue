@@ -241,12 +241,10 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
-import { storeToRefs } from 'pinia';
 import { useDialog, useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
-import { useSettingsStore } from '@/stores/settings';
 import { useAppStore } from '@/stores/app';
 import {
   CreateOutline,
@@ -316,7 +314,7 @@ interface ContextMenuState {
   projectId: string | null;
 }
 
-const emit = defineEmits<{ editCurrent: []; toggleTerminal: [] }>();
+const emit = defineEmits<{ editCurrent: []; showTerminal: [] }>();
 const props = defineProps<{
   currentProjectId: string;
   isMobile?: boolean;
@@ -326,16 +324,14 @@ const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project'
 const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 
 type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
-type WorkspaceTab = 'kanban' | 'terminal' | 'web';
+type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'files';
 
 const route = useRoute();
 const router = useRouter();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
-const settingsStore = useSettingsStore();
 const appStore = useAppStore();
-const { terminalDisplayMode } = storeToRefs(settingsStore);
 
 const loading = computed(() => projectStore.loading);
 const currentProject = computed(() => projectStore.currentProject);
@@ -352,10 +348,9 @@ const storedWorkspaceTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE
 const preferredSessionKind = computed(() =>
   resolvePreferredProjectSessionKind({
     isMobile: Boolean(props.isMobile),
-    isDockMode:
-      !props.isMobile && route.name === 'project' && terminalDisplayMode.value === 'docked',
+    isProjectWorkspace: !props.isMobile && route.name === 'project',
     mobileActiveView: props.currentProjectId ? storedMobileViews.value[props.currentProjectId] : '',
-    dockedActiveTab: storedWorkspaceTab.value,
+    workspaceActiveTab: storedWorkspaceTab.value,
   })
 );
 
@@ -550,8 +545,7 @@ const handleContextMenuSelect = async (key: string) => {
 
 const handleTerminalTagClick = (projectId: string) => {
   if (projectId === props.currentProjectId) {
-    // 只有当前激活的项目的终端图标才能切换终端面板
-    emit('toggleTerminal');
+    emit('showTerminal');
   }
 };
 
