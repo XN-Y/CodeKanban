@@ -7,7 +7,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"reflect"
+	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -23,6 +26,11 @@ import (
 	"code-kanban/service/terminal"
 	"code-kanban/service/websession"
 	"code-kanban/utils"
+)
+
+const (
+	staticAssetMaxAgeSeconds  = 30 * 24 * 60 * 60
+	faviconAssetMaxAgeSeconds = 5 * 60
 )
 
 // AppInfo 应用信息
@@ -159,18 +167,74 @@ func mountStatic(app *fiber.App, cfg *utils.AppConfig, assets embed.FS, logger *
 		fs = http.FS(assets)
 	}
 
-	mountPath := cfg.WebUrl
-	if mountPath == "" {
-		mountPath = "/"
-	}
+	mountPath := normalizeStaticMountPath(cfg.WebUrl)
+
+	app.Use(mountPath, func(c *fiber.Ctx) error {
+		err := c.Next()
+		if err != nil {
+			return err
+		}
+		if c.Response().StatusCode() != fiber.StatusOK {
+			return nil
+		}
+		if isStaticIndexRequest(c.Path(), mountPath) {
+			setNoCacheHeaders(c)
+			return nil
+		}
+		if isShortCacheStaticRequest(c.Path(), mountPath) {
+			setPublicCacheHeader(c, faviconAssetMaxAgeSeconds)
+		}
+		return nil
+	})
 
 	app.Use(mountPath, filesystem.New(filesystem.Config{
 		Root:       fs,
 		PathPrefix: "static",
 		Index:      "index.html",
-		MaxAge:     300,
+		MaxAge:     staticAssetMaxAgeSeconds,
 		Browse:     false,
 	}))
+}
+
+func normalizeStaticMountPath(mountPath string) string {
+	mountPath = strings.TrimSpace(mountPath)
+	if mountPath == "" {
+		return "/"
+	}
+	if !strings.HasPrefix(mountPath, "/") {
+		mountPath = "/" + mountPath
+	}
+	cleaned := path.Clean(mountPath)
+	if cleaned == "." {
+		return "/"
+	}
+	return cleaned
+}
+
+func isStaticIndexRequest(requestPath, mountPath string) bool {
+	cleanedPath := normalizeStaticMountPath(requestPath)
+	cleanedMountPath := normalizeStaticMountPath(mountPath)
+	if cleanedPath == cleanedMountPath {
+		return true
+	}
+	return cleanedPath == path.Join(cleanedMountPath, "index.html")
+}
+
+func isShortCacheStaticRequest(requestPath, mountPath string) bool {
+	cleanedPath := normalizeStaticMountPath(requestPath)
+	cleanedMountPath := normalizeStaticMountPath(mountPath)
+	return cleanedPath == path.Join(cleanedMountPath, "favicon.ico") ||
+		cleanedPath == path.Join(cleanedMountPath, "favicon.svg")
+}
+
+func setNoCacheHeaders(c *fiber.Ctx) {
+	c.Set(fiber.HeaderCacheControl, "no-store, no-cache, must-revalidate")
+	c.Set(fiber.HeaderPragma, "no-cache")
+	c.Set(fiber.HeaderExpires, "0")
+}
+
+func setPublicCacheHeader(c *fiber.Ctx, maxAgeSeconds int) {
+	c.Set(fiber.HeaderCacheControl, "public, max-age="+strconv.Itoa(maxAgeSeconds))
 }
 
 // exposeOpenAPI 在需要时暴露 openapi 文档，提供调试访问
