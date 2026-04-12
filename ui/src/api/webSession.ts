@@ -66,7 +66,7 @@ export const webSessionApi = {
         .send(true)
     );
     if (!config) {
-      throw new Error('failed to load web session runtime config');
+      throw new Error('failed to load AI session runtime config');
     }
     return config;
   },
@@ -117,7 +117,7 @@ export const webSessionApi = {
         })
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to create web session');
+      throw new Error('failed to create AI session');
     }
     return body.item;
   },
@@ -130,7 +130,7 @@ export const webSessionApi = {
         >(`/projects/${projectId}/web-sessions/${sessionId}/archive`)
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to archive web session');
+      throw new Error('failed to archive AI session');
     }
     return body.item;
   },
@@ -143,7 +143,7 @@ export const webSessionApi = {
         >(`/projects/${projectId}/web-sessions/${sessionId}/unarchive`)
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to unarchive web session');
+      throw new Error('failed to unarchive AI session');
     }
     return body.item;
   },
@@ -177,7 +177,7 @@ export const webSessionApi = {
       options?.signal?.removeEventListener('abort', abortHandler);
     }
     if (!body.item) {
-      throw new Error('failed to load web session snapshot');
+      throw new Error('failed to load AI session snapshot');
     }
     return body.item;
   },
@@ -205,7 +205,7 @@ export const webSessionApi = {
         >(`/projects/${projectId}/web-sessions/${sessionId}/history${suffix ? `?${suffix}` : ''}`)
         .send(true)) ?? {};
     if (!body.item) {
-      throw new Error('failed to load web session history');
+      throw new Error('failed to load AI session history');
     }
     return body.item;
   },
@@ -227,7 +227,7 @@ export const webSessionApi = {
         )
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to sync web session');
+      throw new Error('failed to sync AI session');
     }
     return body.item;
   },
@@ -250,7 +250,7 @@ export const webSessionApi = {
         })
         .send()) ?? {};
     if (!body.item) {
-      throw new Error('failed to query archived web sessions');
+      throw new Error('failed to query archived AI sessions');
     }
     return body.item;
   },

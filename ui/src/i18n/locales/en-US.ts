@@ -56,7 +56,7 @@ export default {
     visitNow: 'Visit Now',
     kanban: 'Kanban',
     terminal: 'Terminal',
-    webSession: 'Web Chat',
+    webSession: 'AI Sessions',
     files: 'Files',
     projects: 'Projects',
     settingsShort: 'Settings',
@@ -155,7 +155,7 @@ export default {
     hidePathHint:
       'When enabled, absolute paths will no longer be displayed in the project list and sidebar.',
     terminalCount: 'Terminal Count',
-    webSessionCount: 'Web Session Count',
+    webSessionCount: 'AI Session Count',
     noProjects: 'No projects yet, click the top right corner to create one',
     projectDirectory: 'Project Directory',
     pathPlaceholder: 'Select or enter local project directory, e.g., C:\\Projects\\demo',
@@ -707,7 +707,7 @@ export default {
     emptyName: 'Tab name cannot be empty',
     renameSuccess: 'Tab renamed',
     renameFailed: 'Failed to rename',
-    confirmCloseTitle: 'Archive Web Session',
+    confirmCloseTitle: 'Archive AI Session',
     confirmCloseContent: 'Archive "{title}"?',
     confirmCloseButton: 'Archive',
     archiveAction: 'Archive',
@@ -830,7 +830,7 @@ export default {
       'Note: no context compaction has been observed yet, so this percentage is estimated from cumulative usage total vs. the compact limit, not the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
-      'This estimate is currently available only for Codex web sessions. Claude sessions do not expose a comparable context-window value here yet.',
+      'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintUploading:
