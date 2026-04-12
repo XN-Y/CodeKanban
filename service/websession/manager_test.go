@@ -1110,6 +1110,13 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	if historyHasToolKind(history.Events, "reasoning") {
 		t.Fatalf("expected empty reasoning items to be filtered from projected history, got %#v", history.Events)
 	}
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, 200)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if historyItemsHaveToolKind(snapshot.History.Items, "reasoning") {
+		t.Fatalf("expected empty reasoning items to be filtered from cached history items, got %#v", snapshot.History.Items)
+	}
 
 	rawEvents, err := manager.store.readEvents(created.ID)
 	if err != nil {
@@ -2255,12 +2262,112 @@ func TestGetCommandExecutionGroupReturnsFullItems(t *testing.T) {
 	}
 }
 
-func TestHistoryReasoningWithContentBreaksCommandExecutionGroup(t *testing.T) {
+func TestHistoryReasoningWithContentDoesNotBreakCodexCommandExecutionGroup(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
 	project := seedProject(t)
 	session := seedWebSession(t, project.ID, "Grouped Commands", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_st",
+		Seq:       1,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(1_000),
+		Payload: map[string]any{
+			"tid":  "cmd1",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "ls"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "ls"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd1_end",
+		Seq:       2,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_000),
+		Payload: map[string]any{
+			"tid": "cmd1",
+			"out": "ls output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_reasoning_end",
+		Seq:       3,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(2_500),
+		Payload: map[string]any{
+			"tid":  "rs1",
+			"name": "Reasoning",
+			"kind": "reasoning",
+			"out":  "Need to try a different command.",
+			"ok":   true,
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_st",
+		Seq:       4,
+		Type:      "tool_st",
+		Timestamp: time.UnixMilli(3_000),
+		Payload: map[string]any{
+			"tid":  "cmd2",
+			"name": "CommandExecution",
+			"kind": "command_execution",
+			"in":   map[string]any{"command": "pwd"},
+			"meta": map[string]any{"kind": "command_execution", "title": "CommandExecution", "subtitle": "pwd"},
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_cmd2_end",
+		Seq:       5,
+		Type:      "tool_end",
+		Timestamp: time.UnixMilli(4_000),
+		Payload: map[string]any{
+			"tid": "cmd2",
+			"out": "pwd output",
+			"ok":  true,
+			"meta": map[string]any{
+				"kind":  "command_execution",
+				"title": "CommandExecution",
+			},
+		},
+	})
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 2 {
+		t.Fatalf("expected 2 projected events, got %d", len(history.Events))
+	}
+	if history.Events[0].Type != "tool_end" || eventToolKind(history.Events[0]) != "reasoning" {
+		t.Fatalf("expected first event reasoning, got %#v", history.Events[0])
+	}
+	if history.Events[1].Type != "tool_end" || eventToolKind(history.Events[1]) != "command_execution" {
+		t.Fatalf("expected second event grouped command execution, got %#v", history.Events[1])
+	}
+	groupMeta := decodeRawObject(decodeRawObject(history.Events[1].Payload["meta"])["commandGroup"])
+	if got := int(numberValue(groupMeta["count"])); got != 2 {
+		t.Fatalf("expected grouped count 2, got %d", got)
+	}
+}
+
+func TestHistoryReasoningWithContentBreaksClaudeCommandExecutionGroup(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSessionWithAgent(t, project.ID, "Grouped Commands", 1000, AgentClaude)
 	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
 	if err != nil {
 		t.Fatalf("NewManager returned error: %v", err)
@@ -2868,13 +2975,22 @@ func seedProject(t *testing.T) *tables.ProjectTable {
 }
 
 func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *tables.WebSessionTable {
+	return seedWebSessionWithAgent(t, projectID, title, orderIndex, AgentCodex)
+}
+
+func seedWebSessionWithAgent(
+	t *testing.T,
+	projectID, title string,
+	orderIndex float64,
+	agent Agent,
+) *tables.WebSessionTable {
 	t.Helper()
 	session := &tables.WebSessionTable{
 		ProjectID:            projectID,
 		OrderIndex:           orderIndex,
-		Agent:                string(AgentCodex),
+		Agent:                string(normalizeAgent(agent)),
 		Title:                title,
-		Model:                "gpt-5.4",
+		Model:                defaultModel(normalizeAgent(agent), ""),
 		WorkflowMode:         string(WorkflowModeDefault),
 		PermissionLevel:      string(PermissionLevelElevated),
 		LegacyPermissionMode: "default",
@@ -3525,6 +3641,18 @@ func historyHasToolKind(events []Event, kind string) bool {
 			continue
 		}
 		if value, ok := event.Payload["kind"].(string); ok && value == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func historyItemsHaveToolKind(items []HistoryItem, kind string) bool {
+	for _, item := range items {
+		if item.Kind != "tool" || item.Tool == nil {
+			continue
+		}
+		if item.Tool.Kind == kind {
 			return true
 		}
 	}

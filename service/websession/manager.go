@@ -733,7 +733,8 @@ func (m *Manager) loadSnapshotLocal(
 }
 
 func (m *Manager) History(ctx context.Context, sessionID string, limit int, beforeSeq *int64) (HistoryWindow, error) {
-	if _, err := m.GetSession(ctx, sessionID); err != nil {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
 		return HistoryWindow{}, err
 	}
 	if limit <= 0 || limit > MaxHistoryWindow {
@@ -743,7 +744,7 @@ func (m *Manager) History(ctx context.Context, sessionID string, limit int, befo
 	if err != nil {
 		return HistoryWindow{}, err
 	}
-	projected, err := m.projectedHistoryWindow(sessionID, limit, beforeSeq)
+	projected, err := m.projectedHistoryWindow(record, limit, beforeSeq)
 	if err == nil {
 		window.Events = projected.Events
 	}
@@ -2405,6 +2406,32 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 	return event, nil
 }
 
+func (m *Manager) sessionAgent(sessionID string) Agent {
+	m.mu.RLock()
+	run := m.runs[sessionID]
+	m.mu.RUnlock()
+	if run != nil {
+		run.mu.Lock()
+		agent := run.agent
+		run.mu.Unlock()
+		if agent != "" {
+			return normalizeAgent(agent)
+		}
+	}
+
+	db := model.GetDB()
+	if db == nil {
+		return AgentClaude
+	}
+	var record tables.WebSessionTable
+	if err := db.WithContext(context.Background()).
+		Select("id", "agent").
+		First(&record, "id = ?", sessionID).Error; err != nil {
+		return AgentClaude
+	}
+	return normalizeAgent(Agent(record.Agent))
+}
+
 func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
 	if event == nil {
 		return
@@ -2414,7 +2441,7 @@ func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
 		return
 	}
 	if isReasoningToolEvent(*event) {
-		if reasoningEventHasDisplayContent(*event) {
+		if reasoningEventHasDisplayContent(*event) && m.sessionAgent(sessionID) != AgentCodex {
 			m.resetCommandExecutionGroup(sessionID)
 		}
 		return

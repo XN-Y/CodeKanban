@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"code-kanban/model/tables"
 	"code-kanban/utils"
 )
 
@@ -58,7 +59,7 @@ type commandExecutionDetailAccumulator struct {
 }
 
 func (m *Manager) projectedHistoryWindow(
-	sessionID string,
+	session tables.WebSessionTable,
 	limit int,
 	beforeSeq *int64,
 ) (HistoryWindow, error) {
@@ -66,12 +67,12 @@ func (m *Manager) projectedHistoryWindow(
 		limit = DefaultHistoryWindow
 	}
 
-	rawEvents, err := m.store.readEvents(sessionID)
+	rawEvents, err := m.store.readEvents(session.ID)
 	if err != nil {
 		return HistoryWindow{}, err
 	}
 
-	projected := projectHistoryEvents(rawEvents)
+	projected := projectHistoryEvents(rawEvents, Agent(session.Agent))
 	total := len(projected)
 	filtered := projected
 	if beforeSeq != nil {
@@ -162,7 +163,7 @@ func mustJSONCompatibleGroupItems(raw any) []CommandExecutionGroupItem {
 	return items
 }
 
-func projectHistoryEvents(events []Event) []Event {
+func projectHistoryEvents(events []Event, agent Agent) []Event {
 	projected := make([]Event, 0, len(events))
 	activeTools := make(map[string]toolSnapshot)
 	var currentGroup *commandExecutionProjectionGroup
@@ -208,7 +209,9 @@ func projectHistoryEvents(events []Event) []Event {
 
 		if isReasoningToolEvent(event) {
 			if reasoningEventHasDisplayContent(event) {
-				flushGroup()
+				if normalizeAgent(agent) != AgentCodex {
+					flushGroup()
+				}
 				projected = append(projected, event)
 			}
 			if event.Type == "tool_end" && toolID != "" {
@@ -228,7 +231,7 @@ func projectHistoryEvents(events []Event) []Event {
 	return projected
 }
 
-func buildCommandExecutionGroupLookup(events []Event) map[string]CommandExecutionGroupDetail {
+func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]CommandExecutionGroupDetail {
 	groups := make(map[string]*commandExecutionDetailAccumulator)
 	activeTools := make(map[string]toolSnapshot)
 	var currentGroup *commandExecutionDetailAccumulator
@@ -266,7 +269,7 @@ func buildCommandExecutionGroupLookup(events []Event) map[string]CommandExecutio
 		}
 
 		if isReasoningToolEvent(event) {
-			if reasoningEventHasDisplayContent(event) {
+			if reasoningEventHasDisplayContent(event) && normalizeAgent(agent) != AgentCodex {
 				currentGroup = nil
 			}
 			if event.Type == "tool_end" && toolID != "" {

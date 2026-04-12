@@ -2232,7 +2232,11 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
 
 const visibleBlocks = computed(() =>
   blocks.value.filter((block, index) => {
-    if (!showWebSessionReasoning.value && isReasoningBlock(block)) {
+    if (
+      !showWebSessionReasoning.value &&
+      isReasoningBlock(block) &&
+      currentSession.value?.agent !== 'codex'
+    ) {
       return false;
     }
     if (isPlanChoiceRequestBlock(block)) {

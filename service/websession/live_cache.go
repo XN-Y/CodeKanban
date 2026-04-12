@@ -249,12 +249,23 @@ func resolveToolHistoryKey(payload map[string]any, fallback string) string {
 	return strings.TrimSpace(firstNonEmpty(stringValue(payload["tid"]), fallback))
 }
 
+func shouldSkipReasoningHistoryStart(agent Agent, event Event) bool {
+	return normalizeAgent(agent) == AgentCodex && isReasoningToolEvent(event)
+}
+
+func shouldSkipReasoningHistoryEnd(agent Agent, event Event) bool {
+	return normalizeAgent(agent) == AgentCodex &&
+		isReasoningToolEvent(event) &&
+		!reasoningEventHasDisplayContent(event)
+}
+
 func (m *Manager) applyEventToHistoryCache(
 	ctx context.Context,
 	sessionID string,
 	event Event,
 ) (*HistoryItem, error) {
 	payload := cloneMap(event.Payload)
+	agent := m.sessionAgent(sessionID)
 	switch event.Type {
 	case "msg_u":
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
@@ -305,6 +316,9 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "tool_st":
+		if shouldSkipReasoningHistoryStart(agent, event) {
+			return nil, nil
+		}
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
@@ -329,6 +343,9 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "tool_end":
+		if shouldSkipReasoningHistoryEnd(agent, event) {
+			return nil, nil
+		}
 		toolKey := resolveToolHistoryKey(payload, event.ID)
 		status := "done"
 		if payload["ok"] == false {
