@@ -176,10 +176,10 @@
       </div>
     </template>
     <TerminalPanel
-      ref="terminalPanelRef"
+      v-if="isMobileLayout"
       :project-id="currentProjectId"
-      :is-mobile="isMobileLayout"
-      :hidden="isMobileLayout && mobileActiveView !== 'terminal'"
+      :is-mobile="true"
+      :hidden="mobileActiveView !== 'terminal'"
     />
     <ProjectEditDialog
       v-model:show="showEditDialog"
@@ -232,7 +232,6 @@ const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
 const { windowWidth } = useResponsive();
 const { t } = useLocale();
-const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
 const mobileKanbanEnabled = false;

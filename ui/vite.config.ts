@@ -85,6 +85,7 @@ export default defineConfig(async () => {
   return {
     base: './',
     server: {
+      allowedHosts: true,
       proxy: {
         '/api': {
           target: apiProxyTarget,
