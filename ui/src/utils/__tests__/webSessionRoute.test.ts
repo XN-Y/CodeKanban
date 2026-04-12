@@ -20,12 +20,14 @@ describe('webSessionRoute', () => {
       buildWebSessionRouteQuery(
         {
           filter: 'active',
+          tab: 'web',
           webSessionId: 'old-session',
         },
         'new-session'
       )
     ).toEqual({
       filter: 'active',
+      tab: 'web',
       webSessionId: 'new-session',
     });
   });
@@ -34,10 +36,12 @@ describe('webSessionRoute', () => {
     expect(
       buildWebSessionRouteQuery({
         filter: 'archived',
+        tab: 'terminal',
         webSessionId: 'session-1',
       })
     ).toEqual({
       filter: 'archived',
+      tab: 'terminal',
     });
   });
 

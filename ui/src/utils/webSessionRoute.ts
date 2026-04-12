@@ -2,6 +2,8 @@ import type { LocationQuery, LocationQueryRaw } from 'vue-router';
 
 export const WEB_SESSION_ID_QUERY_KEY = 'webSessionId';
 
+type RouteQueryLike = LocationQuery | LocationQueryRaw;
+
 type WebSessionDeepLinkSummary = {
   id: string;
   projectId: string;
@@ -29,7 +31,7 @@ export function normalizeWebSessionRouteSessionId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-export function getWebSessionRouteSessionId(query?: LocationQuery | null): string {
+export function getWebSessionRouteSessionId(query?: RouteQueryLike | null): string {
   if (!query) {
     return '';
   }
@@ -37,7 +39,7 @@ export function getWebSessionRouteSessionId(query?: LocationQuery | null): strin
 }
 
 export function buildWebSessionRouteQuery(
-  query: LocationQuery = {},
+  query: RouteQueryLike = {},
   sessionId?: string
 ): LocationQueryRaw {
   const nextQuery: LocationQueryRaw = { ...query };
@@ -51,14 +53,14 @@ export function buildWebSessionRouteQuery(
 }
 
 export function isWebSessionRouteQuerySynced(
-  query?: LocationQuery | null,
+  query?: RouteQueryLike | null,
   sessionId?: string
 ): boolean {
   return getWebSessionRouteSessionId(query) === normalizeWebSessionRouteSessionId(sessionId);
 }
 
 function normalizeComparableQuery(
-  query?: LocationQuery | null,
+  query?: RouteQueryLike | null,
   ignoredKeys: string[] = []
 ): Record<string, string[]> {
   const ignored = new Set(ignoredKeys);

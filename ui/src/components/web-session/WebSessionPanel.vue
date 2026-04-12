@@ -1643,6 +1643,7 @@ import {
 } from '@/components/web-session/webSessionDraftTabs';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
+import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
 import {
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
@@ -1824,6 +1825,7 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
 const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
 const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
 const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
+const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -4286,7 +4288,7 @@ function buildProjectRouteLocation(projectId: string, sessionId = '') {
   return {
     name: 'project' as const,
     params: { id: projectId },
-    query: buildWebSessionRouteQuery(route.query, sessionId),
+    query: buildWebSessionRouteQuery(buildWorkspaceRouteQuery(route.query, 'web'), sessionId),
   };
 }
 
@@ -7778,17 +7780,21 @@ useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointe
 });
 
 watch(
-  () => currentSession.value,
-  session => {
+  [() => currentSession.value, routeWorkspaceTab],
+  ([session, workspaceTab]) => {
     if (
       isProjectSessionInitializing.value &&
       routeWebSessionId.value &&
+      workspaceTab === 'web' &&
       (!session || isDraftSession(session))
     ) {
       return;
     }
     const routeSessionId =
-      session && !isDraftSession(session) && session.projectId === props.projectId
+      workspaceTab === 'web' &&
+      session &&
+      !isDraftSession(session) &&
+      session.projectId === props.projectId
         ? session.id
         : '';
     void syncWebSessionRouteSessionId(routeSessionId).catch(error => {
