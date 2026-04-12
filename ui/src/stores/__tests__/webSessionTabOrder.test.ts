@@ -151,6 +151,8 @@ describe('webSession tab ordering behavior', () => {
       },
       setTimeout,
       clearTimeout,
+      setInterval,
+      clearInterval,
     });
     vi.stubGlobal('WebSocket', FakeWebSocket);
     FakeWebSocket.instances = [];

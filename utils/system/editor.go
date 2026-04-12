@@ -20,6 +20,8 @@ const (
 	EditorCustom EditorKind = "custom"
 )
 
+const customEditorPathPlaceholder = "${path}"
+
 // OpenEditor attempts to open the provided path inside the requested editor.
 // Supported editors are VSCode, Cursor, Trae, Zed and a custom command.
 func OpenEditor(path string, editor string, customCommand string) error {
@@ -88,28 +90,9 @@ func launchKnownEditor(kind EditorKind, path string) error {
 }
 
 func launchCustomEditor(commandTemplate string, path string) error {
-	commandTemplate = strings.TrimSpace(commandTemplate)
-	if commandTemplate == "" {
-		return ErrCustomEditorCommand
-	}
-
-	parts, err := shlex.Split(commandTemplate)
+	parts, err := buildCustomEditorCommandParts(commandTemplate, path)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrCustomEditorCommand, err)
-	}
-	if len(parts) == 0 {
-		return ErrCustomEditorCommand
-	}
-
-	hasPlaceholder := false
-	for idx, token := range parts {
-		if strings.Contains(token, "{{path}}") {
-			parts[idx] = strings.ReplaceAll(token, "{{path}}", path)
-			hasPlaceholder = true
-		}
-	}
-	if !hasPlaceholder {
-		parts = append(parts, path)
+		return err
 	}
 
 	_, err = tryLaunchCommand(parts[0], parts[1:]...)
@@ -117,6 +100,35 @@ func launchCustomEditor(commandTemplate string, path string) error {
 		return fmt.Errorf("%w: %s", ErrEditorCommandMissing, parts[0])
 	}
 	return err
+}
+
+func buildCustomEditorCommandParts(commandTemplate string, path string) ([]string, error) {
+	commandTemplate = strings.TrimSpace(commandTemplate)
+	if commandTemplate == "" {
+		return nil, ErrCustomEditorCommand
+	}
+
+	parts, err := shlex.Split(commandTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrCustomEditorCommand, err)
+	}
+	if len(parts) == 0 {
+		return nil, ErrCustomEditorCommand
+	}
+
+	hasPlaceholder := false
+	for idx, token := range parts {
+		replaced := strings.ReplaceAll(token, customEditorPathPlaceholder, path)
+		if replaced != token {
+			hasPlaceholder = true
+			parts[idx] = replaced
+		}
+	}
+	if !hasPlaceholder {
+		parts = append(parts, path)
+	}
+
+	return parts, nil
 }
 
 type editorCommand struct {

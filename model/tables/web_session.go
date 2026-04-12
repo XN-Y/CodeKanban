@@ -35,6 +35,7 @@ type WebSessionTable struct {
 	HasUnread               bool       `gorm:"type:boolean;not null;default:false" json:"hasUnread"`
 	ArchivedAt              *time.Time `gorm:"type:datetime;index" json:"archivedAt"`
 	ActivityAt              time.Time  `gorm:"type:datetime;index" json:"activityAt"`
+	StatusUpdatedAt         *time.Time `gorm:"type:datetime;index" json:"statusUpdatedAt"`
 	AssistantStateUpdatedAt *time.Time `gorm:"type:datetime" json:"assistantStateUpdatedAt"`
 	SourceKind              string     `gorm:"type:text;not null;default:codex_app_server" json:"sourceKind"`
 	SyncState               string     `gorm:"type:text;not null;default:missing;index" json:"syncState"`

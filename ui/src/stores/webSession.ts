@@ -20,7 +20,7 @@ import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
 type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err' | 'hb';
-type WireHeartbeatOp = 'ping' | 'pong';
+type WireHeartbeatOp = 'ping' | 'pong' | 'focus';
 type WebSessionSocketKind = 'event' | 'command';
 type SessionStatus = WebSessionSummary['status'];
 type SessionAssistantState =
@@ -50,6 +50,7 @@ type WireSession = {
   unr: boolean;
   aa?: number | null;
   act?: number | null;
+  sta?: number | null;
   ca?: number | null;
   lu: number;
   lma?: number | null;
@@ -81,6 +82,14 @@ type WireSession = {
   cost?: number;
   cwt?: number | null;
   cws?: WebSessionContextWindowSource;
+};
+
+type WirePendingInput = {
+  id?: string;
+  m?: 'redirect' | 'queue' | string;
+  txt?: string;
+  atts?: string[];
+  ca?: number | null;
 };
 
 type WireHistoryItem = {
@@ -146,6 +155,7 @@ type WireFrame = {
     tot: number;
   };
   i?: WireHistoryItem;
+  pi?: WirePendingInput[];
   code?: string;
   msg?: string;
   retry?: boolean;
@@ -343,6 +353,12 @@ type ArchivedListMeta = {
   offset: number;
   hasMore: boolean;
   loading: boolean;
+};
+
+type ArchivedListScopeState = {
+  projectIds: string[];
+  sessionIds: string[];
+  meta: ArchivedListMeta;
 };
 
 type SyncSessionOptions = {
@@ -799,9 +815,9 @@ function normalizeProjectScope(projectIds: string[]) {
   };
 }
 
-function defaultArchivedListMeta(): ArchivedListMeta {
+function defaultArchivedListMeta(scopeKey = ''): ArchivedListMeta {
   return {
-    scopeKey: '',
+    scopeKey,
     total: 0,
     offset: 0,
     hasMore: false,
@@ -812,8 +828,7 @@ function defaultArchivedListMeta(): ArchivedListMeta {
 export const useWebSessionStore = defineStore('web-session', () => {
   const sessionsByProject = ref<Record<string, WebSessionSummary[]>>({});
   const archivedSessionsById = ref<Record<string, WebSessionSummary>>({});
-  const archivedSessionIds = ref<string[]>([]);
-  const archivedListMeta = ref<ArchivedListMeta>(defaultArchivedListMeta());
+  const archivedScopeStates = ref<Record<string, ArchivedListScopeState>>({});
   const eventsBySession = ref<Record<string, WebSessionBlock[]>>({});
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
@@ -838,6 +853,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   let eventReconnectTimer: number | null = null;
   let eventWatchdogTimer: number | null = null;
   let eventHasConnectedOnce = false;
+  let eventFocusedSessionId = '';
   let commandSocket: WebSocket | null = null;
   let commandConnectPromise: Promise<void> | null = null;
   let commandWatchdogTimer: number | null = null;
@@ -849,9 +865,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       reject: (reason?: unknown) => void;
     }
   >();
-  const redirectAbortSessions = new Set<string>();
-  const pendingFlushTimers = new Map<string, number>();
-  const flushingSessions = new Set<string>();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
@@ -862,7 +875,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Object.values(sessionsByProject.value).forEach(items => {
       items.forEach(item => ids.add(item.id));
     });
-    archivedSessionIds.value.forEach(sessionId => ids.add(sessionId));
+    Object.values(archivedScopeStates.value).forEach(scopeState => {
+      scopeState.sessionIds.forEach(sessionId => ids.add(sessionId));
+    });
     return ids;
   });
 
@@ -881,22 +896,31 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return cachedCounts.get(projectId) ?? 0;
   }
 
+  function getArchivedScopeState(scope: { ids: string[]; key: string }) {
+    if (!scope.key) {
+      return null;
+    }
+    return archivedScopeStates.value[scope.key] ?? null;
+  }
+
   function getArchivedSessions(projectIds: string[]) {
     const scope = normalizeProjectScope(projectIds);
-    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+    const scopeState = getArchivedScopeState(scope);
+    if (!scopeState) {
       return [];
     }
-    return archivedSessionIds.value
+    return scopeState.sessionIds
       .map(sessionId => archivedSessionsById.value[sessionId])
       .filter((session): session is WebSessionSummary => Boolean(session));
   }
 
   function getArchivedMeta(projectIds: string[]): ArchivedListMeta {
     const scope = normalizeProjectScope(projectIds);
-    if (!scope.key || archivedListMeta.value.scopeKey !== scope.key) {
+    const scopeState = getArchivedScopeState(scope);
+    if (!scopeState) {
       return defaultArchivedListMeta();
     }
-    return archivedListMeta.value;
+    return scopeState.meta;
   }
 
   function getActiveSessionId(projectId: string) {
@@ -1016,6 +1040,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     sessionId: string,
     summary: WebSessionSummary,
     items: WebSessionBlock[],
+    pendingInputs: WebSessionPendingInput[],
     history: {
       hasMore: boolean;
       beforeCursor?: string;
@@ -1024,6 +1049,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   ) {
     upsertSession(summary);
     resetSessionEvents(sessionId, items);
+    setPendingInputs(sessionId, pendingInputs);
     historyBySession.value = {
       ...historyBySession.value,
       [sessionId]: {
@@ -1332,6 +1358,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       typeof session.act === 'number' && Number.isFinite(session.act)
         ? new Date(session.act).toISOString()
         : new Date(session.lu).toISOString();
+    const statusUpdatedAt =
+      typeof session.sta === 'number' && Number.isFinite(session.sta)
+        ? new Date(session.sta).toISOString()
+        : null;
     const createdAt =
       typeof session.ca === 'number' && Number.isFinite(session.ca)
         ? new Date(session.ca).toISOString()
@@ -1363,6 +1393,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       hasUnread: session.unr,
       archivedAt,
       activityAt,
+      statusUpdatedAt,
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
       assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
@@ -1407,6 +1438,50 @@ export const useWebSessionStore = defineStore('web-session', () => {
           ? session.cws
           : 'unavailable',
     };
+  }
+
+  function normalizePendingInput(item: {
+    id?: string;
+    mode?: 'redirect' | 'queue' | string;
+    text?: string;
+    attachmentIds?: string[];
+    createdAt?: string | number | null;
+  }): WebSessionPendingInput | null {
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    if (!id) {
+      return null;
+    }
+    const mode = item.mode === 'redirect' ? 'redirect' : item.mode === 'queue' ? 'queue' : '';
+    if (!mode) {
+      return null;
+    }
+    const createdAt =
+      typeof item.createdAt === 'number'
+        ? item.createdAt
+        : Date.parse(typeof item.createdAt === 'string' ? item.createdAt : '');
+    return {
+      id,
+      mode,
+      text: typeof item.text === 'string' ? item.text : '',
+      attachmentIds: Array.isArray(item.attachmentIds)
+        ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
+        : [],
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    };
+  }
+
+  function insertPendingInput(
+    items: WebSessionPendingInput[],
+    item: WebSessionPendingInput
+  ): WebSessionPendingInput[] {
+    if (item.mode !== 'redirect') {
+      return [...items, item];
+    }
+    const insertAt = items.findIndex(existing => existing.mode !== 'redirect');
+    if (insertAt < 0) {
+      return [...items, item];
+    }
+    return [...items.slice(0, insertAt), item, ...items.slice(insertAt)];
   }
 
   function normalizeHistoryItem(item: WireHistoryItem | Record<string, unknown>): WebSessionBlock {
@@ -1540,12 +1615,102 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return right.id.localeCompare(left.id);
   }
 
-  function isArchivedScopeProject(projectId: string) {
-    const scopeKey = archivedListMeta.value.scopeKey;
-    if (!scopeKey || !projectId) {
-      return false;
+  function areStringArraysEqual(left: string[], right: string[]) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+  }
+
+  function reconcileArchivedListMeta(meta: ArchivedListMeta, total: number, offset: number) {
+    const nextTotal = Math.max(0, total);
+    const nextOffset = Math.max(0, Math.min(offset, nextTotal));
+    return {
+      ...meta,
+      total: nextTotal,
+      offset: nextOffset,
+      hasMore: nextOffset < nextTotal,
+    };
+  }
+
+  function getMatchingArchivedScopeKeys(projectId: string) {
+    if (!projectId) {
+      return [];
     }
-    return scopeKey.split('::').includes(projectId);
+    return Object.entries(archivedScopeStates.value)
+      .filter(([, scopeState]) => scopeState.projectIds.includes(projectId))
+      .map(([scopeKey]) => scopeKey);
+  }
+
+  function sortArchivedScopeContainingSession(sessionId: string) {
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    Object.entries(archivedScopeStates.value).forEach(([scopeKey, scopeState]) => {
+      if (!scopeState.sessionIds.includes(sessionId)) {
+        return;
+      }
+      const nextSessionIds = sortArchivedSessionIds(scopeState.sessionIds);
+      if (areStringArraysEqual(nextSessionIds, scopeState.sessionIds)) {
+        return;
+      }
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
+  }
+
+  function addArchivedSessionToMatchingScopes(summary: WebSessionSummary) {
+    const matchingScopeKeys = getMatchingArchivedScopeKeys(summary.projectId);
+    if (matchingScopeKeys.length === 0) {
+      return;
+    }
+
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    matchingScopeKeys.forEach(scopeKey => {
+      const scopeState = archivedScopeStates.value[scopeKey];
+      if (!scopeState) {
+        return;
+      }
+
+      const alreadyIncluded = scopeState.sessionIds.includes(summary.id);
+      const nextSessionIds = sortArchivedSessionIds(
+        alreadyIncluded ? scopeState.sessionIds : [...scopeState.sessionIds, summary.id]
+      );
+      const nextMeta = alreadyIncluded
+        ? reconcileArchivedListMeta(scopeState.meta, scopeState.meta.total, scopeState.meta.offset)
+        : reconcileArchivedListMeta(
+            scopeState.meta,
+            scopeState.meta.total + 1,
+            scopeState.meta.offset + 1
+          );
+
+      if (
+        alreadyIncluded &&
+        areStringArraysEqual(nextSessionIds, scopeState.sessionIds) &&
+        nextMeta.total === scopeState.meta.total &&
+        nextMeta.offset === scopeState.meta.offset &&
+        nextMeta.hasMore === scopeState.meta.hasMore
+      ) {
+        return;
+      }
+
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+        meta: nextMeta,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
   }
 
   function sortArchivedSessionIds(ids: string[]) {
@@ -1567,7 +1732,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertArchivedSession(
     summary: WebSessionSummary,
-    options?: { includeInList?: boolean }
+    options?: { includeInMatchingScopes?: boolean }
   ) {
     const previous = archivedSessionsById.value[summary.id];
     archivedSessionsById.value = {
@@ -1578,19 +1743,63 @@ export const useWebSessionStore = defineStore('web-session', () => {
       },
     };
 
-    const includeInList = options?.includeInList ?? isArchivedScopeProject(summary.projectId);
-    if (!includeInList) {
+    if (options?.includeInMatchingScopes) {
+      addArchivedSessionToMatchingScopes(summary);
       return;
     }
 
-    const nextIds = archivedSessionIds.value.includes(summary.id)
-      ? archivedSessionIds.value
-      : [...archivedSessionIds.value, summary.id];
-    archivedSessionIds.value = sortArchivedSessionIds(nextIds);
+    if (!previous) {
+      return;
+    }
+
+    sortArchivedScopeContainingSession(summary.id);
   }
 
   function removeArchivedSessionRecord(sessionId: string, options?: { clearSummary?: boolean }) {
-    archivedSessionIds.value = archivedSessionIds.value.filter(id => id !== sessionId);
+    const archived = archivedSessionsById.value[sessionId];
+    const projectId = archived?.projectId ?? '';
+    const nextScopes = { ...archivedScopeStates.value };
+    let changed = false;
+
+    Object.entries(archivedScopeStates.value).forEach(([scopeKey, scopeState]) => {
+      const containsSession = scopeState.sessionIds.includes(sessionId);
+      const matchesProject = Boolean(projectId) && scopeState.projectIds.includes(projectId);
+      if (!containsSession && !matchesProject) {
+        return;
+      }
+
+      const nextSessionIds = containsSession
+        ? scopeState.sessionIds.filter(id => id !== sessionId)
+        : scopeState.sessionIds;
+      const nextMeta = matchesProject
+        ? reconcileArchivedListMeta(
+            scopeState.meta,
+            scopeState.meta.total - 1,
+            scopeState.meta.offset - (containsSession ? 1 : 0)
+          )
+        : scopeState.meta;
+
+      if (
+        areStringArraysEqual(nextSessionIds, scopeState.sessionIds) &&
+        nextMeta.total === scopeState.meta.total &&
+        nextMeta.offset === scopeState.meta.offset &&
+        nextMeta.hasMore === scopeState.meta.hasMore
+      ) {
+        return;
+      }
+
+      nextScopes[scopeKey] = {
+        ...scopeState,
+        sessionIds: nextSessionIds,
+        meta: nextMeta,
+      };
+      changed = true;
+    });
+
+    if (changed) {
+      archivedScopeStates.value = nextScopes;
+    }
+
     if (options?.clearSummary !== false) {
       const next = { ...archivedSessionsById.value };
       delete next[sessionId];
@@ -1630,13 +1839,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
     completedTransitionVersionBySession.delete(sessionId);
-    redirectAbortSessions.delete(sessionId);
-    flushingSessions.delete(sessionId);
-    const timer = pendingFlushTimers.get(sessionId);
-    if (timer != null) {
-      window.clearTimeout(timer);
-      pendingFlushTimers.delete(sessionId);
-    }
     if (projectId) {
       clearDraft(projectId, sessionId);
     }
@@ -1663,8 +1865,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertSession(summary: WebSessionSummary) {
     if (summary.archivedAt) {
+      const wasCurrentSession = Boolean(
+        (sessionsByProject.value[summary.projectId] ?? []).some(item => item.id === summary.id)
+      );
       removeCurrentSessionRecord(summary.projectId, summary.id);
-      upsertArchivedSession(summary);
+      upsertArchivedSession(summary, {
+        includeInMatchingScopes: wasCurrentSession,
+      });
       return;
     }
     removeArchivedSessionRecord(summary.id);
@@ -1689,87 +1896,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function setPendingInputs(sessionId: string, items: WebSessionPendingInput[]) {
-    pendingInputsBySession.value = {
-      ...pendingInputsBySession.value,
-      [sessionId]: items,
-    };
-  }
-
-  function enqueuePendingInput(
-    sessionId: string,
-    text: string,
-    attachmentIds: string[],
-    mode: 'redirect' | 'queue'
-  ) {
-    const item: WebSessionPendingInput = {
-      id: `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      mode,
-      text,
-      attachmentIds: [...attachmentIds],
-      createdAt: Date.now(),
-    };
-    setPendingInputs(sessionId, [...getPendingInputs(sessionId), item]);
-    return item;
-  }
-
-  function removePendingInput(sessionId: string, pendingId: string) {
-    setPendingInputs(
-      sessionId,
-      getPendingInputs(sessionId).filter(item => item.id !== pendingId)
-    );
-  }
-
-  function schedulePendingFlush(sessionId: string, delay = 80) {
-    const previous = pendingFlushTimers.get(sessionId);
-    if (previous != null) {
-      window.clearTimeout(previous);
+    const nextPendingInputs = { ...pendingInputsBySession.value };
+    if (items.length === 0) {
+      delete nextPendingInputs[sessionId];
+    } else {
+      nextPendingInputs[sessionId] = items;
     }
-    const timer = window.setTimeout(() => {
-      pendingFlushTimers.delete(sessionId);
-      void flushPendingInput(sessionId);
-    }, delay);
-    pendingFlushTimers.set(sessionId, timer);
-  }
-
-  async function flushPendingInput(sessionId: string) {
-    if (flushingSessions.has(sessionId)) {
-      return;
-    }
-    const session = findSessionById(sessionId);
-    if (!session || session.status === 'running') {
-      return;
-    }
-    const items = getPendingInputs(sessionId);
-    const next = items[0];
-    if (!next) {
-      return;
-    }
-    flushingSessions.add(sessionId);
-    setPendingInputs(sessionId, items.slice(1));
-    try {
-      await sendCommand('send', sessionId, { txt: next.text, atts: next.attachmentIds });
-    } catch (error) {
-      setPendingInputs(sessionId, [next, ...getPendingInputs(sessionId)]);
-      schedulePendingFlush(sessionId, 240);
-      throw error;
-    } finally {
-      flushingSessions.delete(sessionId);
-    }
-  }
-
-  function maybeAbortForRedirect(sessionId: string) {
-    const session = findSessionById(sessionId);
-    if (!session || session.status !== 'running' || redirectAbortSessions.has(sessionId)) {
-      return;
-    }
-    const next = getPendingInputs(sessionId)[0];
-    if (!next || next.mode !== 'redirect') {
-      return;
-    }
-    redirectAbortSessions.add(sessionId);
-    void abortSession(sessionId).catch(() => {
-      redirectAbortSessions.delete(sessionId);
-    });
+    pendingInputsBySession.value = nextPendingInputs;
   }
 
   function mergeEvents(sessionId: string, incoming: WebSessionBlock[]) {
@@ -2101,7 +2234,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
         ...archivedSessionsById.value,
         [sessionId]: updater(archived),
       };
-      archivedSessionIds.value = sortArchivedSessionIds(archivedSessionIds.value);
+      sortArchivedScopeContainingSession(sessionId);
     }
   }
 
@@ -2131,6 +2264,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
     const nextState = getLiveState(sessionId);
     const nextApproval = getPendingApproval(sessionId);
+    const hasPendingInputs = getPendingInputs(sessionId).length > 0;
     const approvalForNotification =
       nextApproval ??
       (nextState.phase === 'waiting_approval' || nextState.phase === 'waiting_plan_approval'
@@ -2166,7 +2300,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       } satisfies WebSessionApprovalEvent);
     }
 
-    if (nextState.phase === 'done' && previousState.phase !== 'done') {
+    if (nextState.phase === 'done' && previousState.phase !== 'done' && !hasPendingInputs) {
       const completionVersion = Math.max(
         nextState.updatedAt,
         Date.parse(session.updatedAt || '') || 0,
@@ -2243,6 +2377,19 @@ export const useWebSessionStore = defineStore('web-session', () => {
         frame.sid,
         summary,
         Array.isArray(frame.h?.its) ? frame.h.its.map(item => normalizeHistoryItem(item)) : [],
+        Array.isArray(frame.pi)
+          ? frame.pi
+              .map(item =>
+                normalizePendingInput({
+                  id: item.id,
+                  mode: item.m,
+                  text: item.txt,
+                  attachmentIds: item.atts,
+                  createdAt: item.ca,
+                })
+              )
+              .filter((item): item is WebSessionPendingInput => item != null)
+          : [],
         {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
@@ -2257,6 +2404,26 @@ export const useWebSessionStore = defineStore('web-session', () => {
       const previousApproval = getPendingApproval(frame.sid);
       if (frame.s) {
         upsertSession(normalizeSession(frame.s));
+      }
+      if (frame.op === 'pending') {
+        setPendingInputs(
+          frame.sid,
+          Array.isArray(frame.pi)
+            ? frame.pi
+                .map(item =>
+                  normalizePendingInput({
+                    id: item.id,
+                    mode: item.m,
+                    text: item.txt,
+                    attachmentIds: item.atts,
+                    createdAt: item.ca,
+                  })
+                )
+                .filter((item): item is WebSessionPendingInput => item != null)
+            : []
+        );
+        emitStateTransition(frame.sid, previousState, previousApproval);
+        return;
       }
 
       if (frame.op === 'hist_page' && frame.h) {
@@ -2279,23 +2446,6 @@ export const useWebSessionStore = defineStore('web-session', () => {
       if (frame.op === 'hist_item' && frame.i) {
         const item = normalizeHistoryItem(frame.i);
         mergeEvents(frame.sid, [item]);
-        if (item.kind === 'tool' && item.tool?.status !== 'running') {
-          maybeAbortForRedirect(frame.sid);
-        }
-      }
-
-      const session = findSessionById(frame.sid);
-      if (session?.status === 'done' || session?.status === 'err' || session?.status === 'idle') {
-        redirectAbortSessions.delete(frame.sid);
-        schedulePendingFlush(frame.sid);
-      }
-
-      if (
-        frame.op === 'hist_item' &&
-        frame.i &&
-        normalizeHistoryItem(frame.i).tool?.status !== 'running'
-      ) {
-        maybeAbortForRedirect(frame.sid);
       }
 
       emitStateTransition(frame.sid, previousState, previousApproval);
@@ -2309,12 +2459,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     pending.clear();
   }
 
-  function buildHeartbeatPayload(op: WireHeartbeatOp) {
+  function buildHeartbeatPayload(op: WireHeartbeatOp, sessionId = '') {
     return JSON.stringify({
       v: 1,
       k: 'hb',
       ts: Date.now(),
       op,
+      sid: sessionId || undefined,
     });
   }
 
@@ -2382,18 +2533,27 @@ export const useWebSessionStore = defineStore('web-session', () => {
     commandWatchdogTimer = timer;
   }
 
-  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp) {
+  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp, sessionId = '') {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
     }
-    socket.send(buildHeartbeatPayload(op));
+    socket.send(buildHeartbeatPayload(op, sessionId));
   }
 
-  function handleSocketHeartbeat(
-    kind: WebSessionSocketKind,
-    socket: WebSocket,
-    frame: WireFrame
-  ) {
+  function sendEventSessionFocus(sessionId = '') {
+    sendSocketHeartbeat(eventSocket, 'focus', sessionId);
+  }
+
+  function setEventSessionFocus(sessionId: string) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (eventFocusedSessionId === normalizedSessionId) {
+      return;
+    }
+    eventFocusedSessionId = normalizedSessionId;
+    sendEventSessionFocus(normalizedSessionId);
+  }
+
+  function handleSocketHeartbeat(kind: WebSessionSocketKind, socket: WebSocket, frame: WireFrame) {
     if (frame.k !== 'hb') {
       return false;
     }
@@ -2427,6 +2587,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
         eventLastDisconnectReason.value = null;
         startSocketWatchdog('event', ws);
         eventConnectPromise = null;
+        if (eventFocusedSessionId) {
+          sendEventSessionFocus(eventFocusedSessionId);
+        }
         if (eventHasConnectedOnce) {
           eventRecoveryVersion.value += 1;
           emitter.emit('web-session:event-stream-recovered', {
@@ -2589,8 +2752,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function invalidateArchivedSessions() {
-    archivedSessionIds.value = [];
-    archivedListMeta.value = defaultArchivedListMeta();
+    archivedScopeStates.value = {};
   }
 
   async function loadArchivedSessions(
@@ -2607,16 +2769,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     const limit = Math.max(1, options?.limit ?? 20);
-    const reset = options?.reset === true || archivedListMeta.value.scopeKey !== scope.key;
-    const previousMeta = getArchivedMeta(scope.ids);
+    const previousScopeState = getArchivedScopeState(scope);
+    const previousMeta = previousScopeState?.meta ?? defaultArchivedListMeta(scope.key);
+    const reset = options?.reset === true || !previousScopeState;
     const offset = reset ? 0 : previousMeta.offset;
 
-    archivedListMeta.value = {
-      scopeKey: scope.key,
-      total: reset ? 0 : previousMeta.total,
-      offset,
-      hasMore: reset ? false : previousMeta.hasMore,
-      loading: true,
+    archivedScopeStates.value = {
+      ...archivedScopeStates.value,
+      [scope.key]: {
+        projectIds: [...scope.ids],
+        sessionIds: [...(previousScopeState?.sessionIds ?? [])],
+        meta: {
+          scopeKey: scope.key,
+          total: reset ? 0 : previousMeta.total,
+          offset,
+          hasMore: reset ? false : previousMeta.hasMore,
+          loading: true,
+        },
+      },
     };
 
     try {
@@ -2626,28 +2796,47 @@ export const useWebSessionStore = defineStore('web-session', () => {
         limit,
       });
       result.items.forEach(item => {
-        upsertArchivedSession(item, { includeInList: false });
+        upsertArchivedSession(item);
       });
-      archivedSessionIds.value = sortArchivedSessionIds(
+      const nextSessionIds = sortArchivedSessionIds(
         reset
           ? result.items.map(item => item.id)
-          : Array.from(new Set([...archivedSessionIds.value, ...result.items.map(item => item.id)]))
+          : Array.from(
+              new Set([
+                ...(previousScopeState?.sessionIds ?? []),
+                ...result.items.map(item => item.id),
+              ])
+            )
       );
-      archivedListMeta.value = {
-        scopeKey: scope.key,
-        total: result.total,
-        offset: result.nextOffset,
-        hasMore: result.hasMore,
-        loading: false,
+      archivedScopeStates.value = {
+        ...archivedScopeStates.value,
+        [scope.key]: {
+          projectIds: [...scope.ids],
+          sessionIds: nextSessionIds,
+          meta: {
+            scopeKey: scope.key,
+            total: result.total,
+            offset: result.nextOffset,
+            hasMore: result.hasMore,
+            loading: false,
+          },
+        },
       };
       return getArchivedSessions(scope.ids);
     } catch (error) {
-      archivedListMeta.value = {
-        scopeKey: scope.key,
-        total: reset ? 0 : previousMeta.total,
-        offset,
-        hasMore: reset ? false : previousMeta.hasMore,
-        loading: false,
+      archivedScopeStates.value = {
+        ...archivedScopeStates.value,
+        [scope.key]: {
+          projectIds: [...scope.ids],
+          sessionIds: [...(previousScopeState?.sessionIds ?? [])],
+          meta: {
+            scopeKey: scope.key,
+            total: reset ? 0 : previousMeta.total,
+            offset,
+            hasMore: reset ? false : previousMeta.hasMore,
+            loading: false,
+          },
+        },
       };
       throw error;
     }
@@ -2674,6 +2863,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           snapshot.session,
           Array.isArray(snapshot.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+            : [],
+          Array.isArray(snapshot.pendingInputs)
+            ? snapshot.pendingInputs
+                .map(item => normalizePendingInput(item))
+                .filter((item): item is WebSessionPendingInput => item != null)
             : [],
           {
             hasMore: Boolean(snapshot.history?.hasMore),
@@ -2702,7 +2896,8 @@ export const useWebSessionStore = defineStore('web-session', () => {
   async function archiveSession(projectId: string, sessionId: string) {
     const summary = await webSessionApi.archive(projectId, sessionId);
     removeCurrentSessionRecord(projectId, sessionId);
-    upsertArchivedSession(summary, { includeInList: false });
+    setPendingInputs(sessionId, []);
+    upsertArchivedSession(summary, { includeInMatchingScopes: true });
     return summary;
   }
 
@@ -2737,6 +2932,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           snapshot.session,
           Array.isArray(snapshot?.history?.items)
             ? snapshot.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+            : [],
+          Array.isArray(snapshot.pendingInputs)
+            ? snapshot.pendingInputs
+                .map(item => normalizePendingInput(item))
+                .filter((item): item is WebSessionPendingInput => item != null)
             : [],
           {
             hasMore: Boolean(snapshot?.history?.hasMore),
@@ -2776,11 +2976,40 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    let optimisticPendingId = '';
     if (session?.status === 'running' && mode) {
-      enqueuePendingInput(sessionId, text, attachmentIds, mode);
-      return;
+      optimisticPendingId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      setPendingInputs(
+        sessionId,
+        insertPendingInput(getPendingInputs(sessionId), {
+          id: optimisticPendingId,
+          mode,
+          text,
+          attachmentIds: [...attachmentIds],
+          createdAt: Date.now(),
+        })
+      );
     }
-    await sendCommand('send', sessionId, { txt: text, atts: attachmentIds });
+
+    try {
+      await sendCommand('send', sessionId, {
+        txt: text,
+        atts: attachmentIds,
+        ...(mode ? { mode, pid: optimisticPendingId } : {}),
+      });
+    } catch (error) {
+      if (optimisticPendingId) {
+        setPendingInputs(
+          sessionId,
+          getPendingInputs(sessionId).filter(item => item.id !== optimisticPendingId)
+        );
+      }
+      throw error;
+    }
+  }
+
+  async function removePendingInput(sessionId: string, pendingId: string) {
+    await sendCommand('pending_del', sessionId, { id: pendingId });
   }
 
   async function abortSession(sessionId: string) {
@@ -3099,6 +3328,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     clearDraft,
     moveDraft,
     openEventStream,
+    setEventSessionFocus,
     sessionCounts: cachedCounts,
     emitter,
   };

@@ -12,7 +12,6 @@ import {
 } from '@/stores/terminalReminder';
 import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
 import { useProjectStore } from '@/stores/project';
-import { useSettingsStore } from '@/stores/settings';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
 import type { TerminalSession } from '@/types/models';
 
@@ -37,8 +36,6 @@ const terminalStore = useTerminalStore();
 const reminderStore = useTerminalReminderStore();
 const sessionSnapshotStore = useTerminalSessionSnapshotStore();
 const projectStore = useProjectStore();
-const settingsStore = useSettingsStore();
-const { terminalDisplayMode } = storeToRefs(settingsStore);
 const { completionRecords, approvalRecords } = storeToRefs(reminderStore);
 const { sessionsByProject, sessionsById } = storeToRefs(sessionSnapshotStore);
 const isSidebar = computed(() => props.layout === 'sidebar' || props.layout === 'docked-sidebar');
@@ -984,7 +981,11 @@ function formatElapsedDuration(startedAt: Date): string {
 }
 
 function getNotificationStartedAt(notification: NotificationItem): Date | null {
-  if (notification.type === 'completion' && notification.state === 'working' && notification.startedAt) {
+  if (
+    notification.type === 'completion' &&
+    notification.state === 'working' &&
+    notification.startedAt
+  ) {
     return notification.startedAt;
   }
   return null;

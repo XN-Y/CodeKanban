@@ -26,24 +26,32 @@ describe('projectSessionBadge', () => {
     ).toEqual({ kind: 'webSession', count: 3 });
   });
 
-  it('prefers terminal when both exist and terminal is preferred', () => {
+  it('returns combined when both terminal and web sessions exist', () => {
     expect(
       resolveProjectSessionBadge({
         terminalCount: 4,
         webSessionCount: 2,
         preferredKind: 'terminal',
       })
-    ).toEqual({ kind: 'terminal', count: 4 });
+    ).toEqual({
+      kind: 'combined',
+      terminalCount: 4,
+      webSessionCount: 2,
+    });
   });
 
-  it('prefers web session when both exist and web session is preferred', () => {
+  it('returns combined regardless of preferred kind when both types exist', () => {
     expect(
       resolveProjectSessionBadge({
         terminalCount: 4,
         webSessionCount: 2,
         preferredKind: 'webSession',
       })
-    ).toEqual({ kind: 'webSession', count: 2 });
+    ).toEqual({
+      kind: 'combined',
+      terminalCount: 4,
+      webSessionCount: 2,
+    });
   });
 
   it('returns null when neither type exists', () => {
@@ -56,11 +64,28 @@ describe('projectSessionBadge', () => {
     ).toBeNull();
   });
 
+  it('normalizes invalid counts before resolving the badge state', () => {
+    expect(
+      resolveProjectSessionBadge({
+        terminalCount: Number.NaN,
+        webSessionCount: 2.8,
+        preferredKind: 'terminal',
+      })
+    ).toEqual({ kind: 'webSession', count: 2 });
+    expect(
+      resolveProjectSessionBadge({
+        terminalCount: -3,
+        webSessionCount: Number.POSITIVE_INFINITY,
+        preferredKind: 'webSession',
+      })
+    ).toBeNull();
+  });
+
   it('defaults to terminal when current mobile view is not web session', () => {
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: true,
-        isDockMode: false,
+        isProjectWorkspace: false,
         mobileActiveView: 'kanban',
       })
     ).toBe('terminal');
@@ -70,41 +95,41 @@ describe('projectSessionBadge', () => {
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: true,
-        isDockMode: false,
+        isProjectWorkspace: false,
         mobileActiveView: 'webSession',
       })
     ).toBe('webSession');
   });
 
-  it('returns web session when the active docked tab is web', () => {
+  it('returns web session when the active workspace tab is web', () => {
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: false,
-        isDockMode: true,
-        dockedActiveTab: 'web',
+        isProjectWorkspace: true,
+        workspaceActiveTab: 'web',
       })
     ).toBe('webSession');
   });
 
-  it('defaults to terminal for non-web docked tabs and floating mode', () => {
+  it('defaults to terminal for non-web workspace tabs and non-project pages', () => {
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: false,
-        isDockMode: true,
-        dockedActiveTab: 'kanban',
+        isProjectWorkspace: true,
+        workspaceActiveTab: 'kanban',
       })
     ).toBe('terminal');
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: false,
-        isDockMode: false,
-        dockedActiveTab: 'web',
+        isProjectWorkspace: false,
+        workspaceActiveTab: 'web',
       })
     ).toBe('terminal');
     expect(
       resolvePreferredProjectSessionKind({
         isMobile: false,
-        isDockMode: false,
+        isProjectWorkspace: false,
       })
     ).toBe('terminal');
   });

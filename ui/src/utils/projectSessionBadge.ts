@@ -1,10 +1,11 @@
 export type ProjectSessionBadgeKind = 'terminal' | 'webSession';
+export type CombinedProjectSessionBadgeKind = 'combined';
 
 type PreferredProjectSessionKindInput = {
   isMobile: boolean;
-  isDockMode: boolean;
+  isProjectWorkspace?: boolean;
   mobileActiveView?: string | null;
-  dockedActiveTab?: string | null;
+  workspaceActiveTab?: string | null;
 };
 
 type ProjectSessionBadgeInput = {
@@ -13,10 +14,17 @@ type ProjectSessionBadgeInput = {
   preferredKind: ProjectSessionBadgeKind;
 };
 
-export type ProjectSessionBadge = {
-  kind: ProjectSessionBadgeKind;
-  count: number;
-} | null;
+export type ProjectSessionBadge =
+  | {
+      kind: ProjectSessionBadgeKind;
+      count: number;
+    }
+  | {
+      kind: CombinedProjectSessionBadgeKind;
+      terminalCount: number;
+      webSessionCount: number;
+    }
+  | null;
 
 function normalizeCount(value: number | undefined) {
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -31,8 +39,8 @@ export function resolvePreferredProjectSessionKind(
   if (input.isMobile) {
     return input.mobileActiveView === 'webSession' ? 'webSession' : 'terminal';
   }
-  if (input.isDockMode) {
-    return input.dockedActiveTab === 'web' ? 'webSession' : 'terminal';
+  if (input.isProjectWorkspace) {
+    return input.workspaceActiveTab === 'web' ? 'webSession' : 'terminal';
   }
   return 'terminal';
 }
@@ -50,7 +58,9 @@ export function resolveProjectSessionBadge(input: ProjectSessionBadgeInput): Pro
   if (webSessionCount > 0 && terminalCount <= 0) {
     return { kind: 'webSession', count: webSessionCount };
   }
-  return input.preferredKind === 'webSession'
-    ? { kind: 'webSession', count: webSessionCount }
-    : { kind: 'terminal', count: terminalCount };
+  return {
+    kind: 'combined',
+    terminalCount,
+    webSessionCount,
+  };
 }

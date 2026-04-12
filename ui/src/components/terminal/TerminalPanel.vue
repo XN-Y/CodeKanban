@@ -3,15 +3,10 @@
     ref="panelRef"
     class="terminal-panel"
     :class="{
-      'is-collapsed': !expanded && !isMobile && !isDocked,
       'is-docked': isDocked,
       'is-mobile': isMobile,
       'is-hidden': hidden,
-      'is-resizing': isResizing || isDragging,
-      'is-fullscreen': isFullscreen,
     }"
-    :style="isMobile || isDocked ? undefined : panelStyle"
-    @pointerdown.capture="handlePanelPointerDown"
   >
     <div v-if="shouldShowBranchFilter" class="branch-filter-strip">
       <button
@@ -33,39 +28,6 @@
         {{ option.label }}
       </button>
     </div>
-
-    <!-- 拖动调整高度的手柄 -->
-    <div
-      v-if="!isFullscreen && !isDocked"
-      class="resize-handle resize-handle-top"
-      @mousedown="startResize"
-    >
-      <div class="resize-indicator"></div>
-    </div>
-
-    <!-- 左侧拖动手柄 -->
-    <div
-      v-if="!isFullscreen && !isDocked"
-      class="resize-handle resize-handle-left"
-      @mousedown="startResizeLeft"
-    ></div>
-
-    <!-- 右侧拖动手柄 -->
-    <div
-      v-if="!isFullscreen && !isDocked"
-      class="resize-handle resize-handle-right"
-      @mousedown="startResizeRight"
-    ></div>
-
-    <!-- 底部拖动手柄 -->
-    <div
-      v-if="!isFullscreen && !isDocked"
-      class="resize-handle resize-handle-bottom"
-      @mousedown="startResizeBottom"
-    >
-      <div class="resize-indicator"></div>
-    </div>
-
     <div class="panel-header">
       <!-- 移动端：下拉选择终端 + 上一个/下一个 -->
       <div v-if="isMobile && (tabs.length || emptyTabs.length)" class="mobile-tab-selector">
@@ -235,16 +197,6 @@
         @select="handleContextMenuSelect"
         @clickoutside="contextMenuTab = null"
       />
-      <n-dropdown
-        trigger="manual"
-        placement="bottom-start"
-        :show="showDragHandleMenu"
-        :options="dragHandleMenuOptions"
-        :x="dragHandleMenuX"
-        :y="dragHandleMenuY"
-        @select="handleDragHandleMenuSelect"
-        @clickoutside="showDragHandleMenu = false"
-      />
       <div class="header-actions">
         <!-- 创建终端按钮 - 始终显示 -->
         <n-dropdown
@@ -370,52 +322,6 @@
           </template>
           {{ t('terminal.viewAISessions') }}
         </n-tooltip>
-        <!-- 拖动手柄 - 仅非全屏时显示 -->
-        <n-tooltip
-          v-if="!isDocked && !isFullscreen"
-          trigger="hover"
-          placement="bottom"
-          :delay="100"
-        >
-          <template #trigger>
-            <div class="panel-drag-handle" @mousedown="startPanelDrag">
-              <n-icon size="18">
-                <MoveOutline />
-              </n-icon>
-            </div>
-          </template>
-          {{ t('terminal.dragPanel') }}
-        </n-tooltip>
-        <!-- 退出全屏按钮 - 仅全屏时显示 -->
-        <n-tooltip
-          v-else-if="!isDocked && isFullscreen"
-          trigger="hover"
-          placement="bottom"
-          :delay="100"
-        >
-          <template #trigger>
-            <n-button text size="small" @click="toggleFullscreen">
-              <template #icon>
-                <n-icon>
-                  <ContractOutline />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          {{ t('terminal.exitFullscreen') }}
-        </n-tooltip>
-        <n-tooltip trigger="hover" placement="bottom" :delay="100">
-          <template #trigger>
-            <n-button text size="small" @click="toggleDockedMode">
-              <template #icon>
-                <n-icon>
-                  <component :is="isDocked ? OpenOutline : AlbumsOutline" />
-                </n-icon>
-              </template>
-            </n-button>
-          </template>
-          {{ isDocked ? t('terminal.switchToFloating') : t('terminal.switchToDocked') }}
-        </n-tooltip>
         <n-dropdown
           trigger="click"
           placement="bottom-end"
@@ -437,27 +343,10 @@
             {{ t('nav.settings') }}
           </n-tooltip>
         </n-dropdown>
-        <n-tooltip
-          v-if="!isDocked"
-          trigger="hover"
-          placement="bottom"
-          :disabled="!expanded"
-          :delay="100"
-        >
-          <template #trigger>
-            <n-button text size="small" class="toggle-button" @click="toggleExpanded">
-              <span>{{ expanded ? t('terminal.collapse') : t('terminal.expand') }}</span>
-              <n-icon class="toggle-icon" :class="{ 'is-expanded': expanded }">
-                <component :is="expanded ? ChevronDownOutline : ChevronUpOutline" />
-              </n-icon>
-            </n-button>
-          </template>
-          {{ t('terminal.shortcutHint2', { key: terminalShortcut.display }) }}
-        </n-tooltip>
       </div>
     </div>
 
-    <div v-if="expanded" class="panel-body">
+    <div class="panel-body">
       <!-- 全局空状态：没有任何标签（包括空标签）时显示 -->
       <div v-if="!tabs.length && !emptyTabs.length" class="empty-guide">
         <div class="empty-guide-content">
@@ -550,22 +439,6 @@
       />
     </div>
   </div>
-
-  <button
-    v-if="!expanded && !isMobile"
-    type="button"
-    class="terminal-floating-button"
-    :class="{ 'has-notifications': totalUnviewedCount > 0 }"
-    :style="{ zIndex: floatingButtonZIndex }"
-    @pointerdown="handleFloatingButtonPointerDown"
-    @click="toggleExpanded"
-  >
-    <span class="floating-button-label">{{ t('terminal.expand') }}</span>
-    <n-icon :size="18" class="floating-button-icon">
-      <TerminalOutline />
-    </n-icon>
-    <span v-if="totalUnviewedCount > 0" class="notification-badge">{{ totalUnviewedCount }}</span>
-  </button>
 
   <!-- 关联任务对话框 -->
   <n-modal
@@ -676,7 +549,6 @@ import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '
 import {
   ChevronBackOutline,
   ChevronDownOutline,
-  ChevronUpOutline,
   ChevronForwardOutline,
   TerminalOutline,
   CopyOutline,
@@ -699,10 +571,6 @@ import {
   LogoGithub,
   NavigateOutline,
   SparklesOutline,
-  ContractOutline,
-  ExpandOutline,
-  MoveOutline,
-  OpenOutline,
   AlbumsOutline,
 } from '@vicons/ionicons5';
 import TerminalViewport from './TerminalViewport.vue';
@@ -734,7 +602,6 @@ import {
   type TerminalRenderMode,
 } from '@/constants/terminalRenderMode';
 import Sortable, { type SortableEvent } from 'sortablejs';
-import { usePanelStack } from '@/composables/usePanelStack';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { extractItem } from '@/api/response';
@@ -754,22 +621,16 @@ type ItemResponse<T> = {
   item?: T;
 };
 
-const props = withDefaults(
-  defineProps<{
-    projectId: string;
-    isMobile?: boolean;
-    hidden?: boolean;
-    mode?: 'floating' | 'docked';
-  }>(),
-  {
-    mode: 'floating',
-  }
-);
+const props = defineProps<{
+  projectId: string;
+  isMobile?: boolean;
+  hidden?: boolean;
+}>();
 
 const projectIdRef = toRef(props, 'projectId');
 const isMobile = computed(() => Boolean(props.isMobile));
 const hidden = computed(() => Boolean(props.hidden));
-const isDocked = computed(() => props.mode === 'docked');
+const isDocked = computed(() => true);
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
@@ -784,20 +645,12 @@ const sessionSnapshotStore = useTerminalSessionSnapshotStore();
 const { unreadCompletionSessionMap, approvalSessionMap } = storeToRefs(reminderStore);
 const { sessionsById: terminalSessionsById } = storeToRefs(sessionSnapshotStore);
 const terminalSessionSnapshotScopeId = `terminal-panel-${Math.random().toString(36).slice(2, 8)}`;
-const storedExpanded = useStorage('terminal-panel-expanded', true);
-const expanded = computed({
-  get: () => (isDocked.value || isMobile.value ? true : storedExpanded.value),
-  set: value => {
-    if (!isDocked.value && !isMobile.value) {
-      storedExpanded.value = value;
-    }
-  },
-});
-const panelHeight = useStorage('terminal-panel-height', 470);
-const panelLeft = useStorage('terminal-panel-left', 220);
-const panelRight = useStorage('terminal-panel-right', 170);
-const panelBottom = useStorage('terminal-panel-bottom', 12);
-const mobilePanelTop = useStorage('terminal-panel-mobile-top', 15); // 移动端顶部位置 (vh)
+const expanded = ref(true);
+const panelHeight = ref(470);
+const panelLeft = ref(220);
+const panelRight = ref(170);
+const panelBottom = ref(12);
+const mobilePanelTop = ref(15);
 const autoResize = useStorage('terminal-auto-resize', true);
 const sendResizeOnSwitch = useStorage('terminal-send-resize-on-switch', true);
 const showBranchFilter = useStorage('terminal-show-branch-filter', true);
@@ -986,10 +839,9 @@ function buildSnapshotModeMenuOptions(tab: TerminalTabState | null | undefined):
   intervalOptions.push({
     label: t('terminal.useGlobalSnapshotInterval', { interval: globalIntervalLabel }),
     key: 'snapshot-interval:global',
-    icon:
-      tab?.useGlobalSnapshotInterval
-        ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
-        : undefined,
+    icon: tab?.useGlobalSnapshotInterval
+      ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+      : undefined,
   });
 
   return [
@@ -1013,10 +865,9 @@ function buildSnapshotModeMenuOptions(tab: TerminalTabState | null | undefined):
     {
       label: t('terminal.useGlobalRenderMode', { mode: globalRenderModeLabel }),
       key: 'snapshot-mode:global',
-      icon:
-        tab?.useGlobalRenderMode
-          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
-          : undefined,
+      icon: tab?.useGlobalRenderMode
+        ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
+        : undefined,
     },
     {
       type: 'divider',
@@ -1144,11 +995,7 @@ const createTerminalMenuClosedAt = ref(0); // 记录菜单关闭时间
 // 设置菜单相关状态
 const showSettingsMenu = ref(false);
 
-// 拖动手柄菜单相关状态
-const showDragHandleMenu = ref(false);
-const dragHandleMenuX = ref(0);
-const dragHandleMenuY = ref(0);
-const isFullscreen = useStorage('terminal-panel-fullscreen', false);
+const isFullscreen = ref(false);
 const savedPanelState = ref<{ left: number; right: number; bottom: number; height: number } | null>(
   null
 );
@@ -1163,17 +1010,6 @@ watch(
   },
   { immediate: true }
 );
-
-const dragHandleMenuOptions = computed<DropdownOption[]>(() => [
-  {
-    label: isFullscreen.value ? t('terminal.exitFullscreen') : t('terminal.fullscreen'),
-    key: 'toggle-fullscreen',
-  },
-  {
-    label: t('terminal.resetPosition'),
-    key: 'reset-position',
-  },
-]);
 
 const settingsMenuOptions = computed<DropdownOption[]>(() => [
   {
@@ -1234,15 +1070,7 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
       },
     ],
   },
-  {
-    label: t('terminal.resetPosition'),
-    key: 'reset-position',
-  },
 ]);
-
-function toggleDockedMode() {
-  settingsStore.updateTerminalDisplayMode(isDocked.value ? 'floating' : 'docked');
-}
 
 async function ensureDeveloperConfigLoaded() {
   if (developerConfigLoaded.value) {
@@ -1410,11 +1238,6 @@ const TAB_LABEL_EXTRA_SPACE = 40;
 const TABS_CONTAINER_STATIC_OFFSET = 320;
 const TABS_CONTAINER_MIN_OFFSET = 200;
 const SHARED_WIDTH_HIDE_THRESHOLD = 1000;
-const FLOATING_BUTTON_Z_OFFSET = 10;
-
-const { zIndex: terminalPanelZIndex, bringToFront: bringTerminalPanelToFront } =
-  usePanelStack('terminal-panel');
-const floatingButtonZIndex = computed(() => terminalPanelZIndex.value + FLOATING_BUTTON_Z_OFFSET);
 
 const {
   tabs,
@@ -1439,7 +1262,6 @@ const {
 const settingsStore = useSettingsStore();
 const {
   maxTerminalsPerProject,
-  terminalShortcut,
   confirmBeforeTerminalClose,
   activeTheme,
   currentPresetId,
@@ -1490,11 +1312,6 @@ const tabsThemeOverrides = computed(() => {
 
 const terminalLimit = computed(() => Math.max(maxTerminalsPerProject.value || 1, 1));
 const isTerminalLimitReached = computed(() => tabs.value.length >= terminalLimit.value);
-const toggleShortcutCode = computed(() => terminalShortcut.value.code);
-const toggleShortcutText = computed(
-  () => terminalShortcut.value.display || terminalShortcut.value.code
-);
-const toggleShortcutLabel = computed(() => `快捷键：${toggleShortcutText.value}`);
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const tabsContainerWidth = ref(0);
@@ -1753,20 +1570,6 @@ const activeTerminalTab = computed(
 const activeEditorPath = computed(() => resolveEditorPath(activeTerminalTab.value));
 const canOpenEditor = computed(() => Boolean(activeEditorPath.value));
 
-const panelStyle = computed(() => ({
-  height: expanded.value ? `${panelHeight.value}px` : 'auto',
-  left: `${panelLeft.value}px`,
-  right: `${panelRight.value}px`,
-  bottom: `${panelBottom.value}px`,
-  zIndex: terminalPanelZIndex.value,
-}));
-
-// 移动端面板样式
-const mobilePanelStyle = computed(() => ({
-  top: expanded.value ? `${mobilePanelTop.value}vh` : '100vh',
-  zIndex: terminalPanelZIndex.value,
-}));
-
 function ensureActiveTabMatchesFilter() {
   const allTabs = tabs.value;
   if (!allTabs.length) {
@@ -1869,7 +1672,6 @@ watch(
       nextTick(() => {
         recalcTabTitleWidth();
         updateActiveTabIndicator();
-        adjustPanelMarginsForMinWidth();
       });
       refreshTabSortable();
     } else {
@@ -1966,17 +1768,12 @@ onMounted(() => {
   updateActiveTabIndicator();
   setupTabScrollListener();
   reminderStore.retain();
-  emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
-
-  // 初始化时检查并调整边距
-  adjustPanelMarginsForMinWidth();
   void ensureDeveloperConfigLoaded();
 });
 
 onBeforeUnmount(() => {
   destroyTabSorting();
   cleanupTabScrollListener();
-  emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
   reminderStore.release();
   sessionSnapshotStore.releaseScope(terminalSessionSnapshotScopeId);
 });
@@ -1993,19 +1790,7 @@ watch(
   { immediate: true }
 );
 
-// 处理窗口大小变化 - 不再自动调整边距，保持 padding 值不变
-// 窗口缩小时允许终端超出屏幕，而不是挤压终端
-function adjustPanelMarginsForMinWidth() {
-  // 不做任何调整，保持 left、right、bottom 值不变
-}
-
-// 使用防抖函数包装，避免频繁调用（200ms防抖）
-const debouncedAdjustMargins = useDebounceFn(adjustPanelMarginsForMinWidth, 200);
-
 function triggerGlobalTerminalRefresh() {
-  if (!expanded.value && !isDocked.value && !isMobile.value) {
-    return;
-  }
   window.setTimeout(() => {
     emitter.emit('terminal-resize-all');
   }, 60);
@@ -2026,10 +1811,6 @@ function handleDocumentVisibilityRefresh() {
 }
 
 if (typeof window !== 'undefined') {
-  if (!isDocked.value) {
-    useEventListener(window, 'keydown', handleTerminalToggleShortcut);
-    useEventListener(window, 'resize', debouncedAdjustMargins);
-  }
   useEventListener(window, 'focus', handleWindowFocusRefresh);
   useEventListener(window, 'pageshow', handleWindowFocusRefresh);
   if (typeof document !== 'undefined') {
@@ -2194,19 +1975,10 @@ function isToggleOptions(value: unknown): value is ToggleOptions {
   return Boolean(value && typeof value === 'object' && 'skipFocus' in value);
 }
 
-function handlePanelPointerDown() {
-  bringTerminalPanelToFront();
-}
-
-function handleFloatingButtonPointerDown() {
-  bringTerminalPanelToFront();
-}
-
 function toggleExpanded(arg?: ToggleOptions | MouseEvent) {
   const options = isToggleOptions(arg) ? arg : undefined;
   const willExpand = !expanded.value;
   if (willExpand) {
-    bringTerminalPanelToFront();
     shouldAutoFocusTerminal.value = !options?.skipFocus;
   } else {
     emitter.emit('terminal-blur-all');
@@ -2222,7 +1994,6 @@ function toggleExpanded(arg?: ToggleOptions | MouseEvent) {
 
 function ensureExpanded(options?: ToggleOptions) {
   if (expanded.value) {
-    bringTerminalPanelToFront();
     return;
   }
   toggleExpanded(options);
@@ -2231,8 +2002,6 @@ function ensureExpanded(options?: ToggleOptions) {
 function expand(options?: ToggleOptions) {
   if (!expanded.value) {
     toggleExpanded(options);
-  } else {
-    bringTerminalPanelToFront();
   }
 }
 
@@ -2243,59 +2012,6 @@ function collapse() {
 }
 
 type EnsureExpandedEvent = ToggleOptions & { projectId?: string };
-
-function handleEnsureExpandedEvent(payload?: EnsureExpandedEvent) {
-  if (payload?.projectId && payload.projectId !== projectIdRef.value) {
-    return;
-  }
-  ensureExpanded(payload);
-}
-
-function handleTerminalToggleShortcut(event: KeyboardEvent) {
-  if (event.defaultPrevented) {
-    return;
-  }
-  if (event.repeat || !isToggleShortcut(event)) {
-    return;
-  }
-  const activeElement = (
-    typeof document !== 'undefined' ? document.activeElement : null
-  ) as HTMLElement | null;
-  if (isTerminalElement(activeElement) || isEditableElement(activeElement)) {
-    return;
-  }
-  event.preventDefault();
-  toggleExpanded({ skipFocus: true });
-}
-
-function isToggleShortcut(event: KeyboardEvent) {
-  if (event.metaKey || event.ctrlKey || event.altKey) {
-    return false;
-  }
-  return event.code === toggleShortcutCode.value;
-}
-
-function isTerminalElement(element: HTMLElement | null) {
-  if (!element) {
-    return false;
-  }
-  return Boolean(element.closest('.terminal-shell'));
-}
-
-function isEditableElement(element: HTMLElement | null) {
-  if (!element) {
-    return false;
-  }
-  if (element.isContentEditable) {
-    return true;
-  }
-  const tagName = element.tagName;
-  if (tagName === 'INPUT' || tagName === 'TEXTAREA') {
-    const input = element as HTMLInputElement | HTMLTextAreaElement;
-    return !input.readOnly && !input.disabled;
-  }
-  return false;
-}
 
 function startResize(event: MouseEvent) {
   if (!expanded.value) return;
@@ -2510,10 +2226,6 @@ function startPanelDrag(event: MouseEvent) {
 
   // 全屏模式下不允许拖动
   if (isFullscreen.value) {
-    // 显示菜单
-    showDragHandleMenu.value = true;
-    dragHandleMenuX.value = event.clientX;
-    dragHandleMenuY.value = event.clientY;
     return;
   }
 
@@ -2571,12 +2283,7 @@ function startPanelDrag(event: MouseEvent) {
     document.removeEventListener('mousemove', handleMouseMove);
     document.removeEventListener('mouseup', handleMouseUp);
 
-    if (!hasMoved) {
-      // 没有移动，是点击 - 显示菜单
-      showDragHandleMenu.value = true;
-      dragHandleMenuX.value = e.clientX;
-      dragHandleMenuY.value = e.clientY;
-    } else {
+    if (hasMoved) {
       // 拖动结束后再调整一次，确保精确
       scheduleResizeAll();
     }
@@ -3761,11 +3468,7 @@ function buildDuplicateTitle(rawTitle: string) {
 
 function handleSettingsMenuSelect(key: string) {
   showSettingsMenu.value = false;
-  if (key === 'switch-to-docked') {
-    settingsStore.updateTerminalDisplayMode('docked');
-  } else if (key === 'switch-to-floating') {
-    settingsStore.updateTerminalDisplayMode('floating');
-  } else if (key === 'auto-resize') {
+  if (key === 'auto-resize') {
     autoResize.value = !autoResize.value;
   } else if (key === 'send-resize-on-switch') {
     sendResizeOnSwitch.value = !sendResizeOnSwitch.value;
@@ -3786,66 +3489,7 @@ function handleSettingsMenuSelect(key: string) {
     void toggleRenameTitleEachCommandSetting();
   } else if (key === 'auto-create-task-on-start-work') {
     void toggleAutoCreateTaskOnStartWorkSetting();
-  } else if (key === 'reset-position') {
-    resetTerminalPosition();
   }
-}
-
-function resetTerminalPosition() {
-  // 重置为默认值
-  panelHeight.value = 470;
-  panelLeft.value = 220;
-  panelRight.value = 170;
-  panelBottom.value = 12;
-
-  // 重置后触发终端大小调整
-  nextTick(() => {
-    scheduleResizeAll();
-  });
-}
-
-// 处理拖动手柄菜单选择
-function handleDragHandleMenuSelect(key: string) {
-  showDragHandleMenu.value = false;
-  if (key === 'toggle-fullscreen') {
-    toggleFullscreen();
-  } else if (key === 'reset-position') {
-    resetTerminalPosition();
-  }
-}
-
-// 切换全屏模式
-function toggleFullscreen() {
-  if (isFullscreen.value) {
-    // 退出全屏 - 恢复之前的状态
-    if (savedPanelState.value) {
-      panelLeft.value = savedPanelState.value.left;
-      panelRight.value = savedPanelState.value.right;
-      panelBottom.value = savedPanelState.value.bottom;
-      panelHeight.value = savedPanelState.value.height;
-      savedPanelState.value = null;
-    }
-    isFullscreen.value = false;
-  } else {
-    // 进入全屏 - 保存当前状态
-    savedPanelState.value = {
-      left: panelLeft.value,
-      right: panelRight.value,
-      bottom: panelBottom.value,
-      height: panelHeight.value,
-    };
-    // 设置全屏参数
-    panelLeft.value = 0;
-    panelRight.value = 0;
-    panelBottom.value = 0;
-    panelHeight.value = window.innerHeight;
-    isFullscreen.value = true;
-  }
-
-  // 触发终端大小调整
-  nextTick(() => {
-    scheduleResizeAll();
-  });
 }
 
 function focusTerminal(sessionId?: string) {
@@ -3858,10 +3502,6 @@ function focusTerminal(sessionId?: string) {
 defineExpose({
   createTerminal: openTerminal,
   reloadSessions,
-  toggleExpanded,
-  ensureExpanded,
-  expand,
-  collapse,
   focusTerminal,
 });
 </script>

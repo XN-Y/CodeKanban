@@ -125,6 +125,13 @@ const (
 	SyncModeDeep SyncMode = "deep"
 )
 
+type PendingInputMode string
+
+const (
+	PendingInputModeRedirect PendingInputMode = "redirect"
+	PendingInputModeQueue    PendingInputMode = "queue"
+)
+
 type SessionSummary struct {
 	ID                      string              `json:"id"`
 	ProjectID               string              `json:"projectId"`
@@ -146,6 +153,7 @@ type SessionSummary struct {
 	HasUnread               bool                `json:"hasUnread"`
 	ArchivedAt              *time.Time          `json:"archivedAt,omitempty"`
 	ActivityAt              time.Time           `json:"activityAt"`
+	StatusUpdatedAt         *time.Time          `json:"statusUpdatedAt,omitempty"`
 	LastMessageAt           *time.Time          `json:"lastMessageAt,omitempty"`
 	AssistantStateUpdatedAt *time.Time          `json:"assistantStateUpdatedAt,omitempty"`
 	SourceKind              string              `json:"sourceKind"`
@@ -254,9 +262,18 @@ type HistoryWindow struct {
 	Total        int           `json:"total"`
 }
 
+type PendingInput struct {
+	ID            string           `json:"id"`
+	Mode          PendingInputMode `json:"mode"`
+	Text          string           `json:"text"`
+	AttachmentIDs []string         `json:"attachmentIds"`
+	CreatedAt     time.Time        `json:"createdAt"`
+}
+
 type SessionSnapshot struct {
-	Session SessionSummary `json:"session"`
-	History HistoryWindow  `json:"history"`
+	Session       SessionSummary `json:"session"`
+	History       HistoryWindow  `json:"history"`
+	PendingInputs []PendingInput `json:"pendingInputs"`
 }
 
 type Event struct {

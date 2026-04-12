@@ -7,7 +7,7 @@
           type="button"
           class="tab-item"
           :class="{ active: activeTab === 'terminal' }"
-          @click="activeTab = 'terminal'"
+          @click="activateTab('terminal')"
         >
           <n-icon size="16">
             <TerminalOutline />
@@ -19,7 +19,7 @@
           type="button"
           class="tab-item"
           :class="{ active: activeTab === 'web' }"
-          @click="activeTab = 'web'"
+          @click="activateTab('web')"
         >
           <n-icon size="16">
             <ChatbubblesOutline />
@@ -33,7 +33,7 @@
           type="button"
           class="tab-item"
           :class="{ active: activeTab === 'files' }"
-          @click="activeTab = 'files'"
+          @click="activateTab('files')"
         >
           <n-icon size="16">
             <FolderOpenOutline />
@@ -44,7 +44,7 @@
           type="button"
           class="tab-item"
           :class="{ active: activeTab === 'kanban' }"
-          @click="activeTab = 'kanban'"
+          @click="activateTab('kanban')"
         >
           <n-icon size="16">
             <GridOutline />
@@ -139,7 +139,7 @@
       <div v-show="activeTab === 'terminal'" class="tab-pane terminal-pane">
         <div class="terminal-split">
           <div class="terminal-main">
-            <TerminalPanel :project-id="projectId" mode="docked" />
+            <TerminalPanel :project-id="projectId" />
           </div>
           <DockedNotificationSidebar v-if="isRightSidebarVisible" />
         </div>
@@ -163,7 +163,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useEventListener, useStorage } from '@vueuse/core';
 import { NIcon } from 'naive-ui';
 import {
@@ -221,13 +221,32 @@ const activeTab = computed<WorkspaceTab>({
     storedActiveTab.value = normalizeWorkspaceTab(value);
   },
 });
+const previousTab = ref<WorkspaceTab | null>(null);
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
+
+function activateTab(nextTab: WorkspaceTab) {
+  const normalized = normalizeWorkspaceTab(nextTab);
+  if (normalized === activeTab.value) {
+    return;
+  }
+  previousTab.value = activeTab.value;
+  activeTab.value = normalized;
+}
+
+function togglePreviousWorkspaceTab() {
+  const previous = previousTab.value ? normalizeWorkspaceTab(previousTab.value) : null;
+  if (!previous || previous === activeTab.value) {
+    return;
+  }
+  previousTab.value = activeTab.value;
+  activeTab.value = previous;
+}
 
 watch(
   routeWebSessionId,
   sessionId => {
     if (sessionId && activeTab.value !== 'web') {
-      activeTab.value = 'web';
+      activateTab('web');
     }
   },
   { immediate: true }
@@ -297,7 +316,7 @@ function handleDockedTerminalToggleShortcut(event: KeyboardEvent) {
     return;
   }
   event.preventDefault();
-  activeTab.value = activeTab.value === 'terminal' ? 'kanban' : 'terminal';
+  togglePreviousWorkspaceTab();
 }
 
 function toggleRightSidebar() {
@@ -308,21 +327,21 @@ const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {
   if (payload?.projectId && payload.projectId !== props.projectId) {
     return;
   }
-  activeTab.value = 'terminal';
+  activateTab('terminal');
 };
 
 const handleTerminalCreatedEvent = (payload?: { projectId?: string }) => {
   if (payload?.projectId && payload.projectId !== props.projectId) {
     return;
   }
-  activeTab.value = 'terminal';
+  activateTab('terminal');
 };
 
 const handleWebSessionCreatedEvent = (payload?: { projectId?: string }) => {
   if (payload?.projectId && payload.projectId !== props.projectId) {
     return;
   }
-  activeTab.value = 'web';
+  activateTab('web');
 };
 
 terminalStore.emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
@@ -391,6 +410,11 @@ if (typeof window !== 'undefined') {
   background-color: var(--n-color-target);
   color: var(--n-primary-color);
   font-weight: 500;
+}
+
+.tab-item:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--n-primary-color);
 }
 
 .tab-label {

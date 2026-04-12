@@ -1,17 +1,21 @@
-import { readFile } from 'node:fs/promises';
+import { readFile } from "node:fs/promises";
 
-import { buildAgentLaunchSpec } from './command-builder.js';
-import { CodeKanbanConfigError, CodeKanbanHttpError, CodeKanbanValidationError } from './errors.js';
-import { TerminalConnection } from './terminal-connection.js';
-import { WebSessionCommandChannel } from './web-session-command-channel.js';
-import { WebSessionEventStream } from './web-session-event-stream.js';
+import { buildAgentLaunchSpec } from "./command-builder.js";
+import {
+  CodeKanbanConfigError,
+  CodeKanbanHttpError,
+  CodeKanbanValidationError,
+} from "./errors.js";
+import { TerminalConnection } from "./terminal-connection.js";
+import { WebSessionCommandChannel } from "./web-session-command-channel.js";
+import { WebSessionEventStream } from "./web-session-event-stream.js";
 import {
   WEB_SESSION_COMMAND_WS_PATH,
   WEB_SESSION_EVENTS_WS_PATH,
   analyzeWebSession,
   ensureImageMimeType,
   normalizeWebSessionAttachment,
-} from './web-session-shared.js';
+} from "./web-session-shared.js";
 import {
   ensureOptionalString,
   ensureString,
@@ -21,7 +25,7 @@ import {
   pathBasename,
   sleep,
   toWsUrl,
-} from './utils.js';
+} from "./utils.js";
 
 const DEFAULT_REQUEST_RETRY = Object.freeze({
   attempts: 2,
@@ -29,30 +33,36 @@ const DEFAULT_REQUEST_RETRY = Object.freeze({
   maxDelayMs: 1000,
 });
 
-const RETRYABLE_HTTP_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_HTTP_STATUS_CODES = new Set([
+  408, 425, 429, 500, 502, 503, 504,
+]);
 
-const DEFAULT_WEB_SESSION_AUTO_RETRY_SCOPE = 'network_only';
-const DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET = 'gentle_stop';
+const DEFAULT_WEB_SESSION_AUTO_RETRY_SCOPE = "network_only";
+const DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET = "gentle_stop";
 
 function defaultWebSessionModel(agent) {
-  return agent === 'claude' ? 'opus' : 'gpt-5.4';
+  return agent === "claude" ? "opus" : "gpt-5.4";
 }
 
 function defaultWebSessionReasoningEffort(agent) {
-  return agent === 'claude' ? 'default' : 'xhigh';
+  return agent === "claude" ? "default" : "xhigh";
 }
 
 function defaultWebSessionWorkflowMode(permissionMode) {
-  return permissionMode === 'plan' ? 'plan' : 'default';
+  return permissionMode === "plan" ? "plan" : "default";
 }
 
 function defaultWebSessionPermissionLevel(permissionMode) {
-  return permissionMode === 'yolo' ? 'yolo' : 'elevated';
+  return permissionMode === "yolo" ? "yolo" : "elevated";
 }
 
 function normalizeWebSessionAutoRetryScope(scope) {
   const normalized = ensureOptionalString(scope);
-  if (['network_only', 'network_and_rate_limit', 'all_failures'].includes(normalized)) {
+  if (
+    ["network_only", "network_and_rate_limit", "all_failures"].includes(
+      normalized,
+    )
+  ) {
     return normalized;
   }
   return DEFAULT_WEB_SESSION_AUTO_RETRY_SCOPE;
@@ -60,14 +70,16 @@ function normalizeWebSessionAutoRetryScope(scope) {
 
 function normalizeWebSessionAutoRetryPreset(preset) {
   const normalized = ensureOptionalString(preset);
-  if (['gentle_stop', 'aggressive_stop', 'sustain_60s'].includes(normalized)) {
+  if (["gentle_stop", "aggressive_stop", "sustain_60s"].includes(normalized)) {
     return normalized;
   }
   return DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET;
 }
 
 function normalizeRequestRetryConfig(value = {}) {
-  const attempts = Number.isFinite(value.attempts) ? Math.max(1, Math.trunc(value.attempts)) : DEFAULT_REQUEST_RETRY.attempts;
+  const attempts = Number.isFinite(value.attempts)
+    ? Math.max(1, Math.trunc(value.attempts))
+    : DEFAULT_REQUEST_RETRY.attempts;
   const baseDelayMs = Number.isFinite(value.baseDelayMs)
     ? Math.max(1, Math.trunc(value.baseDelayMs))
     : DEFAULT_REQUEST_RETRY.baseDelayMs;
@@ -86,12 +98,12 @@ function resolveRequestRetryConfig(method, defaults, override) {
     return null;
   }
 
-  const normalizedMethod = String(method || 'GET').toUpperCase();
-  const source = override && typeof override === 'object' ? override : {};
+  const normalizedMethod = String(method || "GET").toUpperCase();
+  const source = override && typeof override === "object" ? override : {};
   const enabled =
-    typeof source.enabled === 'boolean'
+    typeof source.enabled === "boolean"
       ? source.enabled
-      : ['GET', 'HEAD', 'OPTIONS'].includes(normalizedMethod);
+      : ["GET", "HEAD", "OPTIONS"].includes(normalizedMethod);
   if (!enabled) {
     return null;
   }
@@ -106,13 +118,16 @@ function isRetryableRequestError(error) {
   if (error instanceof CodeKanbanHttpError) {
     return RETRYABLE_HTTP_STATUS_CODES.has(error.status);
   }
-  if (error instanceof CodeKanbanValidationError || error instanceof CodeKanbanConfigError) {
+  if (
+    error instanceof CodeKanbanValidationError ||
+    error instanceof CodeKanbanConfigError
+  ) {
     return false;
   }
   if (error instanceof SyntaxError) {
     return false;
   }
-  if (error?.name === 'AbortError') {
+  if (error?.name === "AbortError") {
     return true;
   }
   if (error instanceof TypeError) {
@@ -122,7 +137,10 @@ function isRetryableRequestError(error) {
 }
 
 function getRetryDelayMs(retryConfig, attemptIndex) {
-  return Math.min(retryConfig.maxDelayMs, retryConfig.baseDelayMs * 2 ** attemptIndex);
+  return Math.min(
+    retryConfig.maxDelayMs,
+    retryConfig.baseDelayMs * 2 ** attemptIndex,
+  );
 }
 
 export class CodeKanbanClient {
@@ -133,41 +151,58 @@ export class CodeKanbanClient {
     this.WebSocketImpl = options.WebSocketImpl || globalThis.WebSocket;
     this.requestRetry = normalizeRequestRetryConfig(options.requestRetry);
     if (!this.fetchImpl) {
-      throw new CodeKanbanConfigError('fetch implementation is unavailable');
+      throw new CodeKanbanConfigError("fetch implementation is unavailable");
     }
   }
 
   async requestJson(path, options = {}) {
-    const method = String(options.method || 'GET').toUpperCase();
-    const headers = { Accept: 'application/json', ...this.headers, ...(options.headers || {}) };
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = {
+      Accept: "application/json",
+      ...this.headers,
+      ...(options.headers || {}),
+    };
     const request = {
       method,
       headers,
     };
     if (options.body !== undefined) {
       request.body = JSON.stringify(options.body);
-      request.headers['Content-Type'] = 'application/json';
+      request.headers["Content-Type"] = "application/json";
     }
 
-    const retryConfig = resolveRequestRetryConfig(method, this.requestRetry, options.retry);
+    const retryConfig = resolveRequestRetryConfig(
+      method,
+      this.requestRetry,
+      options.retry,
+    );
     const maxAttempts = retryConfig?.attempts ?? 1;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
-        const response = await this.fetchImpl(new URL(path, this.baseURL), request);
+        const response = await this.fetchImpl(
+          new URL(path, this.baseURL),
+          request,
+        );
         const text = await response.text();
         const body = text ? JSON.parse(text) : null;
         if (!response.ok) {
-          throw new CodeKanbanHttpError(`request failed with ${response.status}`, {
-            status: response.status,
-            method,
-            path,
-            body,
-          });
+          throw new CodeKanbanHttpError(
+            `request failed with ${response.status}`,
+            {
+              status: response.status,
+              method,
+              path,
+              body,
+            },
+          );
         }
         return body;
       } catch (error) {
-        const canRetry = retryConfig && attempt + 1 < maxAttempts && isRetryableRequestError(error);
+        const canRetry =
+          retryConfig &&
+          attempt + 1 < maxAttempts &&
+          isRetryableRequestError(error);
         if (!canRetry) {
           throw error;
         }
@@ -175,7 +210,9 @@ export class CodeKanbanClient {
       }
     }
 
-    throw new CodeKanbanValidationError(`request retry loop exited unexpectedly for ${method} ${path}`);
+    throw new CodeKanbanValidationError(
+      `request retry loop exited unexpectedly for ${method} ${path}`,
+    );
   }
 
   async resolveProjectReference({ projectId, path, ensureProject = true }) {
@@ -197,25 +234,31 @@ export class CodeKanbanClient {
       path,
       ensureProject,
     });
-    return ensureString(project?.id, 'projectId');
+    return ensureString(project?.id, "projectId");
   }
 
   async listProjects() {
-    const response = await this.requestJson('/api/v1/projects');
+    const response = await this.requestJson("/api/v1/projects");
     return response?.items || [];
   }
 
   async getProject(projectId) {
-    ensureString(projectId, 'projectId');
+    ensureString(projectId, "projectId");
     const response = await this.requestJson(`/api/v1/projects/${projectId}`);
     return response?.item;
   }
 
-  async createProject({ path, name, description = '', worktreeBasePath, hidePath }) {
-    ensureString(path, 'path');
-    ensureString(name, 'name');
-    const response = await this.requestJson('/api/v1/projects/create', {
-      method: 'POST',
+  async createProject({
+    path,
+    name,
+    description = "",
+    worktreeBasePath,
+    hidePath,
+  }) {
+    ensureString(path, "path");
+    ensureString(name, "name");
+    const response = await this.requestJson("/api/v1/projects/create", {
+      method: "POST",
       body: {
         path,
         name,
@@ -228,27 +271,33 @@ export class CodeKanbanClient {
   }
 
   async listWorktrees(projectId) {
-    ensureString(projectId, 'projectId');
-    const response = await this.requestJson(`/api/v1/projects/${projectId}/worktrees`);
+    ensureString(projectId, "projectId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/worktrees`,
+    );
     return response?.items || [];
   }
 
   async listTerminalSessions(projectId) {
-    ensureString(projectId, 'projectId');
-    const response = await this.requestJson(`/api/v1/projects/${projectId}/terminals`);
+    ensureString(projectId, "projectId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/terminals`,
+    );
     return response?.items || [];
   }
 
   async listAISessionsByProject(projectId) {
-    ensureString(projectId, 'projectId');
-    const response = await this.requestJson(`/api/v1/projects/${projectId}/ai-sessions`);
+    ensureString(projectId, "projectId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/ai-sessions`,
+    );
     return response?.item || null;
   }
 
   async listAISessionsByPath(projectPath) {
-    ensureString(projectPath, 'path');
-    const response = await this.requestJson('/api/v1/ai-sessions/by-path', {
-      method: 'POST',
+    ensureString(projectPath, "path");
+    const response = await this.requestJson("/api/v1/ai-sessions/by-path", {
+      method: "POST",
       body: { path: projectPath },
     });
     return response?.item || null;
@@ -258,28 +307,36 @@ export class CodeKanbanClient {
     const dbId = ensureOptionalString(id);
     const rawSessionId = ensureOptionalString(sessionId);
     if (!dbId && !rawSessionId) {
-      throw new CodeKanbanValidationError('id or sessionId is required');
+      throw new CodeKanbanValidationError("id or sessionId is required");
     }
     if (refresh && !dbId) {
-      throw new CodeKanbanValidationError('refresh currently requires a database id');
+      throw new CodeKanbanValidationError(
+        "refresh currently requires a database id",
+      );
     }
 
     if (dbId) {
-      const path = refresh ? `/api/v1/ai-sessions/${dbId}/refresh` : `/api/v1/ai-sessions/${dbId}/conversation`;
-      const response = await this.requestJson(path, { method: refresh ? 'POST' : 'GET' });
+      const path = refresh
+        ? `/api/v1/ai-sessions/${dbId}/refresh`
+        : `/api/v1/ai-sessions/${dbId}/conversation`;
+      const response = await this.requestJson(path, {
+        method: refresh ? "POST" : "GET",
+      });
       return response?.item || null;
     }
 
-    const response = await this.requestJson(`/api/v1/ai-sessions/by-session-id/${rawSessionId}/conversation`);
+    const response = await this.requestJson(
+      `/api/v1/ai-sessions/by-session-id/${rawSessionId}/conversation`,
+    );
     return response?.item || null;
   }
 
   async getAISessionToolResult({ id, sessionId, toolUseId }) {
     const dbId = ensureOptionalString(id);
     const rawSessionId = ensureOptionalString(sessionId);
-    const resolvedToolUseId = ensureString(toolUseId, 'toolUseId');
+    const resolvedToolUseId = ensureString(toolUseId, "toolUseId");
     if (!dbId && !rawSessionId) {
-      throw new CodeKanbanValidationError('id or sessionId is required');
+      throw new CodeKanbanValidationError("id or sessionId is required");
     }
     const path = dbId
       ? `/api/v1/ai-sessions/${dbId}/conversation/tool-results/${resolvedToolUseId}`
@@ -288,18 +345,28 @@ export class CodeKanbanClient {
     return response?.item || null;
   }
 
-  async createTerminalSession({ projectId, worktreeId, workingDir = '', title = '', rows = 0, cols = 0 }) {
-    ensureString(projectId, 'projectId');
-    ensureString(worktreeId, 'worktreeId');
-    const response = await this.requestJson(`/api/v1/projects/${projectId}/worktrees/${worktreeId}/terminals`, {
-      method: 'POST',
-      body: {
-        workingDir,
-        title,
-        rows,
-        cols,
+  async createTerminalSession({
+    projectId,
+    worktreeId,
+    workingDir = "",
+    title = "",
+    rows = 0,
+    cols = 0,
+  }) {
+    ensureString(projectId, "projectId");
+    ensureString(worktreeId, "worktreeId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/worktrees/${worktreeId}/terminals`,
+      {
+        method: "POST",
+        body: {
+          workingDir,
+          title,
+          rows,
+          cols,
+        },
       },
-    });
+    );
     return response?.item;
   }
 
@@ -311,61 +378,74 @@ export class CodeKanbanClient {
       const project = await this.getProject(resolvedProjectId);
       return {
         project,
-        matchedBy: 'projectId',
+        matchedBy: "projectId",
       };
     }
 
     if (!resolvedPath) {
-      throw new CodeKanbanValidationError('projectId or path is required');
+      throw new CodeKanbanValidationError("projectId or path is required");
     }
 
     const target = normalizeFsPath(resolvedPath);
     const projects = await this.listProjects();
-    const project = projects.find(item => normalizeFsPath(item.path) === target);
+    const project = projects.find(
+      (item) => normalizeFsPath(item.path) === target,
+    );
     if (project) {
       return {
         project,
-        matchedBy: 'path',
+        matchedBy: "path",
       };
     }
 
     if (!ensureProject) {
-      throw new CodeKanbanValidationError(`no CodeKanban project is registered for path: ${resolvedPath}`);
+      throw new CodeKanbanValidationError(
+        `no CodeKanban project is registered for path: ${resolvedPath}`,
+      );
     }
 
     const created = await this.createProject({
       path: resolvedPath,
       name: pathBasename(resolvedPath),
-      description: '',
+      description: "",
     });
     return {
       project: created,
-      matchedBy: 'created',
+      matchedBy: "created",
     };
   }
 
   async resolveWorktree({ projectId, worktreeId }) {
-    const project = ensureString(projectId, 'projectId');
+    const project = ensureString(projectId, "projectId");
     const preferredWorktreeId = ensureOptionalString(worktreeId);
     const worktrees = await this.listWorktrees(project);
     if (worktrees.length === 0) {
-      throw new CodeKanbanValidationError(`no worktrees are available for project ${project}`);
+      throw new CodeKanbanValidationError(
+        `no worktrees are available for project ${project}`,
+      );
     }
     if (preferredWorktreeId) {
-      const direct = worktrees.find(item => item.id === preferredWorktreeId);
+      const direct = worktrees.find((item) => item.id === preferredWorktreeId);
       if (!direct) {
-        throw new CodeKanbanValidationError(`worktree ${preferredWorktreeId} was not found in project ${project}`);
+        throw new CodeKanbanValidationError(
+          `worktree ${preferredWorktreeId} was not found in project ${project}`,
+        );
       }
       return direct;
     }
-    return worktrees.find(item => item.isMain) || worktrees[0];
+    return worktrees.find((item) => item.isMain) || worktrees[0];
   }
 
   connectTerminal({ sessionId, wsPath, wsUrl }) {
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
     const resolvedPath =
-      ensureOptionalString(wsUrl) || ensureOptionalString(wsPath) || `/api/v1/terminal/ws?sessionId=${resolvedSessionId}`;
-    const url = resolvedPath.startsWith('ws://') || resolvedPath.startsWith('wss://') ? resolvedPath : toWsUrl(this.baseURL, resolvedPath);
+      ensureOptionalString(wsUrl) ||
+      ensureOptionalString(wsPath) ||
+      `/api/v1/terminal/ws?sessionId=${resolvedSessionId}`;
+    const url =
+      resolvedPath.startsWith("ws://") || resolvedPath.startsWith("wss://")
+        ? resolvedPath
+        : toWsUrl(this.baseURL, resolvedPath);
 
     return new TerminalConnection({
       sessionId: resolvedSessionId,
@@ -399,11 +479,23 @@ export class CodeKanbanClient {
     }
   }
 
-  async listSessions({ projectId, path, includeTerminal = true, includeAI = true, ensureProject = true }) {
-    const { project, matchedBy } = await this.resolveProject({ projectId, path, ensureProject });
+  async listSessions({
+    projectId,
+    path,
+    includeTerminal = true,
+    includeAI = true,
+    ensureProject = true,
+  }) {
+    const { project, matchedBy } = await this.resolveProject({
+      projectId,
+      path,
+      ensureProject,
+    });
 
     const [terminalSessions, aiSessions] = await Promise.all([
-      includeTerminal ? this.listTerminalSessions(project.id) : Promise.resolve([]),
+      includeTerminal
+        ? this.listTerminalSessions(project.id)
+        : Promise.resolve([]),
       includeAI
         ? this.listAISessionsByProject(project.id)
         : Promise.resolve({
@@ -423,8 +515,14 @@ export class CodeKanbanClient {
   }
 
   async listWebSessions({ projectId, path, ensureProject = true } = {}) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject });
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions`);
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject,
+    });
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions`,
+    );
     return response?.items || [];
   }
 
@@ -435,142 +533,231 @@ export class CodeKanbanClient {
       ensureProject: true,
     });
 
-    const agent = ensureString(input.agent, 'agent');
-    const permissionMode = ensureOptionalString(input.permissionMode).toLowerCase();
+    const agent = ensureString(input.agent, "agent");
+    const permissionMode = ensureOptionalString(
+      input.permissionMode,
+    ).toLowerCase();
     const worktree = await this.resolveWorktree({
       projectId,
       worktreeId: input.worktreeId,
     });
 
-    const response = await this.requestJson(`/api/v1/projects/${projectId}/web-sessions`, {
-      method: 'POST',
-      body: {
-        worktreeId: ensureString(worktree?.id, 'worktreeId'),
-        agent,
-        model: ensureOptionalString(input.model) || defaultWebSessionModel(agent),
-        reasoningEffort:
-          ensureOptionalString(input.reasoningEffort) || defaultWebSessionReasoningEffort(agent),
-        workflowMode: ensureOptionalString(input.workflowMode) || defaultWebSessionWorkflowMode(permissionMode),
-        permissionLevel:
-          ensureOptionalString(input.permissionLevel) || defaultWebSessionPermissionLevel(permissionMode),
-        autoRetryEnabled: input.autoRetryEnabled === true,
-        autoRetryScope: normalizeWebSessionAutoRetryScope(input.autoRetryScope),
-        autoRetryPreset: normalizeWebSessionAutoRetryPreset(input.autoRetryPreset),
-        permissionMode,
-        title: ensureOptionalString(input.title),
+    const response = await this.requestJson(
+      `/api/v1/projects/${projectId}/web-sessions`,
+      {
+        method: "POST",
+        body: {
+          worktreeId: ensureString(worktree?.id, "worktreeId"),
+          agent,
+          model:
+            ensureOptionalString(input.model) || defaultWebSessionModel(agent),
+          reasoningEffort:
+            ensureOptionalString(input.reasoningEffort) ||
+            defaultWebSessionReasoningEffort(agent),
+          workflowMode:
+            ensureOptionalString(input.workflowMode) ||
+            defaultWebSessionWorkflowMode(permissionMode),
+          permissionLevel:
+            ensureOptionalString(input.permissionLevel) ||
+            defaultWebSessionPermissionLevel(permissionMode),
+          autoRetryEnabled: input.autoRetryEnabled === true,
+          autoRetryScope: normalizeWebSessionAutoRetryScope(
+            input.autoRetryScope,
+          ),
+          autoRetryPreset: normalizeWebSessionAutoRetryPreset(
+            input.autoRetryPreset,
+          ),
+          permissionMode,
+          title: ensureOptionalString(input.title),
+        },
       },
-    });
+    );
     return response?.item || null;
   }
 
   async getWebSessionSnapshot({ projectId, path, sessionId, limit = 80 }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const normalizedLimit = Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 80;
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const normalizedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.trunc(limit))
+      : 80;
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/snapshot?limit=${normalizedLimit}`,
     );
     return response?.item || null;
   }
 
-  async getWebSessionHistory({ projectId, path, sessionId, beforeCursor, limit = 80 }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
+  async getWebSessionHistory({
+    projectId,
+    path,
+    sessionId,
+    beforeCursor,
+    limit = 80,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
     const params = new URLSearchParams();
     if (ensureOptionalString(beforeCursor)) {
-      params.set('beforeCursor', ensureOptionalString(beforeCursor));
+      params.set("beforeCursor", ensureOptionalString(beforeCursor));
     }
     if (Number.isFinite(limit)) {
-      params.set('limit', String(Math.max(1, Math.trunc(limit))));
+      params.set("limit", String(Math.max(1, Math.trunc(limit))));
     }
     const suffix = params.toString();
     const response = await this.requestJson(
-      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/history${suffix ? `?${suffix}` : ''}`,
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/history${suffix ? `?${suffix}` : ""}`,
     );
     return response?.item || null;
   }
 
-  async syncWebSession({ projectId, path, sessionId, mode, clearExisting = false }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/sync`, {
-      method: 'POST',
-      body: {
-        ...(ensureOptionalString(mode) ? { mode: ensureOptionalString(mode) } : {}),
-        clearExisting: clearExisting === true,
-      },
+  async syncWebSession({
+    projectId,
+    path,
+    sessionId,
+    mode,
+    clearExisting = false,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/sync`,
+      {
+        method: "POST",
+        body: {
+          ...(ensureOptionalString(mode)
+            ? { mode: ensureOptionalString(mode) }
+            : {}),
+          clearExisting: clearExisting === true,
+        },
+      },
+    );
     return response?.item || null;
   }
 
   async archiveWebSession({ projectId, path, sessionId }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/archive`, {
-      method: 'POST',
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/archive`,
+      {
+        method: "POST",
+      },
+    );
     return response?.item || null;
   }
 
   async unarchiveWebSession({ projectId, path, sessionId }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/unarchive`, {
-      method: 'POST',
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/unarchive`,
+      {
+        method: "POST",
+      },
+    );
     return response?.item || null;
   }
 
   async renameWebSession({ projectId, path, sessionId, title }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/rename`, {
-      method: 'POST',
-      body: {
-        title: ensureString(title, 'title'),
-      },
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/rename`,
+      {
+        method: "POST",
+        body: {
+          title: ensureString(title, "title"),
+        },
+      },
+    );
     return response?.item || null;
   }
 
   async closeWebSession({ projectId, path, sessionId }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/close`, {
-      method: 'POST',
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/close`,
+      {
+        method: "POST",
+      },
+    );
     return {
-      message: response?.message || 'session aborted',
+      message: response?.message || "session aborted",
     };
   }
 
   async deleteWebSession({ projectId, path, sessionId }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const response = await this.requestJson(`/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}`, {
-      method: 'DELETE',
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
     });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}`,
+      {
+        method: "DELETE",
+      },
+    );
     return {
-      message: response?.message || 'session deleted',
+      message: response?.message || "session deleted",
     };
   }
 
   async queryArchivedWebSessions({ projectIds, offset = 0, limit = 20 }) {
-    const response = await this.requestJson('/api/v1/web-sessions/archived/query', {
-      method: 'POST',
-      body: {
-        projectIds: Array.isArray(projectIds) ? projectIds : [],
-        offset: Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0,
-        limit: Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 20,
+    const response = await this.requestJson(
+      "/api/v1/web-sessions/archived/query",
+      {
+        method: "POST",
+        body: {
+          projectIds: Array.isArray(projectIds) ? projectIds : [],
+          offset: Number.isFinite(offset) ? Math.max(0, Math.trunc(offset)) : 0,
+          limit: Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : 20,
+        },
       },
-    });
-    return response?.item || { items: [], total: 0, hasMore: false, nextOffset: 0 };
+    );
+    return (
+      response?.item || { items: [], total: 0, hasMore: false, nextOffset: 0 }
+    );
   }
 
   async getWebSessionCommandGroup({ projectId, path, sessionId, groupId }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const resolvedGroupId = ensureString(groupId, 'groupId');
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
+    });
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const resolvedGroupId = ensureString(groupId, "groupId");
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/command-groups/${resolvedGroupId}`,
     );
@@ -578,29 +765,48 @@ export class CodeKanbanClient {
   }
 
   async getWebSessionRuntimeConfig() {
-    const response = await this.requestJson('/api/v1/web-sessions/runtime-config');
+    const response = await this.requestJson(
+      "/api/v1/web-sessions/runtime-config",
+    );
     return response?.item || null;
   }
 
-  async uploadWebSessionAttachment({ projectId, path, filePath, fileName, mimeType }) {
-    const resolvedProjectId = await this.resolveProjectId({ projectId, path, ensureProject: true });
-    const resolvedFilePath = ensureString(filePath, 'filePath');
-    const resolvedFileName = ensureOptionalString(fileName) || pathBasename(resolvedFilePath);
+  async uploadWebSessionAttachment({
+    projectId,
+    path,
+    filePath,
+    fileName,
+    mimeType,
+  }) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      path,
+      ensureProject: true,
+    });
+    const resolvedFilePath = ensureString(filePath, "filePath");
+    const resolvedFileName =
+      ensureOptionalString(fileName) || pathBasename(resolvedFilePath);
     const resolvedMimeType = ensureImageMimeType(mimeType, resolvedFileName);
     const fileBuffer = await readFile(resolvedFilePath);
     const formData = new FormData();
-    formData.append('file', new File([fileBuffer], resolvedFileName, { type: resolvedMimeType }));
+    formData.append(
+      "file",
+      new File([fileBuffer], resolvedFileName, { type: resolvedMimeType }),
+    );
 
     const headers = {
-      Accept: 'application/json',
+      Accept: "application/json",
       ...this.headers,
     };
-    delete headers['Content-Type'];
+    delete headers["Content-Type"];
 
     const response = await this.fetchImpl(
-      new URL(`/api/v1/projects/${resolvedProjectId}/web-sessions/attachments`, this.baseURL),
+      new URL(
+        `/api/v1/projects/${resolvedProjectId}/web-sessions/attachments`,
+        this.baseURL,
+      ),
       {
-        method: 'POST',
+        method: "POST",
         headers,
         body: formData,
       },
@@ -610,7 +816,7 @@ export class CodeKanbanClient {
     if (!response.ok) {
       throw new CodeKanbanHttpError(`request failed with ${response.status}`, {
         status: response.status,
-        method: 'POST',
+        method: "POST",
         path: `/api/v1/projects/${resolvedProjectId}/web-sessions/attachments`,
         body,
       });
@@ -632,17 +838,26 @@ export class CodeKanbanClient {
     return this.analyzeWebSession(snapshot);
   }
 
-  async sendWebSessionMessage({ sessionId, text, attachmentIds = [] }) {
-    return await this.withWebSessionCommandChannel(channel =>
+  async sendWebSessionMessage({ sessionId, text, attachmentIds = [], mode }) {
+    return await this.withWebSessionCommandChannel((channel) =>
       channel.sendMessage(sessionId, {
         text,
         attachmentIds,
+        mode: ensureOptionalString(mode),
+      }),
+    );
+  }
+
+  async removeWebSessionPendingInput({ sessionId, pendingId }) {
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.removePendingInput(sessionId, {
+        pendingId,
       }),
     );
   }
 
   async updateWebSessionWorkflowMode({ sessionId, workflowMode }) {
-    return await this.withWebSessionCommandChannel(channel =>
+    return await this.withWebSessionCommandChannel((channel) =>
       channel.updateWorkflowMode(sessionId, {
         workflowMode,
       }),
@@ -650,7 +865,7 @@ export class CodeKanbanClient {
   }
 
   async answerWebSessionUserInput({ sessionId, itemId, answers }) {
-    return await this.withWebSessionCommandChannel(channel =>
+    return await this.withWebSessionCommandChannel((channel) =>
       channel.answerUserInput(sessionId, {
         itemId,
         answers,
@@ -659,14 +874,24 @@ export class CodeKanbanClient {
   }
 
   async approveWebSession({ sessionId }) {
-    return await this.withWebSessionCommandChannel(channel => channel.approve(sessionId));
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.approve(sessionId),
+    );
   }
 
   async rejectWebSession({ sessionId }) {
-    return await this.withWebSessionCommandChannel(channel => channel.reject(sessionId));
+    return await this.withWebSessionCommandChannel((channel) =>
+      channel.reject(sessionId),
+    );
   }
 
-  async answerPendingUserInput({ projectId, path, sessionId, answers, limit = 120 }) {
+  async answerPendingUserInput({
+    projectId,
+    path,
+    sessionId,
+    answers,
+    limit = 120,
+  }) {
     const state = await this.getWebSessionState({
       projectId,
       path,
@@ -674,7 +899,9 @@ export class CodeKanbanClient {
       limit,
     });
     if (!state.pendingUserInput?.itemId) {
-      throw new CodeKanbanValidationError(`web session ${sessionId} has no pending user input`);
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} has no pending user input`,
+      );
     }
     const ack = await this.answerWebSessionUserInput({
       sessionId,
@@ -698,7 +925,9 @@ export class CodeKanbanClient {
       limit,
     });
     if (!state.pendingApproval) {
-      throw new CodeKanbanValidationError(`web session ${sessionId} has no pending approval`);
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} has no pending approval`,
+      );
     }
     const ack = await this.approveWebSession({ sessionId });
     return {
@@ -717,7 +946,9 @@ export class CodeKanbanClient {
       limit,
     });
     if (!state.pendingApproval) {
-      throw new CodeKanbanValidationError(`web session ${sessionId} has no pending approval`);
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} has no pending approval`,
+      );
     }
     const ack = await this.rejectWebSession({ sessionId });
     return {
@@ -728,7 +959,13 @@ export class CodeKanbanClient {
     };
   }
 
-  async executeLatestPlan({ projectId, path, sessionId, prompt = 'Implement the plan.', limit = 120 }) {
+  async executeLatestPlan({
+    projectId,
+    path,
+    sessionId,
+    prompt = "Implement the plan.",
+    limit = 120,
+  }) {
     const state = await this.getWebSessionState({
       projectId,
       path,
@@ -736,16 +973,20 @@ export class CodeKanbanClient {
       limit,
     });
     if (!state.latestPlan) {
-      throw new CodeKanbanValidationError(`web session ${sessionId} has no latest plan to execute`);
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} has no latest plan to execute`,
+      );
     }
-    if (!state.canSend && state.nextAction?.type !== 'execute_plan') {
-      throw new CodeKanbanValidationError(`web session ${sessionId} is not ready to execute the latest plan`);
+    if (!state.canSend && state.nextAction?.type !== "execute_plan") {
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} is not ready to execute the latest plan`,
+      );
     }
 
-    return await this.withWebSessionCommandChannel(async channel => {
-      if (state.session?.workflowMode === 'plan') {
+    return await this.withWebSessionCommandChannel(async (channel) => {
+      if (state.session?.workflowMode === "plan") {
         await channel.updateWorkflowMode(sessionId, {
-          workflowMode: 'default',
+          workflowMode: "default",
         });
       }
 
@@ -758,12 +999,14 @@ export class CodeKanbanClient {
         const ack = await channel.answerUserInput(sessionId, {
           itemId: state.pendingUserInput.itemId,
           answers: {
-            [state.pendingUserInput.questionId]: [state.pendingUserInput.executeOptionLabel],
+            [state.pendingUserInput.questionId]: [
+              state.pendingUserInput.executeOptionLabel,
+            ],
           },
         });
         return {
           sessionId,
-          mode: 'plan_choice',
+          mode: "plan_choice",
           latestPlan: state.latestPlan,
           ack,
           state,
@@ -776,7 +1019,7 @@ export class CodeKanbanClient {
       });
       return {
         sessionId,
-        mode: 'followup_message',
+        mode: "followup_message",
         prompt,
         latestPlan: state.latestPlan,
         ack,
@@ -795,15 +1038,15 @@ export class CodeKanbanClient {
     limit = 120,
   }) {
     if (!until) {
-      throw new CodeKanbanValidationError('until is required');
+      throw new CodeKanbanValidationError("until is required");
     }
 
     const matches =
-      typeof until === 'function'
+      typeof until === "function"
         ? until
         : Array.isArray(until)
-          ? state => until.includes(state.phase)
-          : state => state.phase === until;
+          ? (state) => until.includes(state.phase)
+          : (state) => state.phase === until;
 
     const startedAt = Date.now();
     let lastRetryableError = null;
@@ -836,7 +1079,9 @@ export class CodeKanbanClient {
       );
     }
 
-    throw new CodeKanbanValidationError(`web session ${sessionId} did not reach the requested state within ${timeoutMs}ms`);
+    throw new CodeKanbanValidationError(
+      `web session ${sessionId} did not reach the requested state within ${timeoutMs}ms`,
+    );
   }
 
   async startWorkflow(input = {}) {
@@ -855,7 +1100,10 @@ export class CodeKanbanClient {
       projectId: project.id,
       worktreeId: worktree.id,
       workingDir: ensureOptionalString(input.workingDir) || worktree.path,
-      title: ensureOptionalString(input.title) || ensureOptionalString(input.prompt) || 'AI workflow',
+      title:
+        ensureOptionalString(input.title) ||
+        ensureOptionalString(input.prompt) ||
+        "AI workflow",
       rows: Number.isFinite(input.rows) ? input.rows : 0,
       cols: Number.isFinite(input.cols) ? input.cols : 0,
     });
@@ -888,16 +1136,22 @@ export class CodeKanbanClient {
   }
 
   async continueTerminalSession({ projectId, path, sessionId, prompt }) {
-    const resolvedSessionId = ensureString(sessionId, 'sessionId');
-    const resolvedPrompt = ensureString(prompt, 'prompt');
+    const resolvedSessionId = ensureString(sessionId, "sessionId");
+    const resolvedPrompt = ensureString(prompt, "prompt");
 
     let project;
     if (projectId || path) {
-      ({ project } = await this.resolveProject({ projectId, path, ensureProject: true }));
+      ({ project } = await this.resolveProject({
+        projectId,
+        path,
+        ensureProject: true,
+      }));
       const sessions = await this.listTerminalSessions(project.id);
-      const exists = sessions.some(item => item.id === resolvedSessionId);
+      const exists = sessions.some((item) => item.id === resolvedSessionId);
       if (!exists) {
-        throw new CodeKanbanValidationError(`terminal session ${resolvedSessionId} does not belong to project ${project.id}`);
+        throw new CodeKanbanValidationError(
+          `terminal session ${resolvedSessionId} does not belong to project ${project.id}`,
+        );
       }
     }
 

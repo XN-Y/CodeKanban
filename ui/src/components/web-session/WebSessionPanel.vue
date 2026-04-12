@@ -211,16 +211,34 @@
                 >
                   <div v-if="!shouldHideTimelineMeta(item)" class="item-meta">
                     <span class="item-role">{{ timelineRoleLabel(item) }}</span>
-                    <span class="item-time">{{ formatTime(item.timestamp) }}</span>
+                    <span class="item-time" :title="formatDateTime(item.timestamp)">{{
+                      formatTime(item.timestamp)
+                    }}</span>
                   </div>
 
                   <div
                     v-if="item.kind === 'tool' && item.tool && isPlanTool(item.tool)"
                     class="timeline-tool-shell plan-tool-shell"
                   >
-                    <div class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool">
+                    <div
+                      class="tool-card timeline-tool-card is-plan-tool is-static-plan-tool"
+                      :class="{
+                        'is-raw-capable': shouldShowPlanRawToggle(item),
+                        'is-raw-active': isTimelineRawBlockActive(item, 'plan'),
+                      }"
+                      :data-raw-toggle-card="
+                        shouldShowPlanRawToggle(item)
+                          ? getTimelineRawModeKey(item, 'plan')
+                          : undefined
+                      "
+                      :tabindex="shouldShowPlanRawToggle(item) ? 0 : undefined"
+                      @click="activateTimelineRawBlock(item, 'plan')"
+                      @focusin="activateTimelineRawBlock(item, 'plan')"
+                      @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'plan')"
+                      @keydown.space.self.prevent="activateTimelineRawBlock(item, 'plan')"
+                    >
                       <button
-                        v-if="shouldShowPlanRawToggle(item)"
+                        v-if="shouldShowTimelineRawToggle(item, 'plan')"
                         type="button"
                         class="timeline-display-toggle"
                         :class="{ 'is-active': isBlockRawMode(item, 'plan') }"
@@ -296,7 +314,9 @@
                             >
                               x{{ getCompactToolCount(item.tool) }}
                             </span>
-                            <span class="command-tool-time">{{ formatTime(item.timestamp) }}</span>
+                            <span class="command-tool-time" :title="formatDateTime(item.timestamp)">
+                              {{ formatTime(item.timestamp) }}
+                            </span>
                           </span>
                           <span
                             class="command-tool-command"
@@ -418,7 +438,9 @@
                         <span class="approval-badge" :class="historyInteractionBadgeClass(item)">
                           {{ historyInteractionTitle(item) }}
                         </span>
-                        <span class="approval-time">{{ formatTime(item.timestamp) }}</span>
+                        <span class="approval-time" :title="formatDateTime(item.timestamp)">
+                          {{ formatTime(item.timestamp) }}
+                        </span>
                       </div>
 
                       <div
@@ -505,10 +527,24 @@
                     :class="[
                       item.level ? `level-${item.level}` : undefined,
                       item.itemType ? `type-${item.itemType}` : undefined,
+                      {
+                        'is-raw-capable': shouldShowMessageRawToggle(item),
+                        'is-raw-active': isTimelineRawBlockActive(item, 'message'),
+                      },
                     ]"
+                    :data-raw-toggle-card="
+                      shouldShowMessageRawToggle(item)
+                        ? getTimelineRawModeKey(item, 'message')
+                        : undefined
+                    "
+                    :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
+                    @click="activateTimelineRawBlock(item, 'message')"
+                    @focusin="activateTimelineRawBlock(item, 'message')"
+                    @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
+                    @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
                     <button
-                      v-if="shouldShowMessageRawToggle(item)"
+                      v-if="shouldShowTimelineRawToggle(item, 'message')"
                       type="button"
                       class="timeline-display-toggle"
                       :class="{ 'is-active': isBlockRawMode(item, 'message') }"
@@ -628,9 +664,11 @@
                   >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.approvalTitle') }}</span>
-                      <span class="approval-time">{{
-                        formatTime(pendingApproval.requestedAt)
-                      }}</span>
+                      <span
+                        class="approval-time"
+                        :title="formatDateTime(pendingApproval.requestedAt)"
+                        >{{ formatTime(pendingApproval.requestedAt) }}</span
+                      >
                     </div>
                     <div class="approval-prompt">
                       {{ pendingApproval.prompt || t('webSession.approvalPromptFallback') }}
@@ -673,9 +711,11 @@
                   >
                     <div class="approval-card-header">
                       <span class="approval-badge">{{ t('webSession.userInputTitle') }}</span>
-                      <span class="approval-time">{{
-                        formatTime(pendingUserInput.requestedAt)
-                      }}</span>
+                      <span
+                        class="approval-time"
+                        :title="formatDateTime(pendingUserInput.requestedAt)"
+                        >{{ formatTime(pendingUserInput.requestedAt) }}</span
+                      >
                     </div>
                     <div class="approval-prompt">
                       {{ pendingUserInput.prompt || t('webSession.userInputPromptFallback') }}
@@ -1434,7 +1474,10 @@
               <span class="tool-state-dot"></span>
               {{ toolStateLabel(detailItem) }}
             </span>
-            <span class="command-execution-detail-item-time">
+            <span
+              class="command-execution-detail-item-time"
+              :title="formatCommandExecutionDetailDateTime(detailItem)"
+            >
               {{ formatCommandExecutionDetailTime(detailItem) }}
             </span>
           </summary>
@@ -1478,9 +1521,16 @@ import {
   type HTMLAttributes,
 } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useDebounceFn, useResizeObserver, useStorage } from '@vueuse/core';
+import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
-import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
+import {
+  NCheckbox,
+  NInput,
+  useDialog,
+  useMessage,
+  type DialogReactive,
+  type DropdownOption,
+} from 'naive-ui';
 import {
   AddOutline,
   ChevronBackOutline,
@@ -1535,6 +1585,14 @@ import TransferProgressDialog from '@/components/common/TransferProgressDialog.v
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import {
+  buildTimelineRawModeKey,
+  pruneActiveTimelineRawBlockKey,
+  resolveActivatedTimelineRawBlockKey,
+  shouldClearActiveTimelineRawBlockKey,
+  shouldShowTimelineRawToggle as shouldShowTimelineRawToggleForBlock,
+  type TimelineRawSurface,
+} from '@/components/web-session/webSessionRawToggle';
+import {
   getWebSessionSidebarTone,
   getWebSessionTabTone,
 } from '@/components/web-session/sessionVisualState';
@@ -1552,6 +1610,10 @@ import {
   scheduleWebSessionUserInputSlowHint,
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
+  buildWebSessionUserInputDraftSyncKey,
+  reconcileWebSessionUserInputLocalState,
+} from '@/components/web-session/webSessionUserInputDraftSync';
+import {
   buildWebSessionSendConfirmationSignature,
   findWebSessionSendConflicts,
   resolveWebSessionSendConfirmation,
@@ -1559,8 +1621,18 @@ import {
 } from '@/components/web-session/webSessionSendGuard';
 import {
   resolveWebSessionDisplayState,
+  resolveWebSessionSidebarSortTimestamp,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
+import {
+  formatWebSessionDateTime,
+  formatWebSessionTimestamp,
+} from '@/components/web-session/webSessionTimeFormat';
+import {
+  buildOrderedTabSessions,
+  clampTabAnchorIndex,
+  resolveTabAnchorInsertIndex,
+} from '@/components/web-session/webSessionTabOrder';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import {
@@ -1694,8 +1766,6 @@ type LiveTimeTooltipItem = {
 
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
-type TimelineRawSurface = 'message' | 'plan';
-
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -1783,6 +1853,7 @@ const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
 const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const rawTimelineBlocks = ref<Record<string, boolean>>({});
+const activeRawTimelineBlockKey = ref('');
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
@@ -1791,7 +1862,7 @@ const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
-const viewedEventSeqBySession = ref<Record<string, number>>({});
+const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
@@ -1831,6 +1902,7 @@ const draftSessions = ref<DraftSessionTab[]>([]);
 const activeDraftSessionId = ref('');
 const activeArchivedPreviewId = ref('');
 const archivedPreviewSession = ref<ArchivedPreviewSessionTab | null>(null);
+const archivedPreviewAnchorIndex = ref(-1);
 const tabOrderIds = ref<string[]>([]);
 const tabMruIds = ref<string[]>([]);
 
@@ -1840,9 +1912,12 @@ const realSessions = computed<SessionTab[]>(() =>
     isDraft: false as const,
   }))
 );
-const allVisibleSessions = computed<SessionTab[]>(() => [
+const nonArchivedVisibleSessions = computed<SessionTab[]>(() => [
   ...realSessions.value,
   ...draftSessions.value,
+]);
+const allVisibleSessions = computed<SessionTab[]>(() => [
+  ...nonArchivedVisibleSessions.value,
   ...(archivedPreviewSession.value ? [archivedPreviewSession.value] : []),
 ]);
 const visibleSessionById = computed(() => {
@@ -1852,26 +1927,14 @@ const visibleSessionById = computed(() => {
   });
   return map;
 });
-const sessions = computed<SessionTab[]>(() => {
-  const ordered: SessionTab[] = [];
-  const seen = new Set<string>();
-  tabOrderIds.value.forEach(sessionId => {
-    const session = visibleSessionById.value.get(sessionId);
-    if (!session || seen.has(session.id)) {
-      return;
-    }
-    ordered.push(session);
-    seen.add(session.id);
-  });
-  allVisibleSessions.value.forEach(session => {
-    if (seen.has(session.id)) {
-      return;
-    }
-    ordered.push(session);
-    seen.add(session.id);
-  });
-  return ordered;
-});
+const sessions = computed<SessionTab[]>(() =>
+  buildOrderedTabSessions(
+    tabOrderIds.value,
+    nonArchivedVisibleSessions.value,
+    archivedPreviewSession.value,
+    archivedPreviewAnchorIndex.value
+  )
+);
 const currentSession = computed<SessionTab | null>(() => {
   if (activeDraftSessionId.value) {
     return draftSessions.value.find(session => session.id === activeDraftSessionId.value) ?? null;
@@ -2161,7 +2224,32 @@ function shouldShowPlanRawToggle(block: WebSessionBlock) {
   );
 }
 function getTimelineRawModeKey(block: WebSessionBlock, surface: TimelineRawSurface) {
-  return `${currentSession.value?.id ?? 'unknown'}:${surface}:${block.key}`;
+  return buildTimelineRawModeKey({
+    sessionId: currentSession.value?.id,
+    surface,
+    blockKey: block.key,
+  });
+}
+function isTimelineRawBlockActive(block: WebSessionBlock, surface: TimelineRawSurface) {
+  return activeRawTimelineBlockKey.value === getTimelineRawModeKey(block, surface);
+}
+function activateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const rawCapable =
+    surface === 'message' ? shouldShowMessageRawToggle(block) : shouldShowPlanRawToggle(block);
+  activeRawTimelineBlockKey.value = resolveActivatedTimelineRawBlockKey(
+    rawCapable,
+    getTimelineRawModeKey(block, surface)
+  );
+}
+function shouldShowTimelineRawToggle(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const rawCapable =
+    surface === 'message' ? shouldShowMessageRawToggle(block) : shouldShowPlanRawToggle(block);
+  return shouldShowTimelineRawToggleForBlock({
+    activeKey: activeRawTimelineBlockKey.value,
+    rawKey: getTimelineRawModeKey(block, surface),
+    rawCapable,
+    rawMode: isBlockRawMode(block, surface),
+  });
 }
 function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   return !!rawTimelineBlocks.value[getTimelineRawModeKey(block, surface)];
@@ -2248,6 +2336,18 @@ const visibleBlocks = computed(() =>
     return true;
   })
 );
+const visibleRawTimelineBlockKeys = computed(() => {
+  const keys: string[] = [];
+  visibleBlocks.value.forEach(block => {
+    if (shouldShowMessageRawToggle(block)) {
+      keys.push(getTimelineRawModeKey(block, 'message'));
+    }
+    if (shouldShowPlanRawToggle(block)) {
+      keys.push(getTimelineRawModeKey(block, 'plan'));
+    }
+  });
+  return keys;
+});
 const latestPlanToolId = computed(() => {
   for (let index = blocks.value.length - 1; index >= 0; index -= 1) {
     const block = blocks.value[index];
@@ -2280,6 +2380,9 @@ const pendingApproval = computed(() =>
 );
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
+);
+const pendingUserInputSyncKey = computed(() =>
+  buildWebSessionUserInputDraftSyncKey(currentRealSession.value?.id, pendingUserInput.value)
 );
 const currentUserInputSubmitOwnerId = computed(() =>
   currentRealSession.value && pendingUserInput.value
@@ -2573,6 +2676,8 @@ const mobileComposerSummaryTokens = computed(() => {
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
+const contextUsageDisclaimer =
+  '这个数据是我从codex那边读的然后原样显示，数据肯定是不对的，但我也不知道为什么他这样给显示，有明白的大佬麻烦告知';
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
   if (!session) {
@@ -2655,6 +2760,7 @@ const contextUsageIndicator = computed(() => {
     }),
     title: t('webSession.contextUsageTitle'),
     lines: [
+      contextUsageDisclaimer,
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),
@@ -2964,10 +3070,15 @@ const mobileSessionCategory = ref<'current' | 'archived'>('current');
 const mobileCurrentSessions = computed<SessionTab[]>(() =>
   sessions.value.filter(session => !isArchivedPreviewSession(session))
 );
+const mobileArchivedProjectIds = computed(() => (props.projectId ? [props.projectId] : []));
+const mobileArchivedScopeKey = computed(() => String(props.projectId || '').trim());
+const mobileArchivedMeta = computed(() =>
+  webSessionStore.getArchivedMeta(mobileArchivedProjectIds.value)
+);
 const mobileArchivedSessions = computed<SessionTab[]>(() => {
-  const items = crossProjectArchivedSessions.value
-    .filter(item => item.projectId === props.projectId)
-    .map(item => item.session as SessionTab);
+  const items = webSessionStore
+    .getArchivedSessions(mobileArchivedProjectIds.value)
+    .map(item => item as SessionTab);
   if (
     archivedPreviewSession.value &&
     !items.some(session => session.id === archivedPreviewSession.value?.id)
@@ -3025,21 +3136,20 @@ const hasNextSession = computed(
 );
 
 watch(
-  pendingUserInput,
-  value => {
-    if (!value) {
+  pendingUserInputSyncKey,
+  syncKey => {
+    const request = pendingUserInput.value;
+    if (!syncKey || !request) {
       userInputSelections.value = {};
       userInputDrafts.value = {};
       return;
     }
-    const nextSelections: Record<string, string[]> = {};
-    const nextDrafts: Record<string, string> = {};
-    value.questions.forEach(question => {
-      nextSelections[question.id] = [...(userInputSelections.value[question.id] ?? [])];
-      nextDrafts[question.id] = userInputDrafts.value[question.id] ?? '';
+    const nextState = reconcileWebSessionUserInputLocalState(request.questions, {
+      selections: userInputSelections.value,
+      drafts: userInputDrafts.value,
     });
-    userInputSelections.value = nextSelections;
-    userInputDrafts.value = nextDrafts;
+    userInputSelections.value = nextState.selections;
+    userInputDrafts.value = nextState.drafts;
   },
   { immediate: true }
 );
@@ -3084,6 +3194,19 @@ const mobileTabOptions = computed<MobileTabDropdownOption[]>(
               },
             },
           ]),
+      ...(mobileSessionCategory.value === 'archived' &&
+      (mobileArchivedMeta.value.hasMore || mobileArchivedMeta.value.loading)
+        ? [
+            {
+              type: 'render' as const,
+              key: 'mobile-session-load-more-archived',
+              render: renderMobileTabLoadMore,
+              props: {
+                class: 'mobile-tab-load-more-render',
+              },
+            },
+          ]
+        : []),
     ] satisfies MobileTabDropdownOption[]
 );
 
@@ -3096,6 +3219,11 @@ function mobileTabDropdownMenuProps() {
 function getMobileTabOptionNodeProps(option: DropdownOption): HTMLAttributes {
   const mobileOption = option as MobileTabOption;
   const classes = ['web-session-mobile-option'];
+  if (!mobileOption?.session) {
+    return {
+      class: classes.join(' '),
+    };
+  }
   if (mobileOption.key === activeSessionId.value) {
     classes.push('is-selected');
   }
@@ -3120,9 +3248,7 @@ function renderMobileTabCategoryHeader() {
 function renderMobileTabCategoryButton(section: 'current' | 'archived') {
   const active = mobileSessionCategory.value === section;
   const count =
-    section === 'current'
-      ? mobileCurrentSessions.value.length
-      : mobileArchivedSessions.value.length;
+    section === 'current' ? mobileCurrentSessions.value.length : mobileArchivedMeta.value.total;
   const label =
     section === 'current' ? t('webSession.currentSessions') : t('webSession.archivedSessions');
 
@@ -3153,8 +3279,31 @@ function renderMobileTabEmptyState() {
     'div',
     { class: 'mobile-tab-empty-state' },
     mobileSessionCategory.value === 'archived'
-      ? t('webSession.archivedSessionsEmpty')
+      ? mobileArchivedMeta.value.loading
+        ? t('common.loading')
+        : t('webSession.archivedSessionsEmpty')
       : t('webSession.currentSessionsEmpty')
+  );
+}
+
+function renderMobileTabLoadMore() {
+  return h(
+    'button',
+    {
+      type: 'button',
+      class: ['mobile-tab-load-more', mobileArchivedMeta.value.loading && 'is-loading'],
+      disabled: mobileArchivedMeta.value.loading,
+      onClick: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void loadMoreMobileArchivedSessions();
+      },
+      onMousedown: (event: MouseEvent) => {
+        event.preventDefault();
+        event.stopPropagation();
+      },
+    },
+    mobileArchivedMeta.value.loading ? t('common.loading') : t('webSession.loadMoreArchived')
   );
 }
 
@@ -3233,18 +3382,39 @@ function getMobileTabOptionProjectBadge(session: SessionTab) {
 
 async function setMobileSessionCategory(section: 'current' | 'archived') {
   mobileSessionCategory.value = section;
+  if (section !== 'archived') {
+    return;
+  }
   if (
-    section === 'archived' &&
-    mobileArchivedSessions.value.length === 0 &&
-    archivedSidebarMeta.value.hasMore
+    mobileArchivedMeta.value.loading ||
+    !mobileArchivedScopeKey.value ||
+    mobileArchivedMeta.value.scopeKey === mobileArchivedScopeKey.value
   ) {
-    try {
-      await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
-        limit: 20,
-      });
-    } catch (error) {
-      message.error(error instanceof Error ? error.message : t('common.error'));
-    }
+    return;
+  }
+  try {
+    await webSessionStore.loadArchivedSessions(mobileArchivedProjectIds.value, {
+      limit: 20,
+    });
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function loadMoreMobileArchivedSessions() {
+  if (
+    !mobileArchivedScopeKey.value ||
+    mobileArchivedMeta.value.loading ||
+    !mobileArchivedMeta.value.hasMore
+  ) {
+    return;
+  }
+  try {
+    await webSessionStore.loadArchivedSessions(mobileArchivedProjectIds.value, {
+      limit: 20,
+    });
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
   }
 }
 
@@ -3614,15 +3784,12 @@ function loadPersistedTabMruIds(projectId: string) {
   return normalizeSessionIdList(persistedTabMruByProject.value[projectId]);
 }
 
+function getOrderedNonArchivedSessions() {
+  return sessions.value.filter(session => !isArchivedPreviewSession(session));
+}
+
 function getVisibleTabIds() {
-  const ids = [
-    ...realSessions.value.map(session => session.id),
-    ...draftSessions.value.map(session => session.id),
-  ];
-  if (archivedPreviewSession.value?.id) {
-    ids.push(archivedPreviewSession.value.id);
-  }
-  return ids;
+  return sessions.value.map(session => session.id);
 }
 
 function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
@@ -3633,10 +3800,6 @@ function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
       .map(session => session.id)
       .filter(sessionId => visibleSet.has(sessionId)),
   ];
-  const archivedId = archivedPreviewSession.value?.id ?? '';
-  if (archivedId && visibleSet.has(archivedId)) {
-    ids.push(archivedId);
-  }
   return ids;
 }
 
@@ -3777,12 +3940,21 @@ function insertTabAfter(
   if (!visibleIds.includes(sessionId)) {
     return;
   }
+  const archivedPreviewId = archivedPreviewSession.value?.id ?? '';
+  const orderVisibleIds = visibleIds.filter(id => id !== archivedPreviewId);
   const nextOrderIds = normalizeTabOrderIds(
     tabOrderIds.value.filter(id => id !== sessionId),
-    visibleIds.filter(id => id !== sessionId)
+    orderVisibleIds.filter(id => id !== sessionId)
   );
-  const anchorIndex = afterId ? nextOrderIds.indexOf(afterId) : -1;
-  const insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : nextOrderIds.length;
+  let insertIndex = nextOrderIds.length;
+  if (afterId) {
+    if (archivedPreviewId && afterId === archivedPreviewId) {
+      insertIndex = clampTabAnchorIndex(archivedPreviewAnchorIndex.value, nextOrderIds.length);
+    } else {
+      const anchorIndex = nextOrderIds.indexOf(afterId);
+      insertIndex = anchorIndex >= 0 ? anchorIndex + 1 : nextOrderIds.length;
+    }
+  }
   nextOrderIds.splice(insertIndex, 0, sessionId);
   replaceTabNavigationState(
     nextOrderIds,
@@ -3989,6 +4161,7 @@ function clearArchivedPreviewSession(options?: { preserveTabId?: boolean }) {
   if (activeArchivedPreviewId.value === archivedPreviewId) {
     activeArchivedPreviewId.value = '';
   }
+  archivedPreviewAnchorIndex.value = -1;
   archivedPreviewSession.value = null;
 }
 
@@ -3998,8 +4171,12 @@ function syncArchivedPreviewSessionSummary(sessionId: string) {
   }
   const latest =
     webSessionStore
+      .getArchivedSessions(mobileArchivedProjectIds.value)
+      .find(item => item.id === sessionId) ??
+    webSessionStore
       .getArchivedSessions(sidebarProjectIdsToLoad.value)
-      .find(item => item.id === sessionId) ?? archivedPreviewSession.value;
+      .find(item => item.id === sessionId) ??
+    archivedPreviewSession.value;
   archivedPreviewSession.value = {
     ...latest,
     isArchivedPreview: true,
@@ -4082,8 +4259,14 @@ async function openArchivedPreviewSession(
   session: WebSessionSummary,
   options?: { snapshotLoaded?: boolean }
 ) {
-  const anchorId = activeSessionId.value;
   const previousPreviewId = archivedPreviewSession.value?.id ?? '';
+  const shouldReuseExistingAnchor =
+    activeArchivedPreviewId.value &&
+    archivedPreviewAnchorIndex.value >= 0 &&
+    activeSessionId.value === activeArchivedPreviewId.value;
+  const nextAnchorIndex = shouldReuseExistingAnchor
+    ? archivedPreviewAnchorIndex.value
+    : resolveTabAnchorInsertIndex(getOrderedNonArchivedSessions(), activeSessionId.value);
   if (previousPreviewId && previousPreviewId !== session.id) {
     clearArchivedPreviewSession();
   }
@@ -4091,13 +4274,10 @@ async function openArchivedPreviewSession(
     ...session,
     isArchivedPreview: true,
   };
+  archivedPreviewAnchorIndex.value = nextAnchorIndex;
   replaceDraftSessionState(draftSessions.value, '');
   activeArchivedPreviewId.value = session.id;
-  if (previousPreviewId !== session.id) {
-    insertTabAfter(session.id, anchorId);
-  } else {
-    syncTabNavigationState();
-  }
+  syncTabNavigationState();
   if (!options?.snapshotLoaded) {
     await webSessionStore.loadSessionSnapshot(session.projectId, session.id, {
       rememberActive: false,
@@ -4240,43 +4420,43 @@ async function closeTabById(
   }
 }
 
-function getSessionActivityTimestamp(session: WebSessionSummary) {
-  return parseTimestamp(
-    session.activityAt || session.lastMessageAt || session.updatedAt || session.createdAt
-  );
-}
-
 function markSessionViewed(sessionId?: string) {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!props.isActive || !normalizedSessionId) {
     return;
   }
-
-  const latestSeq = webSessionStore.getLatestEventSeq(normalizedSessionId);
-  const previousViewedSeq = viewedEventSeqBySession.value[normalizedSessionId] ?? -1;
-  if (latestSeq <= previousViewedSeq) {
-    return;
+  const session = visibleSessionById.value.get(normalizedSessionId);
+  if (session && !isDraftSession(session)) {
+    optimisticUnreadClearedVersionBySession.value = {
+      ...optimisticUnreadClearedVersionBySession.value,
+      [normalizedSessionId]: getSessionUnreadVersion(session),
+    };
   }
-
-  viewedEventSeqBySession.value = {
-    ...viewedEventSeqBySession.value,
-    [normalizedSessionId]: latestSeq,
-  };
   webSessionStore.emitter.emit('web-session:viewed', {
     sessionId: normalizedSessionId,
   });
+}
+
+function getSessionUnreadVersion(session: WebSessionSummary) {
+  return parseTimestamp(
+    session.statusUpdatedAt ||
+      session.assistantStateUpdatedAt ||
+      session.updatedAt ||
+      session.activityAt ||
+      session.lastMessageAt ||
+      session.createdAt
+  );
 }
 
 function hasSessionUnread(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return false;
   }
-  const latestSeq = webSessionStore.getLatestEventSeq(session.id);
-  const viewedSeq = viewedEventSeqBySession.value[session.id] ?? -1;
-  if (latestSeq > 0) {
-    return latestSeq > viewedSeq;
+  if (!session.hasUnread) {
+    return false;
   }
-  return session.hasUnread && (!props.isActive || activeSessionId.value !== session.id);
+  const optimisticClearedVersion = optimisticUnreadClearedVersionBySession.value[session.id] ?? 0;
+  return getSessionUnreadVersion(session) > optimisticClearedVersion;
 }
 
 function getProjectName(projectId: string) {
@@ -4297,12 +4477,11 @@ type CrossProjectSessionItem = {
   session: WebSessionSummary;
   projectId: string;
   projectName: string;
-  activityAt: number;
   isCurrent: boolean;
   projectIndex?: { index: number; color: string };
 };
 
-function withProjectIndexes(items: CrossProjectSessionItem[]) {
+function buildSidebarProjectOrder(items: Array<Pick<CrossProjectSessionItem, 'projectId'>>) {
   const presentProjectIds = new Set(items.map(item => item.projectId).filter(Boolean));
   const projectIds: string[] = [];
   projectStore.projects.forEach(project => {
@@ -4315,7 +4494,13 @@ function withProjectIndexes(items: CrossProjectSessionItem[]) {
       projectIds.push(item.projectId);
     }
   });
+  return projectIds;
+}
 
+function withProjectIndexes(
+  items: CrossProjectSessionItem[],
+  projectIds = buildSidebarProjectOrder(items)
+) {
   const projectIndex = new Map<string, { index: number; color: string }>();
   projectIds.forEach((projectId, idx) => {
     projectIndex.set(projectId, {
@@ -4338,26 +4523,16 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
         session,
         projectId,
         projectName: getProjectName(projectId),
-        activityAt: getSessionActivityTimestamp(session),
         isCurrent: projectId === props.projectId && session.id === activeSessionId.value,
       });
     });
   });
-  const sorted = rawItems.sort((left, right) => {
-    if (right.activityAt !== left.activityAt) {
-      return right.activityAt - left.activityAt;
-    }
-    if (left.isCurrent !== right.isCurrent) {
-      return left.isCurrent ? -1 : 1;
-    }
-    const leftHasUnread = hasSessionUnread(left.session);
-    const rightHasUnread = hasSessionUnread(right.session);
-    if (leftHasUnread !== rightHasUnread) {
-      return leftHasUnread ? -1 : 1;
-    }
-    const projectNameCompare = left.projectName.localeCompare(right.projectName);
-    if (projectNameCompare !== 0) {
-      return projectNameCompare;
+  const projectIds = buildSidebarProjectOrder(rawItems);
+  const sorted = [...rawItems].sort((left, right) => {
+    const rightTimestamp = resolveWebSessionSidebarSortTimestamp(right.session);
+    const leftTimestamp = resolveWebSessionSidebarSortTimestamp(left.session);
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
     }
     if (left.session.orderIndex !== right.session.orderIndex) {
       return left.session.orderIndex - right.session.orderIndex;
@@ -4365,7 +4540,7 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
     return left.session.id.localeCompare(right.session.id);
   });
 
-  return withProjectIndexes(sorted);
+  return withProjectIndexes(sorted, projectIds);
 });
 
 const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
@@ -4373,7 +4548,6 @@ const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
     session,
     projectId: session.projectId,
     projectName: getProjectName(session.projectId),
-    activityAt: getSessionActivityTimestamp(session),
     isCurrent: Boolean(archivedPreviewSession.value?.id === session.id),
   }));
   return withProjectIndexes(items);
@@ -4726,17 +4900,11 @@ function defaultModelForAgent(agent: 'claude' | 'codex') {
 }
 
 function formatTime(timestamp: number) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '';
-  }
-  return new Date(timestamp).toLocaleTimeString();
+  return formatWebSessionTimestamp(timestamp, locale.value);
 }
 
 function formatDateTime(timestamp: number) {
-  if (!Number.isFinite(timestamp) || timestamp <= 0) {
-    return '';
-  }
-  return new Date(timestamp).toLocaleString();
+  return formatWebSessionDateTime(timestamp, locale.value);
 }
 
 function formatElapsedDuration(startedAt: number, endedAt: number) {
@@ -5344,6 +5512,14 @@ function formatCommandExecutionDetailTime(item: CommandExecutionDetailItem) {
   return formatTime(value);
 }
 
+function formatCommandExecutionDetailDateTime(item: CommandExecutionDetailItem) {
+  const value = Date.parse(item.completedAt || item.startedAt || item.timestamp || '');
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  return formatDateTime(value);
+}
+
 function isToolExpanded(toolId: string) {
   return Boolean(expandedTools.value[toolId]);
 }
@@ -5557,6 +5733,7 @@ async function initializeProjectSessions(projectId: string) {
   try {
     clearArchivedPreviewSession();
     activeArchivedPreviewId.value = '';
+    archivedPreviewAnchorIndex.value = -1;
     tabOrderIds.value = loadPersistedTabOrderIds(projectId);
     tabMruIds.value = loadPersistedTabMruIds(projectId);
     const restoredDrafts = loadPersistedDraftSessions(projectId);
@@ -5891,7 +6068,8 @@ function handleArchiveSession(sessionId: string) {
   }
 
   if (confirmBeforeTerminalClose.value) {
-    dialog.warning({
+    let archiveConfirmDialog: DialogReactive | null = null;
+    archiveConfirmDialog = dialog.warning({
       title: t('webSession.confirmCloseTitle'),
       content: () =>
         h('div', { class: 'web-session-close-confirm' }, [
@@ -5901,7 +6079,21 @@ function handleArchiveSession(sessionId: string) {
         ]),
       positiveText: t('webSession.confirmCloseButton'),
       negativeText: t('common.cancel'),
-      onPositiveClick: async () => performArchiveSession(session),
+      onPositiveClick: async () => {
+        if (archiveConfirmDialog?.loading) {
+          return false;
+        }
+        if (archiveConfirmDialog) {
+          archiveConfirmDialog.loading = true;
+        }
+        try {
+          return await performArchiveSession(session);
+        } finally {
+          if (archiveConfirmDialog) {
+            archiveConfirmDialog.loading = false;
+          }
+        }
+      },
     });
     return;
   }
@@ -6462,11 +6654,15 @@ function pendingInputPreview(item: WebSessionPendingInput) {
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
 }
 
-function handleRemovePendingInput(pendingId: string) {
+async function handleRemovePendingInput(pendingId: string) {
   if (!currentRealSession.value) {
     return;
   }
-  webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  try {
+    await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
 }
 
 function userInputPlaceholder(question: WebSessionUserInputQuestion) {
@@ -6892,6 +7088,9 @@ function createTabProps(session: (typeof sessions.value)[number]): HTMLAttribute
   if (isSessionArchiving(session.id)) {
     classes.push('is-archiving');
   }
+  if (isArchivedPreviewSession(session)) {
+    classes.push('is-tab-drag-locked');
+  }
 
   if (usesSessionPlanApprovalTone(session)) {
     classes.push('has-unviewed-plan-approval');
@@ -7228,9 +7427,7 @@ function setupTabSorting() {
     destroyTabSorting();
     return;
   }
-  const wrapper = container.querySelector(
-    '.n-tabs-wrapper, .n-tabs-nav-scroll-content, .n-tabs-nav-scroll-content__wrapper'
-  ) as HTMLElement | null;
+  const wrapper = container.querySelector('.n-tabs-wrapper') as HTMLElement | null;
   if (!wrapper) {
     destroyTabSorting();
     return;
@@ -7245,9 +7442,9 @@ function setupTabSorting() {
   tabDragSortable.value = Sortable.create(wrapper, {
     animation: 150,
     direction: 'horizontal',
-    draggable: '.n-tabs-tab-wrapper, .n-tabs-tab',
-    handle: '.n-tabs-tab',
-    filter: '.n-tabs-tab__close, .n-tabs-tab__close-button, .n-base-close',
+    draggable: '.n-tabs-tab-wrapper',
+    handle: '.n-tabs-tab:not(.is-tab-drag-locked)',
+    filter: '.n-tabs-tab__close',
     preventOnFilter: false,
     ghostClass: 'web-session-tab-ghost',
     chosenClass: 'web-session-tab-chosen',
@@ -7282,7 +7479,14 @@ function handleTabDragEnd(event: SortableEvent) {
     reorderedSessions.map(session => session.id),
     previousMruIds
   );
-  if (isDraftSession(movingSession) || isArchivedPreviewSession(movingSession)) {
+  if (isArchivedPreviewSession(movingSession)) {
+    replaceTabNavigationState(previousOrderIds, previousMruIds);
+    nextTick(() => {
+      updateActiveTabIndicator();
+    });
+    return;
+  }
+  if (isDraftSession(movingSession)) {
     nextTick(() => {
       updateActiveTabIndicator();
     });
@@ -7451,6 +7655,7 @@ watch(
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
+    activeRawTimelineBlockKey.value = '';
     syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
       showMobileTabSelector.value = false;
@@ -7476,6 +7681,34 @@ watch(
   },
   { immediate: true }
 );
+
+watch(
+  [() => props.isActive, () => currentRealSession.value?.id ?? ''],
+  ([isActive, sessionId]) => {
+    webSessionStore.setEventSessionFocus(isActive ? sessionId : '');
+  },
+  { immediate: true }
+);
+
+watch(
+  visibleRawTimelineBlockKeys,
+  keys => {
+    activeRawTimelineBlockKey.value = pruneActiveTimelineRawBlockKey(
+      activeRawTimelineBlockKey.value,
+      keys
+    );
+  },
+  { immediate: true }
+);
+
+useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointerdown', event => {
+  const target = event.target;
+  const clickedInsideRawCard =
+    target instanceof Element && Boolean(target.closest('[data-raw-toggle-card]'));
+  if (shouldClearActiveTimelineRawBlockKey(activeRawTimelineBlockKey.value, clickedInsideRawCard)) {
+    activeRawTimelineBlockKey.value = '';
+  }
+});
 
 watch(
   () => currentSession.value,
@@ -7850,6 +8083,11 @@ onBeforeUnmount(() => {
 
 .tabs-container :deep(.n-tabs-tab:active) {
   cursor: grabbing;
+}
+
+.tabs-container :deep(.n-tabs-tab.is-tab-drag-locked),
+.tabs-container :deep(.n-tabs-tab.is-tab-drag-locked:active) {
+  cursor: default;
 }
 
 .active-tab-indicator {
@@ -8376,6 +8614,26 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+:global(.web-session-mobile-dropdown .mobile-tab-load-more-render) {
+  padding: 6px 2px 2px;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-load-more) {
+  width: 100%;
+  border: 1px solid var(--n-border-color);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
+  color: var(--n-primary-color);
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-load-more.is-loading) {
+  cursor: progress;
+  opacity: 0.82;
+}
+
 :global(.web-session-mobile-dropdown .mobile-tab-option-body) {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -8826,11 +9084,13 @@ onBeforeUnmount(() => {
   width: 18px;
   height: 18px;
   font-size: 10px;
-  border-width: 1px;
+  color: #ffffff;
+  background: var(--badge-color, #3b82f6);
+  background-image: none;
+  border: 1px solid
+    color-mix(in srgb, var(--badge-color, #3b82f6) 78%, var(--app-surface-color, #fff) 22%);
   margin-left: 2px;
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.12),
-    0 3px 8px color-mix(in srgb, var(--badge-color, #3b82f6) 16%, transparent);
+  box-shadow: none;
 }
 
 .project-index-badge.session-project-badge.is-single-project {
@@ -8846,10 +9106,12 @@ onBeforeUnmount(() => {
   justify-content: center;
   line-height: 0;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+  background: var(--n-primary-color);
   color: #ffffff;
-  border: 1px solid rgba(59, 130, 246, 0.9);
-  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  border: 1px solid
+    color-mix(in srgb, var(--n-primary-color) 78%, var(--app-surface-color, #fff) 22%);
+  box-shadow: none;
+  animation: none;
 }
 
 .session-current-indicator.is-hidden {
@@ -9093,6 +9355,24 @@ onBeforeUnmount(() => {
   background: var(--app-surface-color, #fff);
   padding: 15px 16px;
   position: relative;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.item-bubble.is-raw-capable {
+  cursor: pointer;
+}
+
+.item-bubble.is-raw-active {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+}
+
+.item-bubble.is-raw-capable:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .timeline-item.kind-user .item-bubble {
@@ -9129,6 +9409,11 @@ onBeforeUnmount(() => {
 .item-bubble.level-warn {
   border-color: color-mix(in srgb, var(--n-warning-color) 35%, var(--n-border-color));
   background: color-mix(in srgb, var(--n-warning-color) 10%, rgba(255, 255, 255, 0.92));
+}
+
+.item-bubble.is-raw-active,
+.item-bubble.is-raw-capable:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
 }
 
 .item-text {
@@ -9366,6 +9651,24 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, var(--n-primary-color) 6%);
   overflow: hidden;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.tool-card.is-raw-capable {
+  cursor: pointer;
+}
+
+.tool-card.is-raw-active {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+}
+
+.tool-card.is-raw-capable:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 12%, transparent);
 }
 
 .tool-card.is-plan-tool {
@@ -9392,6 +9695,11 @@ onBeforeUnmount(() => {
   inset: 0 0 auto;
   height: 4px;
   background: linear-gradient(90deg, #14b8a6 0%, #0ea5e9 55%, #38bdf8 100%);
+}
+
+.tool-card.is-raw-active,
+.tool-card.is-raw-capable:focus-visible {
+  border-color: color-mix(in srgb, var(--n-primary-color) 34%, var(--n-border-color));
 }
 
 .tool-card.is-context-compaction-tool {

@@ -15,7 +15,7 @@
           <RecentProjects
             :current-project-id="currentProjectId"
             @edit-current="openProjectEditDialog"
-            @toggle-terminal="toggleTerminalPanel"
+            @show-terminal="showTerminalTab"
           />
         </n-layout-sider>
         <div
@@ -39,13 +39,7 @@
           </n-layout-sider>
 
           <n-layout-content content-style="height: 100%;">
-            <!-- 主内容区 -->
-            <!-- Dock 模式：使用 Tab 视图切换看板和终端 -->
-            <WorkspaceTabView v-if="isDockMode" :project-id="currentProjectId" />
-            <!-- 浮动模式：只显示看板 -->
-            <div v-else class="workspace-content">
-              <KanbanBoard :project-id="currentProjectId" />
-            </div>
+            <WorkspaceTabView :project-id="currentProjectId" />
           </n-layout-content>
         </n-layout>
       </n-layout>
@@ -89,7 +83,7 @@
             :current-project-id="currentProjectId"
             :is-mobile="true"
             @edit-current="openProjectEditDialog"
-            @toggle-terminal="() => setMobileView('terminal')"
+            @show-terminal="() => setMobileView('terminal')"
           />
         </div>
 
@@ -181,10 +175,7 @@
         </div>
       </div>
     </template>
-
-    <!-- 悬浮终端面板：仅在浮动模式下显示 -->
     <TerminalPanel
-      v-if="!isDockMode"
       ref="terminalPanelRef"
       :project-id="currentProjectId"
       :is-mobile="isMobileLayout"
@@ -199,13 +190,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
-import { storeToRefs } from 'pinia';
 import { useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
-import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
 import { useResponsive } from '@/composables/useResponsive';
 import { useLocale } from '@/composables/useLocale';
@@ -240,9 +229,7 @@ const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const projectStore = useProjectStore();
-const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
-const { terminalDisplayMode } = storeToRefs(settingsStore);
 const { windowWidth } = useResponsive();
 const { t } = useLocale();
 const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
@@ -341,12 +328,6 @@ function startProjectSidebarResize(event: MouseEvent) {
   document.body.style.userSelect = 'none';
 }
 
-// Dock 模式：终端固定在中央区域，与看板形成 Tab 切换
-const isDockMode = computed(() => !isMobileLayout.value && terminalDisplayMode.value === 'docked');
-
-// 提供终端面板引用给子组件
-provide('terminalPanelRef', terminalPanelRef);
-
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
@@ -413,11 +394,6 @@ watch(
       if (mobileActiveView.value !== 'webSession') {
         setMobileView('webSession');
       }
-      return;
-    }
-
-    if (terminalDisplayMode.value !== 'docked') {
-      settingsStore.updateTerminalDisplayMode('docked');
     }
   },
   { immediate: true }
@@ -476,18 +452,6 @@ watch(
 );
 
 function handleOpenTerminal(worktree: Worktree) {
-  // Floating mode: delegate to TerminalPanel for expand/focus behavior.
-  if (terminalPanelRef.value) {
-    terminalPanelRef.value.createTerminal({
-      worktreeId: worktree.id,
-      workingDir: worktree.path,
-      title: worktree.branchName,
-    });
-    return;
-  }
-
-  // Dock mode: TerminalPanel isn't mounted, so create the session via the store.
-  // WorkspaceTabView will auto-switch to the terminal tab when a new session appears.
   if (!currentProjectId.value) {
     return;
   }
@@ -512,8 +476,17 @@ async function handleProjectUpdated() {
   }
 }
 
-function toggleTerminalPanel() {
-  terminalPanelRef.value?.toggleExpanded();
+function showTerminalTab() {
+  if (isMobileLayout.value) {
+    setMobileView('terminal');
+    return;
+  }
+  if (!currentProjectId.value) {
+    return;
+  }
+  terminalStore.emitter.emit('terminal:ensure-expanded', {
+    projectId: currentProjectId.value,
+  });
 }
 
 function handleMobileWebSessionComposerFocusChange(focused: boolean) {

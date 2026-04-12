@@ -219,6 +219,96 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	}
 }
 
+func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	focusedConn := &captureWSConn{}
+	otherConn := &captureWSConn{}
+	focusedClient := manager.RegisterEventClient(focusedConn)
+	otherClient := manager.RegisterEventClient(otherConn)
+	defer manager.UnregisterClient(focusedClient)
+	defer manager.UnregisterClient(otherClient)
+
+	handled, err := manager.HandleHeartbeatPayload(
+		focusedClient,
+		[]byte(`{"v":1,"k":"hb","ts":1710000000000,"op":"focus","sid":"session-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("HandleHeartbeatPayload returned error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected focus heartbeat payload to be handled")
+	}
+
+	manager.broadcast(newHistoryItemFrame("session-1", HistoryItem{
+		ID:         "hist-1",
+		OrderIndex: 1,
+		Kind:       "assistant",
+		ItemType:   "agent_message",
+		Text:       "delta",
+	}, nil))
+
+	if len(focusedConn.frames) != 1 {
+		t.Fatalf("expected focused client to receive one history frame, got %d", len(focusedConn.frames))
+	}
+	if len(otherConn.frames) != 0 {
+		t.Fatalf("expected unfocused client to receive no history frame, got %d", len(otherConn.frames))
+	}
+
+	manager.broadcast(newSessionFrame("session-1", SessionSummary{
+		ID:        "session-1",
+		ProjectID: "project-1",
+		Title:     "Session 1",
+		Agent:     AgentCodex,
+		Status:    StatusRunning,
+	}))
+
+	if len(focusedConn.frames) != 2 {
+		t.Fatalf("expected focused client to receive session summary, got %d frames", len(focusedConn.frames))
+	}
+	if len(otherConn.frames) != 1 {
+		t.Fatalf("expected unfocused client to still receive session summary, got %d", len(otherConn.frames))
+	}
+	if otherConn.frames[0].Operation != "session" {
+		t.Fatalf("expected unfocused client frame to be session summary, got op=%q", otherConn.frames[0].Operation)
+	}
+}
+
+func TestShouldMarkSessionUnreadForEvent(t *testing.T) {
+	tests := []struct {
+		name  string
+		event Event
+		want  bool
+	}{
+		{name: "approval request", event: Event{Type: "approval_req"}, want: true},
+		{name: "user input request", event: Event{Type: "user_input_req"}, want: true},
+		{name: "run fail", event: Event{Type: "run_fail"}, want: true},
+		{name: "run done", event: Event{Type: "run_done"}, want: true},
+		{
+			name:  "unexpected abort with reason",
+			event: Event{Type: "run_abort", Payload: map[string]any{"reason": "process_restart"}},
+			want:  true,
+		},
+		{name: "manual abort without payload", event: Event{Type: "run_abort"}, want: false},
+		{name: "text delta", event: Event{Type: "txt_d"}, want: false},
+		{name: "tool start", event: Event{Type: "tool_st"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldMarkSessionUnreadForEvent(tt.event); got != tt.want {
+				t.Fatalf("shouldMarkSessionUnreadForEvent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestManagerClientHeartbeatClosesIdleConnections(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -1982,6 +2072,182 @@ func TestSendMessageClearsWaitingApprovalStatus(t *testing.T) {
 	}
 }
 
+func TestSendMessageWithModeQueuesUntilActiveRunStops(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "approval"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval)
+	if request == nil {
+		t.Fatal("expected pending approval request for the first run")
+	}
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"queued",
+		nil,
+		PendingInputModeQueue,
+		"",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode(queue) returned error: %v", err)
+	}
+
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].Text != "queued" || pending[0].Mode != PendingInputModeQueue {
+		t.Fatalf("expected one queued pending input, got %#v", pending)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), created.ID, DefaultHistoryWindow)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.PendingInputs) != 1 || snapshot.PendingInputs[0].Text != "queued" {
+		t.Fatalf("expected snapshot pending inputs to include queued item, got %#v", snapshot.PendingInputs)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); len(got) != 1 || got[0] != "first" {
+		t.Fatalf("expected only the first user message before abort, got %#v", got)
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error: %v", err)
+	}
+	waitForUserMessageCount(t, manager, created.ID, 2)
+
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error after flush: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|queued" {
+		t.Fatalf("expected queued message to flush after abort, got %#v", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected pending inputs to be cleared after flush, got %#v", pending)
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestSendMessageWithModeRedirectWaitsForCurrentStepBeforeInterrupting(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "step_redirect"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	waitForTrackedActiveCallID(t, manager, created.ID, "cmd_step_2")
+
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"queued",
+		nil,
+		PendingInputModeQueue,
+		"",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode(queue) returned error: %v", err)
+	}
+	if err := manager.sendMessageWithMode(
+		context.Background(),
+		created.ID,
+		"redirected",
+		nil,
+		PendingInputModeRedirect,
+		"",
+	); err != nil {
+		t.Fatalf("sendMessageWithMode(redirect) returned error: %v", err)
+	}
+
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 2 || pending[0].Text != "redirected" {
+		t.Fatalf("expected redirect item to be first in pending queue, got %#v", pending)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error while checking immediate redirect behavior: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first" {
+		t.Fatalf("expected redirect not to interrupt the current step immediately, got %#v", got)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 2)
+
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected" {
+		t.Fatalf("expected redirect message to run after the current step boundary and before queued message, got %#v", got)
+	}
+	pending := manager.pendingInputsSnapshot(created.ID)
+	if len(pending) != 1 || pending[0].Text != "queued" || pending[0].Mode != PendingInputModeQueue {
+		t.Fatalf("expected queued message to remain pending after redirect flush, got %#v", pending)
+	}
+
+	waitForUserMessageCount(t, manager, created.ID, 3)
+
+	rawEvents, err = manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error after second flush: %v", err)
+	}
+	if got := userMessageTexts(rawEvents); strings.Join(got, "|") != "first|redirected|queued" {
+		t.Fatalf("expected queued message to flush after redirect run stopped, got %#v", got)
+	}
+	if pending := manager.pendingInputsSnapshot(created.ID); len(pending) != 0 {
+		t.Fatalf("expected pending inputs to be empty after second flush, got %#v", pending)
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error while cleaning up: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestSendMessageResumesRecoveredCodexSession(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -3124,6 +3390,23 @@ function emitFileChangeStart() {
   });
 }
 
+function emitCommandExecutionCompleted(id, command) {
+  send({
+    method: 'item/completed',
+    params: {
+      item: {
+        type: 'commandExecution',
+        id,
+        command,
+        status: 'completed',
+        output: command + ' done',
+      },
+      threadId,
+      turnId,
+    },
+  });
+}
+
 function startTimedOutTurn(kind) {
   if (kind === 'command') {
     emitCommandExecutionStart();
@@ -3434,6 +3717,58 @@ rl.on('line', line => {
       });
       return;
     }
+
+    if (mode === 'step_redirect') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        send({
+          method: 'item/started',
+          params: {
+            item: {
+              type: 'commandExecution',
+              id: 'cmd_step_1',
+              command: 'step-1',
+            },
+            threadId,
+            turnId,
+          },
+        });
+        emitCommandExecutionCompleted('cmd_step_1', 'step-1');
+        send({
+          method: 'item/started',
+          params: {
+            item: {
+              type: 'commandExecution',
+              id: 'cmd_step_2',
+              command: 'step-2',
+            },
+            threadId,
+            turnId,
+          },
+        });
+        setTimeout(() => {
+          emitCommandExecutionCompleted('cmd_step_2', 'step-2');
+          setTimeout(() => {
+            send({
+              method: 'item/started',
+              params: {
+                item: {
+                  type: 'commandExecution',
+                  id: 'cmd_step_3',
+                  command: 'step-3',
+                },
+                threadId,
+                turnId,
+              },
+            });
+          }, 80);
+        }, 80);
+        return;
+      }
+      finishTurn('continued');
+      return;
+    }
   }
 
   if (awaiting && message.id === awaiting) {
@@ -3557,6 +3892,33 @@ func waitForTrackedActiveCall(
 	return trackedActiveCall{}
 }
 
+func waitForTrackedActiveCallID(
+	t *testing.T,
+	manager *Manager,
+	sessionID string,
+	toolID string,
+) trackedActiveCall {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		manager.mu.RLock()
+		run := manager.runs[sessionID]
+		manager.mu.RUnlock()
+		if run != nil {
+			run.mu.Lock()
+			call, ok := run.activeCalls[toolID]
+			run.mu.Unlock()
+			if ok {
+				return call
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for tracked active call id %q", toolID)
+	return trackedActiveCall{}
+}
+
 func waitForTrackedActiveCallCount(t *testing.T, manager *Manager, sessionID string, count int) {
 	t.Helper()
 
@@ -3624,6 +3986,25 @@ func userMessageTexts(events []Event) []string {
 		}
 	}
 	return items
+}
+
+func waitForUserMessageCount(t *testing.T, manager *Manager, sessionID string, count int) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		events, err := manager.store.readEvents(sessionID)
+		if err == nil && len(userMessageTexts(events)) >= count {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	events, err := manager.store.readEvents(sessionID)
+	if err != nil {
+		t.Fatalf("readEvents returned error while waiting for user messages: %v", err)
+	}
+	t.Fatalf("expected at least %d user messages, got %#v", count, userMessageTexts(events))
 }
 
 func historyHasEvent(events []Event, eventType string) bool {

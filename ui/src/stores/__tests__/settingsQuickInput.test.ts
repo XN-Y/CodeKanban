@@ -1,6 +1,24 @@
 import { createPinia, setActivePinia, storeToRefs } from 'pinia';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { getMethodMock, getSendMock, postMethodMock, postSendMock } = vi.hoisted(() => {
+  const getSendMock = vi.fn();
+  const postSendMock = vi.fn();
+  return {
+    getMethodMock: vi.fn(() => ({ send: getSendMock })),
+    getSendMock,
+    postMethodMock: vi.fn(() => ({ send: postSendMock })),
+    postSendMock,
+  };
+});
+
+vi.mock('@/api/http', () => ({
+  http: {
+    Get: getMethodMock,
+    Post: postMethodMock,
+  },
+}));
+
 import { useSettingsStore } from '@/stores/settings';
 
 function createStorageMock() {
@@ -25,6 +43,16 @@ describe('settings web session quick input', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
     vi.stubGlobal('localStorage', createStorageMock());
+    getMethodMock.mockClear();
+    getSendMock.mockReset();
+    postMethodMock.mockClear();
+    postSendMock.mockReset();
+    getSendMock.mockResolvedValue({
+      item: {
+        pinned: ['continue'],
+        recent: [],
+      },
+    });
   });
 
   afterEach(() => {
@@ -102,5 +130,55 @@ describe('settings web session quick input', () => {
 
     store.updateWebSessionQuickInputDirectSend(false);
     expect(webSessionQuickInputDirectSend.value).toBe(false);
+  });
+
+  it('saves pinned quick input with sanitized items while preserving recent history', async () => {
+    const store = useSettingsStore();
+    const { webSessionQuickInput } = storeToRefs(store);
+
+    store.recordWebSessionRecentInput('item 1');
+    store.recordWebSessionRecentInput('item 2');
+    postSendMock.mockResolvedValue({
+      item: {
+        pinned: ['Build plan', 'Ship it'],
+        recent: ['item 2', 'item 1'],
+      },
+    });
+
+    const saved = await store.saveWebSessionQuickInputPinned([
+      '  Build plan  ',
+      '',
+      'Build plan',
+      'Ship it',
+    ]);
+
+    expect(postMethodMock).toHaveBeenCalledWith('/system/web-session-quick-input/update', {
+      pinned: ['Build plan', 'Ship it'],
+      recent: ['item 2', 'item 1'],
+    });
+    expect(saved).toEqual({
+      pinned: ['Build plan', 'Ship it'],
+      recent: ['item 2', 'item 1'],
+    });
+    expect(webSessionQuickInput.value).toEqual({
+      pinned: ['Build plan', 'Ship it'],
+      recent: ['item 2', 'item 1'],
+    });
+  });
+
+  it('keeps saved pinned quick input unchanged when manual save fails', async () => {
+    const store = useSettingsStore();
+    const { webSessionQuickInput } = storeToRefs(store);
+
+    postSendMock.mockRejectedValue(new Error('save failed'));
+
+    await expect(store.saveWebSessionQuickInputPinned(['Draft next step'])).rejects.toThrow(
+      'save failed'
+    );
+
+    expect(webSessionQuickInput.value).toEqual({
+      pinned: ['continue'],
+      recent: [],
+    });
   });
 });

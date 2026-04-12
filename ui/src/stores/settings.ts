@@ -43,9 +43,6 @@ export interface ThemeSettings {
   // 审批提醒标签颜色
   terminalTabApprovalBg?: string;
   terminalTabApprovalBorder?: string;
-  // 浮动按钮颜色
-  terminalFloatingButtonBg?: string;
-  terminalFloatingButtonFg?: string;
   // 空终端引导文字颜色
   terminalEmptyGuideFg?: string;
   // AI 通知按钮颜色（边框和图标）
@@ -85,13 +82,6 @@ export type FontWeight =
   | '700'
   | '800'
   | '900';
-
-/**
- * 终端显示模式
- * - floating: 浮动面板模式
- * - docked: 固定在页面中央区域，与看板形成Tab切换
- */
-export type TerminalDisplayMode = 'floating' | 'docked';
 
 export const FONT_WEIGHT_OPTIONS = [
   { value: 'normal', label: 'Normal (400)' },
@@ -227,7 +217,6 @@ interface GeneralSettings {
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
-  terminalDisplayMode: TerminalDisplayMode;
   defaultTerminalRenderMode: TerminalRenderMode;
   defaultTerminalSnapshotIntervalMs: number | null;
   defaultTerminalSnapshotZlibCompression: boolean;
@@ -246,7 +235,7 @@ type LoadSettingsResult = {
 };
 
 const STORAGE_KEY = 'general_settings';
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 3;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
@@ -328,7 +317,6 @@ const defaultSettings: GeneralSettings = {
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
-  terminalDisplayMode: 'docked',
   defaultTerminalRenderMode: DEFAULT_TERMINAL_RENDER_MODE,
   defaultTerminalSnapshotIntervalMs: null,
   defaultTerminalSnapshotZlibCompression: true,
@@ -372,7 +360,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
-  const terminalDisplayMode = computed(() => settings.value.terminalDisplayMode);
   const defaultTerminalRenderMode = computed(() => settings.value.defaultTerminalRenderMode);
   const defaultTerminalSnapshotIntervalMs = computed(
     () => settings.value.defaultTerminalSnapshotIntervalMs
@@ -437,10 +424,10 @@ export const useSettingsStore = defineStore('settings', () => {
   );
 
   function updateTheme(partial: Partial<ThemeSettings>) {
-    settings.value.theme = {
+    settings.value.theme = sanitizeThemeSettings({
       ...settings.value.theme,
       ...partial,
-    };
+    });
   }
 
   function resetTheme() {
@@ -449,7 +436,7 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.currentPresetId = preset.id;
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
     settings.value.customTheme = null;
-    settings.value.theme = { ...preset.colors };
+    settings.value.theme = sanitizeThemeSettings(preset.colors);
     // 重置终端主题为"跟随主题"
     settings.value.terminalThemeId = TERMINAL_THEME_FOLLOW;
   }
@@ -529,6 +516,33 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionQuickInputDirectSend = value === true;
   }
 
+  function queueWebSessionQuickInputSync(payload: WebSessionQuickInputSettings) {
+    const pendingLoadTask = webSessionQuickInputLoadTask;
+
+    const task = webSessionQuickInputSyncTask.then(async () => {
+      if (pendingLoadTask) {
+        await pendingLoadTask;
+      }
+      const response = await http
+        .Post<
+          ItemResponse<WebSessionQuickInputSettings>
+        >('/system/web-session-quick-input/update', payload)
+        .send();
+      const next = sanitizeWebSessionQuickInput(response?.item ?? payload);
+      settings.value.webSessionQuickInput = next;
+      webSessionQuickInputLoaded.value = true;
+      return next;
+    });
+
+    webSessionQuickInputSyncTask = task
+      .then(() => undefined)
+      .catch(error => {
+        console.warn('Failed to sync web session quick input settings.', error);
+      });
+
+    return task;
+  }
+
   async function loadWebSessionQuickInput(force = false) {
     if (!force && webSessionQuickInputLoaded.value) {
       return;
@@ -559,26 +573,21 @@ export const useSettingsStore = defineStore('settings', () => {
   async function syncWebSessionQuickInputToServer() {
     const payload = sanitizeWebSessionQuickInput(settings.value.webSessionQuickInput);
     settings.value.webSessionQuickInput = payload;
-    const pendingLoadTask = webSessionQuickInputLoadTask;
+    webSessionQuickInputLoaded.value = true;
+    return queueWebSessionQuickInputSync(payload);
+  }
 
-    const task = webSessionQuickInputSyncTask.then(async () => {
-      if (pendingLoadTask) {
-        await pendingLoadTask;
-      }
-      const response = await http
-        .Post<
-          ItemResponse<WebSessionQuickInputSettings>
-        >('/system/web-session-quick-input/update', payload)
-        .send();
-      settings.value.webSessionQuickInput = sanitizeWebSessionQuickInput(response?.item ?? payload);
-      webSessionQuickInputLoaded.value = true;
+  async function saveWebSessionQuickInputPinned(items: string[]) {
+    if (webSessionQuickInputLoadTask) {
+      await webSessionQuickInputLoadTask;
+    } else if (!webSessionQuickInputLoaded.value) {
+      await loadWebSessionQuickInput();
+    }
+    const payload = sanitizeWebSessionQuickInput({
+      ...settings.value.webSessionQuickInput,
+      pinned: items,
     });
-
-    webSessionQuickInputSyncTask = task.catch(error => {
-      console.warn('Failed to sync web session quick input settings.', error);
-    });
-
-    return task;
+    return queueWebSessionQuickInputSync(payload);
   }
 
   function updateConfirmBeforeTerminalClose(value: boolean) {
@@ -610,10 +619,6 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function updateTerminalWebGLRenderer(mode: 'auto' | 'force' | 'disable') {
     settings.value.terminalWebGLRenderer = mode;
-  }
-
-  function updateTerminalDisplayMode(mode: TerminalDisplayMode) {
-    settings.value.terminalDisplayMode = mode;
   }
 
   function updateDefaultTerminalRenderMode(mode: TerminalRenderMode) {
@@ -656,7 +661,7 @@ export const useSettingsStore = defineStore('settings', () => {
       const preset = getPresetById(autoPresetId);
       if (preset) {
         settings.value.currentPresetId = autoPresetId;
-        settings.value.theme = { ...preset.colors };
+        settings.value.theme = sanitizeThemeSettings(preset.colors);
       }
     }
   }
@@ -665,7 +670,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const preset = getPresetById(presetId);
     if (preset) {
       settings.value.currentPresetId = presetId;
-      settings.value.theme = { ...preset.colors };
+      settings.value.theme = sanitizeThemeSettings(preset.colors);
       settings.value.customTheme = null;
       settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
       // 终端主题保持用户选择不变
@@ -678,7 +683,7 @@ export const useSettingsStore = defineStore('settings', () => {
     const preset = getPresetById(presetId);
     if (preset) {
       settings.value.currentPresetId = presetId;
-      settings.value.theme = { ...preset.colors };
+      settings.value.theme = sanitizeThemeSettings(preset.colors);
       settings.value.customTheme = null;
       // 终端主题保持用户选择不变
       // 如果是"跟随主题"，effectiveTerminalThemeId 会自动计算正确的值
@@ -692,10 +697,10 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function applyCustomTheme(themeColors: Partial<ThemeSettings>) {
-    settings.value.customTheme = {
+    settings.value.customTheme = sanitizeThemeSettings({
       ...activeTheme.value,
       ...themeColors,
-    };
+    });
     settings.value.theme = settings.value.customTheme;
     settings.value.followSystemThemeSetting = FOLLOW_SYSTEM_THEME_DISABLED;
   }
@@ -724,7 +729,6 @@ export const useSettingsStore = defineStore('settings', () => {
     terminalThemeId,
     terminalFont,
     terminalWebGLRenderer,
-    terminalDisplayMode,
     defaultTerminalRenderMode,
     defaultTerminalSnapshotIntervalMs,
     defaultTerminalSnapshotZlibCompression,
@@ -742,6 +746,7 @@ export const useSettingsStore = defineStore('settings', () => {
     resetNotepadShortcut,
     loadWebSessionQuickInput,
     syncWebSessionQuickInputToServer,
+    saveWebSessionQuickInputPinned,
     updateWebSessionQuickInputPinned,
     updateWebSessionQuickInputDirectSend,
     recordWebSessionRecentInput,
@@ -754,7 +759,6 @@ export const useSettingsStore = defineStore('settings', () => {
     updateTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
-    updateTerminalDisplayMode,
     updateDefaultTerminalRenderMode,
     updateDefaultTerminalSnapshotIntervalMs,
     updateDefaultTerminalSnapshotZlibCompression,
@@ -790,9 +794,7 @@ function loadSettings(): LoadSettingsResult {
       const parsedVersion = typeof parsed.version === 'number' ? parsed.version : undefined;
 
       if (parsedVersion != null && parsedVersion > STORAGE_VERSION) {
-        console.warn(
-          `Unsupported settings version "${parsedVersion}", falling back to defaults.`
-        );
+        console.warn(`Unsupported settings version "${parsedVersion}", falling back to defaults.`);
         return {
           settings: cloneDefaultSettings(),
           shouldPersist: false,
@@ -804,7 +806,8 @@ function loadSettings(): LoadSettingsResult {
       };
 
       // 兼容旧版本：如果没有 currentPresetId，根据主题判断
-      let currentPresetId = parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
+      let currentPresetId =
+        parsed.currentPresetId ?? legacyParsed.currentPresetId ?? DEFAULT_PRESET_ID;
       if (!parsed.currentPresetId && !legacyParsed.currentPresetId && parsed.theme) {
         // 尝试匹配现有主题到预设
         const matchedPreset = THEME_PRESETS.find(
@@ -814,19 +817,17 @@ function loadSettings(): LoadSettingsResult {
           currentPresetId = matchedPreset.id;
         }
       }
+      const currentPresetTheme = getPresetById(currentPresetId)?.colors ?? defaultTheme;
 
       return {
         settings: {
-          theme: {
-            ...defaultTheme,
-            ...parsed.theme,
-          },
+          theme: sanitizeThemeSettings(parsed.theme ?? currentPresetTheme),
           currentPresetId,
           followSystemThemeSetting:
-            parsedVersion === STORAGE_VERSION
+            parsedVersion != null && parsedVersion >= 2
               ? sanitizeFollowSystemThemeSetting(parsed.followSystemTheme)
               : FOLLOW_SYSTEM_THEME_DEFAULT,
-          customTheme: parsed.customTheme ?? null,
+          customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
           recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
           maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
           panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
@@ -851,14 +852,15 @@ function loadSettings(): LoadSettingsResult {
           terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
           terminalFont: sanitizeTerminalFont(parsed.terminalFont),
           terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
-          terminalDisplayMode: sanitizeTerminalDisplayMode(parsed.terminalDisplayMode),
           defaultTerminalRenderMode: sanitizeTerminalRenderMode(parsed.defaultTerminalRenderMode),
           defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
             parsed.defaultTerminalSnapshotIntervalMs
           ),
           defaultTerminalSnapshotZlibCompression:
             parsed.defaultTerminalSnapshotZlibCompression !== false,
-          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(parsed.terminalConnectionPolicy),
+          terminalConnectionPolicy: sanitizeTerminalConnectionPolicy(
+            parsed.terminalConnectionPolicy
+          ),
           inactiveTerminalSnapshotIntervalMs: sanitizeInactiveSnapshotIntervalMs(
             parsed.inactiveTerminalSnapshotIntervalMs
           ),
@@ -915,7 +917,6 @@ function cloneDefaultSettings(): GeneralSettings {
     webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
-    terminalDisplayMode: defaultSettings.terminalDisplayMode,
     defaultTerminalRenderMode: defaultSettings.defaultTerminalRenderMode,
     defaultTerminalSnapshotIntervalMs: sanitizeDefaultTerminalSnapshotIntervalMs(
       defaultSettings.defaultTerminalSnapshotIntervalMs
@@ -977,6 +978,41 @@ function sanitizeShowWebSessionReasoning(value: unknown, fallback = false) {
     return value;
   }
   return fallback;
+}
+
+function sanitizeThemeSettings(value: unknown): ThemeSettings {
+  const source = value && typeof value === 'object' ? (value as Partial<ThemeSettings>) : {};
+  return {
+    primaryColor: source.primaryColor ?? defaultTheme.primaryColor,
+    surfaceColor: source.surfaceColor ?? defaultTheme.surfaceColor,
+    bodyColor: source.bodyColor ?? defaultTheme.bodyColor,
+    textColor: source.textColor ?? defaultTheme.textColor,
+    terminalBg: source.terminalBg ?? defaultTheme.terminalBg,
+    terminalFg: source.terminalFg ?? defaultTheme.terminalFg,
+    terminalTabBg: source.terminalTabBg ?? defaultTheme.terminalTabBg,
+    terminalTabActiveBg: source.terminalTabActiveBg ?? defaultTheme.terminalTabActiveBg,
+    terminalHeaderBorder: source.terminalHeaderBorder ?? defaultTheme.terminalHeaderBorder,
+    terminalTabCompletionBg: source.terminalTabCompletionBg ?? defaultTheme.terminalTabCompletionBg,
+    terminalTabCompletionBorder:
+      source.terminalTabCompletionBorder ?? defaultTheme.terminalTabCompletionBorder,
+    terminalTabApprovalBg: source.terminalTabApprovalBg ?? defaultTheme.terminalTabApprovalBg,
+    terminalTabApprovalBorder:
+      source.terminalTabApprovalBorder ?? defaultTheme.terminalTabApprovalBorder,
+    terminalEmptyGuideFg: source.terminalEmptyGuideFg ?? defaultTheme.terminalEmptyGuideFg,
+    notificationButtonBorder:
+      source.notificationButtonBorder ?? defaultTheme.notificationButtonBorder,
+    notificationButtonFg: source.notificationButtonFg ?? defaultTheme.notificationButtonFg,
+    kanbanBoardBg: source.kanbanBoardBg ?? defaultTheme.kanbanBoardBg,
+    kanbanCardBg: source.kanbanCardBg ?? defaultTheme.kanbanCardBg,
+    kanbanBorderEnabled: source.kanbanBorderEnabled ?? defaultTheme.kanbanBorderEnabled,
+  };
+}
+
+function sanitizeOptionalThemeSettings(value: unknown) {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  return sanitizeThemeSettings(value);
 }
 
 const VALID_WEB_SESSION_AUTO_CONTINUE_SCOPES: WebSessionAutoContinueScope[] = [
@@ -1283,13 +1319,4 @@ function sanitizeWebGLRenderer(value: string | undefined): 'auto' | 'force' | 'd
     return value as 'auto' | 'force' | 'disable';
   }
   return defaultSettings.terminalWebGLRenderer;
-}
-
-const VALID_DISPLAY_MODES: TerminalDisplayMode[] = ['floating', 'docked'];
-
-function sanitizeTerminalDisplayMode(value: string | undefined): TerminalDisplayMode {
-  if (value && VALID_DISPLAY_MODES.includes(value as TerminalDisplayMode)) {
-    return value as TerminalDisplayMode;
-  }
-  return defaultSettings.terminalDisplayMode;
 }

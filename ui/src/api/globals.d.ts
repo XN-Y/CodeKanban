@@ -191,7 +191,7 @@ export interface OpenEditorInputBody {
    */
   $schema?: string;
   /**
-   * 自定义命令，使用 {{path}} 作为路径占位符
+   * 自定义命令，使用 ${path} 作为路径占位符
    */
   customCommand?: string;
   /**
@@ -4270,7 +4270,7 @@ declare global {
        * type RequestBody = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
-       *   // 自定义命令，使用 {{path}} 作为路径占位符
+       *   // 自定义命令，使用 ${path} 作为路径占位符
        *   customCommand?: string
        *   // 目标编辑器(vscode/cursor/trae/zed/custom)
        *   editor: string

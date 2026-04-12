@@ -63,6 +63,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     hasUnread: false,
     archivedAt: null,
     activityAt: '2026-04-09T10:00:00.000Z',
+    statusUpdatedAt: '2026-04-09T10:00:00.000Z',
     lastMessageAt: '2026-04-09T10:00:00.000Z',
     assistantStateUpdatedAt: '2026-04-09T10:00:00.000Z',
     sourceKind: 'codex_app_server',
@@ -122,6 +123,7 @@ function toWireSession(session: WebSessionSummary) {
     unr: session.hasUnread,
     aa: session.archivedAt ? toMillis(session.archivedAt) : null,
     act: toMillis(session.activityAt),
+    sta: session.statusUpdatedAt ? toMillis(session.statusUpdatedAt) : null,
     ca: toMillis(session.createdAt),
     lu: toMillis(session.updatedAt),
     lma: session.lastMessageAt ? toMillis(session.lastMessageAt) : null,
@@ -380,6 +382,186 @@ describe('webSession loading behavior', () => {
     });
   });
 
+  it('restores pending inputs from snapshot responses', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'queue',
+          text: 'Queued follow-up',
+          attachmentIds: ['attachment-1'],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getPendingInputs(session.id)).toEqual([
+      {
+        id: 'pending-1',
+        mode: 'queue',
+        text: 'Queued follow-up',
+        attachmentIds: ['attachment-1'],
+        createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
+      },
+    ]);
+  });
+
+  it('removes pending inputs via the backend command channel and pending events', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-remove',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [
+        {
+          id: 'pending-1',
+          mode: 'queue',
+          text: 'Queued follow-up',
+          attachmentIds: [],
+          createdAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+    await store.openEventStream();
+
+    const removePromise = store.removePendingInput(session.id, 'pending-1');
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const socket = findSocket('/api/v1/web-sessions/ws');
+      if (socket?.sent.length) {
+        break;
+      }
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    const commandSocket = findSocket('/api/v1/web-sessions/ws');
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(commandSocket).not.toBeNull();
+    expect(eventSocket).not.toBeNull();
+
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'pending_del',
+      p: {
+        id: 'pending-1',
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending_del',
+      ok: 1,
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [],
+    });
+
+    await removePromise;
+    expect(store.getPendingInputs(session.id)).toEqual([]);
+  });
+
+  it('shows optimistic pending previews before the backend pending event arrives', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-pending-optimistic',
+      status: 'running',
+      assistantState: 'working',
+    });
+
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId);
+
+    const sendPromise = store.sendMessage(session.id, 'Optimistic queued follow-up', [], 'queue');
+
+    const optimistic = store.getPendingInputs(session.id);
+    expect(optimistic).toHaveLength(1);
+    expect(optimistic[0]).toMatchObject({
+      mode: 'queue',
+      text: 'Optimistic queued follow-up',
+      attachmentIds: [],
+    });
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket).not.toBeNull();
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'send',
+      p: {
+        txt: 'Optimistic queued follow-up',
+        atts: [],
+        mode: 'queue',
+        pid: optimistic[0]?.id,
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+    });
+
+    await sendPromise;
+    expect(store.getPendingInputs(session.id)[0]?.id).toBe(optimistic[0]?.id);
+  });
+
   it('keeps completion notifications driven by the dedicated event stream websocket', async () => {
     const store = useWebSessionStore();
     const runningSession = makeSession({
@@ -435,6 +617,90 @@ describe('webSession loading behavior', () => {
       ts: Date.now(),
       op: 'session',
       s: toWireSession(doneSession),
+    });
+
+    expect(handleCompleted).toHaveBeenCalledTimes(1);
+    store.emitter.off('ai:completed', handleCompleted);
+  });
+
+  it('suppresses completion notifications while pending inputs remain queued', async () => {
+    const store = useWebSessionStore();
+    const runningSession = makeSession({
+      id: 'session-running-pending',
+      status: 'running',
+      assistantState: null,
+    });
+    const doneSession = makeSession({
+      ...runningSession,
+      status: 'done',
+      assistantState: null,
+      updatedAt: '2026-04-09T10:05:00.000Z',
+      lastMessageAt: '2026-04-09T10:05:00.000Z',
+    });
+    const handleCompleted = vi.fn();
+
+    listMock.mockResolvedValue([runningSession]);
+    await store.loadSessions(runningSession.projectId);
+    store.emitter.on('ai:completed', handleCompleted);
+
+    await store.openEventStream();
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [
+        {
+          id: 'pending-1',
+          m: 'queue',
+          txt: 'queued follow-up',
+          atts: [],
+          ca: Date.parse('2026-04-09T10:04:59.000Z'),
+        },
+      ],
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(doneSession),
+    });
+
+    expect(handleCompleted).not.toHaveBeenCalled();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'pending',
+      pi: [],
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession(runningSession),
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'session',
+      s: toWireSession({
+        ...doneSession,
+        updatedAt: '2026-04-09T10:06:00.000Z',
+        lastMessageAt: '2026-04-09T10:06:00.000Z',
+      }),
     });
 
     expect(handleCompleted).toHaveBeenCalledTimes(1);
@@ -521,6 +787,29 @@ describe('webSession loading behavior', () => {
         op: 'pong',
       }),
     ]);
+  });
+
+  it('sends the focused session id over the event websocket', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-focus',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    store.setEventSessionFocus(session.id);
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+    expect(eventSocket?.sent.at(-1)).toMatchObject({
+      k: 'hb',
+      op: 'focus',
+      sid: session.id,
+    });
   });
 
   it('forces a reconnect when the event stream stops receiving heartbeats', async () => {

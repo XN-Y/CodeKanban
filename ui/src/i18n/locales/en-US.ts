@@ -56,7 +56,7 @@ export default {
     visitNow: 'Visit Now',
     kanban: 'Kanban',
     terminal: 'Terminal',
-    webSession: 'Web Chat',
+    webSession: 'AI Sessions',
     files: 'Files',
     projects: 'Projects',
     settingsShort: 'Settings',
@@ -155,7 +155,7 @@ export default {
     hidePathHint:
       'When enabled, absolute paths will no longer be displayed in the project list and sidebar.',
     terminalCount: 'Terminal Count',
-    webSessionCount: 'Web Session Count',
+    webSessionCount: 'AI Session Count',
     noProjects: 'No projects yet, click the top right corner to create one',
     projectDirectory: 'Project Directory',
     pathPlaceholder: 'Select or enter local project directory, e.g., C:\\Projects\\demo',
@@ -522,8 +522,6 @@ export default {
     resetNotificationWidth: 'Reset Notification Width',
     showNotificationSidebar: 'Show Right Sidebar',
     hideNotificationSidebar: 'Hide Right Sidebar',
-    switchToDocked: 'Dock to Page',
-    switchToFloating: 'Switch to Floating',
     duplicateSuffix: ' Copy',
     emptyGuideTitle: 'No Terminal',
     emptyGuideDescription: 'Click the button below to create a new terminal',
@@ -709,7 +707,7 @@ export default {
     emptyName: 'Tab name cannot be empty',
     renameSuccess: 'Tab renamed',
     renameFailed: 'Failed to rename',
-    confirmCloseTitle: 'Archive Web Session',
+    confirmCloseTitle: 'Archive AI Session',
     confirmCloseContent: 'Archive "{title}"?',
     confirmCloseButton: 'Archive',
     archiveAction: 'Archive',
@@ -832,7 +830,7 @@ export default {
       'Note: no context compaction has been observed yet, so this percentage is estimated from cumulative usage total vs. the compact limit, not the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
-      'This estimate is currently available only for Codex web sessions. Claude sessions do not expose a comparable context-window value here yet.',
+      'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',
     composerHintIdle:
       'Press Enter to send. Use Shift + Enter for a new line. Paste or drag images.',
     composerHintUploading:
@@ -942,8 +940,6 @@ export default {
     terminalTabCompletionBorder: 'Completion Alert Border',
     terminalTabApprovalBg: 'Approval Alert Background',
     terminalTabApprovalBorder: 'Approval Alert Border',
-    terminalFloatingButtonBg: 'Floating Button Background',
-    terminalFloatingButtonFg: 'Floating Button Text',
     fontSize: 'Font Size',
     fontFamily: 'Font Family',
     resetTheme: 'Reset Default Theme',
@@ -1080,15 +1076,16 @@ export default {
     webglDisableTip:
       'Force disable WebGL renderer, use Canvas instead. Better compatibility but slightly lower performance',
     terminalShortcut: 'Terminal Shortcut',
-    terminalShortcutTip: 'Used to expand/collapse the bottom terminal panel, default `',
+    terminalShortcutTip:
+      'Used to switch between the current workspace tab and the previous one, default `.',
     notepadShortcut: 'Notepad Shortcut',
     notepadShortcutTip: 'Used to expand/collapse the right notepad panel, default 1',
     defaultEditor: 'Default Editor',
     defaultEditorTip: 'Used for "Open in Editor" action on Worktree cards',
     customCommand: 'Custom Command',
     customCommandTip:
-      'Use {{path}} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
-    customCommandPlaceholder: 'For example: code --reuse-window {{path}}',
+      'Use {path} to represent the Worktree path; if no placeholder is included, the path will be appended at the end of the command.',
+    customCommandPlaceholder: 'For example: code --reuse-window {path}',
     recordNewKey: 'Record New Key',
     recording: 'Recording...',
     restoreDefault: 'Restore Default',
@@ -1189,7 +1186,6 @@ export default {
     customThemeHint: 'Customizing colors will override preset theme settings',
     terminalColors: 'Terminal Colors',
     statusColors: 'Terminal Tab Status Alerts',
-    floatingButtonColors: 'Terminal Floating Buttons',
   },
   message: {
     saveSuccess: 'Saved successfully',
