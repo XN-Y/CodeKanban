@@ -86,6 +86,8 @@ type client struct {
 	logger     *zap.Logger
 	kind       clientKind
 	writeMu    sync.Mutex
+	focusMu    sync.RWMutex
+	focusedSID string
 	done       chan struct{}
 	once       sync.Once
 	lastSeenAt atomic.Int64
@@ -197,6 +199,25 @@ func effectiveAssistantStateUpdatedAt(record tables.WebSessionTable, state Assis
 	return nil
 }
 
+func effectiveStatusUpdatedAt(record tables.WebSessionTable, assistantState AssistantState) *time.Time {
+	if record.StatusUpdatedAt != nil {
+		return record.StatusUpdatedAt
+	}
+	if assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState); assistantStateUpdatedAt != nil {
+		value := *assistantStateUpdatedAt
+		return &value
+	}
+	if !record.UpdatedAt.IsZero() {
+		value := record.UpdatedAt
+		return &value
+	}
+	if !record.CreatedAt.IsZero() {
+		value := record.CreatedAt
+		return &value
+	}
+	return nil
+}
+
 func effectiveStatus(record tables.WebSessionTable, assistantState AssistantState) Status {
 	switch strings.ToLower(strings.TrimSpace(record.Status)) {
 	case string(StatusRunning):
@@ -221,6 +242,7 @@ func applyAssistantStateUpdates(updates map[string]any, state AssistantState, up
 	if updates == nil {
 		updates = map[string]any{}
 	}
+	updates["status_updated_at"] = updatedAt
 	normalized := normalizeAssistantState(state)
 	if normalized == AssistantStateNone {
 		updates["assistant_state"] = nil
@@ -399,6 +421,24 @@ func (c *client) MarkSeen() {
 		return
 	}
 	c.lastSeenAt.Store(time.Now().UnixMilli())
+}
+
+func (c *client) SetFocusedSessionID(sessionID string) {
+	if c == nil {
+		return
+	}
+	c.focusMu.Lock()
+	c.focusedSID = strings.TrimSpace(sessionID)
+	c.focusMu.Unlock()
+}
+
+func (c *client) FocusedSessionID() string {
+	if c == nil {
+		return ""
+	}
+	c.focusMu.RLock()
+	defer c.focusMu.RUnlock()
+	return c.focusedSID
 }
 
 func (c *client) stop() {
@@ -599,6 +639,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		return SessionSummary{}, err
 	}
 
+	now := time.Now()
 	record := tables.WebSessionTable{
 		ProjectID:               project.Id,
 		WorktreeID:              nilIfEmpty(worktreeID),
@@ -619,7 +660,8 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		AssistantState:          "",
 		HasUnread:               false,
 		ArchivedAt:              nil,
-		ActivityAt:              time.Now(),
+		ActivityAt:              now,
+		StatusUpdatedAt:         &now,
 		AssistantStateUpdatedAt: nil,
 		SourceKind:              string(defaultSessionBackend(normalizeAgent(params.Agent))),
 		SyncState:               string(SyncStateMissing),
@@ -1248,6 +1290,9 @@ func (m *Manager) HandleHeartbeatPayload(client *client, payload []byte) (bool, 
 		return true, client.send(newHeartbeatFrame("pong"))
 	case "pong":
 		return true, nil
+	case "focus":
+		client.SetFocusedSessionID(frame.SessionID)
+		return true, nil
 	default:
 		return true, nil
 	}
@@ -1486,7 +1531,8 @@ func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, summary.ID)
+	m.broadcastSessionSummary(ctx, summary.ID)
+	return nil
 }
 
 func (m *Manager) handleSetModelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1502,7 +1548,8 @@ func (m *Manager) handleSetModelCommand(ctx context.Context, client *client, fra
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleSetReasoningEffortCommand(
@@ -1522,7 +1569,8 @@ func (m *Manager) handleSetReasoningEffortCommand(
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1538,7 +1586,8 @@ func (m *Manager) handleSetWorkflowModeCommand(ctx context.Context, client *clie
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1554,7 +1603,8 @@ func (m *Manager) handleSetPermissionLevelCommand(ctx context.Context, client *c
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleSetAutoRetryCommand(
@@ -1582,7 +1632,8 @@ func (m *Manager) handleSetAutoRetryCommand(
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1602,7 +1653,8 @@ func (m *Manager) handleLegacySetModeCommand(ctx context.Context, client *client
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleSetAgentCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1618,7 +1670,8 @@ func (m *Manager) handleSetAgentCommand(ctx context.Context, client *client, fra
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, frame.SessionID)
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
 }
 
 func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -1636,7 +1689,8 @@ func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame w
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	return m.broadcastSnapshot(ctx, summary.ID)
+	m.broadcastSessionSummary(ctx, summary.ID)
+	return nil
 }
 
 func (m *Manager) handleDeleteCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2416,9 +2470,8 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 	update := map[string]any{
 		"last_event_seq": seq,
 		"activity_at":    event.Timestamp,
-		"updated_at":     time.Now(),
 	}
-	if event.Type != "msg_u" && event.Type != "hist_ch" {
+	if shouldMarkSessionUnreadForEvent(event) && !m.hasFocusedEventClient(sessionID) {
 		update["has_unread"] = true
 	}
 	if event.Type == "msg_u" {
@@ -2434,11 +2487,7 @@ func (m *Manager) appendAndBroadcast(ctx context.Context, sessionID string, reco
 		return Event{}, cacheErr
 	}
 	if cachedItem != nil {
-		if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
-			m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, summary))
-		}
-	} else if summary := m.summaryForBroadcast(ctx, sessionID); summary != nil {
-		m.broadcast(newSessionFrame(sessionID, *summary))
+		m.broadcast(newHistoryItemFrame(sessionID, *cachedItem, nil))
 	}
 	if event.Type == "tool_end" {
 		m.maybeInterruptForRedirect(sessionID)
@@ -2470,6 +2519,42 @@ func (m *Manager) sessionAgent(sessionID string) Agent {
 		return AgentClaude
 	}
 	return normalizeAgent(Agent(record.Agent))
+}
+
+func shouldMarkSessionUnreadForEvent(event Event) bool {
+	switch strings.TrimSpace(event.Type) {
+	case "approval_req", "user_input_req", "run_fail", "run_done":
+		return true
+	case "run_abort":
+		return isUnexpectedRunAbortEvent(event)
+	default:
+		return false
+	}
+}
+
+func isUnexpectedRunAbortEvent(event Event) bool {
+	reason := strings.TrimSpace(stringValue(event.Payload["reason"]))
+	msg := strings.TrimSpace(stringValue(event.Payload["msg"]))
+	prevStatus := strings.TrimSpace(stringValue(event.Payload["prevStatus"]))
+	return reason != "" || msg != "" || prevStatus != ""
+}
+
+func (m *Manager) hasFocusedEventClient(sessionID string) bool {
+	normalizedSessionID := strings.TrimSpace(sessionID)
+	if normalizedSessionID == "" {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for client := range m.clients {
+		if client == nil || client.kind != clientKindEvent {
+			continue
+		}
+		if client.FocusedSessionID() == normalizedSessionID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
@@ -3032,10 +3117,33 @@ func (m *Manager) broadcast(frame wireFrame) {
 	m.mu.RUnlock()
 
 	for _, client := range clients {
+		if !shouldSendFrameToClient(client, frame) {
+			continue
+		}
 		if err := client.send(frame); err != nil {
 			m.logger.Debug("failed to send ws frame", zap.Error(err))
 			client.closeWithReason("broadcast-send-failed")
 		}
+	}
+}
+
+func shouldSendFrameToClient(client *client, frame wireFrame) bool {
+	if client == nil {
+		return false
+	}
+	focusedSessionID := client.FocusedSessionID()
+	switch frame.Kind {
+	case "snap":
+		return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
+	case "evt":
+		switch strings.ToLower(strings.TrimSpace(frame.Operation)) {
+		case "hist_item", "hist_page", "pending":
+			return focusedSessionID != "" && focusedSessionID == strings.TrimSpace(frame.SessionID)
+		default:
+			return true
+		}
+	default:
+		return true
 	}
 }
 
@@ -3075,6 +3183,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		activityAt = chooseSessionActivityAt(record)
 	}
 	assistantState := effectiveAssistantState(record)
+	statusUpdatedAt := effectiveStatusUpdatedAt(record, assistantState)
 	assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState)
 	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
@@ -3098,6 +3207,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		HasUnread:               record.HasUnread,
 		ArchivedAt:              record.ArchivedAt,
 		ActivityAt:              activityAt,
+		StatusUpdatedAt:         statusUpdatedAt,
 		LastMessageAt:           record.LastMessageAt,
 		AssistantStateUpdatedAt: assistantStateUpdatedAt,
 		SourceKind:              record.SourceKind,
@@ -3476,8 +3586,8 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 		if err := m.updateRuntimeState(ctx, record.ID, map[string]any{
 			"status":                     string(StatusIdle),
 			"last_error":                 nil,
-			"has_unread":                 false,
 			"updated_at":                 now,
+			"status_updated_at":          now,
 			"auto_retry_attempt":         0,
 			"auto_retry_next_at":         nil,
 			"auto_retry_last_error_code": nil,

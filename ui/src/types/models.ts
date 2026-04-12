@@ -313,6 +313,7 @@ export interface WebSessionSummary {
   hasUnread: boolean;
   archivedAt?: string | null;
   activityAt: string;
+  statusUpdatedAt?: string | null;
   lastMessageAt?: string | null;
   assistantStateUpdatedAt?: string | null;
   sourceKind: string;

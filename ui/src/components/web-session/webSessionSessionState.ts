@@ -18,13 +18,16 @@ export type WebSessionDisplayStatusKey =
   | 'terminal.aiIdle'
   | 'terminal.aiStatusDone';
 
-export interface WebSessionDisplayStateInput {
+export interface WebSessionDisplayAssistantStateInput {
   isDraft: boolean;
-  hasUnread: boolean;
   status: WebSessionSummary['status'];
-  syncState: WebSessionSummary['syncState'];
   livePhase?: WebSessionLiveState['phase'] | null;
   assistantState?: WebSessionSummary['assistantState'];
+}
+
+export interface WebSessionDisplayStateInput extends WebSessionDisplayAssistantStateInput {
+  hasUnread: boolean;
+  syncState: WebSessionSummary['syncState'];
 }
 
 export interface WebSessionDisplayState {
@@ -99,14 +102,39 @@ function mapStatusToAssistantState(
   }
 }
 
+export function resolveWebSessionDisplayAssistantState(
+  input: WebSessionDisplayAssistantStateInput
+): WebSessionDisplayAssistantState {
+  return input.isDraft
+    ? 'waiting_input'
+    : (mapPhaseToAssistantState(input.livePhase) ??
+        mapAssistantStateToDisplayState(input.assistantState) ??
+        mapStatusToAssistantState(input.status));
+}
+
+function sortableTimestamp(value?: string | null) {
+  const parsed = Date.parse(typeof value === 'string' ? value : '');
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function resolveWebSessionSidebarSortTimestamp(
+  session: Pick<
+    WebSessionSummary,
+    'statusUpdatedAt' | 'assistantStateUpdatedAt' | 'updatedAt' | 'createdAt'
+  >
+) {
+  return sortableTimestamp(
+    session.statusUpdatedAt ||
+      session.assistantStateUpdatedAt ||
+      session.updatedAt ||
+      session.createdAt
+  );
+}
+
 export function resolveWebSessionDisplayState(
   input: WebSessionDisplayStateInput
 ): WebSessionDisplayState {
-  const assistantStateClass = input.isDraft
-    ? 'waiting_input'
-    : (mapPhaseToAssistantState(input.livePhase) ??
-      mapAssistantStateToDisplayState(input.assistantState) ??
-      mapStatusToAssistantState(input.status));
+  const assistantStateClass = resolveWebSessionDisplayAssistantState(input);
 
   const hasUnviewedApproval =
     input.hasUnread &&

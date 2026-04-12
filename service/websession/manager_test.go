@@ -219,6 +219,96 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	}
 }
 
+func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	focusedConn := &captureWSConn{}
+	otherConn := &captureWSConn{}
+	focusedClient := manager.RegisterEventClient(focusedConn)
+	otherClient := manager.RegisterEventClient(otherConn)
+	defer manager.UnregisterClient(focusedClient)
+	defer manager.UnregisterClient(otherClient)
+
+	handled, err := manager.HandleHeartbeatPayload(
+		focusedClient,
+		[]byte(`{"v":1,"k":"hb","ts":1710000000000,"op":"focus","sid":"session-1"}`),
+	)
+	if err != nil {
+		t.Fatalf("HandleHeartbeatPayload returned error: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected focus heartbeat payload to be handled")
+	}
+
+	manager.broadcast(newHistoryItemFrame("session-1", HistoryItem{
+		ID:         "hist-1",
+		OrderIndex: 1,
+		Kind:       "assistant",
+		ItemType:   "agent_message",
+		Text:       "delta",
+	}, nil))
+
+	if len(focusedConn.frames) != 1 {
+		t.Fatalf("expected focused client to receive one history frame, got %d", len(focusedConn.frames))
+	}
+	if len(otherConn.frames) != 0 {
+		t.Fatalf("expected unfocused client to receive no history frame, got %d", len(otherConn.frames))
+	}
+
+	manager.broadcast(newSessionFrame("session-1", SessionSummary{
+		ID:        "session-1",
+		ProjectID: "project-1",
+		Title:     "Session 1",
+		Agent:     AgentCodex,
+		Status:    StatusRunning,
+	}))
+
+	if len(focusedConn.frames) != 2 {
+		t.Fatalf("expected focused client to receive session summary, got %d frames", len(focusedConn.frames))
+	}
+	if len(otherConn.frames) != 1 {
+		t.Fatalf("expected unfocused client to still receive session summary, got %d", len(otherConn.frames))
+	}
+	if otherConn.frames[0].Operation != "session" {
+		t.Fatalf("expected unfocused client frame to be session summary, got op=%q", otherConn.frames[0].Operation)
+	}
+}
+
+func TestShouldMarkSessionUnreadForEvent(t *testing.T) {
+	tests := []struct {
+		name  string
+		event Event
+		want  bool
+	}{
+		{name: "approval request", event: Event{Type: "approval_req"}, want: true},
+		{name: "user input request", event: Event{Type: "user_input_req"}, want: true},
+		{name: "run fail", event: Event{Type: "run_fail"}, want: true},
+		{name: "run done", event: Event{Type: "run_done"}, want: true},
+		{
+			name:  "unexpected abort with reason",
+			event: Event{Type: "run_abort", Payload: map[string]any{"reason": "process_restart"}},
+			want:  true,
+		},
+		{name: "manual abort without payload", event: Event{Type: "run_abort"}, want: false},
+		{name: "text delta", event: Event{Type: "txt_d"}, want: false},
+		{name: "tool start", event: Event{Type: "tool_st"}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldMarkSessionUnreadForEvent(tt.event); got != tt.want {
+				t.Fatalf("shouldMarkSessionUnreadForEvent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestManagerClientHeartbeatClosesIdleConnections(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()

@@ -153,6 +153,7 @@ type SessionSummary struct {
 	HasUnread               bool                `json:"hasUnread"`
 	ArchivedAt              *time.Time          `json:"archivedAt,omitempty"`
 	ActivityAt              time.Time           `json:"activityAt"`
+	StatusUpdatedAt         *time.Time          `json:"statusUpdatedAt,omitempty"`
 	LastMessageAt           *time.Time          `json:"lastMessageAt,omitempty"`
 	AssistantStateUpdatedAt *time.Time          `json:"assistantStateUpdatedAt,omitempty"`
 	SourceKind              string              `json:"sourceKind"`

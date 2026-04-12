@@ -20,7 +20,7 @@ import { buildUploadImageFileName } from '@/utils/webSessionImages';
 import { resolveWsUrl } from '@/utils/ws';
 
 type WireFrameKind = 'ack' | 'snap' | 'evt' | 'err' | 'hb';
-type WireHeartbeatOp = 'ping' | 'pong';
+type WireHeartbeatOp = 'ping' | 'pong' | 'focus';
 type WebSessionSocketKind = 'event' | 'command';
 type SessionStatus = WebSessionSummary['status'];
 type SessionAssistantState =
@@ -50,6 +50,7 @@ type WireSession = {
   unr: boolean;
   aa?: number | null;
   act?: number | null;
+  sta?: number | null;
   ca?: number | null;
   lu: number;
   lma?: number | null;
@@ -852,6 +853,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   let eventReconnectTimer: number | null = null;
   let eventWatchdogTimer: number | null = null;
   let eventHasConnectedOnce = false;
+  let eventFocusedSessionId = '';
   let commandSocket: WebSocket | null = null;
   let commandConnectPromise: Promise<void> | null = null;
   let commandWatchdogTimer: number | null = null;
@@ -1356,6 +1358,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
       typeof session.act === 'number' && Number.isFinite(session.act)
         ? new Date(session.act).toISOString()
         : new Date(session.lu).toISOString();
+    const statusUpdatedAt =
+      typeof session.sta === 'number' && Number.isFinite(session.sta)
+        ? new Date(session.sta).toISOString()
+        : null;
     const createdAt =
       typeof session.ca === 'number' && Number.isFinite(session.ca)
         ? new Date(session.ca).toISOString()
@@ -1387,6 +1393,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       hasUnread: session.unr,
       archivedAt,
       activityAt,
+      statusUpdatedAt,
       lastMessageAt: session.lma ? new Date(session.lma).toISOString() : null,
       assistantStateUpdatedAt: session.asu ? new Date(session.asu).toISOString() : null,
       sourceKind: session.sk ?? 'codex_app_server',
@@ -2452,12 +2459,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
     pending.clear();
   }
 
-  function buildHeartbeatPayload(op: WireHeartbeatOp) {
+  function buildHeartbeatPayload(op: WireHeartbeatOp, sessionId = '') {
     return JSON.stringify({
       v: 1,
       k: 'hb',
       ts: Date.now(),
       op,
+      sid: sessionId || undefined,
     });
   }
 
@@ -2525,11 +2533,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     commandWatchdogTimer = timer;
   }
 
-  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp) {
+  function sendSocketHeartbeat(socket: WebSocket | null, op: WireHeartbeatOp, sessionId = '') {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
     }
-    socket.send(buildHeartbeatPayload(op));
+    socket.send(buildHeartbeatPayload(op, sessionId));
+  }
+
+  function sendEventSessionFocus(sessionId = '') {
+    sendSocketHeartbeat(eventSocket, 'focus', sessionId);
+  }
+
+  function setEventSessionFocus(sessionId: string) {
+    const normalizedSessionId = String(sessionId || '').trim();
+    if (eventFocusedSessionId === normalizedSessionId) {
+      return;
+    }
+    eventFocusedSessionId = normalizedSessionId;
+    sendEventSessionFocus(normalizedSessionId);
   }
 
   function handleSocketHeartbeat(kind: WebSessionSocketKind, socket: WebSocket, frame: WireFrame) {
@@ -2566,6 +2587,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
         eventLastDisconnectReason.value = null;
         startSocketWatchdog('event', ws);
         eventConnectPromise = null;
+        if (eventFocusedSessionId) {
+          sendEventSessionFocus(eventFocusedSessionId);
+        }
         if (eventHasConnectedOnce) {
           eventRecoveryVersion.value += 1;
           emitter.emit('web-session:event-stream-recovered', {
@@ -3304,6 +3328,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     clearDraft,
     moveDraft,
     openEventStream,
+    setEventSessionFocus,
     sessionCounts: cachedCounts,
     emitter,
   };

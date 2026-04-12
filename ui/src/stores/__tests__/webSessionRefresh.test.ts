@@ -63,6 +63,7 @@ function makeSession(overrides: Partial<WebSessionSummary> = {}): WebSessionSumm
     hasUnread: false,
     archivedAt: null,
     activityAt: '2026-04-09T10:00:00.000Z',
+    statusUpdatedAt: '2026-04-09T10:00:00.000Z',
     lastMessageAt: '2026-04-09T10:00:00.000Z',
     assistantStateUpdatedAt: '2026-04-09T10:00:00.000Z',
     sourceKind: 'codex_app_server',
@@ -122,6 +123,7 @@ function toWireSession(session: WebSessionSummary) {
     unr: session.hasUnread,
     aa: session.archivedAt ? toMillis(session.archivedAt) : null,
     act: toMillis(session.activityAt),
+    sta: session.statusUpdatedAt ? toMillis(session.statusUpdatedAt) : null,
     ca: toMillis(session.createdAt),
     lu: toMillis(session.updatedAt),
     lma: session.lastMessageAt ? toMillis(session.lastMessageAt) : null,
@@ -785,6 +787,29 @@ describe('webSession loading behavior', () => {
         op: 'pong',
       }),
     ]);
+  });
+
+  it('sends the focused session id over the event websocket', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-focus',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    store.setEventSessionFocus(session.id);
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+    expect(eventSocket?.sent.at(-1)).toMatchObject({
+      k: 'hb',
+      op: 'focus',
+      sid: session.id,
+    });
   });
 
   it('forces a reconnect when the event stream stops receiving heartbeats', async () => {

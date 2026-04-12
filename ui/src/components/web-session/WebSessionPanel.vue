@@ -1614,6 +1614,7 @@ import {
 } from '@/components/web-session/webSessionSendGuard';
 import {
   resolveWebSessionDisplayState,
+  resolveWebSessionSidebarSortTimestamp,
   type WebSessionDisplayState,
 } from '@/components/web-session/webSessionSessionState';
 import {
@@ -1854,7 +1855,7 @@ const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
-const viewedEventSeqBySession = ref<Record<string, number>>({});
+const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
@@ -4409,43 +4410,43 @@ async function closeTabById(
   }
 }
 
-function getSessionActivityTimestamp(session: WebSessionSummary) {
-  return parseTimestamp(
-    session.activityAt || session.lastMessageAt || session.updatedAt || session.createdAt
-  );
-}
-
 function markSessionViewed(sessionId?: string) {
   const normalizedSessionId = String(sessionId || '').trim();
   if (!props.isActive || !normalizedSessionId) {
     return;
   }
-
-  const latestSeq = webSessionStore.getLatestEventSeq(normalizedSessionId);
-  const previousViewedSeq = viewedEventSeqBySession.value[normalizedSessionId] ?? -1;
-  if (latestSeq <= previousViewedSeq) {
-    return;
+  const session = visibleSessionById.value.get(normalizedSessionId);
+  if (session && !isDraftSession(session)) {
+    optimisticUnreadClearedVersionBySession.value = {
+      ...optimisticUnreadClearedVersionBySession.value,
+      [normalizedSessionId]: getSessionUnreadVersion(session),
+    };
   }
-
-  viewedEventSeqBySession.value = {
-    ...viewedEventSeqBySession.value,
-    [normalizedSessionId]: latestSeq,
-  };
   webSessionStore.emitter.emit('web-session:viewed', {
     sessionId: normalizedSessionId,
   });
+}
+
+function getSessionUnreadVersion(session: WebSessionSummary) {
+  return parseTimestamp(
+    session.statusUpdatedAt ||
+      session.assistantStateUpdatedAt ||
+      session.updatedAt ||
+      session.activityAt ||
+      session.lastMessageAt ||
+      session.createdAt
+  );
 }
 
 function hasSessionUnread(session: (typeof sessions.value)[number]) {
   if (isDraftSession(session)) {
     return false;
   }
-  const latestSeq = webSessionStore.getLatestEventSeq(session.id);
-  const viewedSeq = viewedEventSeqBySession.value[session.id] ?? -1;
-  if (latestSeq > 0) {
-    return latestSeq > viewedSeq;
+  if (!session.hasUnread) {
+    return false;
   }
-  return session.hasUnread && (!props.isActive || activeSessionId.value !== session.id);
+  const optimisticClearedVersion = optimisticUnreadClearedVersionBySession.value[session.id] ?? 0;
+  return getSessionUnreadVersion(session) > optimisticClearedVersion;
 }
 
 function getProjectName(projectId: string) {
@@ -4466,12 +4467,11 @@ type CrossProjectSessionItem = {
   session: WebSessionSummary;
   projectId: string;
   projectName: string;
-  activityAt: number;
   isCurrent: boolean;
   projectIndex?: { index: number; color: string };
 };
 
-function withProjectIndexes(items: CrossProjectSessionItem[]) {
+function buildSidebarProjectOrder(items: Array<Pick<CrossProjectSessionItem, 'projectId'>>) {
   const presentProjectIds = new Set(items.map(item => item.projectId).filter(Boolean));
   const projectIds: string[] = [];
   projectStore.projects.forEach(project => {
@@ -4484,7 +4484,13 @@ function withProjectIndexes(items: CrossProjectSessionItem[]) {
       projectIds.push(item.projectId);
     }
   });
+  return projectIds;
+}
 
+function withProjectIndexes(
+  items: CrossProjectSessionItem[],
+  projectIds = buildSidebarProjectOrder(items)
+) {
   const projectIndex = new Map<string, { index: number; color: string }>();
   projectIds.forEach((projectId, idx) => {
     projectIndex.set(projectId, {
@@ -4507,26 +4513,16 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
         session,
         projectId,
         projectName: getProjectName(projectId),
-        activityAt: getSessionActivityTimestamp(session),
         isCurrent: projectId === props.projectId && session.id === activeSessionId.value,
       });
     });
   });
-  const sorted = rawItems.sort((left, right) => {
-    if (right.activityAt !== left.activityAt) {
-      return right.activityAt - left.activityAt;
-    }
-    if (left.isCurrent !== right.isCurrent) {
-      return left.isCurrent ? -1 : 1;
-    }
-    const leftHasUnread = hasSessionUnread(left.session);
-    const rightHasUnread = hasSessionUnread(right.session);
-    if (leftHasUnread !== rightHasUnread) {
-      return leftHasUnread ? -1 : 1;
-    }
-    const projectNameCompare = left.projectName.localeCompare(right.projectName);
-    if (projectNameCompare !== 0) {
-      return projectNameCompare;
+  const projectIds = buildSidebarProjectOrder(rawItems);
+  const sorted = [...rawItems].sort((left, right) => {
+    const rightTimestamp = resolveWebSessionSidebarSortTimestamp(right.session);
+    const leftTimestamp = resolveWebSessionSidebarSortTimestamp(left.session);
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
     }
     if (left.session.orderIndex !== right.session.orderIndex) {
       return left.session.orderIndex - right.session.orderIndex;
@@ -4534,7 +4530,7 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
     return left.session.id.localeCompare(right.session.id);
   });
 
-  return withProjectIndexes(sorted);
+  return withProjectIndexes(sorted, projectIds);
 });
 
 const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
@@ -4542,7 +4538,6 @@ const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
     session,
     projectId: session.projectId,
     projectName: getProjectName(session.projectId),
-    activityAt: getSessionActivityTimestamp(session),
     isCurrent: Boolean(archivedPreviewSession.value?.id === session.id),
   }));
   return withProjectIndexes(items);
@@ -7658,6 +7653,14 @@ watch(
     if (!isDraftSession(session)) {
       markSessionViewed(session.id);
     }
+  },
+  { immediate: true }
+);
+
+watch(
+  [() => props.isActive, () => currentRealSession.value?.id ?? ''],
+  ([isActive, sessionId]) => {
+    webSessionStore.setEventSessionFocus(isActive ? sessionId : '');
   },
   { immediate: true }
 );

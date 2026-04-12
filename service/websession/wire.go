@@ -25,6 +25,7 @@ type wireHeartbeatFrame struct {
 	Kind      string `json:"k"`
 	Timestamp int64  `json:"ts"`
 	Operation string `json:"op"`
+	SessionID string `json:"sid,omitempty"`
 }
 
 type wireFrame struct {
@@ -66,6 +67,7 @@ type wireSess struct {
 	Unread                  bool       `json:"unr"`
 	ArchivedAt              *int64     `json:"aa,omitempty"`
 	ActivityAt              int64      `json:"act"`
+	StatusUpdatedAt         *int64     `json:"sta,omitempty"`
 	CreatedAt               int64      `json:"ca"`
 	LastUpdated             int64      `json:"lu"`
 	LastMessageAt           *int64     `json:"lma,omitempty"`
@@ -292,6 +294,11 @@ func mapWireSession(session SessionSummary) *wireSess {
 		value := session.LastMessageAt.UnixMilli()
 		lastMessageAt = &value
 	}
+	var statusUpdatedAt *int64
+	if session.StatusUpdatedAt != nil {
+		value := session.StatusUpdatedAt.UnixMilli()
+		statusUpdatedAt = &value
+	}
 	var assistantStateUpdatedAt *int64
 	if session.AssistantStateUpdatedAt != nil {
 		value := session.AssistantStateUpdatedAt.UnixMilli()
@@ -343,6 +350,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		Unread:                  session.HasUnread,
 		ArchivedAt:              archivedAt,
 		ActivityAt:              session.ActivityAt.UnixMilli(),
+		StatusUpdatedAt:         statusUpdatedAt,
 		CreatedAt:               session.CreatedAt.UnixMilli(),
 		LastUpdated:             session.UpdatedAt.UnixMilli(),
 		LastMessageAt:           lastMessageAt,
