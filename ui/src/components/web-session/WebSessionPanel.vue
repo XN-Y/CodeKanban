@@ -1523,7 +1523,14 @@ import {
 import { useRoute, useRouter } from 'vue-router';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
-import { NCheckbox, NInput, useDialog, useMessage, type DropdownOption } from 'naive-ui';
+import {
+  NCheckbox,
+  NInput,
+  useDialog,
+  useMessage,
+  type DialogReactive,
+  type DropdownOption,
+} from 'naive-ui';
 import {
   AddOutline,
   ChevronBackOutline,
@@ -6061,7 +6068,8 @@ function handleArchiveSession(sessionId: string) {
   }
 
   if (confirmBeforeTerminalClose.value) {
-    dialog.warning({
+    let archiveConfirmDialog: DialogReactive | null = null;
+    archiveConfirmDialog = dialog.warning({
       title: t('webSession.confirmCloseTitle'),
       content: () =>
         h('div', { class: 'web-session-close-confirm' }, [
@@ -6071,7 +6079,21 @@ function handleArchiveSession(sessionId: string) {
         ]),
       positiveText: t('webSession.confirmCloseButton'),
       negativeText: t('common.cancel'),
-      onPositiveClick: async () => performArchiveSession(session),
+      onPositiveClick: async () => {
+        if (archiveConfirmDialog?.loading) {
+          return false;
+        }
+        if (archiveConfirmDialog) {
+          archiveConfirmDialog.loading = true;
+        }
+        try {
+          return await performArchiveSession(session);
+        } finally {
+          if (archiveConfirmDialog) {
+            archiveConfirmDialog.loading = false;
+          }
+        }
+      },
     });
     return;
   }
