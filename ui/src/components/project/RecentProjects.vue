@@ -133,6 +133,7 @@
                         >
                           {{ getCombinedTerminalCount(project.id) }}
                         </span>
+                        <span class="terminal-tag-combined-separator" aria-hidden="true">·</span>
                         <span class="terminal-tag-combined-count terminal-tag-combined-count--web">
                           {{ getCombinedWebSessionCount(project.id) }}
                         </span>
@@ -742,15 +743,14 @@ onMounted(() => {
   --terminal-tag-terminal-bg: #eaf8e3;
   --terminal-tag-web-color: #2080f0;
   --terminal-tag-web-bg: #e7edf5;
-  --terminal-tag-combined-split: 23px;
-  --n-padding: 0 4px 0 5px;
+  --n-padding: 0 6px 0 5px;
   color: rgba(15, 23, 42, 0.92);
   background: linear-gradient(
     90deg,
-    var(--terminal-tag-terminal-bg) 0%,
-    var(--terminal-tag-terminal-bg) var(--terminal-tag-combined-split),
-    var(--terminal-tag-web-bg) var(--terminal-tag-combined-split),
-    var(--terminal-tag-web-bg) 100%
+    color-mix(in srgb, var(--terminal-tag-terminal-bg) 94%, white 6%) 0%,
+    color-mix(in srgb, var(--terminal-tag-terminal-bg) 78%, var(--terminal-tag-web-bg) 22%) 44%,
+    color-mix(in srgb, var(--terminal-tag-web-bg) 78%, var(--terminal-tag-terminal-bg) 22%) 56%,
+    color-mix(in srgb, var(--terminal-tag-web-bg) 94%, white 6%) 100%
   ) !important;
 }
 
@@ -760,7 +760,7 @@ onMounted(() => {
 }
 
 .terminal-tag--combined :deep(.n-tag__icon) {
-  margin-right: 2px;
+  margin-right: 3px;
 }
 
 .terminal-tag-combined-icon {
@@ -772,24 +772,29 @@ onMounted(() => {
 }
 
 .terminal-tag-combined-counts {
-  min-width: 8px;
   display: inline-flex;
-  flex-direction: column;
-  align-items: flex-end;
+  align-items: center;
   justify-content: center;
-  font-size: 8px;
+  min-width: 0;
+  font-size: 10px;
   font-weight: 700;
-  line-height: 0.82;
-  letter-spacing: -0.02em;
+  line-height: 1;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
 }
 
 .terminal-tag-combined-count {
-  display: block;
+  display: inline-block;
 }
 
 .terminal-tag-combined-count--terminal {
   color: var(--terminal-tag-terminal-color);
+}
+
+.terminal-tag-combined-separator {
+  display: inline-block;
+  margin: 0 1px;
+  color: rgba(15, 23, 42, 0.48);
 }
 
 .terminal-tag-combined-count--web {
