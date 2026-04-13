@@ -1,6 +1,6 @@
 <template>
-  <n-dropdown :options="themeOptions" @select="handleSelect">
-    <n-button quaternary circle size="small" @click="handleQuickToggle">
+  <n-dropdown :options="themeOptions" :trigger="resolvedTrigger" @select="handleSelect">
+    <n-button quaternary circle size="small" @click="handleButtonClick">
       <template #icon>
         <n-icon size="18">
           <component :is="isDarkTheme ? MoonOutline : SunnyOutline" />
@@ -24,6 +24,17 @@ import {
   createThemeSelectionController,
 } from '@/utils/themeMaintenanceWarning';
 import type { DropdownOption } from 'naive-ui';
+
+const props = withDefaults(
+  defineProps<{
+    quickToggleOnClick?: boolean;
+    trigger?: 'hover' | 'click';
+  }>(),
+  {
+    quickToggleOnClick: true,
+    trigger: undefined,
+  }
+);
 
 const { t } = useLocale();
 const dialog = useDialog();
@@ -65,6 +76,7 @@ const renderCheckIcon = () => h(NIcon, null, { default: () => h(CheckmarkOutline
 
 // 获取主题选项（使用 composable）
 const baseThemeOptions = useThemeOptions();
+const resolvedTrigger = computed(() => props.trigger ?? (props.quickToggleOnClick ? 'hover' : 'click'));
 
 // 下拉菜单选项
 const themeOptions = computed<DropdownOption[]>(() => {
@@ -109,5 +121,12 @@ const handleSelect = async (key: string) => {
 // 快速切换 dark/light 主题
 const handleQuickToggle = async () => {
   await themeSelectionController.quickToggleLightDark();
+};
+
+const handleButtonClick = async () => {
+  if (!props.quickToggleOnClick) {
+    return;
+  }
+  await handleQuickToggle();
 };
 </script>

@@ -79,12 +79,7 @@
 
         <!-- 项目视图 -->
         <div v-show="mobileActiveView === 'projects'" class="mobile-view mobile-projects-view">
-          <RecentProjects
-            :current-project-id="currentProjectId"
-            :is-mobile="true"
-            @edit-current="openProjectEditDialog"
-            @show-terminal="() => setMobileView('terminal')"
-          />
+          <ProjectBrowser mode="mobile-workspace" :current-project-id="currentProjectId" />
         </div>
 
         <!-- 提醒视图 -->
@@ -127,6 +122,22 @@
           <button
             type="button"
             class="nav-item"
+            :class="{ active: mobileActiveView === 'files' }"
+            @click="setMobileView('files')"
+          >
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2zm-2 9h8v2H8v-2zm0-4h10v2H8V9z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.files') }}</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
             :class="{ active: mobileActiveView === 'terminal' }"
             @click="setMobileView('terminal')"
           >
@@ -155,22 +166,6 @@
               </svg>
             </n-icon>
             <span>{{ t('nav.webSession') }}</span>
-          </button>
-          <button
-            type="button"
-            class="nav-item"
-            :class="{ active: mobileActiveView === 'files' }"
-            @click="setMobileView('files')"
-          >
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2zm-2 9h8v2H8v-2zm0-4h10v2H8V9z"
-                />
-              </svg>
-            </n-icon>
-            <span>{{ t('nav.files') }}</span>
           </button>
         </div>
       </div>
@@ -207,6 +202,7 @@ import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
+import ProjectBrowser from '@/components/project/ProjectBrowser.vue';
 import type { Worktree } from '@/types/models';
 import {
   DEFAULT_MOBILE_VIEW,
@@ -647,8 +643,7 @@ function setMobileView(view: MobileView) {
 }
 
 .mobile-projects-view {
-  padding: 16px;
-  padding-bottom: calc(16px + var(--workspace-mobile-bottom-nav-space));
+  min-height: 0;
 }
 
 .mobile-notifications-view {

@@ -54,6 +54,12 @@ const browserTabTitle = computed(() =>
 );
 const canLoadProtectedContent = computed(() => authStore.canAccessProtectedContent);
 const shouldRenderWorkspaceOverlays = computed(() => canLoadProtectedContent.value);
+const shouldShowGlobalNotepad = computed(() => {
+  if (isMobile.value) {
+    return false;
+  }
+  return true;
+});
 
 const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
@@ -304,7 +310,7 @@ watch(
             <n-modal-provider>
               <AppInitializer />
               <RouterView />
-              <NotePad v-if="shouldRenderWorkspaceOverlays" />
+              <NotePad v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotepad" />
               <AINotificationBar
                 v-if="shouldRenderWorkspaceOverlays && shouldShowGlobalNotificationBar"
               />
