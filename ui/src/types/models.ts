@@ -236,7 +236,6 @@ export interface WebSessionActiveCallTimeoutConfig {
 export interface DeveloperConfig {
   enableTerminalScrollback: boolean;
   renameSessionTitleEachCommand: boolean;
-  autoCreateTaskOnStartWork: boolean;
   enableTerminalStateSnapshot: boolean;
   webSessionCodexDefaultSyncMode: 'fast' | 'deep';
   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig;

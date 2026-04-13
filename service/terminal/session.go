@@ -207,7 +207,6 @@ type Session struct {
 	lockedTitle                  string
 	lastRecentInput              string
 	renameTitleEachCommand       atomic.Bool
-	autoCreateTaskOnStartWork    atomic.Bool
 	autoTitleAssigned            atomic.Bool
 	terminalStateEnabled         atomic.Bool
 	terminalStateSuppressReplies atomic.Bool
@@ -275,7 +274,6 @@ type SessionParams struct {
 	EnableTerminalStateSnapshot bool
 	TaskID                      string
 	RenameTitleEachCommand      bool
-	AutoCreateTaskOnStartWork   bool
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -335,7 +333,6 @@ func NewSession(params SessionParams) (*Session, error) {
 		associatedTaskID: params.TaskID,
 	}
 	session.renameTitleEachCommand.Store(params.RenameTitleEachCommand)
-	session.autoCreateTaskOnStartWork.Store(params.AutoCreateTaskOnStartWork)
 	session.terminalStateEnabled.Store(params.EnableTerminalStateSnapshot && runtime.GOOS != "windows")
 
 	session.assistantTracker.SetCaptureFunc(session.captureTerminalLines)
@@ -1033,11 +1030,6 @@ func (s *Session) SetRenameTitleEachCommand(enabled bool) {
 	s.renameTitleEachCommand.Store(enabled)
 }
 
-// SetAutoCreateTaskOnStartWork toggles automatic task creation when work starts.
-func (s *Session) SetAutoCreateTaskOnStartWork(enabled bool) {
-	s.autoCreateTaskOnStartWork.Store(enabled)
-}
-
 // LastRecentInput returns the last user input captured by the AI assistant.
 func (s *Session) LastRecentInput() string {
 	s.mu.RLock()
@@ -1323,7 +1315,6 @@ func (s *Session) handleStateChangeFromTracker(event ai_assistant2.StateChangeEv
 	}
 
 	s.applyAssistantState(event)
-	s.updateTaskStatusFromAssistantEvent(event)
 	if event.RecentInput != "" {
 		go s.handleRecentInput(event)
 	}
@@ -1368,49 +1359,6 @@ func (s *Session) applyAssistantState(event ai_assistant2.StateChangeEvent) {
 	s.broadcast(StreamEvent{Type: StreamEventMetadata, Metadata: metadata})
 }
 
-func (s *Session) updateTaskStatusFromAssistantEvent(event ai_assistant2.StateChangeEvent) {
-	taskID := s.TaskID()
-	if taskID == "" {
-		return
-	}
-
-	targetStatus := ""
-	if event.State == types.StateWaitingInput && event.PreviousState == types.StateWorking {
-		targetStatus = "done"
-	} else if event.State == types.StateWorking {
-		targetStatus = "in_progress"
-	}
-
-	if targetStatus == "" {
-		return
-	}
-
-	taskSvc := &model.TaskService{}
-	ctx := context.Background()
-	task, err := taskSvc.GetTask(ctx, taskID)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to fetch task for assistant state update",
-				zap.String("taskId", taskID),
-				zap.Error(err))
-		}
-		return
-	}
-
-	if task.Status == "archived" || task.Status == targetStatus {
-		return
-	}
-
-	if _, err := taskSvc.UpdateTask(ctx, taskID, map[string]any{"status": targetStatus}); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to update task status from assistant state",
-				zap.String("taskId", taskID),
-				zap.String("status", targetStatus),
-				zap.Error(err))
-		}
-	}
-}
-
 func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 	input := strings.TrimSpace(event.RecentInput)
 	if input == "" {
@@ -1423,173 +1371,10 @@ func (s *Session) handleRecentInput(event ai_assistant2.StateChangeEvent) {
 		return
 	}
 	s.lastRecentInput = input
-	taskID := s.associatedTaskID
 	s.mu.Unlock()
 
-	if taskID == "" {
-		if !s.autoCreateTaskOnStartWork.Load() {
-			return
-		}
-		var err error
-		taskID, err = s.autoCreateTaskFromInput(input, event.Timestamp)
-		if err != nil {
-			if s.logger != nil {
-				s.logger.Warn("failed to auto create task from recent input",
-					zap.String("sessionId", s.id),
-					zap.Error(err))
-			}
-			return
-		}
-	}
-
-	ts := event.Timestamp
-	if ts.IsZero() {
-		ts = time.Now()
-	}
-
-	s.appendInputToTask(taskID, input, ts, s.assistantDisplayName())
 	if s.autoUpdateTitleFromInput(input) {
 		s.notifyTitleChanged()
-	}
-}
-
-func (s *Session) autoCreateTaskFromInput(input string, ts time.Time) (string, error) {
-	projectID := strings.TrimSpace(s.projectID)
-	if projectID == "" {
-		return "", fmt.Errorf("session missing project id")
-	}
-
-	taskSvc := &model.TaskService{}
-	ctx := context.Background()
-
-	var worktreeID *string
-	if trimmed := strings.TrimSpace(s.worktreeID); trimmed != "" {
-		worktreeID = &trimmed
-	}
-
-	if ts.IsZero() {
-		ts = time.Now()
-	}
-
-	title := sanitizeCapturedInput(input)
-	if title == "" {
-		title = "AI task"
-	}
-	title = truncateString(title, 100)
-
-	description := s.buildAutoTaskDescription(input, ts)
-
-	task, err := taskSvc.CreateTask(ctx, &model.CreateTaskRequest{
-		ProjectID:   projectID,
-		WorktreeID:  worktreeID,
-		Title:       title,
-		Description: description,
-		Status:      "in_progress",
-		Priority:    0,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	s.AssociateTask(task.ID)
-
-	return task.ID, nil
-}
-
-func (s *Session) buildAutoTaskDescription(input string, ts time.Time) string {
-	if ts.IsZero() {
-		ts = time.Now()
-	}
-	sessionLabel := s.Title()
-	if strings.TrimSpace(sessionLabel) == "" {
-		sessionLabel = s.id
-	}
-	lines := []string{
-		fmt.Sprintf(`Auto-generated from terminal session "%s" at %s.`, sessionLabel, ts.Format(time.RFC3339)),
-	}
-
-	var meta []string
-	if dir := strings.TrimSpace(s.workingDir); dir != "" {
-		meta = append(meta, fmt.Sprintf("Working directory: %s", dir))
-	}
-	if wt := strings.TrimSpace(s.worktreeID); wt != "" {
-		meta = append(meta, fmt.Sprintf("Worktree: %s", wt))
-	}
-	if len(meta) > 0 {
-		lines = append(lines, strings.Join(meta, " | "))
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func (s *Session) assistantDisplayName() string {
-	s.metaMu.RLock()
-	if s.lastMetadata != nil && s.lastMetadata.AIAssistant != nil {
-		if name := strings.TrimSpace(s.lastMetadata.AIAssistant.DisplayName); name != "" {
-			s.metaMu.RUnlock()
-			return name
-		}
-		if name := strings.TrimSpace(s.lastMetadata.AIAssistant.Name); name != "" {
-			s.metaMu.RUnlock()
-			return name
-		}
-	}
-	s.metaMu.RUnlock()
-
-	if tracker := s.assistantTracker; tracker != nil {
-		if name := tracker.AssistantType().DisplayName(); strings.TrimSpace(name) != "" {
-			return name
-		}
-	}
-	return "AI Agent"
-}
-
-func (s *Session) appendInputToTask(taskID, input string, ts time.Time, assistantName string) {
-	taskSvc := &model.TaskService{}
-	commentSvc := model.NewTaskCommentService()
-	ctx := context.Background()
-
-	task, err := taskSvc.GetTask(ctx, taskID)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to fetch task for recent input", zap.String("taskId", taskID), zap.Error(err))
-		}
-		return
-	}
-
-	descriptionEntry := fmt.Sprintf("%s\n%s - %s", input, ts.Format("2006-01-02 15:04:05"), assistantName)
-
-	commentEntry := input
-	if trimmed := strings.TrimSpace(assistantName); trimmed != "" {
-		commentEntry = fmt.Sprintf("%s - %s", commentEntry, trimmed)
-	}
-
-	existing := strings.TrimRight(task.Description, "\n")
-	var builder strings.Builder
-	builder.WriteString(existing)
-	if strings.TrimSpace(existing) != "" {
-		builder.WriteString("\n\n")
-	}
-	builder.WriteString(descriptionEntry)
-
-	updates := map[string]any{
-		"description": builder.String(),
-	}
-	if task.Status == "todo" {
-		updates["status"] = "in_progress"
-	}
-
-	if _, err := taskSvc.UpdateTask(ctx, taskID, updates); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to append recent input to task", zap.String("taskId", taskID), zap.Error(err))
-		}
-		return
-	}
-
-	if _, err := commentSvc.CreateComment(ctx, taskID, commentEntry); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("failed to append task comment from recent input", zap.String("taskId", taskID), zap.Error(err))
-		}
 	}
 }
 
@@ -2069,8 +1854,7 @@ func (s *Session) handleLogWatcherMessage(msg *log_watcher.UserMessage) {
 		RecentInput:   msg.Message,
 	}
 
-	s.updateTaskStatusFromAssistantEvent(event)
-	// Handle the recent input (this will update task description, title, etc.)
+	// Reuse the same recent-input path so terminal title updates stay consistent.
 	go s.handleRecentInput(event)
 
 	if s.logger != nil {

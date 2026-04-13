@@ -63,7 +63,6 @@ type TerminalShellConfig struct {
 type DeveloperConfig struct {
 	EnableTerminalScrollback       bool                              `json:"enableTerminalScrollback" yaml:"enableTerminalScrollback"`
 	RenameSessionTitleEachCommand  bool                              `json:"renameSessionTitleEachCommand" yaml:"renameSessionTitleEachCommand"`
-	AutoCreateTaskOnStartWork      bool                              `json:"autoCreateTaskOnStartWork" yaml:"autoCreateTaskOnStartWork"`
 	EnableTerminalStateSnapshot    bool                              `json:"enableTerminalStateSnapshot" yaml:"enableTerminalStateSnapshot"`
 	WebSessionCodexDefaultSyncMode string                            `json:"webSessionCodexDefaultSyncMode" yaml:"webSessionCodexDefaultSyncMode"`
 	WebSessionActiveCallTimeout    WebSessionActiveCallTimeoutConfig `json:"webSessionActiveCallTimeout" yaml:"webSessionActiveCallTimeout"`
@@ -314,7 +313,6 @@ func ReadConfig() *AppConfig {
 		Developer: DeveloperConfig{
 			EnableTerminalScrollback:       false,
 			RenameSessionTitleEachCommand:  false,
-			AutoCreateTaskOnStartWork:      true,
 			EnableTerminalStateSnapshot:    runtime.GOOS != "windows",
 			WebSessionCodexDefaultSyncMode: "fast",
 			WebSessionActiveCallTimeout:    NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),

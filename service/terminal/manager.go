@@ -19,16 +19,15 @@ import (
 
 // Config defines runtime constraints for terminal sessions.
 type Config struct {
-	Shell                     utils.TerminalShellConfig
-	IdleTimeout               time.Duration
-	MaxSessionsPerProject     int
-	Encoding                  string
-	ScrollbackBytes           int
-	AIAssistantStatus         utils.AIAssistantStatusConfig
-	ScrollbackEnabled         bool
-	TerminalStateSnapshot     bool
-	RenameTitleEachCommand    bool
-	AutoCreateTaskOnStartWork bool
+	Shell                  utils.TerminalShellConfig
+	IdleTimeout            time.Duration
+	MaxSessionsPerProject  int
+	Encoding               string
+	ScrollbackBytes        int
+	AIAssistantStatus      utils.AIAssistantStatusConfig
+	ScrollbackEnabled      bool
+	TerminalStateSnapshot  bool
+	RenameTitleEachCommand bool
 }
 
 // CreateSessionParams describes API level inputs.
@@ -128,7 +127,6 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		EnableTerminalStateSnapshot: m.cfg.TerminalStateSnapshot,
 		TaskID:                      params.TaskID,
 		RenameTitleEachCommand:      m.cfg.RenameTitleEachCommand,
-		AutoCreateTaskOnStartWork:   m.cfg.AutoCreateTaskOnStartWork,
 	})
 	if err != nil {
 		return nil, err
@@ -456,18 +454,6 @@ func (m *Manager) UpdateRenameTitleEachCommand(enabled bool) {
 
 	m.sessions.Range(func(_ string, session *Session) bool {
 		session.SetRenameTitleEachCommand(enabled)
-		return true
-	})
-}
-
-// UpdateAutoCreateTaskOnStartWork toggles automatic task creation when work begins.
-func (m *Manager) UpdateAutoCreateTaskOnStartWork(enabled bool) {
-	m.sessionMu.Lock()
-	m.cfg.AutoCreateTaskOnStartWork = enabled
-	m.sessionMu.Unlock()
-
-	m.sessions.Range(func(_ string, session *Session) bool {
-		session.SetAutoCreateTaskOnStartWork(enabled)
 		return true
 	})
 }

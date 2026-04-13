@@ -158,7 +158,6 @@ export interface DeveloperConfig {
    * A URL to the JSON Schema for this object.
    */
   $schema?: string;
-  autoCreateTaskOnStartWork: boolean;
   enableTerminalScrollback: boolean;
   enableTerminalStateSnapshot: boolean;
   renameSessionTitleEachCommand: boolean;
@@ -4208,9 +4207,11 @@ declare global {
        *   item: {
        *     // A URL to the JSON Schema for this object.
        *     $schema?: string
-       *     autoCreateTaskOnStartWork: boolean
        *     enableTerminalScrollback: boolean
+       *     enableTerminalStateSnapshot: boolean
        *     renameSessionTitleEachCommand: boolean
+       *     webSessionCodexDefaultSyncMode: string
+       *     webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig
        *   }
        * }
        * ```
@@ -4232,9 +4233,11 @@ declare global {
        * type RequestBody = {
        *   // A URL to the JSON Schema for this object.
        *   $schema?: string
-       *   autoCreateTaskOnStartWork: boolean
        *   enableTerminalScrollback: boolean
+       *   enableTerminalStateSnapshot: boolean
        *   renameSessionTitleEachCommand: boolean
+       *   webSessionCodexDefaultSyncMode: string
+       *   webSessionActiveCallTimeout: WebSessionActiveCallTimeoutConfig
        * }
        * ```
        *

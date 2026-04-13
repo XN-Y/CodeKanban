@@ -23,7 +23,6 @@ type systemTerminalManager interface {
 	UpdateScrollbackEnabled(bool)
 	UpdateTerminalStateSnapshotEnabled(bool)
 	UpdateRenameTitleEachCommand(bool)
-	UpdateAutoCreateTaskOnStartWork(bool)
 	UpdateShellConfig(utils.TerminalShellConfig)
 }
 
@@ -218,7 +217,6 @@ func registerSystemRoutes(
 			terminalManager.UpdateScrollbackEnabled(normalized.EnableTerminalScrollback)
 			terminalManager.UpdateTerminalStateSnapshotEnabled(normalized.EnableTerminalStateSnapshot)
 			terminalManager.UpdateRenameTitleEachCommand(normalized.RenameSessionTitleEachCommand)
-			terminalManager.UpdateAutoCreateTaskOnStartWork(normalized.AutoCreateTaskOnStartWork)
 		}
 		if webSessionManager != nil {
 			webSessionManager.RefreshDeveloperConfig()

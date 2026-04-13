@@ -615,15 +615,6 @@
                 <span class="form-tip">{{ t('settings.renameSessionTitleEachCommandTip') }}</span>
               </n-space>
             </n-form-item>
-            <n-form-item :label="t('settings.autoCreateTaskOnStartWork')">
-              <n-space vertical size="small">
-                <n-switch
-                  v-model:value="developerForm.autoCreateTaskOnStartWork"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">{{ t('settings.autoCreateTaskOnStartWorkTip') }}</span>
-              </n-space>
-            </n-form-item>
             <n-form-item :label="t('settings.webSessionCodexDefaultSyncMode')">
               <n-space vertical size="small">
                 <n-select
@@ -1290,7 +1281,6 @@ function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): Devel
   return {
     enableTerminalScrollback: value?.enableTerminalScrollback ?? false,
     renameSessionTitleEachCommand: value?.renameSessionTitleEachCommand ?? false,
-    autoCreateTaskOnStartWork: value?.autoCreateTaskOnStartWork ?? true,
     enableTerminalStateSnapshot: value?.enableTerminalStateSnapshot ?? false,
     webSessionCodexDefaultSyncMode:
       value?.webSessionCodexDefaultSyncMode === 'deep' ? 'deep' : 'fast',
@@ -1303,7 +1293,6 @@ function sanitizeDeveloperConfig(value?: Partial<DeveloperConfig> | null): Devel
 function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) {
   target.enableTerminalScrollback = source.enableTerminalScrollback;
   target.renameSessionTitleEachCommand = source.renameSessionTitleEachCommand;
-  target.autoCreateTaskOnStartWork = source.autoCreateTaskOnStartWork;
   target.enableTerminalStateSnapshot = source.enableTerminalStateSnapshot;
   target.webSessionCodexDefaultSyncMode = source.webSessionCodexDefaultSyncMode;
   target.webSessionActiveCallTimeout.enabledMode = source.webSessionActiveCallTimeout.enabledMode;

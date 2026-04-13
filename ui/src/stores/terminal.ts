@@ -1355,10 +1355,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     return assembled;
   }
 
-  function resolveConnectionRole(
-    projectId: string,
-    sessionId: string
-  ): TerminalConnectionRole {
+  function resolveConnectionRole(projectId: string, sessionId: string): TerminalConnectionRole {
     if (!isProjectConnectionActive(projectId)) {
       return 'detached';
     }
@@ -1752,8 +1749,6 @@ export const useTerminalStore = defineStore('terminal', () => {
                   assistant: payload.metadata.aiAssistant,
                 }
               );
-
-              taskActions.invalidateTaskCache();
             }
           }
           // Check if there are any listeners for this session
@@ -1806,10 +1801,7 @@ export const useTerminalStore = defineStore('terminal', () => {
         updateTabStatus(tab.id, 'connecting');
         setTimeout(() => {
           const nextRecord = sessionIndex.get(tab.id);
-          if (
-            nextRecord &&
-            resolveConnectionRole(nextRecord.projectId, tab.id) !== 'detached'
-          ) {
+          if (nextRecord && resolveConnectionRole(nextRecord.projectId, tab.id) !== 'detached') {
             connect(nextRecord.tab);
           }
         }, 1000);

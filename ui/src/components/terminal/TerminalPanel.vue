@@ -440,66 +440,6 @@
     </div>
   </div>
 
-  <!-- 关联任务对话框 -->
-  <n-modal
-    v-model:show="showLinkTaskModal"
-    preset="card"
-    :title="t('terminal.linkTaskTitle')"
-    style="width: 480px; max-width: 90vw"
-    :mask-closable="!linkTaskLoading"
-    :closable="!linkTaskLoading"
-    @close="closeLinkTaskModal"
-  >
-    <n-spin :show="linkTaskLoading">
-      <n-list v-if="availableTasks.length > 0" hoverable class="link-task-list">
-        <n-list-item
-          v-for="task in availableTasks"
-          :key="task.id"
-          :class="{
-            'task-item-selected': selectedTaskId === task.id,
-            'task-item-disabled': isTaskLinkedToActiveSession(task.id),
-          }"
-          @click="selectTask(task.id)"
-        >
-          <div class="link-task-item">
-            <div class="task-title">{{ task.title }}</div>
-            <div class="task-meta">
-              <n-tag :type="task.status === 'todo' ? 'default' : 'info'" size="small">
-                {{ t(`task.status.${task.status === 'in_progress' ? 'inProgress' : task.status}`) }}
-              </n-tag>
-              <n-tag
-                v-if="task.priority > 0"
-                :type="task.priority === 3 ? 'error' : task.priority === 2 ? 'warning' : 'info'"
-                size="small"
-              >
-                {{ getPriorityLabel(task.priority) }}
-              </n-tag>
-              <n-tag v-if="isTaskLinkedToActiveSession(task.id)" type="warning" size="small">
-                {{ t('terminal.taskAlreadyLinked') }}
-              </n-tag>
-            </div>
-          </div>
-        </n-list-item>
-      </n-list>
-      <n-empty v-else :description="t('terminal.noAvailableTasks')" />
-    </n-spin>
-    <template #footer>
-      <n-space justify="end">
-        <n-button :disabled="linkTaskLoading" @click="closeLinkTaskModal">
-          {{ t('common.cancel') }}
-        </n-button>
-        <n-button
-          type="primary"
-          :disabled="!selectedTaskId || linkTaskLoading"
-          :loading="linkTaskLoading"
-          @click="confirmLinkTask"
-        >
-          {{ t('common.confirm') }}
-        </n-button>
-      </n-space>
-    </template>
-  </n-modal>
-
   <!-- AI 会话历史对话框 -->
   <AISessionHistoryDialog
     v-if="projectIdRef"
@@ -529,22 +469,7 @@ import {
 import type { HTMLAttributes } from 'vue';
 import { useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
-import {
-  useDialog,
-  useMessage,
-  NIcon,
-  NInput,
-  NModal,
-  NList,
-  NListItem,
-  NSpin,
-  NEmpty,
-  NTag,
-  NCheckbox,
-  NButton,
-  NSpace,
-  NTooltip,
-} from 'naive-ui';
+import { useDialog, useMessage, NIcon, NInput, NButton, NSpace, NTooltip } from 'naive-ui';
 import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '@vueuse/core';
 import {
   ChevronBackOutline,
@@ -557,9 +482,7 @@ import {
   CheckmarkOutline,
   InformationCircleOutline,
   Add,
-  TrashOutline,
   ClipboardOutline,
-  LinkOutline,
   FolderOpenOutline,
   TimeOutline,
   ChatbubblesOutline,
@@ -585,10 +508,8 @@ import {
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
-import { useTaskStore } from '@/stores/task';
 import { useTerminalReminderStore } from '@/stores/terminalReminder';
 import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapshot';
-import { taskActions } from '@/composables/useTaskActions';
 import { getPresetById } from '@/constants/themes';
 import {
   DEFAULT_EDITOR,
@@ -604,8 +525,7 @@ import {
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
-import { extractItem } from '@/api/response';
-import type { DeveloperConfig, Task } from '@/types/models';
+import type { DeveloperConfig } from '@/types/models';
 import type {
   EditorPreference,
   TerminalQuickAction,
@@ -638,8 +558,6 @@ const { t } = useLocale();
 const panelRef = ref<HTMLElement | null>(null);
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
-const taskStore = useTaskStore();
-const { tasksByStatus } = storeToRefs(taskStore);
 const reminderStore = useTerminalReminderStore();
 const sessionSnapshotStore = useTerminalSessionSnapshotStore();
 const { unreadCompletionSessionMap, approvalSessionMap } = storeToRefs(reminderStore);
@@ -670,7 +588,6 @@ const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
 const developerConfigState = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
-  autoCreateTaskOnStartWork: true,
   enableTerminalStateSnapshot: false,
   webSessionCodexDefaultSyncMode: 'fast',
   webSessionActiveCallTimeout: {
@@ -685,14 +602,12 @@ const developerConfigState = reactive<DeveloperConfig>({
 const developerConfigLoaded = ref(false);
 const developerConfigLoading = ref(false);
 const renameTitleToggleLoading = ref(false);
-const autoCreateTaskToggleLoading = ref(false);
 let developerConfigLoadPromise: Promise<boolean> | null = null;
 
 function cloneDeveloperConfigState(): DeveloperConfig {
   return {
     enableTerminalScrollback: developerConfigState.enableTerminalScrollback,
     renameSessionTitleEachCommand: developerConfigState.renameSessionTitleEachCommand,
-    autoCreateTaskOnStartWork: developerConfigState.autoCreateTaskOnStartWork,
     enableTerminalStateSnapshot: developerConfigState.enableTerminalStateSnapshot,
     webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
     webSessionActiveCallTimeout: {
@@ -715,14 +630,10 @@ const contextMenuTab = ref<string | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
 
-// 关联任务对话框相关状态
-const showLinkTaskModal = ref(false);
-
 // AI 会话历史对话框状态
 const showAISessionHistory = ref(false);
 const showConversationViewer = ref(false);
 const conversationSessionId = ref<string | null>(null);
-const linkTaskTargetTab = ref<TerminalTabState | null>(null);
 
 // 空终端标签状态
 const EMPTY_TAB_PREFIX = 'empty-';
@@ -762,40 +673,6 @@ function closeEmptyTab(tabId: string) {
 
 function isEmptyTab(tabId: string): boolean {
   return tabId.startsWith(EMPTY_TAB_PREFIX);
-}
-const linkTaskLoading = ref(false);
-const selectedTaskId = ref<string | null>(null);
-
-// 可关联的任务列表（待办和进行中的任务）
-const availableTasks = computed(() => {
-  const todoTasks = tasksByStatus.value['todo'] || [];
-  const inProgressTasks = tasksByStatus.value['in_progress'] || [];
-  return [...todoTasks, ...inProgressTasks];
-});
-
-// 检查任务是否已被其他终端关联（且终端状态活跃）
-function isTaskLinkedToActiveSession(taskId: string): boolean {
-  const session = getSessionByTask(taskId);
-  // 如果没有关联的会话，则允许关联
-  if (!session) {
-    return false;
-  }
-  // 如果终端已关闭或出错，允许重新关联
-  if (session.clientStatus === 'closed' || session.clientStatus === 'error') {
-    return false;
-  }
-  // 其他状态（connecting, ready）视为活跃，不允许重复关联
-  return true;
-}
-
-// 优先级标签映射
-function getPriorityLabel(priority: number): string {
-  const map: Record<number, string> = {
-    1: t('task.priority.low'),
-    2: t('task.priority.medium'),
-    3: t('task.priority.high'),
-  };
-  return map[priority] || '';
 }
 
 function resolveTabTaskId(tab: TerminalTabState | null | undefined) {
@@ -890,8 +767,6 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
   const tabId = contextMenuTab.value;
   const tab = tabId ? tabs.value.find(t => t.id === tabId) : null;
   const hasProcessInfo = tab?.processPid != null;
-  const linkedTaskId = resolveTabTaskId(tab);
-  const hasLinkedTask = Boolean(linkedTaskId);
   const canOpenEditorForTab = Boolean(resolveEditorPath(tab));
   const editorMenuOptions = editorOptions.value.map(option => ({
     label: option.label,
@@ -954,28 +829,6 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
       key: 'view-conversation',
       icon: () => h(NIcon, null, { default: () => h(ChatbubblesOutline) }),
       disabled: !tab?.aiSessionId,
-    },
-    {
-      type: 'divider',
-      key: 'task-actions-divider',
-    },
-    {
-      label: t('terminal.linkTask'),
-      key: 'link-task',
-      icon: () => h(NIcon, null, { default: () => h(LinkOutline) }),
-      disabled: hasLinkedTask,
-    },
-    {
-      label: t('terminal.viewLinkedTask'),
-      key: 'view-task',
-      icon: () => h(NIcon, null, { default: () => h(ClipboardOutline) }),
-      disabled: !hasLinkedTask,
-    },
-    {
-      label: t('terminal.unlinkTask'),
-      key: 'unlink-task',
-      icon: () => h(NIcon, null, { default: () => h(TrashOutline) }),
-      disabled: !hasLinkedTask,
     },
     {
       type: 'divider',
@@ -1064,14 +917,6 @@ const settingsMenuOptions = computed<DropdownOption[]>(() => [
           : undefined,
         disabled: developerConfigLoading.value || renameTitleToggleLoading.value,
       },
-      {
-        label: t('terminal.autoCreateTaskOnStartWork'),
-        key: 'auto-create-task-on-start-work',
-        icon: developerConfigState.autoCreateTaskOnStartWork
-          ? () => h(NIcon, null, { default: () => h(CheckmarkOutline) })
-          : undefined,
-        disabled: developerConfigLoading.value || autoCreateTaskToggleLoading.value,
-      },
     ],
   },
 ]);
@@ -1093,7 +938,6 @@ async function ensureDeveloperConfigLoaded() {
       developerConfigState.enableTerminalScrollback = config?.enableTerminalScrollback ?? false;
       developerConfigState.renameSessionTitleEachCommand =
         config?.renameSessionTitleEachCommand ?? false;
-      developerConfigState.autoCreateTaskOnStartWork = config?.autoCreateTaskOnStartWork ?? true;
       developerConfigState.enableTerminalStateSnapshot =
         config?.enableTerminalStateSnapshot ?? false;
       developerConfigState.webSessionCodexDefaultSyncMode =
@@ -1171,30 +1015,6 @@ async function toggleRenameTitleEachCommandSetting() {
   }
 }
 
-async function toggleAutoCreateTaskOnStartWorkSetting() {
-  if (autoCreateTaskToggleLoading.value) {
-    return;
-  }
-  const ready = await ensureDeveloperConfigLoaded();
-  if (!ready) {
-    return;
-  }
-  autoCreateTaskToggleLoading.value = true;
-  const nextValue = !developerConfigState.autoCreateTaskOnStartWork;
-  try {
-    const payload = cloneDeveloperConfigState();
-    payload.autoCreateTaskOnStartWork = nextValue;
-    await http.Post('/system/developer-config/update', payload).send();
-    developerConfigState.autoCreateTaskOnStartWork = nextValue;
-    message.success(t('common.saveSuccess'));
-  } catch (error) {
-    console.error('Failed to update auto create task setting', error);
-    message.error(t('common.saveFailed'));
-  } finally {
-    autoCreateTaskToggleLoading.value = false;
-  }
-}
-
 // 创建终端下拉菜单选项
 const createTerminalOptions = computed<DropdownOption[]>(() => {
   return worktrees.value.map(worktree => ({
@@ -1269,13 +1089,10 @@ const {
   send,
   disconnectTab,
   reorderTabs: reorderTabsInStore,
-  linkTask,
-  unlinkTask,
   setRenderMode,
   setSnapshotInterval,
   focusSession: focusSessionInStore,
   getLinkedTaskId,
-  getSessionByTask,
 } = useTerminalClient(projectIdRef);
 
 const settingsStore = useSettingsStore();
@@ -2690,50 +2507,20 @@ function handleClose(sessionId: string) {
 
   const tab = tabs.value.find(t => t.id === sessionId);
   const tabTitle = tab?.title || t('terminal.defaultTerminalTitle');
-  const linkedTaskId = resolveTabTaskId(tab);
 
   // 如果开启了关闭确认，先弹出确认对话框
   if (confirmBeforeTerminalClose.value) {
-    const shouldCompleteTask = ref(Boolean(linkedTaskId));
-
     dialog.warning({
       title: t('terminal.confirmCloseTitle'),
-      content: () => {
-        const children = [
+      content: () =>
+        h('div', { class: 'terminal-close-confirm' }, [
           h('div', { class: 'terminal-close-confirm__message' }, [
             t('terminal.confirmCloseContent', { title: tabTitle }),
           ]),
-        ];
-
-        if (linkedTaskId) {
-          children.push(
-            h(
-              'div',
-              { class: 'terminal-close-confirm__checkbox' },
-              h(
-                NCheckbox,
-                {
-                  checked: shouldCompleteTask.value,
-                  'onUpdate:checked': (value: boolean) => {
-                    shouldCompleteTask.value = value;
-                  },
-                },
-                { default: () => t('terminal.confirmCloseCompleteTask') }
-              )
-            )
-          );
-        }
-
-        return h('div', { class: 'terminal-close-confirm' }, children);
-      },
+        ]),
       positiveText: t('terminal.confirmCloseButton'),
       negativeText: t('common.cancel'),
-      onPositiveClick: async () => {
-        const closed = await performClose(sessionId);
-        if (closed && linkedTaskId && shouldCompleteTask.value) {
-          await completeLinkedTask(linkedTaskId);
-        }
-      },
+      onPositiveClick: async () => performClose(sessionId),
     });
     return;
   }
@@ -2750,24 +2537,6 @@ async function performClose(sessionId: string): Promise<boolean> {
     message.error(error?.message ?? t('terminal.closeFailed'));
     disconnectTab(sessionId);
     return false;
-  }
-}
-
-async function completeLinkedTask(taskId: string) {
-  const task = taskStore.tasks.find(item => item.id === taskId);
-  if (task && (task.status === 'done' || task.status === 'archived')) {
-    return;
-  }
-  try {
-    const response = await taskActions.moveTask.send(taskId, { status: 'done' });
-    const updated = extractItem(response) as unknown as Task | undefined;
-    if (updated) {
-      taskStore.upsertTask(updated);
-    } else {
-      taskActions.invalidateTaskCache();
-    }
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.completeLinkedTaskFailed'));
   }
 }
 
@@ -3280,18 +3049,6 @@ async function handleContextMenuSelect(key: string) {
     viewConversation(tab);
     return;
   }
-  if (key === 'link-task') {
-    promptLinkTask(tab);
-    return;
-  }
-  if (key === 'view-task') {
-    handleViewTask(tab);
-    return;
-  }
-  if (key === 'unlink-task') {
-    promptUnlinkTask(tab);
-    return;
-  }
   if (key === 'close-right-tabs') {
     promptCloseRightTabs(tab);
     return;
@@ -3308,30 +3065,6 @@ function handleViewTask(tab: TerminalTabState) {
     sessionId: tab.id,
     taskId,
     projectId: props.projectId,
-  });
-}
-
-function promptUnlinkTask(tab: TerminalTabState) {
-  const taskId = resolveTabTaskId(tab);
-  if (!taskId) {
-    message.warning(t('terminal.noLinkedTask'));
-    return;
-  }
-  dialog.warning({
-    title: t('terminal.unlinkTask'),
-    content: t('terminal.unlinkTaskConfirm', { title: tab.title }),
-    positiveText: t('common.confirm'),
-    negativeText: t('common.cancel'),
-    showIcon: false,
-    maskClosable: false,
-    onPositiveClick: async () => {
-      try {
-        await unlinkTask(tab.id);
-        message.success(t('terminal.taskUnlinked'));
-      } catch (error: any) {
-        message.error(error?.message ?? t('terminal.taskUnlinkFailed'));
-      }
-    },
   });
 }
 
@@ -3363,44 +3096,6 @@ function promptCloseRightTabs(tab: TerminalTabState) {
       message.success(t('terminal.closeRightTabsSuccess', { count }));
     },
   });
-}
-
-function promptLinkTask(tab: TerminalTabState) {
-  linkTaskTargetTab.value = tab;
-  selectedTaskId.value = null;
-  showLinkTaskModal.value = true;
-}
-
-function selectTask(taskId: string) {
-  // 如果任务已被活跃终端关联，不允许选中
-  if (isTaskLinkedToActiveSession(taskId)) {
-    return;
-  }
-  selectedTaskId.value = taskId;
-}
-
-async function confirmLinkTask() {
-  const tab = linkTaskTargetTab.value;
-  const taskId = selectedTaskId.value;
-  if (!tab || !taskId) {
-    return;
-  }
-  linkTaskLoading.value = true;
-  try {
-    await linkTask(tab.id, taskId);
-    message.success(t('terminal.taskLinked'));
-    closeLinkTaskModal();
-  } catch (error: any) {
-    message.error(error?.message ?? t('terminal.taskLinkFailed'));
-  } finally {
-    linkTaskLoading.value = false;
-  }
-}
-
-function closeLinkTaskModal() {
-  showLinkTaskModal.value = false;
-  linkTaskTargetTab.value = null;
-  selectedTaskId.value = null;
 }
 
 async function duplicateTab(tab: TerminalTabState) {
@@ -3506,8 +3201,6 @@ function handleSettingsMenuSelect(key: string) {
     );
   } else if (key === 'rename-title-each-command') {
     void toggleRenameTitleEachCommandSetting();
-  } else if (key === 'auto-create-task-on-start-work') {
-    void toggleAutoCreateTaskOnStartWorkSetting();
   }
 }
 
@@ -4252,55 +3945,6 @@ defineExpose({
   opacity: 0.8;
 }
 
-/* 关联任务对话框样式 */
-.link-task-list {
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.link-task-list :deep(.n-list-item) {
-  cursor: pointer;
-  border-radius: 6px;
-  transition:
-    background-color 0.2s,
-    border-color 0.2s;
-  border: 2px solid transparent;
-}
-
-.link-task-list :deep(.n-list-item:hover) {
-  background-color: var(--n-item-color-pending, rgba(0, 0, 0, 0.05));
-}
-.link-task-list :deep(.n-list-item.task-item-selected) {
-  background-color: rgba(24, 160, 88, 0.1);
-}
-
-.link-task-list :deep(.n-list-item.task-item-disabled) {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.link-task-list :deep(.n-list-item.task-item-disabled:hover) {
-  background-color: transparent;
-}
-
-.link-task-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.link-task-item .task-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--app-text-color, var(--n-text-color-1, #333));
-}
-
-.link-task-item .task-meta {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
 /* ========================================
    移动端样式
    ======================================== */
@@ -4421,10 +4065,6 @@ defineExpose({
 
 .mobile-tab-arrow.is-open {
   transform: rotate(180deg);
-}
-
-.terminal-close-confirm__checkbox {
-  margin-top: 8px;
 }
 
 /* 移动端布局隐藏浮动按钮 */

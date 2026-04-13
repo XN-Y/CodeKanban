@@ -204,12 +204,6 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 			return nil, huma.Error404NotFound("task not found")
 		}
 
-		if task.Status == "todo" {
-			if _, err := c.taskService.UpdateTask(ctx, taskID, map[string]interface{}{"status": "in_progress"}); err != nil {
-				return nil, huma.Error500InternalServerError("failed to update task status", err)
-			}
-		}
-
 		session, err = c.manager.LinkTask(input.SessionID, taskID)
 		if err != nil {
 			if errors.Is(err, terminal.ErrSessionNotFound) {
