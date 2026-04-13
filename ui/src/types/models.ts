@@ -227,7 +227,8 @@ export interface WebSessionActiveCallTimeoutKindsConfig {
 
 export interface WebSessionActiveCallTimeoutConfig {
   enabledMode: 'default' | 'on' | 'off';
-  timeoutSeconds: number;
+  timeoutMode: 'default' | 'custom';
+  customTimeoutSeconds: number;
   promptTemplate: string;
   callKinds: WebSessionActiveCallTimeoutKindsConfig;
 }

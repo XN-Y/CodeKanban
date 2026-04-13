@@ -1453,9 +1453,10 @@ func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
 
 	project := seedProject(t)
 	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
-		EnabledMode:    utils.SettingModeOn,
-		TimeoutSeconds: 10,
-		PromptTemplate: "The ${call} call timed out after ${duration}. Continue.",
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "The ${call} call timed out after ${duration}. Continue.",
 		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
 			UseDefault: false,
 			Command:    true,
@@ -1532,15 +1533,69 @@ func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
 	}
 }
 
-func TestActiveCallTimeoutUsesLatestTrackedCall(t *testing.T) {
+func TestActiveCallTimeoutDefaultKindsSkipCommandExecution(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
 
 	project := seedProject(t)
 	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
 		EnabledMode:    utils.SettingModeOn,
-		TimeoutSeconds: 10,
-		PromptTemplate: "Continue after ${call}.",
+		PromptTemplate: "The ${call} call timed out after ${duration}. Continue.",
+	})
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "active_call_timeout_command_then_success"),
+		ActiveCallTimeoutConfig: func() utils.WebSessionActiveCallTimeoutConfig {
+			return timeoutConfig
+		},
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	call := waitForTrackedActiveCall(t, manager, created.ID, activeCallTimeoutKindCommand)
+	setTrackedActiveCallStartedAt(t, manager, created.ID, call.ToolID, time.Now().Add(-12*time.Second))
+	manager.RefreshDeveloperConfig()
+	time.Sleep(150 * time.Millisecond)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	for _, event := range rawEvents {
+		if event.Type == "run_abort" && stringValue(event.Payload["reason"]) == activeCallTimeoutReason {
+			t.Fatalf("expected default monitored kinds to skip command execution, got %#v", rawEvents)
+		}
+	}
+
+	if err := manager.AbortSession(created.ID); err != nil {
+		t.Fatalf("AbortSession returned error: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
+func TestActiveCallTimeoutUsesLatestTrackedCall(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "Continue after ${call}.",
 	})
 	manager, err := NewManager(Config{
 		DataDir:   t.TempDir(),
@@ -1602,9 +1657,10 @@ func TestActiveCallTimeoutPausesDuringApproval(t *testing.T) {
 
 	project := seedProject(t)
 	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
-		EnabledMode:    utils.SettingModeOn,
-		TimeoutSeconds: 10,
-		PromptTemplate: "Continue after ${call}.",
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "Continue after ${call}.",
 		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
 			UseDefault: false,
 			Tool:       true,
@@ -1671,9 +1727,10 @@ func TestActiveCallTimeoutPausesDuringUserInput(t *testing.T) {
 
 	project := seedProject(t)
 	timeoutConfig := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
-		EnabledMode:    utils.SettingModeOn,
-		TimeoutSeconds: 10,
-		PromptTemplate: "Continue after ${call}.",
+		EnabledMode:          utils.SettingModeOn,
+		TimeoutMode:          utils.WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 10,
+		PromptTemplate:       "Continue after ${call}.",
 		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
 			UseDefault: false,
 			MCP:        true,

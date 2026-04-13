@@ -660,6 +660,13 @@ const panelSize = reactive({
 });
 const isResizing = ref(false);
 const shouldAutoFocusTerminal = ref(true);
+const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
+const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
+  useDefault: true,
+  mcp: true,
+  command: false,
+  tool: true,
+} as const;
 const developerConfigState = reactive<DeveloperConfig>({
   enableTerminalScrollback: false,
   renameSessionTitleEachCommand: false,
@@ -668,15 +675,11 @@ const developerConfigState = reactive<DeveloperConfig>({
   webSessionCodexDefaultSyncMode: 'fast',
   webSessionActiveCallTimeout: {
     enabledMode: 'default',
-    timeoutSeconds: 60,
+    timeoutMode: 'default',
+    customTimeoutSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
     promptTemplate:
       'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.',
-    callKinds: {
-      useDefault: true,
-      mcp: true,
-      command: true,
-      tool: true,
-    },
+    callKinds: { ...DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS },
   },
 });
 const developerConfigLoaded = ref(false);
@@ -694,7 +697,8 @@ function cloneDeveloperConfigState(): DeveloperConfig {
     webSessionCodexDefaultSyncMode: developerConfigState.webSessionCodexDefaultSyncMode,
     webSessionActiveCallTimeout: {
       enabledMode: developerConfigState.webSessionActiveCallTimeout.enabledMode,
-      timeoutSeconds: developerConfigState.webSessionActiveCallTimeout.timeoutSeconds,
+      timeoutMode: developerConfigState.webSessionActiveCallTimeout.timeoutMode,
+      customTimeoutSeconds: developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds,
       promptTemplate: developerConfigState.webSessionActiveCallTimeout.promptTemplate,
       callKinds: {
         useDefault: developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault,
@@ -1099,21 +1103,36 @@ async function ensureDeveloperConfigLoaded() {
         config?.webSessionActiveCallTimeout?.enabledMode === 'off'
           ? config.webSessionActiveCallTimeout.enabledMode
           : 'default';
-      developerConfigState.webSessionActiveCallTimeout.timeoutSeconds = Math.max(
-        10,
-        Number(config?.webSessionActiveCallTimeout?.timeoutSeconds) || 60
+      developerConfigState.webSessionActiveCallTimeout.timeoutMode =
+        config?.webSessionActiveCallTimeout?.timeoutMode === 'custom' ? 'custom' : 'default';
+      developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds = Math.min(
+        3600,
+        Math.max(
+          10,
+          Number(config?.webSessionActiveCallTimeout?.customTimeoutSeconds) ||
+            DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
+        )
       );
       developerConfigState.webSessionActiveCallTimeout.promptTemplate =
         config?.webSessionActiveCallTimeout?.promptTemplate?.trim() ||
         developerConfigState.webSessionActiveCallTimeout.promptTemplate;
       developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault =
         config?.webSessionActiveCallTimeout?.callKinds?.useDefault !== false;
-      developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
-        config?.webSessionActiveCallTimeout?.callKinds?.mcp !== false;
-      developerConfigState.webSessionActiveCallTimeout.callKinds.command =
-        config?.webSessionActiveCallTimeout?.callKinds?.command !== false;
-      developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
-        config?.webSessionActiveCallTimeout?.callKinds?.tool !== false;
+      if (developerConfigState.webSessionActiveCallTimeout.callKinds.useDefault) {
+        developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
+          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.mcp;
+        developerConfigState.webSessionActiveCallTimeout.callKinds.command =
+          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.command;
+        developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
+          DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.tool;
+      } else {
+        developerConfigState.webSessionActiveCallTimeout.callKinds.mcp =
+          config?.webSessionActiveCallTimeout?.callKinds?.mcp !== false;
+        developerConfigState.webSessionActiveCallTimeout.callKinds.command =
+          config?.webSessionActiveCallTimeout?.callKinds?.command === true;
+        developerConfigState.webSessionActiveCallTimeout.callKinds.tool =
+          config?.webSessionActiveCallTimeout?.callKinds?.tool !== false;
+      }
       developerConfigLoaded.value = true;
       return true;
     } catch (error) {

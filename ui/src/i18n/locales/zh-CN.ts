@@ -1099,10 +1099,10 @@ export default {
       '仅作用于后端 Codex 会话。当受监控的活跃调用持续超过阈值时，CodeKanban 会自动打断当前 run，并补发一条继续 prompt。',
     webSessionActiveCallTimeoutSeconds: '活跃调用超时阈值（秒）',
     webSessionActiveCallTimeoutSecondsTip:
-      '按当前活跃的 Codex 调用计时。可设置范围 10-3600 秒，默认 60 秒。',
+      '默认值为 {defaultSeconds} 秒；切换为自定义后，可在 10 至 3600 秒范围内手动设置。',
     webSessionActiveCallTimeoutCallKinds: '活跃调用分类',
     webSessionActiveCallTimeoutCallKindsTip:
-      '勾选“默认”时，跟随当前版本内置监控集合；取消后可以手动选择要监控的 Codex 调用类型。',
+      '勾选“默认”时，跟随当前版本内置监控集合（MCP 调用、其他工具）；取消后可以手动选择要监控的 Codex 调用类型。',
     webSessionActiveCallTimeoutKindDefault: '默认监控集合',
     webSessionActiveCallTimeoutKindMcp: 'MCP 调用',
     webSessionActiveCallTimeoutKindCommand: '命令执行',

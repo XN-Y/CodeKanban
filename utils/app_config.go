@@ -77,6 +77,13 @@ const (
 	SettingModeOff     SettingMode = "off"
 )
 
+type WebSessionActiveCallTimeoutMode string
+
+const (
+	WebSessionActiveCallTimeoutModeDefault WebSessionActiveCallTimeoutMode = "default"
+	WebSessionActiveCallTimeoutModeCustom  WebSessionActiveCallTimeoutMode = "custom"
+)
+
 type WebSessionActiveCallTimeoutKindsConfig struct {
 	UseDefault bool `json:"useDefault" yaml:"useDefault"`
 	MCP        bool `json:"mcp" yaml:"mcp"`
@@ -85,10 +92,11 @@ type WebSessionActiveCallTimeoutKindsConfig struct {
 }
 
 type WebSessionActiveCallTimeoutConfig struct {
-	EnabledMode    SettingMode                            `json:"enabledMode" yaml:"enabledMode"`
-	TimeoutSeconds int                                    `json:"timeoutSeconds" yaml:"timeoutSeconds"`
-	PromptTemplate string                                 `json:"promptTemplate" yaml:"promptTemplate"`
-	CallKinds      WebSessionActiveCallTimeoutKindsConfig `json:"callKinds" yaml:"callKinds"`
+	EnabledMode          SettingMode                            `json:"enabledMode" yaml:"enabledMode"`
+	TimeoutMode          WebSessionActiveCallTimeoutMode        `json:"timeoutMode" yaml:"timeoutMode"`
+	CustomTimeoutSeconds int                                    `json:"customTimeoutSeconds" yaml:"customTimeoutSeconds"`
+	PromptTemplate       string                                 `json:"promptTemplate" yaml:"promptTemplate"`
+	CallKinds            WebSessionActiveCallTimeoutKindsConfig `json:"callKinds" yaml:"callKinds"`
 }
 
 type WebSessionQuickInputConfig struct {
@@ -108,22 +116,25 @@ var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
 }
 
 const (
-	defaultWebSessionActiveCallTimeoutSeconds = 60
+	DefaultWebSessionActiveCallTimeoutSeconds = 120
 	minWebSessionActiveCallTimeoutSeconds     = 10
 	maxWebSessionActiveCallTimeoutSeconds     = 3600
 	DefaultWebSessionActiveCallTimeoutPrompt  = "The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue."
 )
 
+var defaultWebSessionActiveCallTimeoutCallKindsConfig = WebSessionActiveCallTimeoutKindsConfig{
+	UseDefault: true,
+	MCP:        true,
+	Command:    false,
+	Tool:       true,
+}
+
 var defaultWebSessionActiveCallTimeoutConfig = WebSessionActiveCallTimeoutConfig{
-	EnabledMode:    SettingModeDefault,
-	TimeoutSeconds: defaultWebSessionActiveCallTimeoutSeconds,
-	PromptTemplate: DefaultWebSessionActiveCallTimeoutPrompt,
-	CallKinds: WebSessionActiveCallTimeoutKindsConfig{
-		UseDefault: true,
-		MCP:        true,
-		Command:    true,
-		Tool:       true,
-	},
+	EnabledMode:          SettingModeDefault,
+	TimeoutMode:          WebSessionActiveCallTimeoutModeDefault,
+	CustomTimeoutSeconds: DefaultWebSessionActiveCallTimeoutSeconds,
+	PromptTemplate:       DefaultWebSessionActiveCallTimeoutPrompt,
+	CallKinds:            defaultWebSessionActiveCallTimeoutCallKindsConfig,
 }
 
 // WorktreeConfig Worktree 全局配置。
@@ -322,6 +333,7 @@ func ReadConfig() *AppConfig {
 	// 存储活动配置路径以供后续 WriteConfig 使用
 	activeConfigPath = configPath
 
+	fileConfigStore := koanf.New(".")
 	provider := file.Provider(configPath)
 	if err := configStore.Load(provider, yaml.Parser()); err != nil {
 		fmt.Printf("Failed to read config: %v\n", err)
@@ -332,6 +344,8 @@ func ReadConfig() *AppConfig {
 		} else {
 			os.Exit(1)
 		}
+	} else {
+		lo.Must0(fileConfigStore.Load(provider, yaml.Parser()))
 	}
 
 	config := defaults
@@ -345,6 +359,11 @@ func ReadConfig() *AppConfig {
 	_ = config.Terminal.IdleDuration()
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)
 	config.Developer = NormalizeDeveloperConfig(config.Developer)
+	if webSessionActiveCallTimeoutConfigNeedsRewrite(fileConfigStore) {
+		if writeErr := WriteConfigToPath(&config, configPath); writeErr != nil {
+			fmt.Printf("Failed to rewrite migrated config: %v\n", writeErr)
+		}
+	}
 
 	if config.PrintConfig {
 		configStore.Print()
@@ -381,8 +400,9 @@ func MergeDeveloperConfig(current DeveloperConfig, incoming DeveloperConfig) Dev
 func NormalizeWebSessionActiveCallTimeoutConfig(config WebSessionActiveCallTimeoutConfig) WebSessionActiveCallTimeoutConfig {
 	normalized := defaultWebSessionActiveCallTimeoutConfig
 	normalized.EnabledMode = normalizeSettingMode(config.EnabledMode)
-	if config.TimeoutSeconds != 0 {
-		normalized.TimeoutSeconds = clampWebSessionActiveCallTimeoutSeconds(config.TimeoutSeconds)
+	normalized.TimeoutMode = normalizeWebSessionActiveCallTimeoutMode(config.TimeoutMode)
+	if config.CustomTimeoutSeconds != 0 {
+		normalized.CustomTimeoutSeconds = clampWebSessionActiveCallTimeoutSeconds(config.CustomTimeoutSeconds)
 	}
 	if strings.TrimSpace(config.PromptTemplate) != "" {
 		normalized.PromptTemplate = strings.TrimSpace(config.PromptTemplate)
@@ -397,11 +417,25 @@ func normalizeWebSessionActiveCallTimeoutKindsConfig(
 	config WebSessionActiveCallTimeoutKindsConfig,
 ) WebSessionActiveCallTimeoutKindsConfig {
 	if config.UseDefault {
-		config.MCP = true
-		config.Command = true
-		config.Tool = true
+		return defaultWebSessionActiveCallTimeoutCallKindsConfig
 	}
-	return config
+	return WebSessionActiveCallTimeoutKindsConfig{
+		UseDefault: false,
+		MCP:        config.MCP,
+		Command:    config.Command,
+		Tool:       config.Tool,
+	}
+}
+
+func normalizeWebSessionActiveCallTimeoutMode(
+	value WebSessionActiveCallTimeoutMode,
+) WebSessionActiveCallTimeoutMode {
+	switch strings.ToLower(strings.TrimSpace(string(value))) {
+	case string(WebSessionActiveCallTimeoutModeCustom):
+		return WebSessionActiveCallTimeoutModeCustom
+	default:
+		return WebSessionActiveCallTimeoutModeDefault
+	}
 }
 
 func normalizeSettingMode(value SettingMode) SettingMode {
@@ -417,7 +451,7 @@ func normalizeSettingMode(value SettingMode) SettingMode {
 
 func clampWebSessionActiveCallTimeoutSeconds(value int) int {
 	if value <= 0 {
-		return defaultWebSessionActiveCallTimeoutSeconds
+		return DefaultWebSessionActiveCallTimeoutSeconds
 	}
 	if value < minWebSessionActiveCallTimeoutSeconds {
 		return minWebSessionActiveCallTimeoutSeconds
@@ -426,6 +460,59 @@ func clampWebSessionActiveCallTimeoutSeconds(value int) int {
 		return maxWebSessionActiveCallTimeoutSeconds
 	}
 	return value
+}
+
+func effectiveWebSessionActiveCallTimeoutSeconds(config WebSessionActiveCallTimeoutConfig) int {
+	normalized := NormalizeWebSessionActiveCallTimeoutConfig(config)
+	if normalized.TimeoutMode == WebSessionActiveCallTimeoutModeCustom {
+		return normalized.CustomTimeoutSeconds
+	}
+	return DefaultWebSessionActiveCallTimeoutSeconds
+}
+
+func webSessionActiveCallTimeoutConfigNeedsRewrite(store *koanf.Koanf) bool {
+	if store == nil {
+		return false
+	}
+	if store.Get("developer.webSessionActiveCallTimeout") == nil {
+		return false
+	}
+	if store.Get("developer.webSessionActiveCallTimeout.timeoutSeconds") != nil {
+		return true
+	}
+	if store.Get("developer.webSessionActiveCallTimeout.timeoutMode") == nil {
+		return true
+	}
+	if !boolValueOrDefault(store.Get("developer.webSessionActiveCallTimeout.callKinds.useDefault"), false) {
+		return false
+	}
+	if boolValueOrDefault(
+		store.Get("developer.webSessionActiveCallTimeout.callKinds.mcp"),
+		defaultWebSessionActiveCallTimeoutCallKindsConfig.MCP,
+	) != defaultWebSessionActiveCallTimeoutCallKindsConfig.MCP {
+		return true
+	}
+	if boolValueOrDefault(
+		store.Get("developer.webSessionActiveCallTimeout.callKinds.command"),
+		defaultWebSessionActiveCallTimeoutCallKindsConfig.Command,
+	) != defaultWebSessionActiveCallTimeoutCallKindsConfig.Command {
+		return true
+	}
+	if boolValueOrDefault(
+		store.Get("developer.webSessionActiveCallTimeout.callKinds.tool"),
+		defaultWebSessionActiveCallTimeoutCallKindsConfig.Tool,
+	) != defaultWebSessionActiveCallTimeoutCallKindsConfig.Tool {
+		return true
+	}
+	return false
+}
+
+func boolValueOrDefault(value any, fallback bool) bool {
+	typed, ok := value.(bool)
+	if !ok {
+		return fallback
+	}
+	return typed
 }
 
 func normalizeWebSessionQuickInputItems(items []string, limit int) []string {
@@ -497,11 +584,14 @@ func WriteConfigToPath(config *AppConfig, path string) error {
 
 // writeConfigToPathLocked 不获取锁直接写入配置（调用者必须持有锁）
 func writeConfigToPathLocked(config *AppConfig, path string) error {
+	store := configStore
 	if config != nil {
-		lo.Must0(configStore.Load(structs.Provider(config, "yaml"), nil))
+		store = koanf.New(".")
+		lo.Must0(store.Load(structs.Provider(config, "yaml"), nil))
+		configStore = store
 	}
 
-	content, err := yaml.Parser().Marshal(configStore.Raw())
+	content, err := yaml.Parser().Marshal(store.Raw())
 	if err != nil {
 		return fmt.Errorf("failed to serialize config: %w", err)
 	}

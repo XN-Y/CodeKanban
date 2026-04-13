@@ -651,15 +651,29 @@
             </n-form-item>
             <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
               <n-space vertical size="small">
+                <n-radio-group
+                  v-model:value="developerForm.webSessionActiveCallTimeout.timeoutMode"
+                  :disabled="developerLoading"
+                >
+                  <n-space>
+                    <n-radio value="default">{{ t('common.default') }}</n-radio>
+                    <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                  </n-space>
+                </n-radio-group>
                 <n-input-number
-                  v-model:value="developerForm.webSessionActiveCallTimeout.timeoutSeconds"
+                  v-if="developerUsesCustomActiveCallTimeout"
+                  v-model:value="developerForm.webSessionActiveCallTimeout.customTimeoutSeconds"
                   :min="10"
                   :max="3600"
                   :step="10"
                   :disabled="developerLoading"
                 />
                 <span class="form-tip">
-                  {{ t('settings.webSessionActiveCallTimeoutSecondsTip') }}
+                  {{
+                    t('settings.webSessionActiveCallTimeoutSecondsTip', {
+                      defaultSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
+                    })
+                  }}
                 </span>
               </n-space>
             </n-form-item>
@@ -1119,6 +1133,13 @@ type ShortcutTarget = 'terminal' | 'notepad';
 
 const SHELL_AUTO_VALUE = '__auto__';
 const SHELL_CUSTOM_VALUE = '__custom__';
+const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
+const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
+  useDefault: true,
+  mcp: true,
+  command: false,
+  tool: true,
+} as const;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT =
   'The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue.';
 
@@ -1241,17 +1262,27 @@ const { send: updateAIStatus, loading: saveLoading } = useReq((config: AIAssista
 function sanitizeActiveCallTimeoutConfig(
   value?: Partial<WebSessionActiveCallTimeoutConfig> | null
 ): WebSessionActiveCallTimeoutConfig {
+  const useDefaultCallKinds = value?.callKinds?.useDefault !== false;
   return {
     enabledMode:
       value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
-    timeoutSeconds: Math.min(3600, Math.max(10, Number(value?.timeoutSeconds) || 60)),
+    timeoutMode: value?.timeoutMode === 'custom' ? 'custom' : 'default',
+    customTimeoutSeconds: Math.min(
+      3600,
+      Math.max(
+        10,
+        Number(value?.customTimeoutSeconds) || DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
+      )
+    ),
     promptTemplate: value?.promptTemplate?.trim() || DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
-    callKinds: {
-      useDefault: value?.callKinds?.useDefault !== false,
-      mcp: value?.callKinds?.mcp !== false,
-      command: value?.callKinds?.command !== false,
-      tool: value?.callKinds?.tool !== false,
-    },
+    callKinds: useDefaultCallKinds
+      ? { ...DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS }
+      : {
+          useDefault: false,
+          mcp: value?.callKinds?.mcp !== false,
+          command: value?.callKinds?.command === true,
+          tool: value?.callKinds?.tool !== false,
+        },
   };
 }
 
@@ -1276,8 +1307,9 @@ function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) 
   target.enableTerminalStateSnapshot = source.enableTerminalStateSnapshot;
   target.webSessionCodexDefaultSyncMode = source.webSessionCodexDefaultSyncMode;
   target.webSessionActiveCallTimeout.enabledMode = source.webSessionActiveCallTimeout.enabledMode;
-  target.webSessionActiveCallTimeout.timeoutSeconds =
-    source.webSessionActiveCallTimeout.timeoutSeconds;
+  target.webSessionActiveCallTimeout.timeoutMode = source.webSessionActiveCallTimeout.timeoutMode;
+  target.webSessionActiveCallTimeout.customTimeoutSeconds =
+    source.webSessionActiveCallTimeout.customTimeoutSeconds;
   target.webSessionActiveCallTimeout.promptTemplate =
     source.webSessionActiveCallTimeout.promptTemplate;
   target.webSessionActiveCallTimeout.callKinds.useDefault =
@@ -1299,6 +1331,9 @@ function serializeDeveloperConfig(value: DeveloperConfig | null) {
 
 const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
 const developerOriginal = ref<DeveloperConfig | null>(null);
+const developerUsesCustomActiveCallTimeout = computed(
+  () => developerForm.webSessionActiveCallTimeout.timeoutMode === 'custom'
+);
 const webSessionSyncModeOptions = computed(() => [
   { label: t('settings.webSessionSyncModeFast'), value: 'fast' },
   { label: t('settings.webSessionSyncModeDeep'), value: 'deep' },
@@ -1368,6 +1403,21 @@ async function handleSaveDeveloperConfig() {
     message.error(t('common.saveFailed'));
   }
 }
+
+watch(
+  () => developerForm.webSessionActiveCallTimeout.callKinds.useDefault,
+  useDefault => {
+    if (!useDefault) {
+      return;
+    }
+    developerForm.webSessionActiveCallTimeout.callKinds.mcp =
+      DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.mcp;
+    developerForm.webSessionActiveCallTimeout.callKinds.command =
+      DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.command;
+    developerForm.webSessionActiveCallTimeout.callKinds.tool =
+      DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS.tool;
+  }
+);
 
 // Worktree 全局设置
 const worktreeSettingsForm = reactive<WorktreeConfig>({

@@ -1142,10 +1142,10 @@ export default {
       'Backend-only Codex safeguard. When a monitored active call keeps running past the threshold, CodeKanban interrupts the run and sends a follow-up prompt automatically.',
     webSessionActiveCallTimeoutSeconds: 'Active call timeout (seconds)',
     webSessionActiveCallTimeoutSecondsTip:
-      'Applies to the currently active Codex call. Valid range: 10-3600 seconds. Default is 60 seconds.',
+      'Use either the Default or Custom tier. Default is a separate tier that follows the built-in value for this version, currently {defaultSeconds} seconds. Custom stays in the 10-3600 second range.',
     webSessionActiveCallTimeoutCallKinds: 'Active call categories',
     webSessionActiveCallTimeoutCallKindsTip:
-      'Use Default follows the built-in monitored set for this version. Disable Default to choose specific Codex call categories manually.',
+      'Use Default follows the built-in monitored set for this version (MCP calls and other tools). Disable Default to choose specific Codex call categories manually.',
     webSessionActiveCallTimeoutKindDefault: 'Default monitored set',
     webSessionActiveCallTimeoutKindMcp: 'MCP calls',
     webSessionActiveCallTimeoutKindCommand: 'Command execution',

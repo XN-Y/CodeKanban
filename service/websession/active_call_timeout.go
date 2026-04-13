@@ -64,21 +64,19 @@ func (m *Manager) RefreshDeveloperConfig() {
 }
 
 func (m *Manager) activeCallTimeoutSettings() activeCallTimeoutSettings {
-	raw := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{
-		CallKinds: utils.WebSessionActiveCallTimeoutKindsConfig{
-			UseDefault: true,
-			MCP:        true,
-			Command:    true,
-			Tool:       true,
-		},
-	})
+	raw := utils.NormalizeWebSessionActiveCallTimeoutConfig(utils.WebSessionActiveCallTimeoutConfig{})
 	if m != nil && m.cfg.ActiveCallTimeoutConfig != nil {
 		raw = utils.NormalizeWebSessionActiveCallTimeoutConfig(m.cfg.ActiveCallTimeoutConfig())
 	}
 
+	timeoutSeconds := utils.DefaultWebSessionActiveCallTimeoutSeconds
+	if raw.TimeoutMode == utils.WebSessionActiveCallTimeoutModeCustom {
+		timeoutSeconds = raw.CustomTimeoutSeconds
+	}
+
 	settings := activeCallTimeoutSettings{
 		Enabled:        activeCallTimeoutDefaultEnabled,
-		Timeout:        time.Duration(raw.TimeoutSeconds) * time.Second,
+		Timeout:        time.Duration(timeoutSeconds) * time.Second,
 		PromptTemplate: raw.PromptTemplate,
 	}
 	switch raw.EnabledMode {
@@ -88,12 +86,6 @@ func (m *Manager) activeCallTimeoutSettings() activeCallTimeoutSettings {
 		settings.Enabled = true
 	default:
 		settings.Enabled = activeCallTimeoutDefaultEnabled
-	}
-	if raw.CallKinds.UseDefault {
-		settings.TrackMCP = true
-		settings.TrackCommand = true
-		settings.TrackTool = true
-		return settings
 	}
 	settings.TrackMCP = raw.CallKinds.MCP
 	settings.TrackCommand = raw.CallKinds.Command

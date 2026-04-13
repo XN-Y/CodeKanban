@@ -171,9 +171,10 @@ export interface WebSessionActiveCallTimeoutConfig {
    */
   $schema?: string;
   callKinds: WebSessionActiveCallTimeoutKindsConfig;
+  customTimeoutSeconds: number;
   enabledMode: string;
   promptTemplate: string;
-  timeoutSeconds: number;
+  timeoutMode: string;
 }
 export interface WebSessionActiveCallTimeoutKindsConfig {
   /**
