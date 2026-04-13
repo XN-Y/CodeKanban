@@ -14,6 +14,7 @@ import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapsho
 import { useProjectStore } from '@/stores/project';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
 import type { TerminalSession } from '@/types/models';
+import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 
 // Props
 const props = withDefaults(
@@ -1484,53 +1485,29 @@ watch(
         </span>
       </button>
 
-      <div
+      <SplitDropdownControl
         v-if="!isDockedSidebar"
-        class="notification-mode-control notification-action-btn"
-        :class="{ 'is-active': notificationDisplayMode !== 'standard' }"
+        :label="currentDisplayModeLabel"
+        :options="notificationModeOptions"
+        placement="bottom-end"
+        :title="t('terminal.notificationModeCycleTooltip')"
+        :menu-title="t('terminal.notificationModeMenuTooltip')"
+        :active="notificationDisplayMode !== 'standard'"
+        @main-click="cycleDisplayMode"
+        @select="handleNotificationModeSelect"
       >
-        <button
-          type="button"
-          class="mode-control-btn"
-          @click="cycleDisplayMode"
-          :title="t('terminal.notificationModeCycleTooltip')"
-        >
-          <span class="action-btn-icon" aria-hidden="true">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M4 7h16M4 12h10M4 17h8"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </span>
-          <span class="action-btn-label">{{ currentDisplayModeLabel }}</span>
-        </button>
-        <n-dropdown
-          trigger="click"
-          placement="bottom-end"
-          :options="notificationModeOptions"
-          @select="handleNotificationModeSelect"
-        >
-          <button
-            type="button"
-            class="mode-dropdown-btn"
-            :title="t('terminal.notificationModeMenuTooltip')"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M6 9l6 6 6-6"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </button>
-        </n-dropdown>
-      </div>
+        <template #prefix>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M4 7h16M4 12h10M4 17h8"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </template>
+      </SplitDropdownControl>
 
       <!-- 通知开关按钮 -->
       <n-tooltip placement="bottom" :delay="250">

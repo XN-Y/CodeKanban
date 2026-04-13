@@ -1253,10 +1253,29 @@
           <aside class="session-sidebar" :style="{ width: effectiveSidebarWidthPx + 'px' }">
             <div class="session-sidebar-header">
               <div class="session-sidebar-title-wrap">
-                <div class="session-sidebar-title">{{ t('webSession.allSessions') }}</div>
-                <div class="session-sidebar-subtitle">
-                  {{ t('webSession.crossProjectSessions') }}
-                </div>
+                <SplitDropdownControl
+                  class="session-sidebar-scope-control"
+                  :label="sidebarScopeLabel"
+                  :options="sidebarScopeOptions"
+                  :title="sidebarScopeAriaLabel"
+                  :menu-title="sidebarScopeAriaLabel"
+                  :aria-label="sidebarScopeAriaLabel"
+                  flat
+                  @main-click="toggleSidebarScope"
+                  @select="handleSidebarScopeSelect"
+                >
+                  <template #prefix>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M4 7h16M4 12h10M4 17h8"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </template>
+                </SplitDropdownControl>
               </div>
               <span class="session-sidebar-count">{{
                 crossProjectSessions.length + archivedSidebarMeta.total
@@ -1609,6 +1628,7 @@ import { urlBase } from '@/api';
 import { http } from '@/api/http';
 import { webSessionApi } from '@/api/webSession';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
+import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import {
@@ -1671,6 +1691,11 @@ import {
   collapseProjectDraftTabs,
   pickPreferredDraftTab,
 } from '@/components/web-session/webSessionDraftTabs';
+import {
+  normalizeWebSessionSidebarScope,
+  resolveWebSessionSidebarProjectIds,
+  type WebSessionSidebarScope,
+} from '@/components/web-session/webSessionSidebarScope';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
 import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
@@ -1696,6 +1721,7 @@ const DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-draft-tabs';
 const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
 const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
+const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
@@ -1934,6 +1960,7 @@ const sidebarWidthPx = useStorage<number>(
   'workspace-web-session-sidebar-width',
   DEFAULT_SESSION_SIDEBAR_WIDTH
 );
+const persistedSidebarScope = useStorage<string>(SIDEBAR_SCOPE_STORAGE_KEY, 'all');
 let sidebarResizeObserver: ResizeObserver | null = null;
 const composerTransferErrorMessage = ref('');
 const composerTransferErrorDetail = ref('');
@@ -3323,7 +3350,31 @@ const activeSessionAttentionStateClass = computed(() =>
 const activeSessionHasWorkflowPlanBadge = computed(() =>
   shouldShowSessionWorkflowPlanBadge(currentSession.value)
 );
+const sidebarScope = computed<WebSessionSidebarScope>({
+  get: () => normalizeWebSessionSidebarScope(persistedSidebarScope.value),
+  set: value => {
+    persistedSidebarScope.value = normalizeWebSessionSidebarScope(value);
+  },
+});
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
+const sidebarScopeOptions = computed<DropdownOption[]>(() => [
+  {
+    key: 'all',
+    label: t('webSession.sidebarScopeAll'),
+  },
+  {
+    key: 'current',
+    label: t('webSession.sidebarScopeCurrentProject'),
+  },
+]);
+const sidebarScopeLabel = computed(() =>
+  sidebarScope.value === 'current'
+    ? t('webSession.sidebarScopeCurrentProject')
+    : t('webSession.sidebarScopeAll')
+);
+const sidebarScopeAriaLabel = computed(() =>
+  t('webSession.sidebarScopeAria', { scope: sidebarScopeLabel.value })
+);
 const mobileSessionCategory = ref<'current' | 'archived'>('current');
 const mobileCurrentSessions = computed<SessionTab[]>(() =>
   sortMobileCurrentSessions(sessions.value, session =>
@@ -3880,6 +3931,13 @@ const sidebarProjectIdsToLoad = computed(() => {
   });
   return Array.from(ids);
 });
+const sidebarVisibleProjectIds = computed(() =>
+  resolveWebSessionSidebarProjectIds({
+    scope: sidebarScope.value,
+    currentProjectId: props.projectId,
+    allProjectIds: sidebarProjectIdsToLoad.value,
+  })
+);
 
 function parseTimestamp(value?: string | null) {
   if (!value) {
@@ -4397,7 +4455,7 @@ function syncArchivedPreviewSessionSummary(sessionId: string) {
       .getArchivedSessions(mobileArchivedProjectIds.value)
       .find(item => item.id === sessionId) ??
     webSessionStore
-      .getArchivedSessions(sidebarProjectIdsToLoad.value)
+      .getArchivedSessions(sidebarVisibleProjectIds.value)
       .find(item => item.id === sessionId) ??
     archivedPreviewSession.value;
   archivedPreviewSession.value = {
@@ -4735,7 +4793,7 @@ function withProjectIndexes(
 
 const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
   const rawItems: CrossProjectSessionItem[] = [];
-  sidebarProjectIdsToLoad.value.forEach(projectId => {
+  sidebarVisibleProjectIds.value.forEach(projectId => {
     webSessionStore.getSessions(projectId).forEach(session => {
       rawItems.push({
         session,
@@ -4762,17 +4820,19 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
 });
 
 const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
-  const items = webSessionStore.getArchivedSessions(sidebarProjectIdsToLoad.value).map(session => ({
-    session,
-    projectId: session.projectId,
-    projectName: getProjectName(session.projectId),
-    isCurrent: activeArchivedPreviewId.value === session.id,
-  }));
+  const items = webSessionStore
+    .getArchivedSessions(sidebarVisibleProjectIds.value)
+    .map(session => ({
+      session,
+      projectId: session.projectId,
+      projectName: getProjectName(session.projectId),
+      isCurrent: activeArchivedPreviewId.value === session.id,
+    }));
   return withProjectIndexes(items);
 });
 
 const archivedSidebarMeta = computed(() =>
-  webSessionStore.getArchivedMeta(sidebarProjectIdsToLoad.value)
+  webSessionStore.getArchivedMeta(sidebarVisibleProjectIds.value)
 );
 
 async function ensureArchivedScopeLoaded(projectIds: string[], limit = 20) {
@@ -6097,12 +6157,20 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
 
 async function handleLoadMoreArchived() {
   try {
-    await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
+    await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
       limit: 20,
     });
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
+}
+
+function handleSidebarScopeSelect(key: string | number) {
+  sidebarScope.value = normalizeWebSessionSidebarScope(key);
+}
+
+function toggleSidebarScope() {
+  sidebarScope.value = sidebarScope.value === 'current' ? 'all' : 'current';
 }
 
 function updateSidebarContainerWidth() {
@@ -6288,7 +6356,7 @@ async function handleRenameSession(sessionId: string) {
 }
 
 async function refreshArchivedSidebar() {
-  await webSessionStore.loadArchivedSessions(sidebarProjectIdsToLoad.value, {
+  await webSessionStore.loadArchivedSessions(sidebarVisibleProjectIds.value, {
     reset: true,
     limit: 20,
   });
@@ -7901,7 +7969,7 @@ watch(
 );
 
 watch(
-  sidebarProjectIdsToLoad,
+  sidebarVisibleProjectIds,
   projectIds => {
     projectIds.forEach(projectId => {
       if (!projectId || loadedSidebarProjectIds.has(projectId)) {
@@ -7918,7 +7986,7 @@ watch(
 );
 
 watch(
-  sidebarProjectIdsToLoad,
+  sidebarVisibleProjectIds,
   projectIds => {
     void ensureArchivedScopeLoaded(projectIds, 20).catch(error => {
       console.error('[Web Session] Failed to preload archived sidebar sessions', error);
@@ -9190,12 +9258,14 @@ onBeforeUnmount(() => {
 }
 
 .session-sidebar {
+  box-sizing: border-box;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--n-border-color);
-  border-radius: 8px;
-  background: var(--app-surface-color, var(--n-card-color, #fff));
-  padding: 8px;
+  border: none;
+  border-left: 1px solid var(--n-border-color);
+  border-radius: 0;
+  background: transparent;
+  padding: 4px 0 8px 12px;
   display: flex;
   flex-direction: column;
 }
@@ -9205,7 +9275,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 4px 8px;
+  padding: 2px 0 6px;
   border-bottom: 1px solid color-mix(in srgb, var(--n-primary-color) 8%, var(--n-border-color));
 }
 
@@ -9213,29 +9283,51 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.session-sidebar-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--app-text-color, var(--n-text-color-1, #111827));
+.session-sidebar-scope-control {
+  flex-shrink: 0;
 }
 
-.session-sidebar-subtitle {
-  margin-top: 1px;
-  font-size: 10px;
-  color: var(--n-text-color-3);
+.session-sidebar-scope-control:deep(.split-dropdown-control) {
+  border-radius: 6px;
+}
+
+.session-sidebar-scope-control:deep(.split-dropdown-main),
+.session-sidebar-scope-control:deep(.split-dropdown-menu) {
+  height: 28px;
+  font-size: 11px;
+}
+
+.session-sidebar-scope-control:deep(.split-dropdown-main) {
+  padding: 0 8px;
+  gap: 5px;
+}
+
+.session-sidebar-scope-control:deep(.split-dropdown-menu) {
+  padding: 0 7px;
+}
+
+.session-sidebar-scope-control:deep(.split-dropdown-icon) {
+  width: 12px;
+  height: 12px;
+}
+
+.session-sidebar-scope-control:deep(.split-dropdown-icon svg) {
+  width: 12px;
+  height: 12px;
 }
 
 .session-sidebar-count {
-  min-width: 24px;
-  height: 24px;
-  padding: 0 6px;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  margin-right: 4px;
   border-radius: 999px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
   color: var(--n-primary-color);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 700;
 }
 
@@ -9243,7 +9335,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 2px 2px;
+  padding: 6px 0 2px;
   display: flex;
   flex-direction: column;
   gap: 12px;
