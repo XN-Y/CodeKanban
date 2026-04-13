@@ -9,18 +9,24 @@
   >
     <!-- 桌面端布局 -->
     <template v-if="!isMobileLayout">
-      <n-layout has-sider class="workspace-desktop-shell">
+      <div class="workspace-desktop-shell">
         <!-- 左侧最近项目侧边栏 -->
-        <n-layout-sider bordered class="project-sidebar" :width="effectiveLeftSidebarWidth">
-          <RecentProjects
-            :current-project-id="currentProjectId"
-            @edit-current="openProjectEditDialog"
-            @show-terminal="showTerminalTab"
-          />
-        </n-layout-sider>
+        <aside class="project-sidebar-shell" :style="{ width: `${effectiveLeftSidebarWidth}px` }">
+          <div class="project-sidebar">
+            <RecentProjects
+              :current-project-id="currentProjectId"
+              :compact="isProjectSidebarCompact"
+              @edit-current="openProjectEditDialog"
+              @show-terminal="showTerminalTab"
+            />
+          </div>
+        </aside>
         <div
           class="project-sidebar-resizer"
-          :class="{ 'is-dragging': isProjectSidebarResizing }"
+          :class="{
+            'is-dragging': isProjectSidebarResizing,
+            'is-compact': isProjectSidebarCompact,
+          }"
           @mousedown="startProjectSidebarResize"
         >
           <div class="project-sidebar-resizer-handle"></div>
@@ -42,7 +48,7 @@
             <WorkspaceTabView :project-id="currentProjectId" />
           </n-layout-content>
         </n-layout>
-      </n-layout>
+      </div>
     </template>
 
     <!-- 移动端布局 -->
@@ -221,14 +227,17 @@ import {
   isWorkspaceRouteTabQuerySynced,
   resolveMobileWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
+import {
+  PROJECT_SIDEBAR_DEFAULT_WIDTH,
+  clampProjectSidebarWidth,
+  isProjectSidebarCompact as isCompactProjectSidebarWidth,
+  PROJECT_SIDEBAR_COMPACT_WIDTH,
+  resolveProjectSidebarDragWidth,
+  resolveProjectSidebarMaxWidth,
+} from '@/views/projectWorkspaceSidebar';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
-const PROJECT_SIDEBAR_DEFAULT_WIDTH = 240;
-const PROJECT_SIDEBAR_MIN_WIDTH = 200;
-const PROJECT_SIDEBAR_MAX_WIDTH = 400;
-const WORKTREE_SIDER_WIDTH = 320;
-const MIN_MAIN_WORKSPACE_WIDTH = 320;
 const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
 
 const route = useRoute();
@@ -244,10 +253,6 @@ const mobileKanbanEnabled = false;
 let mobileWebSessionComposerFocusFrame: number | null = null;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
-
-function clamp(min: number, value: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
 
 const WORKTREE_SIDER_COLLAPSED_KEY = 'worktree-sider-collapsed';
 const getInitialWorktreeSiderCollapsedState = (): boolean => {
@@ -266,26 +271,26 @@ const leftProjectSidebarWidth = useStorage<number>(
 const isProjectSidebarResizing = ref(false);
 
 const maxLeftProjectSidebarWidth = computed(() => {
-  const reservedWorktreeWidth = worktreeSiderCollapsed.value ? 0 : WORKTREE_SIDER_WIDTH;
-  const maxByViewport = windowWidth.value - reservedWorktreeWidth - MIN_MAIN_WORKSPACE_WIDTH;
-  return Math.min(
-    PROJECT_SIDEBAR_MAX_WIDTH,
-    Math.max(PROJECT_SIDEBAR_MIN_WIDTH, Math.round(maxByViewport))
-  );
+  return resolveProjectSidebarMaxWidth({
+    windowWidth: windowWidth.value,
+    worktreeCollapsed: worktreeSiderCollapsed.value,
+  });
 });
 
 const effectiveLeftSidebarWidth = computed(() =>
-  clamp(
-    PROJECT_SIDEBAR_MIN_WIDTH,
-    Math.round(leftProjectSidebarWidth.value),
-    Math.round(maxLeftProjectSidebarWidth.value)
-  )
+  resolveProjectSidebarDragWidth(leftProjectSidebarWidth.value, maxLeftProjectSidebarWidth.value)
+);
+const isProjectSidebarCompact = computed(() =>
+  isCompactProjectSidebarWidth(effectiveLeftSidebarWidth.value)
 );
 
 watch(
   [windowWidth, worktreeSiderCollapsed],
   () => {
-    leftProjectSidebarWidth.value = effectiveLeftSidebarWidth.value;
+    leftProjectSidebarWidth.value = resolveProjectSidebarDragWidth(
+      leftProjectSidebarWidth.value,
+      maxLeftProjectSidebarWidth.value
+    );
   },
   { immediate: true }
 );
@@ -311,7 +316,11 @@ function startProjectSidebarResize(event: MouseEvent) {
   const onMouseMove = (moveEvent: MouseEvent) => {
     const delta = moveEvent.clientX - startX;
     leftProjectSidebarWidth.value = Math.round(
-      clamp(PROJECT_SIDEBAR_MIN_WIDTH, startWidth + delta, maxLeftProjectSidebarWidth.value)
+      clampProjectSidebarWidth(
+        PROJECT_SIDEBAR_COMPACT_WIDTH,
+        startWidth + delta,
+        maxLeftProjectSidebarWidth.value
+      )
     );
   };
 
@@ -552,6 +561,16 @@ function setMobileView(view: MobileView) {
   min-height: 0;
 }
 
+.project-sidebar-shell {
+  flex: 0 0 auto;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  background-color: var(--app-surface-color, #ffffff);
+  border-right: 1px solid var(--n-border-color, #e0e0e0);
+}
+
 .project-sidebar {
   height: 100%;
   min-height: 0;
@@ -587,6 +606,12 @@ function setMobileView(view: MobileView) {
   background-color: var(--n-border-color, #d0d0d0);
   height: 48px;
   opacity: 1;
+}
+
+.project-sidebar-resizer.is-compact .project-sidebar-resizer-handle {
+  background-color: var(--n-border-color, #d0d0d0);
+  height: 40px;
+  opacity: 0.72;
 }
 
 .project-sidebar-resizer.is-dragging .project-sidebar-resizer-handle {

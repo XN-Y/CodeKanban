@@ -1,169 +1,233 @@
 <template>
-  <div class="recent-projects">
-    <div class="recent-projects-header">
-      <n-space justify="space-between" align="center" style="width: 100%">
-        <n-button text @click="handleBackToList">
-          <template #icon>
-            <n-icon size="20">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                <path
-                  fill="currentColor"
-                  d="M20 11H7.83l5.59-5.59L12 4l-8 8l8 8l1.41-1.41L7.83 13H20v-2z"
-                />
-              </svg>
-            </n-icon>
-          </template>
-          {{ t('common.backToList') }}
-        </n-button>
-        <n-space align="center" :wrap="false" size="small">
-          <ThemeSwitcher />
-          <n-popover trigger="hover" placement="bottom">
-            <template #trigger>
-              <n-button
-                quaternary
-                circle
-                size="small"
-                :disabled="!currentProject"
-                @click="emit('editCurrent')"
-              >
-                <template #icon>
-                  <n-icon size="18">
-                    <CreateOutline />
-                  </n-icon>
-                </template>
-              </n-button>
+  <div class="recent-projects" :class="{ 'is-compact': isCompact }">
+    <div class="recent-projects-header" :class="{ 'is-compact': isCompact }">
+      <template v-if="!isCompact">
+        <n-space justify="space-between" align="center" style="width: 100%">
+          <n-button text @click="handleBackToList">
+            <template #icon>
+              <n-icon size="20">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                  <path
+                    fill="currentColor"
+                    d="M20 11H7.83l5.59-5.59L12 4l-8 8l8 8l1.41-1.41L7.83 13H20v-2z"
+                  />
+                </svg>
+              </n-icon>
             </template>
-            {{ t('common.edit') }}
-          </n-popover>
-          <n-popover trigger="hover" placement="bottom">
-            <template #trigger>
-              <n-button quaternary circle size="small" @click="handleGoToSettings">
-                <template #icon>
-                  <n-icon size="18">
-                    <SettingsOutline />
-                  </n-icon>
-                </template>
-              </n-button>
-            </template>
-            {{ t('nav.settings') }}
-          </n-popover>
+            {{ t('common.backToList') }}
+          </n-button>
+          <n-space align="center" :wrap="false" size="small">
+            <ThemeSwitcher />
+            <n-popover trigger="hover" placement="bottom">
+              <template #trigger>
+                <n-button
+                  quaternary
+                  circle
+                  size="small"
+                  :disabled="!currentProject"
+                  @click="emit('editCurrent')"
+                >
+                  <template #icon>
+                    <n-icon size="18">
+                      <CreateOutline />
+                    </n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ t('common.edit') }}
+            </n-popover>
+            <n-popover trigger="hover" placement="bottom">
+              <template #trigger>
+                <n-button quaternary circle size="small" @click="handleGoToSettings">
+                  <template #icon>
+                    <n-icon size="18">
+                      <SettingsOutline />
+                    </n-icon>
+                  </template>
+                </n-button>
+              </template>
+              {{ t('nav.settings') }}
+            </n-popover>
+          </n-space>
         </n-space>
-      </n-space>
+      </template>
+      <template v-else>
+        <div class="recent-projects-compact-actions">
+          <n-popover trigger="hover" placement="right">
+            <template #trigger>
+              <n-button quaternary circle class="compact-header-button" @click="handleBackToList">
+                <template #icon>
+                  <n-icon size="18">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                      <path
+                        fill="currentColor"
+                        d="M20 11H7.83l5.59-5.59L12 4l-8 8l8 8l1.41-1.41L7.83 13H20v-2z"
+                      />
+                    </svg>
+                  </n-icon>
+                </template>
+              </n-button>
+            </template>
+            {{ t('common.backToList') }}
+          </n-popover>
+        </div>
+      </template>
     </div>
+
     <div v-if="recentProjects.length === 0" class="empty-state">
       <n-text depth="3">{{ loading ? t('common.loading') : t('common.noRecentProjects') }}</n-text>
     </div>
-    <div v-else class="projects-list">
-      <TransitionGroup name="project-list" tag="div">
-        <n-popover
-          v-for="project in recentProjects"
-          :key="project.id"
-          trigger="hover"
-          placement="right-start"
-          :disabled="isMobile === true"
-          :content-style="compactPopoverContentStyle"
-        >
-          <template #trigger>
-            <div class="project-item-popover-trigger">
-              <div
-                class="project-item"
-                :class="{ active: project.id === currentProjectId }"
-                @click="handleSelectProject(project.id)"
-                @contextmenu="handleContextMenu($event, project.id)"
-              >
-                <n-icon
-                  v-if="projectStore.getProjectPriority(project.id)"
-                  size="12"
-                  :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
-                  class="pin-icon-corner"
-                  :title="t('project.unpinProject')"
-                  @click.stop="handleUnpinProject(project.id)"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-                    />
-                  </svg>
-                </n-icon>
-                <div class="project-info">
-                  <div class="project-name-row">
-                    <n-tag
-                      v-if="getProjectSessionBadge(project.id)"
-                      size="small"
-                      :type="getProjectSessionBadgeType(project.id)"
-                      :bordered="false"
-                      class="terminal-tag"
-                      :class="{
-                        'terminal-tag--combined': isCombinedProjectSessionBadge(project.id),
-                        clickable:
-                          getProjectSessionBadge(project.id)?.kind === 'terminal' &&
-                          project.id === currentProjectId,
-                      }"
-                      :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
-                      @click.stop="
-                        handleProjectBadgeClick(project.id, getProjectSessionBadge(project.id))
-                      "
-                    >
-                      <template #icon>
-                        <n-icon
-                          v-if="isCombinedProjectSessionBadge(project.id)"
-                          size="14"
-                          class="terminal-tag-combined-icon"
-                          :class="getCombinedProjectSessionActiveIconClass()"
-                        >
-                          <component :is="getCombinedProjectSessionActiveIcon()" />
-                        </n-icon>
-                        <n-icon v-else size="14">
-                          <component
-                            :is="
-                              getProjectSessionBadge(project.id)?.kind === 'terminal'
-                                ? TerminalOutline
-                                : ChatbubblesOutline
-                            "
-                          />
-                        </n-icon>
-                      </template>
-                      <span
-                        v-if="isCombinedProjectSessionBadge(project.id)"
-                        class="terminal-tag-combined-counts"
-                      >
-                        <span
-                          class="terminal-tag-combined-count terminal-tag-combined-count--terminal"
-                        >
-                          {{ getCombinedTerminalCount(project.id) }}
-                        </span>
-                        <span class="terminal-tag-combined-separator" aria-hidden="true">·</span>
-                        <span class="terminal-tag-combined-count terminal-tag-combined-count--web">
-                          {{ getCombinedWebSessionCount(project.id) }}
-                        </span>
-                      </span>
-                      <template v-else>
-                        {{ getSingleProjectSessionCount(project.id) }}
-                      </template>
-                    </n-tag>
-                    <n-text class="project-name" strong>{{ project.name }}</n-text>
-                  </div>
-                  <n-text v-if="!project.hidePath" class="project-path" depth="3">
-                    {{ project.path }}
-                  </n-text>
-                </div>
-                <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                    <path
-                      fill="currentColor"
-                      d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
-                    />
-                  </svg>
-                </n-icon>
-              </div>
-            </div>
-          </template>
 
-          <ProjectAiStatusSummaryCard :project-id="project.id" compact />
-        </n-popover>
-      </TransitionGroup>
-    </div>
+    <n-scrollbar v-else class="projects-scrollbar">
+      <div class="projects-list" :class="{ 'is-compact': isCompact }">
+        <TransitionGroup name="project-list" tag="div">
+          <n-popover
+            v-for="project in recentProjects"
+            :key="project.id"
+            trigger="hover"
+            placement="right-start"
+            :disabled="isMobile === true"
+            :content-style="compactPopoverContentStyle"
+          >
+            <template #trigger>
+              <div class="project-item-popover-trigger">
+                <div
+                  class="project-item"
+                  :class="{ active: project.id === currentProjectId, 'is-compact': isCompact }"
+                  :title="isCompact ? project.name : undefined"
+                  @click="handleSelectProject(project.id)"
+                  @contextmenu="handleContextMenu($event, project.id)"
+                >
+                  <n-icon
+                    v-if="projectStore.getProjectPriority(project.id)"
+                    size="12"
+                    :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
+                    class="pin-icon-corner"
+                    :class="{ 'is-compact': isCompact }"
+                    :title="t('project.unpinProject')"
+                    @click.stop="handleUnpinProject(project.id)"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                      <path
+                        fill="currentColor"
+                        d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
+                      />
+                    </svg>
+                  </n-icon>
+
+                  <template v-if="isCompact">
+                    <div class="project-compact-avatar">
+                      {{ getProjectMonogram(project.name) }}
+                    </div>
+                    <div
+                      v-if="getProjectSessionBadge(project.id)"
+                      class="project-compact-counts"
+                      :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
+                    >
+                      <template v-if="isCombinedProjectSessionBadge(project.id)">
+                        <span class="project-compact-count is-terminal">{{
+                          getCombinedTerminalCount(project.id)
+                        }}</span>
+                        <span class="project-compact-count is-web-session">{{
+                          getCombinedWebSessionCount(project.id)
+                        }}</span>
+                      </template>
+                      <template v-else>
+                        <span
+                          class="project-compact-count"
+                          :class="getCompactSingleCountClass(project.id)"
+                          >{{ getSingleProjectSessionCount(project.id) }}</span
+                        >
+                      </template>
+                    </div>
+                  </template>
+
+                  <template v-else>
+                    <div class="project-info">
+                      <div class="project-name-row">
+                        <n-tag
+                          v-if="getProjectSessionBadge(project.id)"
+                          size="small"
+                          :type="getProjectSessionBadgeType(project.id)"
+                          :bordered="false"
+                          class="terminal-tag"
+                          :class="{
+                            'terminal-tag--combined': isCombinedProjectSessionBadge(project.id),
+                            clickable:
+                              getProjectSessionBadge(project.id)?.kind === 'terminal' &&
+                              project.id === currentProjectId,
+                          }"
+                          :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
+                          @click.stop="
+                            handleProjectBadgeClick(project.id, getProjectSessionBadge(project.id))
+                          "
+                        >
+                          <template #icon>
+                            <n-icon
+                              v-if="isCombinedProjectSessionBadge(project.id)"
+                              size="14"
+                              class="terminal-tag-combined-icon"
+                              :class="getCombinedProjectSessionActiveIconClass()"
+                            >
+                              <component :is="getCombinedProjectSessionActiveIcon()" />
+                            </n-icon>
+                            <n-icon v-else size="14">
+                              <component
+                                :is="
+                                  getProjectSessionBadge(project.id)?.kind === 'terminal'
+                                    ? TerminalOutline
+                                    : ChatbubblesOutline
+                                "
+                              />
+                            </n-icon>
+                          </template>
+                          <span
+                            v-if="isCombinedProjectSessionBadge(project.id)"
+                            class="terminal-tag-combined-counts"
+                          >
+                            <span
+                              class="terminal-tag-combined-count terminal-tag-combined-count--terminal"
+                            >
+                              {{ getCombinedTerminalCount(project.id) }}
+                            </span>
+                            <span class="terminal-tag-combined-separator" aria-hidden="true"
+                              >·</span
+                            >
+                            <span
+                              class="terminal-tag-combined-count terminal-tag-combined-count--web"
+                            >
+                              {{ getCombinedWebSessionCount(project.id) }}
+                            </span>
+                          </span>
+                          <template v-else>
+                            {{ getSingleProjectSessionCount(project.id) }}
+                          </template>
+                        </n-tag>
+                        <n-text class="project-name" strong>{{ project.name }}</n-text>
+                      </div>
+                      <n-text v-if="!project.hidePath" class="project-path" depth="3">
+                        {{ project.path }}
+                      </n-text>
+                    </div>
+                    <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+                        />
+                      </svg>
+                    </n-icon>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <ProjectAiStatusSummaryCard :project-id="project.id" compact />
+          </n-popover>
+        </TransitionGroup>
+      </div>
+    </n-scrollbar>
+
     <n-dropdown
       placement="bottom-start"
       trigger="manual"
@@ -174,35 +238,65 @@
       :on-clickoutside="handleClickOutside"
       @select="handleContextMenuSelect"
     />
-    <div class="version-info-container">
+
+    <div class="version-info-container" :class="{ 'is-compact': isCompact }">
       <a
         class="version-info"
+        :class="{ 'is-compact': isCompact }"
         href="https://github.com/fy0/CodeKanban"
         target="_blank"
         rel="noopener noreferrer"
+        :title="brandTitle"
+        @click.prevent="handleAppNameClick"
       >
-        <img src="/favicon.svg" alt="CodeKanban" class="app-logo" />
-        <n-text strong style="font-size: 13px">{{ appStore.appInfo.name }}</n-text>
-        <n-popover v-if="updateInfo?.hasUpdate" trigger="hover" placement="top">
+        <span class="app-logo-shell" :class="{ 'is-compact': isCompact }">
+          <img src="/favicon.svg" alt="CodeKanban" class="app-logo" />
+        </span>
+        <template v-if="!isCompact">
+          <span class="version-info-meta">
+            <n-text strong class="version-app-name">{{ appStore.appInfo.name }}</n-text>
+            <span class="version-info-secondary">
+              <n-popover v-if="updateInfo?.hasUpdate" trigger="hover" placement="top">
+                <template #trigger>
+                  <n-text
+                    type="warning"
+                    class="version-text version-text--update"
+                    @click.prevent.stop="showUpdateModal = true"
+                  >
+                    v{{ displayAppVersion }}
+                    <n-icon :size="12" :component="ArrowUpCircleOutline" />
+                  </n-text>
+                </template>
+                <div class="version-update-popover">
+                  {{ t('update.newVersionAvailable') }}:
+                  {{ formatDisplayVersion(updateInfo.latestVersion) }}
+                </div>
+              </n-popover>
+              <n-text v-else depth="3" class="version-text version-text--plain">
+                v{{ displayAppVersion }}
+              </n-text>
+            </span>
+          </span>
+        </template>
+        <n-popover v-else-if="updateInfo?.hasUpdate" trigger="hover" placement="right">
           <template #trigger>
             <n-text
               type="warning"
-              style="font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 2px"
-              @click.prevent="showUpdateModal = true"
+              class="version-text version-text--update"
+              :class="{ 'is-compact': isCompact }"
+              @click.prevent.stop="showUpdateModal = true"
             >
-              v{{ appStore.appInfo.version }}
-              <n-icon :size="12" :component="ArrowUpCircleOutline" />
+              <n-icon :size="10" :component="ArrowUpCircleOutline" />
             </n-text>
           </template>
-          <div style="font-size: 12px">
-            {{ t('update.newVersionAvailable') }}: {{ updateInfo.latestVersion }}
+          <div class="version-update-popover">
+            {{ t('update.newVersionAvailable') }}:
+            {{ formatDisplayVersion(updateInfo.latestVersion) }}
           </div>
         </n-popover>
-        <n-text v-else depth="3" style="font-size: 11px">v{{ appStore.appInfo.version }}</n-text>
       </a>
     </div>
 
-    <!-- 更新提示模态框 -->
     <n-modal
       v-model:show="showUpdateModal"
       preset="card"
@@ -212,12 +306,14 @@
       <div style="margin-bottom: 16px">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
-          <n-tag :bordered="false" size="small">{{ updateInfo?.currentVersion }}</n-tag>
+          <n-tag :bordered="false" size="small">{{
+            formatDisplayVersion(updateInfo?.currentVersion)
+          }}</n-tag>
         </div>
         <div style="display: flex; align-items: center; gap: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
           <n-tag type="success" :bordered="false" size="small">{{
-            updateInfo?.latestVersion
+            formatDisplayVersion(updateInfo?.latestVersion)
           }}</n-tag>
         </div>
       </div>
@@ -262,6 +358,7 @@ import {
   resolveProjectSessionBadge,
   type ProjectSessionBadge,
 } from '@/utils/projectSessionBadge';
+import { formatVersionForDisplay } from '@/utils/versionDisplay';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
 import Apis from '@/api';
@@ -271,17 +368,80 @@ const { t } = useLocale();
 const dialog = useDialog();
 const message = useMessage();
 
-// 更新检查
 interface UpdateInfo {
   currentVersion: string;
   latestVersion: string;
   hasUpdate: boolean;
   updateUrl?: string;
 }
+
+interface ContextMenuState {
+  show: boolean;
+  x: number;
+  y: number;
+  projectId: string | null;
+}
+
+type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
+type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'files';
+
+const emit = defineEmits<{ editCurrent: []; showTerminal: [] }>();
+const props = defineProps<{
+  currentProjectId: string;
+  isMobile?: boolean;
+  compact?: boolean;
+}>();
+
+const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
+const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
+
+const route = useRoute();
+const router = useRouter();
+const projectStore = useProjectStore();
+const terminalStore = useTerminalStore();
+const webSessionStore = useWebSessionStore();
+const appStore = useAppStore();
+
 const updateInfo = ref<UpdateInfo | null>(null);
 const showUpdateModal = ref(false);
+const contextMenu = ref<ContextMenuState>({
+  show: false,
+  x: 0,
+  y: 0,
+  projectId: null,
+});
 
 const { send: checkUpdate } = useReq(() => Apis.system.checkUpdate({}));
+const { send: updatePriority } = useReq((projectId: string, priority: number | null) =>
+  Apis.project.updatePriority({
+    pathParams: { id: projectId },
+    data: { priority },
+  })
+);
+
+const loading = computed(() => projectStore.loading);
+const currentProject = computed(() => projectStore.currentProject);
+const recentProjects = computed(() => projectStore.recentProjects);
+const isCompact = computed(() => props.compact === true);
+const displayAppVersion = computed(() => formatVersionForDisplay(appStore.appInfo.version));
+const brandTitle = computed(() => `${appStore.appInfo.name} v${displayAppVersion.value}`);
+const terminalCounts = terminalStore.terminalCounts;
+const webSessionCounts = webSessionStore.sessionCounts;
+const compactPopoverContentStyle = 'padding: 4px 6px;';
+const storedMobileViews = useStorage<Record<string, MobileView>>(
+  MOBILE_ACTIVE_VIEW_STORAGE_KEY,
+  {}
+);
+const storedWorkspaceTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
+
+const preferredSessionKind = computed(() =>
+  resolvePreferredProjectSessionKind({
+    isMobile: Boolean(props.isMobile),
+    isProjectWorkspace: !props.isMobile && route.name === 'project',
+    mobileActiveView: props.currentProjectId ? storedMobileViews.value[props.currentProjectId] : '',
+    workspaceActiveTab: storedWorkspaceTab.value,
+  })
+);
 
 const checkForUpdates = async () => {
   try {
@@ -304,72 +464,24 @@ const copyUpdateCommand = () => {
 
 const openUpdateUrl = () => {
   if (updateInfo.value?.updateUrl) {
-    window.open(updateInfo.value.updateUrl, '_blank');
+    window.open(updateInfo.value.updateUrl, '_blank', 'noopener,noreferrer');
   }
 };
 
-interface ContextMenuState {
-  show: boolean;
-  x: number;
-  y: number;
-  projectId: string | null;
-}
+const formatDisplayVersion = (version?: string | null) =>
+  version ? formatVersionForDisplay(version) : '';
 
-const emit = defineEmits<{ editCurrent: []; showTerminal: [] }>();
-const props = defineProps<{
-  currentProjectId: string;
-  isMobile?: boolean;
-}>();
-
-const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project';
-const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
-
-type MobileView = 'kanban' | 'terminal' | 'webSession' | 'projects' | 'notifications';
-type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'files';
-
-const route = useRoute();
-const router = useRouter();
-const projectStore = useProjectStore();
-const terminalStore = useTerminalStore();
-const webSessionStore = useWebSessionStore();
-const appStore = useAppStore();
-
-const loading = computed(() => projectStore.loading);
-const currentProject = computed(() => projectStore.currentProject);
-const recentProjects = computed(() => projectStore.recentProjects);
-const terminalCounts = terminalStore.terminalCounts;
-const webSessionCounts = webSessionStore.sessionCounts;
-const compactPopoverContentStyle = 'padding: 4px 6px;';
-const storedMobileViews = useStorage<Record<string, MobileView>>(
-  MOBILE_ACTIVE_VIEW_STORAGE_KEY,
-  {}
-);
-const storedWorkspaceTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
-
-const preferredSessionKind = computed(() =>
-  resolvePreferredProjectSessionKind({
-    isMobile: Boolean(props.isMobile),
-    isProjectWorkspace: !props.isMobile && route.name === 'project',
-    mobileActiveView: props.currentProjectId ? storedMobileViews.value[props.currentProjectId] : '',
-    workspaceActiveTab: storedWorkspaceTab.value,
-  })
-);
-
-const contextMenu = ref<ContextMenuState>({
-  show: false,
-  x: 0,
-  y: 0,
-  projectId: null,
-});
-
-// 使用 useReq 定义优先级更新请求
-const { send: updatePriority, loading: priorityLoading } = useReq(
-  (projectId: string, priority: number | null) =>
-    Apis.project.updatePriority({
-      pathParams: { id: projectId },
-      data: { priority },
-    })
-);
+const handleAppNameClick = () => {
+  dialog.info({
+    title: t('nav.visitProjectConfirm'),
+    content: t('nav.visitProjectMessage'),
+    positiveText: t('nav.visitNow'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      window.open('https://github.com/fy0/CodeKanban', '_blank', 'noopener,noreferrer');
+    },
+  });
+};
 
 const handleSelectProject = (projectId: string) => {
   if (projectId !== props.currentProjectId) {
@@ -377,15 +489,15 @@ const handleSelectProject = (projectId: string) => {
   }
 };
 
-const handleContextMenu = (e: MouseEvent, projectId: string) => {
-  e.preventDefault();
+const handleContextMenu = (event: MouseEvent, projectId: string) => {
+  event.preventDefault();
   contextMenu.value = {
     show: false,
-    x: e.clientX,
-    y: e.clientY,
+    x: event.clientX,
+    y: event.clientY,
     projectId,
   };
-  // 使用 nextTick 确保在 DOM 更新后显示菜单
+
   setTimeout(() => {
     contextMenu.value.show = true;
   }, 0);
@@ -396,7 +508,9 @@ const handleClickOutside = () => {
 };
 
 const contextMenuOptions = computed<DropdownOption[]>(() => {
-  if (!contextMenu.value.projectId) return [];
+  if (!contextMenu.value.projectId) {
+    return [];
+  }
 
   const projectId = contextMenu.value.projectId;
   const currentPriority = projectStore.getProjectPriority(projectId);
@@ -462,14 +576,10 @@ const contextMenuOptions = computed<DropdownOption[]>(() => {
   ];
 });
 
-// 处理优先级更新的辅助函数
 const handleSetPriority = async (projectId: string, priority: number | null) => {
   try {
     const result = await updatePriority(projectId, priority);
-
-    // Apis 返回的结果包含 item 字段
     if (result?.item) {
-      // 更新 Store 中的状态（Store 只负责存储，不调用 API）
       projectStore.updateProjectInList(result.item);
     }
   } catch (error) {
@@ -479,7 +589,9 @@ const handleSetPriority = async (projectId: string, priority: number | null) => 
 
 const handleContextMenuSelect = async (key: string) => {
   const projectId = contextMenu.value.projectId;
-  if (!projectId) return;
+  if (!projectId) {
+    return;
+  }
 
   contextMenu.value.show = false;
 
@@ -488,18 +600,13 @@ const handleContextMenuSelect = async (key: string) => {
       if (projectId === props.currentProjectId) {
         emit('editCurrent');
       } else {
-        // 如果不是当前项目，先切换到该项目
         router.push({ name: 'project', params: { id: projectId } }).then(() => {
           emit('editCurrent');
         });
       }
       break;
     case 'toggle-pin':
-      if (projectStore.getProjectPriority(projectId)) {
-        await handleSetPriority(projectId, null);
-      } else {
-        await handleSetPriority(projectId, 5);
-      }
+      await handleSetPriority(projectId, projectStore.getProjectPriority(projectId) ? null : 5);
       break;
     case 'priority-5':
       await handleSetPriority(projectId, 5);
@@ -516,28 +623,27 @@ const handleContextMenuSelect = async (key: string) => {
     case 'priority-1':
       await handleSetPriority(projectId, 1);
       break;
-    case 'close-all-terminals':
-      {
-        const terminalCount = terminalCounts.get(projectId) || 0;
-        const project = projectStore.projects.find(p => p.id === projectId);
-        dialog.warning({
-          title: t('project.closeAllTerminals'),
-          content: t('project.closeAllTerminalsConfirm', {
-            count: terminalCount,
-            name: project?.name || '',
-          }),
-          positiveText: t('common.confirm'),
-          negativeText: t('common.cancel'),
-          onPositiveClick: async () => {
-            try {
-              await terminalStore.closeAllSessions(projectId);
-            } catch (error) {
-              console.error('Failed to close all terminals:', error);
-            }
-          },
-        });
-      }
+    case 'close-all-terminals': {
+      const terminalCount = terminalCounts.get(projectId) || 0;
+      const project = projectStore.projects.find(item => item.id === projectId);
+      dialog.warning({
+        title: t('project.closeAllTerminals'),
+        content: t('project.closeAllTerminalsConfirm', {
+          count: terminalCount,
+          name: project?.name || '',
+        }),
+        positiveText: t('common.confirm'),
+        negativeText: t('common.cancel'),
+        onPositiveClick: async () => {
+          try {
+            await terminalStore.closeAllSessions(projectId);
+          } catch (error) {
+            console.error('Failed to close all terminals:', error);
+          }
+        },
+      });
       break;
+    }
     case 'remove':
       projectStore.removeRecentProject(projectId);
       break;
@@ -581,6 +687,16 @@ const getSingleProjectSessionCount = (projectId: string) => {
   return badge && badge.kind !== 'combined' ? badge.count : 0;
 };
 
+const getCompactSingleCountClass = (projectId: string) => {
+  const badge = getProjectSessionBadge(projectId);
+
+  if (!badge || badge.kind === 'combined') {
+    return '';
+  }
+
+  return badge.kind === 'terminal' ? 'is-terminal' : 'is-web-session';
+};
+
 const getProjectSessionBadgeType = (projectId: string) => {
   const badge = getProjectSessionBadge(projectId);
   if (!badge || badge.kind === 'combined') {
@@ -615,13 +731,27 @@ const handleGoToSettings = () => {
   router.push({ name: 'settings' });
 };
 
+const getProjectMonogram = (name: string) => {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return '?';
+  }
+
+  const segments = trimmed.split(/\s+/).filter(Boolean);
+  if (segments.length >= 2) {
+    return `${segments[0][0]}${segments[1][0]}`.toUpperCase();
+  }
+
+  return trimmed.slice(0, 1).toUpperCase();
+};
+
 const getPriorityColor = (priority: ProjectPriority): string => {
   const colorMap: Record<ProjectPriority, string> = {
-    5: '#e74c3c', // 红色 - 最高优先级
-    4: '#ff9800', // 橙色
-    3: '#ffc107', // 黄色
-    2: '#4caf50', // 绿色
-    1: '#2196f3', // 蓝色 - 最低优先级
+    5: '#e74c3c',
+    4: '#ff9800',
+    3: '#ffc107',
+    2: '#4caf50',
+    1: '#2196f3',
   };
   return colorMap[priority];
 };
@@ -636,7 +766,6 @@ onMounted(() => {
   }
   terminalStore.loadTerminalCounts();
   webSessionStore.loadSessionCounts();
-  // 延迟检查更新
   setTimeout(checkForUpdates, 2000);
 });
 </script>
@@ -648,11 +777,37 @@ onMounted(() => {
   height: 100%;
   min-height: 0;
   background: var(--n-color);
+  overflow: hidden;
 }
 
 .recent-projects-header {
+  --recent-projects-header-height: 64px;
   padding: 16px;
+  min-height: var(--recent-projects-header-height);
+  box-sizing: border-box;
   border-bottom: 1px solid var(--n-border-color);
+}
+
+.recent-projects-header.is-compact {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--recent-projects-header-height) - 4px);
+  padding: 0 10px;
+}
+
+.recent-projects-compact-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.compact-header-button {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  border-radius: 12px;
 }
 
 .empty-state {
@@ -665,11 +820,43 @@ onMounted(() => {
   text-align: center;
 }
 
-.projects-list {
+.projects-scrollbar {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 8px 0;
+}
+
+.projects-scrollbar :deep(.n-scrollbar-container) {
+  overflow-x: hidden !important;
+}
+
+.projects-scrollbar :deep(.n-scrollbar-content) {
+  min-width: 0;
+  width: 100%;
+  display: block;
+}
+
+.projects-scrollbar :deep(.n-scrollbar-rail.n-scrollbar-rail--vertical) {
+  right: 4px;
+}
+
+.projects-list {
+  min-height: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 0 14px;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.projects-list.is-compact {
+  padding: 12px 0 14px;
+}
+
+.projects-list.is-compact .project-item-popover-trigger {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .project-item-popover-trigger {
@@ -681,6 +868,7 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-width: 0;
   padding: 12px 16px;
   cursor: pointer;
   transition: background-color 0.2s;
@@ -694,6 +882,99 @@ onMounted(() => {
 .project-item.active {
   background-color: var(--n-item-color-active);
   border-left-color: var(--n-primary-color);
+}
+
+.project-item.is-compact {
+  width: 64px;
+  height: 40px;
+  min-height: 40px;
+  justify-content: flex-start;
+  align-items: center;
+  margin: 0 auto 12px;
+  gap: 6px;
+  padding: 0 6px;
+  border-left: none;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.project-item.is-compact:hover {
+  background: transparent;
+}
+
+.project-item.is-compact.active {
+  background: transparent;
+}
+
+.project-compact-avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid #cfd6df;
+  background: #ffffff;
+  color: #334155;
+  font-size: 17px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  box-shadow: none;
+}
+
+.project-item.is-compact.active .project-compact-avatar {
+  border-color: #374151;
+  color: #111827;
+}
+
+.project-compact-counts {
+  width: 20px;
+  min-width: 20px;
+  flex: 0 0 20px;
+  margin-left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+.project-compact-count {
+  display: inline-flex;
+  width: 100%;
+  min-height: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 2px;
+  border-radius: 3px;
+  background: #e5e7eb;
+  text-align: center;
+  color: #334155;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-item.is-compact.active .project-compact-count {
+  background: #d1d5db;
+  color: #1f2937;
+}
+
+.project-item.is-compact.active .project-compact-count.is-terminal {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.project-item.is-compact.active .project-compact-count.is-web-session {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .project-info {
@@ -824,12 +1105,17 @@ onMounted(() => {
     transform 0.2s;
 }
 
+.pin-icon-corner.is-compact {
+  top: 6px;
+  left: auto;
+  right: 6px;
+}
+
 .pin-icon-corner:hover {
   opacity: 1;
   transform: scale(1.2);
 }
 
-/* 过渡动画 */
 .project-list-move,
 .project-list-enter-active,
 .project-list-leave-active {
@@ -858,23 +1144,102 @@ onMounted(() => {
   background-color: var(--n-color-target);
   display: flex;
   align-items: center;
+  container-type: inline-size;
+}
+
+.version-info-container.is-compact {
+  padding: 12px 10px 14px;
+  justify-content: center;
 }
 
 .version-info {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 8px;
+  column-gap: 8px;
+  min-width: 0;
   text-decoration: none;
   color: inherit;
-  transition: background-color 0.2s;
+  background: transparent;
+  border: none;
+  transition:
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
   margin: -4px -8px;
+  text-align: left;
+}
+
+.version-info.is-compact {
+  display: inline-flex;
+  position: relative;
+  justify-content: center;
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .version-info:hover {
   background-color: var(--n-item-color-hover);
+}
+
+.version-info.is-compact:hover {
+  background: transparent;
+  box-shadow: none;
+}
+
+.version-info.is-compact:active {
+  transform: none;
+}
+
+.version-info:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color, #2080f0) 45%, transparent 55%);
+  outline-offset: 2px;
+}
+
+.app-logo-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.version-info-meta {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.version-info-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.version-app-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.app-logo-shell.is-compact {
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .version-info :deep(.n-text) {
@@ -883,9 +1248,73 @@ onMounted(() => {
   align-items: center;
 }
 
+.version-text--update {
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.version-text--plain {
+  font-size: 11px;
+}
+
+.version-update-popover {
+  font-size: 12px;
+}
+
+.version-text--update.is-compact {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  width: 16px;
+  height: 16px;
+  justify-content: center;
+  font-size: 0;
+  gap: 0;
+  color: #ffffff;
+  background: linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+  border: 2px solid var(--app-surface-color, #ffffff);
+  border-radius: 999px;
+  box-shadow: 0 4px 10px rgba(249, 115, 22, 0.28);
+}
+
 .app-logo {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
+  transition: opacity 0.2s ease;
+}
+
+@container (max-width: 188px) {
+  .version-info:not(.is-compact) {
+    align-items: flex-start;
+  }
+
+  .version-info-meta {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 2px;
+  }
+
+  .version-info-secondary {
+    min-width: 0;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .version-info,
+  .app-logo {
+    transition: none;
+  }
+
+  .version-info.is-compact:hover,
+  .version-info.is-compact:active,
+  .version-info.is-compact:hover .app-logo {
+    transform: none;
+  }
 }
 </style>

@@ -18,7 +18,7 @@
                 style="cursor: pointer"
                 @click="showUpdateModal = true"
               >
-                v{{ appStore.appInfo.version }}
+                v{{ displayAppVersion }}
                 <template #icon>
                   <n-icon :component="ArrowUpCircleOutline" />
                 </template>
@@ -30,7 +30,9 @@
               </div>
               <div style="font-size: 13px; margin-bottom: 4px">
                 {{ t('update.latestVersion') }}:
-                <n-tag size="tiny" type="success">{{ updateInfo.latestVersion }}</n-tag>
+                <n-tag size="tiny" type="success">{{
+                  formatDisplayVersion(updateInfo.latestVersion)
+                }}</n-tag>
               </div>
               <div style="font-size: 12px; color: var(--n-text-color-3)">
                 {{ t('update.clickToView') }}
@@ -38,7 +40,7 @@
             </div>
           </n-popover>
           <n-tag v-else size="small" type="info" :bordered="false">
-            v{{ appStore.appInfo.version }}
+            v{{ displayAppVersion }}
           </n-tag>
         </div>
       </template>
@@ -241,12 +243,14 @@
       <div style="margin-bottom: 16px">
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.currentVersion') }}:</span>
-          <n-tag :bordered="false" size="small">{{ updateInfo?.currentVersion }}</n-tag>
+          <n-tag :bordered="false" size="small">{{
+            formatDisplayVersion(updateInfo?.currentVersion)
+          }}</n-tag>
         </div>
         <div style="display: flex; align-items: center; gap: 12px">
           <span style="color: var(--n-text-color-3)">{{ t('update.latestVersion') }}:</span>
           <n-tag type="success" :bordered="false" size="small">{{
-            updateInfo?.latestVersion
+            formatDisplayVersion(updateInfo?.latestVersion)
           }}</n-tag>
         </div>
       </div>
@@ -298,6 +302,7 @@ import { useAppStore } from '@/stores/app';
 import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
 import type { Project } from '@/types/models';
+import { formatVersionForDisplay } from '@/utils/versionDisplay';
 import Apis from '@/api';
 import { useReq } from '@/api';
 import type { ProjectPriority } from '@/stores/project';
@@ -326,6 +331,9 @@ interface UpdateInfo {
   message?: string;
 }
 const updateInfo = ref<UpdateInfo | null>(null);
+const displayAppVersion = computed(() => formatVersionForDisplay(appStore.appInfo.version));
+const formatDisplayVersion = (version?: string | null) =>
+  version ? formatVersionForDisplay(version) : '';
 
 const { send: checkUpdate } = useReq(() => Apis.system.checkUpdate({}));
 
