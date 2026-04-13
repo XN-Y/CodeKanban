@@ -124,6 +124,30 @@
               <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.webSessionStreamingMarkdownThrottle')">
+            <n-space vertical size="small">
+              <n-radio-group v-model:value="webSessionStreamingMarkdownThrottleModeValue">
+                <n-space>
+                  <n-radio value="default">{{ t('common.default') }}</n-radio>
+                  <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                </n-space>
+              </n-radio-group>
+              <n-input-number
+                v-model:value="webSessionStreamingMarkdownThrottleCustomMsValue"
+                :min="1"
+                :step="10"
+                style="max-width: 180px"
+                :disabled="webSessionStreamingMarkdownThrottleModeValue !== 'custom'"
+              />
+              <span class="form-tip">
+                {{
+                  t('settings.webSessionStreamingMarkdownThrottleTip', {
+                    defaultMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
+                  })
+                }}
+              </span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.webSessionAutoContinueScope')">
             <n-space vertical size="small">
               <n-select
@@ -1053,6 +1077,9 @@ import {
   type TerminalQuickActionIcon,
   type WebSessionAutoContinuePreset,
   type WebSessionAutoContinueScope,
+  type WebSessionStreamingMarkdownThrottleMode,
+  DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
+  type FollowSystemThemeSetting,
 } from '@/stores/settings';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
@@ -1087,7 +1114,6 @@ import type {
   WebSessionActiveCallTimeoutConfig,
   WorktreeConfig,
 } from '@/types/models';
-import type { FollowSystemThemeSetting } from '@/stores/settings';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -1124,6 +1150,8 @@ const {
   showWebSessionReasoning,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
+  webSessionStreamingMarkdownThrottleMode,
+  webSessionStreamingMarkdownThrottleCustomMs,
   terminalThemeId,
   terminalFont,
   terminalWebGLRenderer,
@@ -1905,6 +1933,20 @@ const defaultTerminalSnapshotZlibCompressionValue = computed({
 const showWebSessionReasoningValue = computed({
   get: () => showWebSessionReasoning.value,
   set: value => settingsStore.updateShowWebSessionReasoning(value),
+});
+
+const webSessionStreamingMarkdownThrottleModeValue = computed({
+  get: () => webSessionStreamingMarkdownThrottleMode.value,
+  set: (value: WebSessionStreamingMarkdownThrottleMode) =>
+    settingsStore.updateWebSessionStreamingMarkdownThrottleMode(value),
+});
+
+const webSessionStreamingMarkdownThrottleCustomMsValue = computed({
+  get: () => webSessionStreamingMarkdownThrottleCustomMs.value,
+  set: (value: number | null) =>
+    settingsStore.updateWebSessionStreamingMarkdownThrottleCustomMs(
+      value ?? DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS
+    ),
 });
 
 const webSessionAutoContinueScopeOptions = computed(() => [

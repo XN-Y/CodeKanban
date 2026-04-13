@@ -266,8 +266,14 @@
                           ><code>{{ item.tool.output }}</code></pre>
                           <div
                             v-else
+                            v-memo="getPlanToolMarkdownMemoDeps(item)"
                             class="chat-markdown"
-                            v-html="renderMarkdown(item.tool.output)"
+                            v-html="
+                              renderMarkdown(
+                                getPlanToolMarkdownText(item),
+                                getPlanToolMarkdownRenderOptions(item)
+                              )
+                            "
                           ></div>
                         </div>
                         <div v-if="showPlanActions(item.tool.id)" class="plan-tool-actions">
@@ -567,8 +573,14 @@
                     ><code>{{ item.text }}</code></pre>
                     <div
                       v-else-if="getDisplayBlockText(item)"
+                      v-memo="getMessageMarkdownMemoDeps(item)"
                       class="item-text chat-markdown"
-                      v-html="renderMarkdown(getDisplayBlockText(item))"
+                      v-html="
+                        renderMarkdown(
+                          getMessageMarkdownText(item),
+                          getMessageMarkdownRenderOptions(item)
+                        )
+                      "
                     ></div>
                     <div v-if="item.attachments.length > 0" class="attachment-row">
                       <span
@@ -1608,6 +1620,7 @@ import {
   toggleExclusiveTimelineRawBlock,
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
+import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
   getWebSessionSidebarTone,
   getWebSessionTabTone,
@@ -1686,6 +1699,9 @@ const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
+const STREAMING_MARKDOWN_RENDER_OPTIONS = Object.freeze({
+  disableCodeHighlight: true,
+});
 const PROJECT_INDEX_COLORS = [
   '#10b981',
   '#3b82f6',
@@ -1827,6 +1843,7 @@ const {
   showWebSessionReasoning,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
+  webSessionStreamingMarkdownThrottleMs,
   effectiveTerminalThemeId,
   webSessionQuickInput,
   webSessionQuickInputDirectSend,
@@ -1881,6 +1898,7 @@ const activeCommandExecutionGroupId = ref('');
 const dismissedPlanActions = ref<Record<string, boolean>>({});
 const rawTimelineBlocks = ref<Record<string, boolean>>({});
 const activeRawTimelineBlockKey = ref('');
+const streamingMarkdownTextByKey = ref<Record<string, string>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
@@ -1904,6 +1922,12 @@ let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
 let sendConfirmationTimer: number | null = null;
 const loadedSidebarProjectIds = new Set<string>();
+const streamingMarkdownController = createWebSessionStreamingMarkdownController({
+  delayMs: webSessionStreamingMarkdownThrottleMs.value,
+  onStateChange: state => {
+    streamingMarkdownTextByKey.value = state;
+  },
+});
 const sidebarContainerWidth = ref(0);
 const isSidebarResizing = ref(false);
 const sidebarWidthPx = useStorage<number>(
@@ -2252,6 +2276,81 @@ function shouldShowPlanRawToggle(block: WebSessionBlock) {
     block.kind === 'tool' && block.tool && isPlanTool(block.tool) && block.tool.output?.trim()
   );
 }
+type StreamingMarkdownSurface = 'message' | 'plan';
+
+function buildStreamingMarkdownKey(block: WebSessionBlock, surface: StreamingMarkdownSurface) {
+  return `${block.key}:${surface}`;
+}
+
+function isStreamingMessageMarkdownBlock(block: WebSessionBlock) {
+  return block.kind === 'assistant' && liveState.value.running && block.done !== true;
+}
+
+function isStreamingPlanMarkdownBlock(block: WebSessionBlock) {
+  return Boolean(
+    block.kind === 'tool' && block.tool && isPlanTool(block.tool) && block.tool.status === 'running'
+  );
+}
+
+function getStreamingMarkdownText(block: WebSessionBlock, surface: StreamingMarkdownSurface) {
+  if (surface === 'plan') {
+    return block.tool?.output ?? '';
+  }
+  return getDisplayBlockText(block);
+}
+
+function getEffectiveStreamingMarkdownText(
+  block: WebSessionBlock,
+  surface: StreamingMarkdownSurface
+) {
+  const fallback = getStreamingMarkdownText(block, surface);
+  return streamingMarkdownTextByKey.value[buildStreamingMarkdownKey(block, surface)] ?? fallback;
+}
+
+function getMessageMarkdownText(block: WebSessionBlock) {
+  if (!isStreamingMessageMarkdownBlock(block)) {
+    return getDisplayBlockText(block);
+  }
+  return getEffectiveStreamingMarkdownText(block, 'message');
+}
+
+function getMessageMarkdownRenderOptions(block: WebSessionBlock) {
+  return isStreamingMessageMarkdownBlock(block) ? STREAMING_MARKDOWN_RENDER_OPTIONS : undefined;
+}
+
+function getMessageMarkdownMemoDeps(block: WebSessionBlock) {
+  const rawMode = isBlockRawMode(block, 'message');
+  return rawMode
+    ? ['message-raw', block.text]
+    : [
+        'message-markdown',
+        getMessageMarkdownText(block),
+        isStreamingMessageMarkdownBlock(block) ? 1 : 0,
+      ];
+}
+
+function getPlanToolMarkdownText(block: WebSessionBlock) {
+  if (!isStreamingPlanMarkdownBlock(block)) {
+    return block.tool?.output ?? '';
+  }
+  return getEffectiveStreamingMarkdownText(block, 'plan');
+}
+
+function getPlanToolMarkdownRenderOptions(block: WebSessionBlock) {
+  return isStreamingPlanMarkdownBlock(block) ? STREAMING_MARKDOWN_RENDER_OPTIONS : undefined;
+}
+
+function getPlanToolMarkdownMemoDeps(block: WebSessionBlock) {
+  const rawMode = isBlockRawMode(block, 'plan');
+  return rawMode
+    ? ['plan-raw', block.tool?.output ?? '']
+    : [
+        'plan-markdown',
+        getPlanToolMarkdownText(block),
+        isStreamingPlanMarkdownBlock(block) ? 1 : 0,
+      ];
+}
+
 function getTimelineRawModeKey(block: WebSessionBlock, surface: TimelineRawSurface) {
   return buildTimelineRawModeKey({
     sessionId: currentSession.value?.id,
@@ -2439,6 +2538,30 @@ const liveState = computed(() =>
   currentRealSession.value
     ? webSessionStore.getLiveState(currentRealSession.value.id)
     : ({ phase: 'idle', running: false, updatedAt: Date.now() } as WebSessionLiveState)
+);
+const streamingMarkdownTargets = computed(() =>
+  visibleBlocks.value.flatMap(block => {
+    const targets: Array<{ key: string; text: string }> = [];
+    if (isStreamingMessageMarkdownBlock(block)) {
+      const text = getDisplayBlockText(block);
+      if (text) {
+        targets.push({
+          key: buildStreamingMarkdownKey(block, 'message'),
+          text,
+        });
+      }
+    }
+    if (isStreamingPlanMarkdownBlock(block)) {
+      const text = block.tool?.output ?? '';
+      if (text) {
+        targets.push({
+          key: buildStreamingMarkdownKey(block, 'plan'),
+          text,
+        });
+      }
+    }
+    return targets;
+  })
 );
 const pendingApproval = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingApproval(currentRealSession.value.id) : null
@@ -3203,7 +3326,9 @@ const activeSessionHasWorkflowPlanBadge = computed(() =>
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
 const mobileSessionCategory = ref<'current' | 'archived'>('current');
 const mobileCurrentSessions = computed<SessionTab[]>(() =>
-  sortMobileCurrentSessions(sessions.value, session => resolveWebSessionSidebarSortTimestamp(session))
+  sortMobileCurrentSessions(sessions.value, session =>
+    resolveWebSessionSidebarSortTimestamp(session)
+  )
 );
 const mobileArchivedProjectIds = computed(() => (props.projectId ? [props.projectId] : []));
 const mobileArchivedScopeKey = computed(() => String(props.projectId || '').trim());
@@ -3211,7 +3336,9 @@ const mobileArchivedMeta = computed(() =>
   webSessionStore.getArchivedMeta(mobileArchivedProjectIds.value)
 );
 const mobileArchivedSessions = computed<SessionTab[]>(() =>
-  webSessionStore.getArchivedSessions(mobileArchivedProjectIds.value).map(item => item as SessionTab)
+  webSessionStore
+    .getArchivedSessions(mobileArchivedProjectIds.value)
+    .map(item => item as SessionTab)
 );
 const mobileVisibleSessions = computed<SessionTab[]>(() =>
   mobileSessionCategory.value === 'archived'
@@ -7350,10 +7477,7 @@ function getSessionStatusTooltip(session: (typeof sessions.value)[number]) {
 }
 
 function getSessionHoverTimeText(
-  session:
-    | Pick<WebSessionSummary, 'updatedAt' | 'lastMessageAt' | 'createdAt'>
-    | null
-    | undefined
+  session: Pick<WebSessionSummary, 'updatedAt' | 'lastMessageAt' | 'createdAt'> | null | undefined
 ) {
   if (!session) {
     return '';
@@ -7363,7 +7487,10 @@ function getSessionHoverTimeText(
 }
 
 function joinSessionHoverParts(parts: Array<string | null | undefined>) {
-  return parts.map(part => String(part ?? '').trim()).filter(Boolean).join(' · ');
+  return parts
+    .map(part => String(part ?? '').trim())
+    .filter(Boolean)
+    .join(' · ');
 }
 
 function getSidebarSessionSubtitle(item: CrossProjectSessionItem) {
@@ -7793,10 +7920,9 @@ watch(
 watch(
   sidebarProjectIdsToLoad,
   projectIds => {
-    void ensureArchivedScopeLoaded(projectIds, 20)
-      .catch(error => {
-        console.error('[Web Session] Failed to preload archived sidebar sessions', error);
-      });
+    void ensureArchivedScopeLoaded(projectIds, 20).catch(error => {
+      console.error('[Web Session] Failed to preload archived sidebar sessions', error);
+    });
   },
   { immediate: true }
 );
@@ -7835,6 +7961,7 @@ watch(
   () => currentSession.value?.id,
   sessionId => {
     stopWebSessionCatchUp('session-change');
+    streamingMarkdownController.clear();
     pendingHistoryAnchor.value = null;
     handleCommandExecutionDetailVisibilityChange(false);
     rawTimelineBlocks.value = {};
@@ -7880,6 +8007,22 @@ watch(
       activeRawTimelineBlockKey.value,
       keys
     );
+  },
+  { immediate: true }
+);
+
+watch(
+  streamingMarkdownTargets,
+  targets => {
+    streamingMarkdownController.sync(targets);
+  },
+  { immediate: true, deep: true }
+);
+
+watch(
+  () => webSessionStreamingMarkdownThrottleMs.value,
+  value => {
+    streamingMarkdownController.setDelayMs(value);
   },
   { immediate: true }
 );
@@ -8166,6 +8309,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   realSessionSnapshotLoadController.cancel();
+  streamingMarkdownController.clear();
   if (liveStateClockTimer != null) {
     window.clearInterval(liveStateClockTimer);
     liveStateClockTimer = null;

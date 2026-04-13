@@ -77,7 +77,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -103,7 +103,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.followSystemTheme).toBe(1);
 
     setActivePinia(createPinia());
@@ -133,7 +133,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.followSystemTheme).toBe(-1);
   });
 
@@ -157,7 +157,7 @@ describe('settings theme storage', () => {
       followSystemTheme?: number;
     };
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.followSystemTheme).toBe(1);
   });
 
@@ -197,9 +197,44 @@ describe('settings theme storage', () => {
       customTheme?: Record<string, unknown>;
     };
 
-    expect(persisted.version).toBe(3);
+    expect(persisted.version).toBe(4);
     expect(persisted.terminalDisplayMode).toBeUndefined();
     expect(persisted.theme?.terminalFloatingButtonBg).toBeUndefined();
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
+  });
+
+  it('defaults web session streaming markdown cadence to the built-in profile', () => {
+    const store = useSettingsStore();
+    const {
+      webSessionStreamingMarkdownThrottleMode,
+      webSessionStreamingMarkdownThrottleCustomMs,
+      webSessionStreamingMarkdownThrottleMs,
+    } = storeToRefs(store);
+
+    expect(webSessionStreamingMarkdownThrottleMode.value).toBe('default');
+    expect(webSessionStreamingMarkdownThrottleCustomMs.value).toBe(100);
+    expect(webSessionStreamingMarkdownThrottleMs.value).toBe(100);
+  });
+
+  it('preserves custom web session streaming markdown cadence from storage', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 4,
+        webSessionStreamingMarkdownThrottleMode: 'custom',
+        webSessionStreamingMarkdownThrottleCustomMs: 137,
+      })
+    );
+
+    const store = useSettingsStore();
+    const {
+      webSessionStreamingMarkdownThrottleMode,
+      webSessionStreamingMarkdownThrottleCustomMs,
+      webSessionStreamingMarkdownThrottleMs,
+    } = storeToRefs(store);
+
+    expect(webSessionStreamingMarkdownThrottleMode.value).toBe('custom');
+    expect(webSessionStreamingMarkdownThrottleCustomMs.value).toBe(137);
+    expect(webSessionStreamingMarkdownThrottleMs.value).toBe(137);
   });
 });

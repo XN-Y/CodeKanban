@@ -31,6 +31,7 @@ export default {
     yes: '是',
     no: '否',
     default: '默认',
+    custom: '自定义',
     saveSuccess: '保存成功',
     saveFailed: '保存失败',
     loadFailed: '加载失败',
@@ -973,6 +974,9 @@ export default {
     showWebSessionReasoning: '显示 AI 思考过程',
     showWebSessionReasoningTip:
       '仅影响会话页中的思考条目显示。大部分时候这些内容都是无用信息，只有排查模型行为或调试时才建议开启。',
+    webSessionStreamingMarkdownThrottle: '流式 Markdown 渲染节拍',
+    webSessionStreamingMarkdownThrottleTip:
+      '默认模式使用当前版本内置的渲染节拍，现为 {defaultMs} ms。切换为自定义后，将固定使用你设置的数值，不会随版本更新而自动调整。',
     webSessionAutoContinueScope: '自动继续失败范围',
     webSessionAutoContinueScopeTip:
       '仅影响 run_fail 之后的自动 continue；不影响 Codex 已有的 1/5、2/5 这类传输层重连。',

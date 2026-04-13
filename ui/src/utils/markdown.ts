@@ -22,6 +22,9 @@ import yaml from 'highlight.js/lib/languages/yaml';
 import { Marked, type Tokens } from 'marked';
 
 type HljsLanguageModule = Parameters<typeof hljs.registerLanguage>[1];
+export interface RenderMarkdownOptions {
+  disableCodeHighlight?: boolean;
+}
 
 const registeredLanguages = new Set<string>();
 
@@ -110,10 +113,11 @@ function normalizeLanguage(value?: string) {
   return registeredLanguages.has(normalized) ? normalized : '';
 }
 
-function renderCodeBlock({ text, lang }: Tokens.Code) {
+function renderCodeBlock({ text, lang }: Tokens.Code, options: RenderMarkdownOptions = {}) {
   const normalizedLanguage = normalizeLanguage(lang);
   const languageLabel = pickLanguageName(lang);
-  const highlightedCode = normalizedLanguage
+  const shouldHighlight = !options.disableCodeHighlight && Boolean(normalizedLanguage);
+  const highlightedCode = shouldHighlight
     ? hljs.highlight(text, {
         language: normalizedLanguage,
         ignoreIllegals: true,
@@ -121,38 +125,49 @@ function renderCodeBlock({ text, lang }: Tokens.Code) {
     : escapeHtml(text);
 
   const dataLanguage = languageLabel ? ` data-language="${escapeHtml(languageLabel)}"` : '';
-  const languageClass = normalizedLanguage ? ` language-${normalizedLanguage}` : '';
+  const languageClass = shouldHighlight ? ` language-${normalizedLanguage}` : '';
 
   return `<pre class="markdown-code-block"${dataLanguage}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
 }
 
-const markdownRenderer = new Marked({
-  async: false,
-  breaks: true,
-  gfm: true,
+function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
+  const renderer = new Marked({
+    async: false,
+    breaks: true,
+    gfm: true,
+  });
+
+  renderer.use({
+    renderer: {
+      code(token) {
+        return renderCodeBlock(token, options);
+      },
+      link(token) {
+        const href = token.href ? ` href="${escapeHtml(token.href)}"` : '';
+        const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
+        const text = this.parser.parseInline(token.tokens);
+        return `<a${href}${title} target="_blank" rel="noopener noreferrer" data-message-link="true">${text}</a>`;
+      },
+    },
+  });
+
+  return renderer;
+}
+
+const markdownRenderer = createMarkdownRenderer();
+const markdownRendererWithoutCodeHighlight = createMarkdownRenderer({
+  disableCodeHighlight: true,
 });
 
-markdownRenderer.use({
-  renderer: {
-    code(token) {
-      return renderCodeBlock(token);
-    },
-    link(token) {
-      const href = token.href ? ` href="${escapeHtml(token.href)}"` : '';
-      const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
-      const text = this.parser.parseInline(token.tokens);
-      return `<a${href}${title} target="_blank" rel="noopener noreferrer" data-message-link="true">${text}</a>`;
-    },
-  },
-});
-
-export function renderMarkdown(value: string) {
+export function renderMarkdown(value: string, options: RenderMarkdownOptions = {}) {
   if (!value) {
     return '';
   }
 
   try {
-    return markdownRenderer.parse(value) as string;
+    return (
+      options.disableCodeHighlight ? markdownRendererWithoutCodeHighlight : markdownRenderer
+    ).parse(value) as string;
   } catch {
     return escapeHtml(value).replace(/\n/g, '<br>');
   }

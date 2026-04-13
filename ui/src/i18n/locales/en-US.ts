@@ -31,6 +31,7 @@ export default {
     yes: 'Yes',
     no: 'No',
     default: 'Default',
+    custom: 'Custom',
     saveSuccess: 'Saved successfully',
     saveFailed: 'Failed to save',
     loadFailed: 'Failed to load',
@@ -1011,6 +1012,9 @@ export default {
     showWebSessionReasoning: 'Show AI reasoning',
     showWebSessionReasoningTip:
       'Only affects reasoning entries in the session view. Most of the time this is low-value noise, so only enable it when debugging agent behavior.',
+    webSessionStreamingMarkdownThrottle: 'Streaming Markdown render cadence',
+    webSessionStreamingMarkdownThrottleTip:
+      'Default uses the built-in cadence for this release, currently {defaultMs} ms. Custom keeps the exact value you specify and does not automatically change with future release defaults.',
     webSessionAutoContinueScope: 'Auto-continue failure scope',
     webSessionAutoContinueScopeTip:
       'This only applies after run_fail. It does not change Codex transport reconnect attempts like 1/5 or 2/5.',

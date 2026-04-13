@@ -196,6 +196,7 @@ export type WebSessionAutoContinueScope =
   | 'all_failures';
 
 export type WebSessionAutoContinuePreset = 'gentle_stop' | 'aggressive_stop' | 'sustain_60s';
+export type WebSessionStreamingMarkdownThrottleMode = 'default' | 'custom';
 export type FollowSystemThemeSetting = -1 | 0 | 1;
 
 interface GeneralSettings {
@@ -214,6 +215,8 @@ interface GeneralSettings {
   showWebSessionReasoning: boolean;
   webSessionAutoContinueScope: WebSessionAutoContinueScope;
   webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
+  webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
+  webSessionStreamingMarkdownThrottleCustomMs: number;
   terminalThemeId: string;
   terminalFont: TerminalFontSettings;
   terminalWebGLRenderer: 'auto' | 'force' | 'disable';
@@ -235,12 +238,13 @@ type LoadSettingsResult = {
 };
 
 const STORAGE_KEY = 'general_settings';
-const STORAGE_VERSION = 3;
+const STORAGE_VERSION = 4;
 const LEGACY_WEB_SESSION_REASONING_STORAGE_KEY = 'kanban-web-show-reasoning';
 const DEFAULT_RECENT_PROJECTS_LIMIT = 10;
 const DEFAULT_TERMINALS_PER_PROJECT_LIMIT = 12;
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE: WebSessionAutoContinueScope = 'network_only';
 const DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET: WebSessionAutoContinuePreset = 'gentle_stop';
+export const DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS = 100;
 export const WEB_SESSION_QUICK_INPUT_RECENT_LIMIT = 6;
 const FOLLOW_SYSTEM_THEME_DEFAULT: FollowSystemThemeSetting = -1;
 const FOLLOW_SYSTEM_THEME_DISABLED: FollowSystemThemeSetting = 0;
@@ -314,6 +318,8 @@ const defaultSettings: GeneralSettings = {
   showWebSessionReasoning: false,
   webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
   webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
+  webSessionStreamingMarkdownThrottleMode: 'default',
+  webSessionStreamingMarkdownThrottleCustomMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   terminalThemeId: TERMINAL_THEME_FOLLOW,
   terminalFont: { ...DEFAULT_TERMINAL_FONT },
   terminalWebGLRenderer: 'auto',
@@ -357,6 +363,17 @@ export const useSettingsStore = defineStore('settings', () => {
   const showWebSessionReasoning = computed(() => settings.value.showWebSessionReasoning);
   const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
   const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
+  const webSessionStreamingMarkdownThrottleMode = computed(
+    () => settings.value.webSessionStreamingMarkdownThrottleMode
+  );
+  const webSessionStreamingMarkdownThrottleCustomMs = computed(
+    () => settings.value.webSessionStreamingMarkdownThrottleCustomMs
+  );
+  const webSessionStreamingMarkdownThrottleMs = computed(() =>
+    settings.value.webSessionStreamingMarkdownThrottleMode === 'custom'
+      ? settings.value.webSessionStreamingMarkdownThrottleCustomMs
+      : DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS
+  );
   const terminalThemeId = computed(() => settings.value.terminalThemeId);
   const terminalFont = computed(() => settings.value.terminalFont);
   const terminalWebGLRenderer = computed(() => settings.value.terminalWebGLRenderer);
@@ -606,6 +623,18 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.webSessionAutoContinuePreset = sanitizeWebSessionAutoContinuePreset(value);
   }
 
+  function updateWebSessionStreamingMarkdownThrottleMode(
+    value: WebSessionStreamingMarkdownThrottleMode
+  ) {
+    settings.value.webSessionStreamingMarkdownThrottleMode =
+      sanitizeWebSessionStreamingMarkdownThrottleMode(value);
+  }
+
+  function updateWebSessionStreamingMarkdownThrottleCustomMs(value: number) {
+    settings.value.webSessionStreamingMarkdownThrottleCustomMs =
+      sanitizeWebSessionStreamingMarkdownThrottleCustomMs(value);
+  }
+
   function updateTerminalTheme(themeId: string) {
     settings.value.terminalThemeId = themeId;
   }
@@ -726,6 +755,9 @@ export const useSettingsStore = defineStore('settings', () => {
     showWebSessionReasoning,
     webSessionAutoContinueScope,
     webSessionAutoContinuePreset,
+    webSessionStreamingMarkdownThrottleMode,
+    webSessionStreamingMarkdownThrottleCustomMs,
+    webSessionStreamingMarkdownThrottleMs,
     terminalThemeId,
     terminalFont,
     terminalWebGLRenderer,
@@ -756,6 +788,8 @@ export const useSettingsStore = defineStore('settings', () => {
     updateShowWebSessionReasoning,
     updateWebSessionAutoContinueScope,
     updateWebSessionAutoContinuePreset,
+    updateWebSessionStreamingMarkdownThrottleMode,
+    updateWebSessionStreamingMarkdownThrottleCustomMs,
     updateTerminalTheme,
     updateTerminalFont,
     updateTerminalWebGLRenderer,
@@ -849,6 +883,13 @@ function loadSettings(): LoadSettingsResult {
           webSessionAutoContinuePreset: sanitizeWebSessionAutoContinuePreset(
             parsed.webSessionAutoContinuePreset
           ),
+          webSessionStreamingMarkdownThrottleMode: sanitizeWebSessionStreamingMarkdownThrottleMode(
+            parsed.webSessionStreamingMarkdownThrottleMode
+          ),
+          webSessionStreamingMarkdownThrottleCustomMs:
+            sanitizeWebSessionStreamingMarkdownThrottleCustomMs(
+              parsed.webSessionStreamingMarkdownThrottleCustomMs
+            ),
           terminalThemeId: parsed.terminalThemeId ?? defaultSettings.terminalThemeId,
           terminalFont: sanitizeTerminalFont(parsed.terminalFont),
           terminalWebGLRenderer: sanitizeWebGLRenderer(parsed.terminalWebGLRenderer),
@@ -915,6 +956,10 @@ function cloneDefaultSettings(): GeneralSettings {
     showWebSessionReasoning: defaultSettings.showWebSessionReasoning,
     webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
     webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
+    webSessionStreamingMarkdownThrottleMode:
+      defaultSettings.webSessionStreamingMarkdownThrottleMode,
+    webSessionStreamingMarkdownThrottleCustomMs:
+      defaultSettings.webSessionStreamingMarkdownThrottleCustomMs,
     terminalFont: { ...defaultSettings.terminalFont },
     terminalWebGLRenderer: defaultSettings.terminalWebGLRenderer,
     defaultTerminalRenderMode: defaultSettings.defaultTerminalRenderMode,
@@ -1045,6 +1090,31 @@ function sanitizeWebSessionAutoContinuePreset(value: unknown): WebSessionAutoCon
     return value as WebSessionAutoContinuePreset;
   }
   return DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET;
+}
+
+const VALID_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MODES: WebSessionStreamingMarkdownThrottleMode[] =
+  ['default', 'custom'];
+
+function sanitizeWebSessionStreamingMarkdownThrottleMode(
+  value: unknown
+): WebSessionStreamingMarkdownThrottleMode {
+  if (
+    typeof value === 'string' &&
+    VALID_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MODES.includes(
+      value as WebSessionStreamingMarkdownThrottleMode
+    )
+  ) {
+    return value as WebSessionStreamingMarkdownThrottleMode;
+  }
+  return defaultSettings.webSessionStreamingMarkdownThrottleMode;
+}
+
+function sanitizeWebSessionStreamingMarkdownThrottleCustomMs(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS;
+  }
+  return Math.max(1, Math.round(parsed));
 }
 
 function sanitizeWebSessionQuickInputItems(value: unknown, limit?: number) {
