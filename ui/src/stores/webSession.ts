@@ -368,6 +368,7 @@ type SyncSessionOptions = {
 type LoadSessionSnapshotOptions = {
   rememberActive?: boolean;
   signal?: AbortSignal;
+  preserveArchivedPosition?: boolean;
 };
 
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
@@ -923,6 +924,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return scopeState.meta;
   }
 
+  function hasArchivedScope(projectIds: string[]) {
+    const scope = normalizeProjectScope(projectIds);
+    return Boolean(scope.key && getArchivedScopeState(scope));
+  }
+
   function getActiveSessionId(projectId: string) {
     return activeSessionIdByProject.value[projectId] ?? '';
   }
@@ -1045,9 +1051,12 @@ export const useWebSessionStore = defineStore('web-session', () => {
       hasMore: boolean;
       beforeCursor?: string;
       total: number;
+    },
+    options?: {
+      preserveArchivedPosition?: boolean;
     }
   ) {
-    upsertSession(summary);
+    upsertSession(summary, options);
     resetSessionEvents(sessionId, items);
     setPendingInputs(sessionId, pendingInputs);
     historyBySession.value = {
@@ -1732,7 +1741,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
 
   function upsertArchivedSession(
     summary: WebSessionSummary,
-    options?: { includeInMatchingScopes?: boolean }
+    options?: {
+      includeInMatchingScopes?: boolean;
+      preserveScopeOrder?: boolean;
+    }
   ) {
     const previous = archivedSessionsById.value[summary.id];
     archivedSessionsById.value = {
@@ -1749,6 +1761,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     if (!previous) {
+      return;
+    }
+
+    if (options?.preserveScopeOrder) {
       return;
     }
 
@@ -1863,7 +1879,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     syncSessionCount(summary.projectId);
   }
 
-  function upsertSession(summary: WebSessionSummary) {
+  function upsertSession(
+    summary: WebSessionSummary,
+    options?: { preserveArchivedPosition?: boolean }
+  ) {
     if (summary.archivedAt) {
       const wasCurrentSession = Boolean(
         (sessionsByProject.value[summary.projectId] ?? []).some(item => item.id === summary.id)
@@ -1871,6 +1890,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       removeCurrentSessionRecord(summary.projectId, summary.id);
       upsertArchivedSession(summary, {
         includeInMatchingScopes: wasCurrentSession,
+        preserveScopeOrder: options?.preserveArchivedPosition === true,
       });
       return;
     }
@@ -2873,6 +2893,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
             hasMore: Boolean(snapshot.history?.hasMore),
             beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
             total: Number(snapshot.history?.total ?? 0),
+          },
+          {
+            preserveArchivedPosition: options?.preserveArchivedPosition === true,
           }
         );
       } else {
@@ -3283,6 +3306,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getSessionCount,
     getArchivedSessions,
     getArchivedMeta,
+    hasArchivedScope,
     getActiveSessionId,
     hasStoredActiveSession,
     getActiveSession,

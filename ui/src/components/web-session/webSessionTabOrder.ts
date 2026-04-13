@@ -15,6 +15,31 @@ export function clampTabAnchorIndex(anchorIndex: number, baseLength: number) {
   return Math.min(normalizedBaseLength, Math.max(0, Math.trunc(anchorIndex)));
 }
 
+function normalizeSessionId(sessionId = '') {
+  return String(sessionId || '').trim();
+}
+
+export function resolveUnderlyingTabSessionId(options: {
+  activeDraftSessionId?: string;
+  activeRealSessionId?: string;
+}) {
+  return (
+    normalizeSessionId(options.activeDraftSessionId) ||
+    normalizeSessionId(options.activeRealSessionId)
+  );
+}
+
+export function resolveActiveTabSessionId(options: {
+  activeArchivedPreviewId?: string;
+  activeDraftSessionId?: string;
+  activeRealSessionId?: string;
+}) {
+  if (normalizeSessionId(options.activeArchivedPreviewId)) {
+    return '';
+  }
+  return resolveUnderlyingTabSessionId(options);
+}
+
 export function resolveTabAnchorInsertIndex<T extends OrderedTabSessionLike>(
   orderedSessions: T[],
   anchorId = ''

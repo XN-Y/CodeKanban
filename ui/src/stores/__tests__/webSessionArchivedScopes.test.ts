@@ -4,13 +4,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebSessionSummary } from '@/types/models';
 import { useWebSessionStore } from '@/stores/webSession';
 
-const { listMock, queryArchivedMock, archiveMock, unarchiveMock, deleteMock } = vi.hoisted(() => ({
-  listMock: vi.fn(),
-  queryArchivedMock: vi.fn(),
-  archiveMock: vi.fn(),
-  unarchiveMock: vi.fn(),
-  deleteMock: vi.fn(),
-}));
+const { listMock, queryArchivedMock, archiveMock, unarchiveMock, deleteMock, snapshotMock } =
+  vi.hoisted(() => ({
+    listMock: vi.fn(),
+    queryArchivedMock: vi.fn(),
+    archiveMock: vi.fn(),
+    unarchiveMock: vi.fn(),
+    deleteMock: vi.fn(),
+    snapshotMock: vi.fn(),
+  }));
 
 vi.mock('@/api/webSession', () => ({
   webSessionApi: {
@@ -19,6 +21,7 @@ vi.mock('@/api/webSession', () => ({
     archive: archiveMock,
     unarchive: unarchiveMock,
     delete: deleteMock,
+    snapshot: snapshotMock,
   },
 }));
 
@@ -119,6 +122,7 @@ describe('webSession archived scopes', () => {
     archiveMock.mockReset();
     unarchiveMock.mockReset();
     deleteMock.mockReset();
+    snapshotMock.mockReset();
   });
 
   afterEach(() => {
@@ -324,6 +328,74 @@ describe('webSession archived scopes', () => {
       total: 3,
       offset: 1,
       hasMore: true,
+    });
+  });
+
+  it('preserves the loaded archived order while preview snapshots refresh an archived session', async () => {
+    const store = useWebSessionStore();
+    const archivedRecent = makeSession({
+      id: 'archived-recent',
+      archivedAt: '2026-04-10T13:00:00.000Z',
+      activityAt: '2026-04-10T13:00:00.000Z',
+      updatedAt: '2026-04-10T13:00:00.000Z',
+      lastMessageAt: '2026-04-10T13:00:00.000Z',
+    });
+    const archivedPreview = makeSession({
+      id: 'archived-preview',
+      archivedAt: '2026-04-10T12:00:00.000Z',
+      activityAt: '2026-04-10T12:00:00.000Z',
+      updatedAt: '2026-04-10T12:00:00.000Z',
+      lastMessageAt: '2026-04-10T12:00:00.000Z',
+    });
+    const refreshedPreview = {
+      ...archivedPreview,
+      title: 'Archived Preview Updated',
+      activityAt: '2026-04-10T15:00:00.000Z',
+      updatedAt: '2026-04-10T15:00:00.000Z',
+      lastMessageAt: '2026-04-10T15:00:00.000Z',
+    };
+
+    queryArchivedMock.mockResolvedValue({
+      items: [archivedRecent, archivedPreview],
+      total: 2,
+      hasMore: false,
+      nextOffset: 2,
+    });
+    snapshotMock.mockResolvedValue({
+      session: refreshedPreview,
+      history: {
+        items: [],
+        hasMore: false,
+        beforeCursor: '',
+        total: 0,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadArchivedSessions(['project-1'], {
+      reset: true,
+      limit: 20,
+    });
+    expect(store.hasArchivedScope(['project-1'])).toBe(true);
+
+    await store.loadSessionSnapshot('project-1', archivedPreview.id, {
+      rememberActive: false,
+      preserveArchivedPosition: true,
+    });
+
+    expect(store.getArchivedSessions(['project-1']).map(item => item.id)).toEqual([
+      archivedRecent.id,
+      archivedPreview.id,
+    ]);
+    expect(store.getArchivedSessions(['project-1'])[1]).toMatchObject({
+      id: archivedPreview.id,
+      title: refreshedPreview.title,
+      activityAt: refreshedPreview.activityAt,
+    });
+    expect(store.getArchivedMeta(['project-1'])).toMatchObject({
+      total: 2,
+      offset: 2,
+      hasMore: false,
     });
   });
 });

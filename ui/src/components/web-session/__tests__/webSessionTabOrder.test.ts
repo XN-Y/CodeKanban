@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildOrderedTabSessions,
   clampTabAnchorIndex,
+  resolveActiveTabSessionId,
+  resolveUnderlyingTabSessionId,
   resolveTabAnchorInsertIndex,
   sortMobileCurrentSessions,
 } from '@/components/web-session/webSessionTabOrder';
@@ -63,6 +65,31 @@ describe('webSessionTabOrder', () => {
     expect(clampTabAnchorIndex(2, 3)).toBe(2);
     expect(clampTabAnchorIndex(99, 3)).toBe(3);
     expect(clampTabAnchorIndex(Number.NaN, 3)).toBe(3);
+  });
+
+  it('hides current-tab selection while an archived preview is open', () => {
+    expect(
+      resolveActiveTabSessionId({
+        activeArchivedPreviewId: 'archived-1',
+        activeDraftSessionId: 'draft-1',
+        activeRealSessionId: 'real-1',
+      })
+    ).toBe('');
+  });
+
+  it('keeps the underlying draft or real tab id for non-visual tab actions', () => {
+    expect(
+      resolveUnderlyingTabSessionId({
+        activeDraftSessionId: 'draft-1',
+        activeRealSessionId: 'real-1',
+      })
+    ).toBe('draft-1');
+    expect(
+      resolveUnderlyingTabSessionId({
+        activeDraftSessionId: '',
+        activeRealSessionId: 'real-1',
+      })
+    ).toBe('real-1');
   });
 
   it('pins drafts first and sorts real sessions by recency for mobile navigation', () => {
