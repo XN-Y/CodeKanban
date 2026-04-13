@@ -176,10 +176,10 @@
       </div>
     </template>
     <TerminalPanel
-      ref="terminalPanelRef"
+      v-if="isMobileLayout"
       :project-id="currentProjectId"
-      :is-mobile="isMobileLayout"
-      :hidden="isMobileLayout && mobileActiveView !== 'terminal'"
+      :is-mobile="true"
+      :hidden="mobileActiveView !== 'terminal'"
     />
     <ProjectEditDialog
       v-model:show="showEditDialog"
@@ -210,11 +210,17 @@ import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import type { Worktree } from '@/types/models';
 import {
   DEFAULT_MOBILE_VIEW,
+  mobileViewToRouteTab,
   normalizeMobileView,
+  routeTabToMobileView,
   restorePersistedMobileView,
   type MobileView,
 } from '@/views/projectWorkspaceMobileView';
-import { getWebSessionRouteSessionId } from '@/utils/webSessionRoute';
+import {
+  buildWorkspaceRouteQuery,
+  isWorkspaceRouteTabQuerySynced,
+  resolveMobileWorkspaceRouteTab,
+} from '@/utils/workspaceRoute';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
@@ -232,7 +238,6 @@ const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
 const { windowWidth } = useResponsive();
 const { t } = useLocale();
-const terminalPanelRef = ref<InstanceType<typeof TerminalPanel> | null>(null);
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
 const mobileKanbanEnabled = false;
@@ -331,7 +336,6 @@ function startProjectSidebarResize(event: MouseEvent) {
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
-const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 
 const storedMobileViews = useStorage<Record<string, MobileView>>(
   MOBILE_ACTIVE_VIEW_STORAGE_KEY,
@@ -339,9 +343,19 @@ const storedMobileViews = useStorage<Record<string, MobileView>>(
 );
 const mobileActiveView = ref<MobileView>(DEFAULT_MOBILE_VIEW);
 
+function syncMobileRouteTab(view: MobileView) {
+  const routeTab = mobileViewToRouteTab(view);
+  if (isWorkspaceRouteTabQuerySynced(route.query, routeTab)) {
+    return;
+  }
+  void router.replace({
+    query: buildWorkspaceRouteQuery(route.query, routeTab),
+  });
+}
+
 watch(
-  currentProjectId,
-  projectId => {
+  [currentProjectId, () => route.query, () => isMobileLayout.value],
+  ([projectId, query, mobile]) => {
     if (!projectId) {
       mobileActiveView.value = DEFAULT_MOBILE_VIEW;
       return;
@@ -349,7 +363,10 @@ watch(
 
     const storedView = storedMobileViews.value[projectId];
     const restoredView = restorePersistedMobileView(storedView);
-    mobileActiveView.value = restoredView;
+    const nextView = routeTabToMobileView(
+      resolveMobileWorkspaceRouteTab(query, mobileViewToRouteTab(restoredView))
+    );
+    mobileActiveView.value = nextView;
 
     if (storedView !== restoredView) {
       storedMobileViews.value = {
@@ -357,47 +374,40 @@ watch(
         [projectId]: restoredView,
       };
     }
+
+    if (mobile) {
+      syncMobileRouteTab(nextView);
+    }
   },
   { immediate: true }
 );
 
-watch([currentProjectId, mobileActiveView], ([projectId, view]) => {
-  if (!projectId) {
-    return;
-  }
+watch(
+  [currentProjectId, mobileActiveView, () => isMobileLayout.value],
+  ([projectId, view, mobile]) => {
+    if (!projectId) {
+      return;
+    }
 
-  const normalizedView = normalizeMobileView(view);
-  if (storedMobileViews.value[projectId] === normalizedView) {
-    return;
-  }
+    const normalizedView = normalizeMobileView(view);
+    if (storedMobileViews.value[projectId] !== normalizedView) {
+      storedMobileViews.value = {
+        ...storedMobileViews.value,
+        [projectId]: normalizedView,
+      };
+    }
 
-  storedMobileViews.value = {
-    ...storedMobileViews.value,
-    [projectId]: normalizedView,
-  };
-});
+    if (mobile) {
+      syncMobileRouteTab(normalizedView);
+    }
+  }
+);
 
 watch(mobileActiveView, view => {
   if (view !== 'webSession') {
     isMobileWebSessionComposerFocused.value = false;
   }
 });
-
-watch(
-  [currentProjectId, routeWebSessionId, isMobileLayout],
-  ([projectId, sessionId, mobile]) => {
-    if (!projectId || !sessionId) {
-      return;
-    }
-
-    if (mobile) {
-      if (mobileActiveView.value !== 'webSession') {
-        setMobileView('webSession');
-      }
-    }
-  },
-  { immediate: true }
-);
 
 watch(
   () => isMobileLayout.value,
@@ -518,10 +528,14 @@ function handleGoToSettings() {
 
 // 移动端视图切换
 function setMobileView(view: MobileView) {
-  if (view !== 'webSession') {
+  const normalizedView = normalizeMobileView(view);
+  if (normalizedView !== 'webSession') {
     isMobileWebSessionComposerFocused.value = false;
   }
-  mobileActiveView.value = normalizeMobileView(view);
+  mobileActiveView.value = normalizedView;
+  if (isMobileLayout.value) {
+    syncMobileRouteTab(normalizedView);
+  }
 }
 </script>
 

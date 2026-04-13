@@ -173,7 +173,7 @@ import {
   TerminalOutline,
 } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import {
   formatAiStatusTripletWithTotal,
   summarizeWebSessions,
@@ -187,50 +187,75 @@ import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
 import DockedNotificationSidebar from '@/components/workspace/DockedNotificationSidebar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
-import { getWebSessionRouteSessionId } from '@/utils/webSessionRoute';
+import {
+  buildWorkspaceRouteQuery,
+  isWorkspaceRouteTabQuerySynced,
+  resolveDesktopWorkspaceRouteTab,
+  type DesktopWorkspaceRouteTab,
+} from '@/utils/workspaceRoute';
 
 const props = defineProps<{
   projectId: string;
 }>();
 
-type WorkspaceTab = 'kanban' | 'terminal' | 'web' | 'files';
+type WorkspaceTab = DesktopWorkspaceRouteTab;
 
 const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 
 const { t } = useLocale();
 const route = useRoute();
+const router = useRouter();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
 const { terminalShortcut } = storeToRefs(settingsStore);
-const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
 
 function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
-  if (value === 'kanban' || value === 'terminal' || value === 'web' || value === 'files') {
-    return value;
-  }
-  return 'terminal';
+  return resolveDesktopWorkspaceRouteTab(null, value);
 }
 
 const storedActiveTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
-const activeTab = computed<WorkspaceTab>({
-  get() {
-    return normalizeWorkspaceTab(storedActiveTab.value);
-  },
-  set(value) {
-    storedActiveTab.value = normalizeWorkspaceTab(value);
-  },
-});
+const activeTab = ref<WorkspaceTab>(normalizeWorkspaceTab(storedActiveTab.value));
 const previousTab = ref<WorkspaceTab | null>(null);
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
 
+function syncWorkspaceRouteTab(tab: WorkspaceTab) {
+  if (isWorkspaceRouteTabQuerySynced(route.query, tab)) {
+    return;
+  }
+  void router.replace({
+    query: buildWorkspaceRouteQuery(route.query, tab),
+  });
+}
+
+watch(
+  [() => route.query, storedActiveTab],
+  ([query, storedTab]) => {
+    const nextTab = resolveDesktopWorkspaceRouteTab(query, storedTab);
+    if (storedActiveTab.value !== nextTab) {
+      storedActiveTab.value = nextTab;
+    }
+    if (activeTab.value !== nextTab) {
+      previousTab.value = activeTab.value;
+      activeTab.value = nextTab;
+    }
+    syncWorkspaceRouteTab(nextTab);
+  },
+  { immediate: true }
+);
+
 function activateTab(nextTab: WorkspaceTab) {
   const normalized = normalizeWorkspaceTab(nextTab);
+  if (storedActiveTab.value !== normalized) {
+    storedActiveTab.value = normalized;
+  }
   if (normalized === activeTab.value) {
+    syncWorkspaceRouteTab(normalized);
     return;
   }
   previousTab.value = activeTab.value;
   activeTab.value = normalized;
+  syncWorkspaceRouteTab(normalized);
 }
 
 function togglePreviousWorkspaceTab() {
@@ -240,17 +265,9 @@ function togglePreviousWorkspaceTab() {
   }
   previousTab.value = activeTab.value;
   activeTab.value = previous;
+  storedActiveTab.value = previous;
+  syncWorkspaceRouteTab(previous);
 }
-
-watch(
-  routeWebSessionId,
-  sessionId => {
-    if (sessionId && activeTab.value !== 'web') {
-      activateTab('web');
-    }
-  },
-  { immediate: true }
-);
 
 // 终端数量
 const terminalCount = computed(() => {

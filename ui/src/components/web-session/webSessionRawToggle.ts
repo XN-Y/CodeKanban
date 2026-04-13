@@ -28,6 +28,16 @@ export function shouldShowTimelineRawToggle(input: TimelineRawToggleVisibilityIn
   return input.activeKey === input.rawKey || input.rawMode;
 }
 
+export function toggleExclusiveTimelineRawBlock(
+  rawBlocks: Record<string, boolean>,
+  rawKey: string
+): Record<string, boolean> {
+  if (rawBlocks[rawKey]) {
+    return {};
+  }
+  return { [rawKey]: true };
+}
+
 export function pruneActiveTimelineRawBlockKey(activeKey: string, visibleKeys: string[]): string {
   if (!activeKey || visibleKeys.includes(activeKey)) {
     return activeKey;

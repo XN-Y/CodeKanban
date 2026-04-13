@@ -271,8 +271,8 @@
                               size="small"
                               type="primary"
                               class="plan-tool-action-primary"
-                              :loading="isPlanCardImplementPending"
-                              :disabled="isPlanCardImplementPending"
+                              :loading="isSubmittingPlanExecution"
+                              :disabled="isSubmittingMessage"
                               @click="handlePlanCardImplement"
                             >
                               {{ t('webSession.planActionImplement') }}
@@ -281,7 +281,7 @@
                               size="small"
                               secondary
                               class="plan-tool-action-secondary"
-                              :disabled="isPlanCardImplementPending"
+                              :disabled="isSubmittingMessage"
                               @click="handlePlanCardCancel"
                             >
                               {{ t('webSession.planActionCancel') }}
@@ -538,8 +538,11 @@
                         : undefined
                     "
                     :tabindex="shouldShowMessageRawToggle(item) ? 0 : undefined"
-                    @click="activateTimelineRawBlock(item, 'message')"
+                    @mouseenter="handleMessageBubbleMouseEnter(item)"
+                    @mouseleave="handleMessageBubbleMouseLeave(item)"
+                    @click="handleMessageBubbleClick(item)"
                     @focusin="activateTimelineRawBlock(item, 'message')"
+                    @focusout="handleMessageBubbleFocusOut(item, $event)"
                     @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
                     @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
@@ -613,7 +616,7 @@
                     type="button"
                     class="live-card"
                     :class="[
-                      `phase-${liveState.phase}`,
+                      `phase-${displayLiveState.phase}`,
                       {
                         'show-jump-hint': showJumpToBottom,
                       },
@@ -641,11 +644,11 @@
                       </span>
                       <n-tooltip placement="top-end" :delay="120">
                         <template #trigger>
-                          <span class="live-time">{{ getLiveTimeText(liveState) }}</span>
+                          <span class="live-time">{{ getLiveTimeText(displayLiveState) }}</span>
                         </template>
                         <div class="live-time-tooltip">
                           <div
-                            v-for="item in getLiveTimeTooltipItems(liveState)"
+                            v-for="item in getLiveTimeTooltipItems(displayLiveState)"
                             :key="item.key"
                             class="live-time-tooltip-row"
                           >
@@ -1185,11 +1188,15 @@
                         'composer-send-btn',
                         { 'is-confirm-armed': isSendConflictConfirmationArmed },
                       ]"
-                      :loading="isSubmittingMessage"
+                      :loading="isSubmittingMessage && !isSubmittingPlanExecution"
                       :disabled="!canSend"
                       @click="handleSubmit"
                     >
-                      {{ t('webSession.send') }}
+                      {{
+                        isSendConflictConfirmationArmed
+                          ? t('webSession.sendEmphatic')
+                          : t('webSession.send')
+                      }}
                     </n-button>
                   </template>
                   <div class="composer-send-confirm-popover-card" role="status" aria-live="polite">
@@ -1590,6 +1597,7 @@ import {
   resolveActivatedTimelineRawBlockKey,
   shouldClearActiveTimelineRawBlockKey,
   shouldShowTimelineRawToggle as shouldShowTimelineRawToggleForBlock,
+  toggleExclusiveTimelineRawBlock,
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
 import {
@@ -1600,8 +1608,12 @@ import {
   beginWebSessionSubmit,
   buildWebSessionSubmitOwnerId,
   endWebSessionSubmit,
+  getWebSessionSubmitEntry,
   isWebSessionSubmitting,
+  resolveOptimisticWebSessionLiveState,
+  shouldShowWebSessionExecuteFeedback,
   transferWebSessionSubmit,
+  type WebSessionSubmitKind,
   type WebSessionSubmitState,
 } from '@/components/web-session/webSessionSubmitState';
 import {
@@ -1633,8 +1645,13 @@ import {
   clampTabAnchorIndex,
   resolveTabAnchorInsertIndex,
 } from '@/components/web-session/webSessionTabOrder';
+import {
+  collapseProjectDraftTabs,
+  pickPreferredDraftTab,
+} from '@/components/web-session/webSessionDraftTabs';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
+import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
 import {
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
@@ -1816,6 +1833,7 @@ const persistedActiveDraftSessionIdByProject = useStorage<Record<string, string>
 const persistedTabOrderByProject = useStorage<Record<string, string[]>>(TAB_ORDER_STORAGE_KEY, {});
 const persistedTabMruByProject = useStorage<Record<string, string[]>>(TAB_MRU_STORAGE_KEY, {});
 const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query));
+const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
@@ -2241,6 +2259,45 @@ function activateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSu
     getTimelineRawModeKey(block, surface)
   );
 }
+function deactivateTimelineRawBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const key = getTimelineRawModeKey(block, surface);
+  if (activeRawTimelineBlockKey.value === key) {
+    activeRawTimelineBlockKey.value = '';
+  }
+}
+function handleMessageBubbleMouseEnter(block: WebSessionBlock) {
+  if (isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  activateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleMouseLeave(block: WebSessionBlock) {
+  if (isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  deactivateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleClick(block: WebSessionBlock) {
+  if (!isMobile.value || !shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  activateTimelineRawBlock(block, 'message');
+}
+function handleMessageBubbleFocusOut(block: WebSessionBlock, event: FocusEvent) {
+  if (!shouldShowMessageRawToggle(block)) {
+    return;
+  }
+  const currentTarget = event.currentTarget;
+  const relatedTarget = event.relatedTarget;
+  if (
+    currentTarget instanceof Element &&
+    relatedTarget instanceof Node &&
+    currentTarget.contains(relatedTarget)
+  ) {
+    return;
+  }
+  deactivateTimelineRawBlock(block, 'message');
+}
 function shouldShowTimelineRawToggle(block: WebSessionBlock, surface: TimelineRawSurface) {
   const rawCapable =
     surface === 'message' ? shouldShowMessageRawToggle(block) : shouldShowPlanRawToggle(block);
@@ -2256,10 +2313,7 @@ function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
 }
 function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   const key = getTimelineRawModeKey(block, surface);
-  rawTimelineBlocks.value = {
-    ...rawTimelineBlocks.value,
-    [key]: !rawTimelineBlocks.value[key],
-  };
+  rawTimelineBlocks.value = toggleExclusiveTimelineRawBlock(rawTimelineBlocks.value, key);
 }
 function isExecutePlanOption(option: WebSessionUserInputOption) {
   const text = normalizeChoiceText(`${option.label} ${option.description}`);
@@ -2429,18 +2483,31 @@ const isPlanWaitingApprovalState = computed(
     Boolean(latestPlanToolId.value) &&
     !hasUserMessageAfterLatestPlan.value
 );
+const currentSubmitEntry = computed(() =>
+  getWebSessionSubmitEntry(submitStateBySessionId.value, currentDraftSessionId.value)
+);
+const currentSubmitShowsExecuteFeedback = computed(() =>
+  shouldShowWebSessionExecuteFeedback(currentSubmitEntry.value)
+);
+const isOptimisticExecuteFeedbackActive = computed(
+  () => currentSubmitShowsExecuteFeedback.value && !liveState.value.running
+);
+const displayLiveState = computed(() =>
+  resolveOptimisticWebSessionLiveState(liveState.value, currentSubmitEntry.value)
+);
+const isSubmittingPlanExecution = computed(() => currentSubmitEntry.value?.kind === 'execute_plan');
 const showRuntimeStrip = computed(() => {
   if (pendingApproval.value || pendingUserInput.value) {
     return true;
   }
-  if (isPlanWaitingApprovalState.value) {
+  if (isPlanWaitingApprovalState.value && !isOptimisticExecuteFeedbackActive.value) {
     return false;
   }
-  if (liveState.value.phase === 'idle') {
+  if (displayLiveState.value.phase === 'idle') {
     return false;
   }
   if (
-    liveState.value.phase === 'done' &&
+    displayLiveState.value.phase === 'done' &&
     latestPlanToolId.value &&
     !hasUserMessageAfterLatestPlan.value
   ) {
@@ -2543,9 +2610,7 @@ const pendingInputs = computed(() =>
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
-const isPlanCardImplementPending = computed(() =>
-  isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
-);
+const currentComposerSubmitKind = computed(() => resolveComposerSubmitKind());
 const sendConfirmationSignature = computed(() =>
   buildWebSessionSendConfirmationSignature({
     ownerId: currentDraftSessionId.value,
@@ -2554,11 +2619,22 @@ const sendConfirmationSignature = computed(() =>
     conflictSessionIds: sendConflictSessions.value.map(session => session.id),
   })
 );
-const isSendConflictConfirmationArmed = computed(() =>
-  Boolean(
-    sendConfirmationState.value &&
-      sendConfirmationState.value.signature === sendConfirmationSignature.value
-  )
+const planImplementConfirmationSignature = computed(() =>
+  buildWebSessionSendConfirmationSignature({
+    ownerId: currentRealSession.value?.id ?? '',
+    text: '__implement_plan__',
+    attachmentIds: [],
+    conflictSessionIds: sendConflictSessions.value.map(session => session.id),
+  })
+);
+const isSendConflictConfirmationArmed = computed(
+  () =>
+    currentComposerSubmitKind.value === 'execute_send' &&
+    sendConflictSessions.value.length > 0 &&
+    Boolean(
+      sendConfirmationState.value &&
+        sendConfirmationState.value.signature === sendConfirmationSignature.value
+    )
 );
 const isSubmittingMessage = computed(() =>
   isWebSessionSubmitting(submitStateBySessionId.value, currentDraftSessionId.value)
@@ -2821,8 +2897,10 @@ function clearComposerTransferError() {
   composerTransferErrorDetail.value = '';
 }
 
-function beginSessionSubmit(ownerId: string) {
-  submitStateBySessionId.value = beginWebSessionSubmit(submitStateBySessionId.value, ownerId);
+function beginSessionSubmit(ownerId: string, kind: WebSessionSubmitKind) {
+  submitStateBySessionId.value = beginWebSessionSubmit(submitStateBySessionId.value, ownerId, {
+    kind,
+  });
 }
 
 function endSessionSubmit(ownerId: string) {
@@ -2943,31 +3021,36 @@ function isQuickInputSelected(text: string) {
   return normalizedComposerText.value.length > 0 && normalizedComposerText.value === text.trim();
 }
 
+function resolveComposerSubmitKind(): WebSessionSubmitKind {
+  const workflowMode = currentSession.value?.workflowMode ?? draftWorkflowMode.value;
+  return workflowMode === 'plan' ? 'plan_message' : 'execute_send';
+}
+
 const liveStateLabel = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return t('webSession.liveRecovered');
   }
-  switch (liveState.value.phase) {
+  switch (displayLiveState.value.phase) {
     case 'starting':
       return t('webSession.liveStarting');
     case 'thinking':
       return t('webSession.liveThinking');
     case 'retrying':
-      if (liveState.value.retry?.attempt && liveState.value.retry?.maxAttempts) {
+      if (displayLiveState.value.retry?.attempt && displayLiveState.value.retry?.maxAttempts) {
         return t('webSession.liveRetryingProgress', {
-          attempt: liveState.value.retry.attempt,
-          max: liveState.value.retry.maxAttempts,
+          attempt: displayLiveState.value.retry.attempt,
+          max: displayLiveState.value.retry.maxAttempts,
         });
       }
       return t('webSession.liveRetrying');
     case 'tool':
-      if (isCompactToolKind(liveState.value.tool?.kind)) {
-        const count = Math.max(1, Number(liveState.value.tool?.count ?? 1) || 1);
-        const label = compactToolLabel(liveState.value.tool);
+      if (isCompactToolKind(displayLiveState.value.tool?.kind)) {
+        const count = Math.max(1, Number(displayLiveState.value.tool?.count ?? 1) || 1);
+        const label = compactToolLabel(displayLiveState.value.tool);
         const toolLabel = count > 1 ? `${label} x${count}` : label;
         return t('webSession.liveTool', { tool: toolLabel });
       }
-      return t('webSession.liveTool', { tool: liveState.value.tool?.name || 'Tool' });
+      return t('webSession.liveTool', { tool: displayLiveState.value.tool?.name || 'Tool' });
     case 'waiting_approval':
     case 'waiting_plan_approval':
       return t('webSession.liveWaitingApproval');
@@ -2985,32 +3068,35 @@ const liveStateDetail = computed(() => {
   if (hasRecoveredRuntimeRequest.value) {
     return recoveredRuntimeHint.value;
   }
+  if (isOptimisticExecuteFeedbackActive.value) {
+    return '';
+  }
   if (pendingApproval.value?.prompt) {
     return pendingApproval.value.prompt;
   }
   if (
-    liveState.value.phase === 'waiting_approval' ||
-    liveState.value.phase === 'waiting_plan_approval'
+    displayLiveState.value.phase === 'waiting_approval' ||
+    displayLiveState.value.phase === 'waiting_plan_approval'
   ) {
     return t('webSession.liveWaitingApprovalDetail');
   }
   if (pendingUserInput.value?.prompt) {
     return pendingUserInput.value.prompt;
   }
-  if (liveState.value.phase === 'retrying' && liveState.value.retry?.message) {
-    const message = liveState.value.retry.message.trim();
+  if (displayLiveState.value.phase === 'retrying' && displayLiveState.value.retry?.message) {
+    const message = displayLiveState.value.retry.message.trim();
     if (message && message !== liveStateLabel.value) {
       return message;
     }
   }
-  if (liveState.value.phase === 'tool' && liveState.value.tool?.summary) {
-    return liveState.value.tool.summary;
+  if (displayLiveState.value.phase === 'tool' && displayLiveState.value.tool?.summary) {
+    return displayLiveState.value.tool.summary;
   }
-  if (liveState.value.phase === 'tool' && liveState.value.tool?.kind) {
-    return liveState.value.tool.kind;
+  if (displayLiveState.value.phase === 'tool' && displayLiveState.value.tool?.kind) {
+    return displayLiveState.value.tool.kind;
   }
-  if (liveState.value.phase === 'error' && liveState.value.errorMessage) {
-    return liveState.value.errorMessage;
+  if (displayLiveState.value.phase === 'error' && displayLiveState.value.errorMessage) {
+    return displayLiveState.value.errorMessage;
   }
   return '';
 });
@@ -3018,7 +3104,7 @@ const liveStateSecondaryText = computed(() => {
   if (liveStateDetail.value) {
     return liveStateDetail.value;
   }
-  switch (liveState.value.phase) {
+  switch (displayLiveState.value.phase) {
     case 'starting':
       return t('webSession.liveStartingDetail');
     case 'thinking':
@@ -3026,7 +3112,7 @@ const liveStateSecondaryText = computed(() => {
     case 'retrying':
       return t('webSession.liveRetryingDetail');
     case 'tool':
-      return compactToolLabel(liveState.value.tool);
+      return compactToolLabel(displayLiveState.value.tool);
     case 'waiting_approval':
     case 'waiting_plan_approval':
       return t('webSession.liveWaitingApprovalDetail');
@@ -3041,7 +3127,7 @@ const liveStateSecondaryText = computed(() => {
   }
 });
 const liveStateWorking = computed(() =>
-  ['starting', 'thinking', 'retrying', 'tool'].includes(liveState.value.phase)
+  ['starting', 'thinking', 'retrying', 'tool'].includes(displayLiveState.value.phase)
 );
 const shouldAutoContinueOnLiveCardClick = computed(
   () =>
@@ -3490,7 +3576,7 @@ const mobileActionMenuOptions = computed<DropdownOption[]>(() =>
 
 async function handleSessionActionSelect(action: string, session: SessionTab | null) {
   if (action === 'new') {
-    handleStartDraftSession();
+    await handleStartDraftSession();
     return;
   }
   if (!session) {
@@ -4242,7 +4328,7 @@ function buildProjectRouteLocation(projectId: string, sessionId = '') {
   return {
     name: 'project' as const,
     params: { id: projectId },
-    query: buildWebSessionRouteQuery(route.query, sessionId),
+    query: buildWebSessionRouteQuery(buildWorkspaceRouteQuery(route.query, 'web'), sessionId),
   };
 }
 
@@ -5736,11 +5822,19 @@ async function initializeProjectSessions(projectId: string) {
     archivedPreviewAnchorIndex.value = -1;
     tabOrderIds.value = loadPersistedTabOrderIds(projectId);
     tabMruIds.value = loadPersistedTabMruIds(projectId);
-    const restoredDrafts = loadPersistedDraftSessions(projectId);
-    const storedActiveDraftId = persistedActiveDraftSessionIdByProject.value[projectId] ?? '';
-    const activeDraftId = restoredDrafts.some(session => session.id === storedActiveDraftId)
-      ? storedActiveDraftId
-      : '';
+    const restoredDraftState = collapseProjectDraftTabs({
+      drafts: loadPersistedDraftSessions(projectId),
+      activeDraftId: persistedActiveDraftSessionIdByProject.value[projectId] ?? '',
+      orderIds: tabOrderIds.value,
+      mruIds: tabMruIds.value,
+    });
+    restoredDraftState.removedDraftIds.forEach(draftId => {
+      webSessionStore.clearDraft(projectId, draftId);
+    });
+    tabOrderIds.value = restoredDraftState.orderIds;
+    tabMruIds.value = restoredDraftState.mruIds;
+    const restoredDrafts = restoredDraftState.drafts;
+    const activeDraftId = restoredDraftState.activeDraftId;
     replaceDraftSessionState(restoredDrafts, activeDraftId, projectId);
     const loadedSessions = await webSessionStore.loadSessions(projectId);
     syncTabNavigationState(projectId, {
@@ -5971,7 +6065,22 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   }
 }
 
-function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  const existingDraft = pickPreferredDraftTab(draftSessions.value, {
+    activeDraftId: activeDraftSessionId.value,
+    mruIds: tabMruIds.value,
+  });
+  if (existingDraft) {
+    await activateTabById(existingDraft.id, { connectReal: false });
+    showMobileTabSelector.value = false;
+    contextMenuSession.value = null;
+    expandedTools.value = {};
+    autoFollowBottom.value = true;
+    scrollToBottom(true);
+    updateActiveTabIndicator();
+    focusComposer();
+    return;
+  }
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
@@ -6462,19 +6571,16 @@ async function handleSubmit() {
   ) {
     return;
   }
-  const confirmation = resolveWebSessionSendConfirmation({
-    conflicts: sendConflictSessions.value,
-    currentState: sendConfirmationState.value,
-    signature: sendConfirmationSignature.value,
-    now: Date.now(),
-    ttlMs: WEB_SESSION_SEND_CONFIRM_TTL_MS,
-  });
-  setSendConflictConfirmationState(confirmation.nextState);
-  if (!confirmation.shouldProceed) {
-    return;
+  const submitKind = resolveComposerSubmitKind();
+  if (submitKind === 'execute_send') {
+    if (!ensureSendConflictConfirmed(sendConfirmationSignature.value)) {
+      return;
+    }
+  } else {
+    clearSendConflictConfirmation();
   }
   let submitOwnerId = initialSubmitOwnerId;
-  beginSessionSubmit(submitOwnerId);
+  beginSessionSubmit(submitOwnerId, submitKind);
   try {
     let session = currentRealSession.value;
     if (!session || isDraftSession(currentSession.value)) {
@@ -6606,23 +6712,53 @@ function formatSendConflictSessionList(
   });
 }
 
+function buildSendConflictWarningBody(
+  sessions: Array<{
+    title: string;
+  }>
+) {
+  if (sessions.length === 0) {
+    return '';
+  }
+  const formatted = formatSendConflictSessionList(sessions);
+  if (sessions.length === 1) {
+    return t('webSession.sendConflictWarningBodySingle', { sessions: formatted });
+  }
+  return t('webSession.sendConflictWarningBodyMultiple', {
+    count: sessions.length,
+    sessions: formatted,
+  });
+}
+
+function ensureSendConflictConfirmed(
+  signature: string,
+  options?: {
+    notifyOnBlock?: boolean;
+  }
+) {
+  const confirmation = resolveWebSessionSendConfirmation({
+    conflicts: sendConflictSessions.value,
+    currentState: sendConfirmationState.value,
+    signature,
+    now: Date.now(),
+    ttlMs: WEB_SESSION_SEND_CONFIRM_TTL_MS,
+  });
+  setSendConflictConfirmationState(confirmation.nextState);
+  if (!confirmation.shouldProceed && options?.notifyOnBlock) {
+    const warningBody = buildSendConflictWarningBody(sendConflictSessions.value);
+    if (warningBody) {
+      message.warning(warningBody);
+    }
+  }
+  return confirmation.shouldProceed;
+}
+
 const showSendConflictWarning = computed(
   () => isSendConflictConfirmationArmed.value && sendConflictSessions.value.length > 0
 );
-const sendConflictWarningBody = computed(() => {
-  const conflicts = sendConflictSessions.value;
-  if (!showSendConflictWarning.value || conflicts.length === 0) {
-    return '';
-  }
-  const sessions = formatSendConflictSessionList(conflicts);
-  if (conflicts.length === 1) {
-    return t('webSession.sendConflictWarningBodySingle', { sessions });
-  }
-  return t('webSession.sendConflictWarningBodyMultiple', {
-    count: conflicts.length,
-    sessions,
-  });
-});
+const sendConflictWarningBody = computed(() =>
+  showSendConflictWarning.value ? buildSendConflictWarningBody(sendConflictSessions.value) : ''
+);
 
 function handleUserInputEnter(event: KeyboardEvent) {
   if (event.key !== 'Enter') {
@@ -6738,26 +6874,33 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
 }
 
 async function handlePlanCardImplement() {
-  const submitOwnerId = currentDraftSessionId.value;
-  if (!currentRealSession.value || !submitOwnerId || isPlanCardImplementPending.value) {
+  if (!currentRealSession.value || isSubmittingMessage.value) {
     return;
   }
-
-  beginSessionSubmit(submitOwnerId);
+  if (
+    !ensureSendConflictConfirmed(planImplementConfirmationSignature.value, { notifyOnBlock: true })
+  ) {
+    return;
+  }
+  let submitOwnerId = currentRealSession.value.id;
+  beginSessionSubmit(submitOwnerId, 'execute_plan');
   try {
     const prepared = await prepareSessionForSend(currentRealSession.value);
     const targetSession = prepared.session;
+    if (targetSession.id !== submitOwnerId) {
+      transferSessionSubmit(submitOwnerId, targetSession.id);
+      submitOwnerId = targetSession.id;
+    }
 
     if (targetSession.workflowMode === 'plan') {
       await webSessionStore.updateWorkflowMode(targetSession.id, 'default');
     }
 
     const answered = await answerInlinePlanChoice('execute');
-    if (answered) {
-      return;
+    if (!answered) {
+      await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     }
 
-    await webSessionStore.sendMessage(targetSession.id, 'Implement the plan.', []);
     if (prepared.navigateProjectId) {
       projectStore.addRecentProject(prepared.navigateProjectId);
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, targetSession.id));
@@ -7552,11 +7695,12 @@ watch(
   }
 );
 
-watch(sendConfirmationSignature, signature => {
+watch([sendConfirmationSignature, planImplementConfirmationSignature], signatures => {
   if (!sendConfirmationState.value) {
     return;
   }
-  if (sendConfirmationState.value.signature !== signature) {
+  const activeSignatures = signatures.filter(Boolean);
+  if (!activeSignatures.includes(sendConfirmationState.value.signature)) {
     clearSendConflictConfirmation();
   }
 });
@@ -7711,17 +7855,21 @@ useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointe
 });
 
 watch(
-  () => currentSession.value,
-  session => {
+  [() => currentSession.value, routeWorkspaceTab],
+  ([session, workspaceTab]) => {
     if (
       isProjectSessionInitializing.value &&
       routeWebSessionId.value &&
+      workspaceTab === 'web' &&
       (!session || isDraftSession(session))
     ) {
       return;
     }
     const routeSessionId =
-      session && !isDraftSession(session) && session.projectId === props.projectId
+      workspaceTab === 'web' &&
+      session &&
+      !isDraftSession(session) &&
+      session.projectId === props.projectId
         ? session.id
         : '';
     void syncWebSessionRouteSessionId(routeSessionId).catch(error => {
@@ -9358,10 +9506,6 @@ onBeforeUnmount(() => {
   transition:
     border-color 0.18s ease,
     box-shadow 0.18s ease;
-}
-
-.item-bubble.is-raw-capable {
-  cursor: pointer;
 }
 
 .item-bubble.is-raw-active {

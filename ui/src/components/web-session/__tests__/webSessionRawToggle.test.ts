@@ -6,6 +6,7 @@ import {
   resolveActivatedTimelineRawBlockKey,
   shouldClearActiveTimelineRawBlockKey,
   shouldShowTimelineRawToggle,
+  toggleExclusiveTimelineRawBlock,
 } from '@/components/web-session/webSessionRawToggle';
 
 describe('webSessionRawToggle', () => {
@@ -70,6 +71,32 @@ describe('webSessionRawToggle', () => {
         rawMode: true,
       })
     ).toBe(false);
+  });
+
+  it('keeps raw mode exclusive to a single card', () => {
+    expect(toggleExclusiveTimelineRawBlock({}, 'session-1:message:block-1')).toEqual({
+      'session-1:message:block-1': true,
+    });
+
+    expect(
+      toggleExclusiveTimelineRawBlock(
+        {
+          'session-1:message:block-1': true,
+        },
+        'session-1:message:block-2'
+      )
+    ).toEqual({
+      'session-1:message:block-2': true,
+    });
+
+    expect(
+      toggleExclusiveTimelineRawBlock(
+        {
+          'session-1:message:block-2': true,
+        },
+        'session-1:message:block-2'
+      )
+    ).toEqual({});
   });
 
   it('prunes the active key when its card leaves the visible list', () => {

@@ -3,7 +3,10 @@ package terminal
 import (
 	"bytes"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/tuzig/vt10x"
 )
 
 func TestTerminalMirrorSnapshotPreservesDefaultColorsForReverseCells(t *testing.T) {
@@ -64,5 +67,59 @@ func TestTerminalMirrorSnapshotIncludesTerminalModes(t *testing.T) {
 	}
 	if snapshot.TerminalModes.AlternateScreen != "1049" {
 		t.Fatalf("expected alternate screen 1049, got %q", snapshot.TerminalModes.AlternateScreen)
+	}
+}
+
+func TestTerminalMirrorSnapshotTrimsDefaultTrailingPadding(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("server-side terminal state snapshots are disabled on windows")
+	}
+
+	session := &Session{
+		rows: 3,
+		cols: 8,
+	}
+	session.SetTerminalStateSnapshotEnabled(true)
+	session.appendTerminalState([]byte("hi"))
+
+	snapshot := session.TerminalMirrorSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected mirror snapshot")
+	}
+
+	expectedLine := []byte(buildTerminalSnapshotSGRFromColors(0, vt10x.DefaultFG, vt10x.DefaultBG) + "hi")
+	if !bytes.Equal(snapshot.Lines[0], expectedLine) {
+		t.Fatalf("expected trimmed line %q, got %q", expectedLine, snapshot.Lines[0])
+	}
+	if len(snapshot.Lines[1]) != 0 || len(snapshot.Lines[2]) != 0 {
+		t.Fatalf("expected fully blank rows to trim to empty lines, got %q and %q", snapshot.Lines[1], snapshot.Lines[2])
+	}
+}
+
+func TestTerminalMirrorSnapshotPreservesStyledTrailingBlanks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("server-side terminal state snapshots are disabled on windows")
+	}
+
+	session := &Session{
+		rows: 2,
+		cols: 8,
+	}
+	session.SetTerminalStateSnapshotEnabled(true)
+	session.appendTerminalState([]byte("hi\x1b[41m\x1b[K"))
+
+	snapshot := session.TerminalMirrorSnapshot()
+	if snapshot == nil {
+		t.Fatal("expected mirror snapshot")
+	}
+
+	expectedLine := []byte(
+		buildTerminalSnapshotSGRFromColors(0, vt10x.DefaultFG, vt10x.DefaultBG) +
+			"hi" +
+			buildTerminalSnapshotSGRFromColors(0, vt10x.DefaultFG, vt10x.Color(0xcc0000)) +
+			strings.Repeat(" ", 6),
+	)
+	if !bytes.Equal(snapshot.Lines[0], expectedLine) {
+		t.Fatalf("expected styled trailing blanks to be preserved, got %q", snapshot.Lines[0])
 	}
 }

@@ -18,6 +18,12 @@ const (
 	terminalAttrBlink     int16 = 1 << 5
 	terminalAttrFaint     int16 = 1 << 7
 	terminalAttrWideDummy int16 = 1 << 9
+	terminalAttrVisible   int16 = terminalAttrReverse |
+		terminalAttrUnderline |
+		terminalAttrBold |
+		terminalAttrItalic |
+		terminalAttrBlink |
+		terminalAttrFaint
 )
 
 type TerminalMirrorSnapshot struct {
@@ -248,7 +254,8 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 	for row := 0; row < rows; row++ {
 		var line bytes.Buffer
 		previousStyle := ""
-		for col := 0; col < cols; col++ {
+		endCol := terminalMirrorLineEndColumn(s.terminalState, row, cols)
+		for col := 0; col < endCol; col++ {
 			glyph := s.terminalState.Cell(col, row)
 			if terminalCellModeHas(glyph.Mode, terminalAttrWideDummy) {
 				continue
@@ -293,6 +300,34 @@ func (s *Session) terminalMirrorSnapshotLocked() *TerminalMirrorSnapshot {
 		ModeFlags:     uint32(s.terminalState.Mode()),
 		CapturedAt:    s.terminalStateCapturedAt,
 	}
+}
+
+func terminalMirrorLineEndColumn(view vt10x.View, row, cols int) int {
+	for col := cols - 1; col >= 0; col-- {
+		glyph := view.Cell(col, row)
+		if terminalMirrorGlyphKeepsLineOpen(glyph) {
+			return col + 1
+		}
+	}
+	return 0
+}
+
+// vt10x stores both untouched padding and default-styled trailing spaces as blank-space glyphs,
+// so snapshot trimming can only preserve suffix cells that still carry visible content or style.
+func terminalMirrorGlyphKeepsLineOpen(glyph vt10x.Glyph) bool {
+	if terminalCellModeHas(glyph.Mode, terminalAttrWideDummy) {
+		return false
+	}
+
+	if glyph.Char != 0 && glyph.Char != ' ' {
+		return true
+	}
+
+	if glyph.FG != vt10x.DefaultFG || glyph.BG != vt10x.DefaultBG {
+		return true
+	}
+
+	return glyph.Mode&terminalAttrVisible != 0
 }
 
 func snapshotCellFromGlyph(cell vt10x.Glyph) TerminalStateCell {
