@@ -60,6 +60,7 @@ describe('webSessionSessionState', () => {
     expect(state.assistantStateClass).toBe('waiting_plan_approval');
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingApproval');
     expect(state.pillStateClass).toBe('waiting_plan_approval');
+    expect(state.attentionStateClass).toBe('plan_approval');
     expect(state.hasUnviewedApproval).toBe(true);
   });
 
@@ -75,8 +76,26 @@ describe('webSessionSessionState', () => {
 
     expect(state.assistantStateClass).toBe('waiting_input');
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingInput');
+    expect(state.attentionStateClass).toBe('waiting_input');
+    expect(state.hasUnviewedApproval).toBe(false);
     expect(state.showStatusDot).toBe(false);
     expect(state.statusDotClass).toBeNull();
+  });
+
+  it('keeps waiting_input labels while promoting real sessions to approval attention', () => {
+    const state = resolveWebSessionDisplayState(
+      makeInput({
+        livePhase: 'waiting_input',
+        hasUnread: true,
+        status: 'running',
+      })
+    );
+
+    expect(state.assistantStateClass).toBe('waiting_input');
+    expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingInput');
+    expect(state.pillStateClass).toBe('waiting_input');
+    expect(state.attentionStateClass).toBe('approval');
+    expect(state.hasUnviewedApproval).toBe(true);
   });
 
   it('uses completion pills for unread finished sessions', () => {
@@ -127,6 +146,7 @@ describe('webSessionSessionState', () => {
 
     expect(state.assistantStateClass).toBe('waiting_input');
     expect(state.statusLabelKey).toBe('terminal.aiStatusWaitingInput');
+    expect(state.attentionStateClass).toBe('approval');
   });
 
   it('shows error dots and ignores legacy stale sync state markers', () => {

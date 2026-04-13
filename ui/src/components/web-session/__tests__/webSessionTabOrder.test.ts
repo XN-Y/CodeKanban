@@ -4,6 +4,7 @@ import {
   buildOrderedTabSessions,
   clampTabAnchorIndex,
   resolveTabAnchorInsertIndex,
+  sortMobileCurrentSessions,
 } from '@/components/web-session/webSessionTabOrder';
 
 function makeSessions(ids: string[]) {
@@ -62,5 +63,39 @@ describe('webSessionTabOrder', () => {
     expect(clampTabAnchorIndex(2, 3)).toBe(2);
     expect(clampTabAnchorIndex(99, 3)).toBe(3);
     expect(clampTabAnchorIndex(Number.NaN, 3)).toBe(3);
+  });
+
+  it('pins drafts first and sorts real sessions by recency for mobile navigation', () => {
+    const sessions = [
+      { id: 'real-older', orderIndex: 20 },
+      { id: 'draft-a', orderIndex: 100, isDraft: true as const },
+      { id: 'real-newer', orderIndex: 10 },
+      { id: 'draft-b', orderIndex: 200, isDraft: true as const },
+    ];
+    const timestamps = new Map<string, number>([
+      ['real-older', 100],
+      ['real-newer', 300],
+    ]);
+
+    const ordered = sortMobileCurrentSessions(sessions, session => timestamps.get(session.id) ?? 0);
+
+    expect(ordered.map(session => session.id)).toEqual([
+      'draft-a',
+      'draft-b',
+      'real-newer',
+      'real-older',
+    ]);
+  });
+
+  it('breaks real-session recency ties by orderIndex and id', () => {
+    const sessions = [
+      { id: 'real-b', orderIndex: 30 },
+      { id: 'real-a', orderIndex: 30 },
+      { id: 'real-c', orderIndex: 10 },
+    ];
+
+    const ordered = sortMobileCurrentSessions(sessions, () => 500);
+
+    expect(ordered.map(session => session.id)).toEqual(['real-c', 'real-a', 'real-b']);
   });
 });

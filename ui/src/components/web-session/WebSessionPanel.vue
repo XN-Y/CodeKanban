@@ -41,7 +41,7 @@
                     <span
                       v-if="activeSessionStatusLabel"
                       class="ai-status-pill mobile-tab-trigger-status"
-                      :class="`state-${activeSessionPillStateClass}`"
+                      :class="`state-${activeSessionAttentionStateClass}`"
                     >
                       <span class="mobile-tab-trigger-status-text">
                         {{ activeSessionStatusLabel }}
@@ -1647,6 +1647,7 @@ import {
   buildOrderedTabSessions,
   clampTabAnchorIndex,
   resolveTabAnchorInsertIndex,
+  sortMobileCurrentSessions,
 } from '@/components/web-session/webSessionTabOrder';
 import {
   collapseProjectDraftTabs,
@@ -3174,8 +3175,8 @@ const activeSessionTitle = computed(() => currentSession.value?.title ?? emptySt
 const activeSessionStatusLabel = computed(() =>
   currentSession.value ? getSessionStatusLabel(currentSession.value) : ''
 );
-const activeSessionPillStateClass = computed(() =>
-  currentSession.value ? getSessionPillStateClass(currentSession.value) : 'unknown'
+const activeSessionAttentionStateClass = computed(() =>
+  currentSession.value ? getSessionAttentionStateClass(currentSession.value) : 'unknown'
 );
 const activeSessionHasWorkflowPlanBadge = computed(() =>
   shouldShowSessionWorkflowPlanBadge(currentSession.value)
@@ -3183,7 +3184,10 @@ const activeSessionHasWorkflowPlanBadge = computed(() =>
 const showCrossProjectSidebar = computed(() => !isMobile.value && props.showSidebar);
 const mobileSessionCategory = ref<'current' | 'archived'>('current');
 const mobileCurrentSessions = computed<SessionTab[]>(() =>
-  sessions.value.filter(session => !isArchivedPreviewSession(session))
+  sortMobileCurrentSessions(
+    sessions.value.filter(session => !isArchivedPreviewSession(session)),
+    session => resolveWebSessionSidebarSortTimestamp(session)
+  )
 );
 const mobileArchivedProjectIds = computed(() => (props.projectId ? [props.projectId] : []));
 const mobileArchivedScopeKey = computed(() => String(props.projectId || '').trim());
@@ -3484,7 +3488,7 @@ function getMobileTabOptionAgentBadgeStateClass(
   if (!isDraftSession(session) && session.status === 'err') {
     return 'state-error';
   }
-  return `state-${displayState.pillStateClass}`;
+  return `state-${displayState.attentionStateClass}`;
 }
 
 function getMobileTabOptionProjectBadge(session: SessionTab) {
@@ -7342,6 +7346,10 @@ function getSessionPillStateClass(session: (typeof sessions.value)[number]) {
   return getSessionDisplayState(session).pillStateClass;
 }
 
+function getSessionAttentionStateClass(session: (typeof sessions.value)[number]) {
+  return getSessionDisplayState(session).attentionStateClass;
+}
+
 function getSessionStatusEmoji(session: (typeof sessions.value)[number]) {
   return getSessionDisplayState(session).statusEmoji;
 }
@@ -8845,6 +8853,7 @@ onBeforeUnmount(() => {
   color: #7c3aed;
 }
 
+:global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-approval),
 :global(.web-session-mobile-dropdown .mobile-tab-option-agent-badge.state-waiting_approval) {
   background: #fed7aa;
   color: #f79009;
@@ -8925,6 +8934,48 @@ onBeforeUnmount(() => {
 
 :global(.web-session-mobile-dropdown .mobile-tab-option-plan-badge::after) {
   transform: rotate(-54deg);
+}
+
+:global(
+  .web-session-mobile-dropdown
+    .web-session-mobile-option.is-approval
+    > .n-dropdown-option-body::before
+) {
+  background: color-mix(
+    in srgb,
+    var(--web-session-approval-accent, #f79009) 16%,
+    var(--app-surface-color, #fff)
+  );
+}
+
+:global(
+  .web-session-mobile-dropdown .web-session-mobile-option.is-approval > .n-dropdown-option-body
+) {
+  background: color-mix(
+    in srgb,
+    var(--web-session-approval-accent, #f79009) 8%,
+    var(--app-surface-color, #fff)
+  );
+}
+
+:global(
+  .web-session-mobile-dropdown .web-session-mobile-option.is-approval .mobile-tab-option-title
+) {
+  color: color-mix(in srgb, var(--web-session-approval-accent-strong, #b54708) 78%, #111827);
+}
+
+:global(
+  .web-session-mobile-dropdown
+    .web-session-mobile-option.is-completion
+    > .n-dropdown-option-body::before
+) {
+  background: color-mix(in srgb, #10b981 14%, var(--app-surface-color, #fff));
+}
+
+:global(
+  .web-session-mobile-dropdown .web-session-mobile-option.is-completion > .n-dropdown-option-body
+) {
+  background: color-mix(in srgb, #10b981 7%, var(--app-surface-color, #fff));
 }
 
 :global(

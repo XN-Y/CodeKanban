@@ -2,6 +2,11 @@ export type OrderedTabSessionLike = {
   id: string;
 };
 
+export type MobileCurrentSessionLike = OrderedTabSessionLike & {
+  orderIndex: number;
+  isDraft?: boolean;
+};
+
 export function clampTabAnchorIndex(anchorIndex: number, baseLength: number) {
   if (!Number.isFinite(anchorIndex)) {
     return Math.max(0, baseLength);
@@ -60,4 +65,38 @@ export function buildOrderedTabSessions<T extends OrderedTabSessionLike>(
   const anchored = [...ordered];
   anchored.splice(clampTabAnchorIndex(fixedAnchorIndex, anchored.length), 0, fixedSession);
   return anchored;
+}
+
+function sortableNumber(value: number) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function sortMobileCurrentSessions<T extends MobileCurrentSessionLike>(
+  sessions: T[],
+  resolveSortTimestamp: (session: T) => number
+) {
+  const drafts: T[] = [];
+  const realSessions: T[] = [];
+
+  sessions.forEach(session => {
+    if (session.isDraft) {
+      drafts.push(session);
+      return;
+    }
+    realSessions.push(session);
+  });
+
+  const sortedRealSessions = [...realSessions].sort((left, right) => {
+    const rightTimestamp = sortableNumber(resolveSortTimestamp(right));
+    const leftTimestamp = sortableNumber(resolveSortTimestamp(left));
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+    if (left.orderIndex !== right.orderIndex) {
+      return left.orderIndex - right.orderIndex;
+    }
+    return left.id.localeCompare(right.id);
+  });
+
+  return [...drafts, ...sortedRealSessions];
 }

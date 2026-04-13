@@ -10,6 +10,14 @@ export type WebSessionDisplayAssistantState =
   | 'unknown';
 
 export type WebSessionDisplayPillState = WebSessionDisplayAssistantState | 'completion';
+export type WebSessionDisplayAttentionState =
+  | 'working'
+  | 'approval'
+  | 'plan_approval'
+  | 'waiting_input'
+  | 'completion'
+  | 'idle'
+  | 'unknown';
 
 export type WebSessionDisplayStatusKey =
   | 'terminal.aiStatusWorking'
@@ -34,6 +42,7 @@ export interface WebSessionDisplayState {
   assistantStateClass: WebSessionDisplayAssistantState;
   statusLabelKey: WebSessionDisplayStatusKey | null;
   pillStateClass: WebSessionDisplayPillState;
+  attentionStateClass: WebSessionDisplayAttentionState;
   statusEmoji: string;
   hasUnviewedApproval: boolean;
   hasUnviewedCompletion: boolean;
@@ -135,15 +144,28 @@ export function resolveWebSessionDisplayState(
   input: WebSessionDisplayStateInput
 ): WebSessionDisplayState {
   const assistantStateClass = resolveWebSessionDisplayAssistantState(input);
+  const hasUnviewedCompletion =
+    input.hasUnread && assistantStateClass === 'idle' && input.status !== 'err';
+  const attentionStateClass: WebSessionDisplayAttentionState = (() => {
+    switch (assistantStateClass) {
+      case 'working':
+        return 'working';
+      case 'waiting_approval':
+        return 'approval';
+      case 'waiting_plan_approval':
+        return 'plan_approval';
+      case 'waiting_input':
+        return input.isDraft ? 'waiting_input' : 'approval';
+      case 'idle':
+        return hasUnviewedCompletion ? 'completion' : 'idle';
+      default:
+        return 'unknown';
+    }
+  })();
 
   const hasUnviewedApproval =
     input.hasUnread &&
-    (assistantStateClass === 'waiting_approval' || assistantStateClass === 'waiting_plan_approval');
-  const hasUnviewedCompletion =
-    input.hasUnread &&
-    !hasUnviewedApproval &&
-    assistantStateClass === 'idle' &&
-    input.status !== 'err';
+    (attentionStateClass === 'approval' || attentionStateClass === 'plan_approval');
   const showStatusDot = !input.isDraft && input.status === 'err';
 
   let statusLabelKey: WebSessionDisplayStatusKey | null = null;
@@ -175,6 +197,7 @@ export function resolveWebSessionDisplayState(
     assistantStateClass,
     statusLabelKey,
     pillStateClass: hasUnviewedCompletion ? 'completion' : assistantStateClass,
+    attentionStateClass,
     statusEmoji,
     hasUnviewedApproval,
     hasUnviewedCompletion,
