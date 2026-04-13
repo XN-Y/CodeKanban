@@ -365,7 +365,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		return resp, nil
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-sync"
-		op.Summary = "从 Codex 线程强制同步会话"
+		op.Summary = "强制同步会话缓存"
 		op.Tags = []string{webSessionTag}
 	})
 

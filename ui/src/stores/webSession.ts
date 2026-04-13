@@ -238,6 +238,7 @@ export interface WebSessionUserInputQuestion {
   id: string;
   header: string;
   question: string;
+  multiSelect: boolean;
   isOther: boolean;
   isSecret: boolean;
   options: WebSessionUserInputOption[];
@@ -724,9 +725,10 @@ function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] 
         return null;
       }
       return {
-        id: String(record.id ?? ''),
+        id: String(record.id ?? record.question ?? record.header ?? ''),
         header: String(record.header ?? ''),
         question: String(record.question ?? ''),
+        multiSelect: record.multiSelect === true,
         isOther: record.isOther === true,
         isSecret: record.isSecret === true,
         options: Array.isArray(record.options)

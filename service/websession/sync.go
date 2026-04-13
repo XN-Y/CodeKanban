@@ -439,8 +439,12 @@ func (m *Manager) syncSessionFromSource(
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
-	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
-		return SessionSnapshot{}, fmt.Errorf("sync is only supported for codex sessions")
+	agent := normalizeAgent(Agent(session.Agent))
+	if agent == AgentClaude {
+		return m.syncClaudeSessionFromSource(ctx, session, force, clearExisting)
+	}
+	if agent != AgentCodex {
+		return SessionSnapshot{}, fmt.Errorf("sync is only supported for codex or claude sessions")
 	}
 	if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
 		return SessionSnapshot{}, fmt.Errorf("session has no native thread id")

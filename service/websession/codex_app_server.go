@@ -72,6 +72,7 @@ const (
 	pendingServerRequestCommandApproval     pendingServerRequestKind = "command_approval"
 	pendingServerRequestFileChangeApproval  pendingServerRequestKind = "file_change_approval"
 	pendingServerRequestPermissionsApproval pendingServerRequestKind = "permissions_approval"
+	pendingServerRequestPlanApproval        pendingServerRequestKind = "plan_approval"
 )
 
 type toolRequestOption struct {
@@ -80,12 +81,13 @@ type toolRequestOption struct {
 }
 
 type toolRequestQuestion struct {
-	ID       string              `json:"id"`
-	Header   string              `json:"header"`
-	Question string              `json:"question"`
-	IsOther  bool                `json:"isOther"`
-	IsSecret bool                `json:"isSecret"`
-	Options  []toolRequestOption `json:"options,omitempty"`
+	ID          string              `json:"id"`
+	Header      string              `json:"header"`
+	Question    string              `json:"question"`
+	MultiSelect bool                `json:"multiSelect,omitempty"`
+	IsOther     bool                `json:"isOther"`
+	IsSecret    bool                `json:"isSecret"`
+	Options     []toolRequestOption `json:"options,omitempty"`
 }
 
 type pendingServerRequest struct {
@@ -132,7 +134,7 @@ func (r *pendingServerRequest) isApproval() bool {
 		return false
 	}
 	switch r.Kind {
-	case pendingServerRequestCommandApproval, pendingServerRequestFileChangeApproval, pendingServerRequestPermissionsApproval:
+	case pendingServerRequestCommandApproval, pendingServerRequestFileChangeApproval, pendingServerRequestPermissionsApproval, pendingServerRequestPlanApproval:
 		return true
 	default:
 		return false
@@ -1223,11 +1225,12 @@ func decodeToolQuestions(raw any) []toolRequestQuestion {
 	result := make([]toolRequestQuestion, 0, len(items))
 	for _, item := range items {
 		question := toolRequestQuestion{
-			ID:       stringValue(item["id"]),
-			Header:   stringValue(item["header"]),
-			Question: stringValue(item["question"]),
-			IsOther:  item["isOther"] == true,
-			IsSecret: item["isSecret"] == true,
+			ID:          stringValue(item["id"]),
+			Header:      stringValue(item["header"]),
+			Question:    stringValue(item["question"]),
+			MultiSelect: item["multiSelect"] == true,
+			IsOther:     item["isOther"] == true,
+			IsSecret:    item["isSecret"] == true,
 		}
 		if question.ID == "" {
 			question.ID = stringValue(item["ID"])
@@ -1237,6 +1240,12 @@ func decodeToolQuestions(raw any) []toolRequestQuestion {
 		}
 		if question.Question == "" {
 			question.Question = stringValue(item["Question"])
+		}
+		if question.ID == "" {
+			question.ID = firstNonEmpty(question.Question, question.Header)
+		}
+		if !question.MultiSelect {
+			question.MultiSelect = item["MultiSelect"] == true
 		}
 		if !question.IsOther {
 			question.IsOther = item["IsOther"] == true

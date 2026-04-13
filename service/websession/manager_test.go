@@ -3286,6 +3286,52 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 	return path
 }
 
+func writeFakeClaudeStreamCLI(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-claude.sh")
+	script := `#!/bin/sh
+read first_line
+printf '%s\n' '{"type":"system","session_id":"claude-session-test"}'
+printf '%s\n' '{"type":"assistant","uuid":"assistant_1","message":{"type":"message","role":"assistant","id":"assistant_msg_1","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}'
+cat >/dev/null
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake claude cli failed: %v", err)
+	}
+	return path
+}
+
+func writeFakeClaudeDeferredCLI(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-claude-deferred.sh")
+	script := `#!/bin/sh
+state_file="` + filepath.Join(t.TempDir(), "claude-deferred-state.txt") + `"
+count=0
+if [ -f "$state_file" ]; then
+  count=$(cat "$state_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" >"$state_file"
+if [ "$count" -eq 1 ]; then
+  cat >/dev/null
+  printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+  printf '%s\n' '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
+  printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
+  exit 0
+fi
+cat >/dev/null
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+printf '%s\n' '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
+printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake claude deferred cli failed: %v", err)
+	}
+	return path
+}
+
 func writeFakeCodexAppServerCLI(t *testing.T, mode string) string {
 	t.Helper()
 

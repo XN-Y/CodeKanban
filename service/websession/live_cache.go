@@ -456,13 +456,19 @@ func (m *Manager) applyEventToHistoryCache(
 				answers[key] = next
 			}
 		}
+		text := "Submitted requested input"
+		level := "info"
+		if errText := strings.TrimSpace(stringValue(payload["err"])); errText != "" {
+			text = errText
+			level = "warn"
+		}
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
 			Kind:       "system",
 			ItemType:   "user_input_response",
-			Text:       "Submitted requested input",
+			Text:       text,
 			Timestamp:  ptr(event.Timestamp),
 			ObservedAt: ptr(event.Timestamp),
-			Level:      "info",
+			Level:      level,
 			Detail: &HistoryDetail{
 				Type:    "user_input_response",
 				Answers: historyAnswerEntries(answersToRawMap(answers), nil),
@@ -551,7 +557,8 @@ func (m *Manager) summaryForBroadcast(ctx context.Context, sessionID string) *Se
 }
 
 func (m *Manager) maybeSyncSessionAfterRun(session tables.WebSessionTable) {
-	if normalizeAgent(Agent(session.Agent)) != AgentCodex {
+	agent := normalizeAgent(Agent(session.Agent))
+	if agent != AgentCodex {
 		return
 	}
 	if session.NativeSessionID == nil || strings.TrimSpace(*session.NativeSessionID) == "" {
