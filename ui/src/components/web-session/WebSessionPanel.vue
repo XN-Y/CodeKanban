@@ -1003,72 +1003,75 @@
                 @blur="handleComposerBlur"
                 @keydown.enter.exact="handleComposerEnter"
               />
-              <n-popover
-                v-if="isMobile"
-                v-model:show="showQuickInputPopover"
-                trigger="click"
-                placement="top-start"
-                content-style="padding: 4px 0;"
-              >
-                <template #trigger>
-                  <button
-                    type="button"
-                    class="composer-icon-btn composer-icon-btn-mobile"
-                    :title="quickInputButtonTitle"
-                    :aria-label="quickInputButtonTitle"
-                    @mousedown.stop
-                    @touchstart.stop
-                    @click.stop
-                  >
-                    <n-icon size="14"><FlashOutline /></n-icon>
-                  </button>
-                </template>
-                <div class="quick-input-popover-card">
-                  <div class="quick-input-popover-header">
-                    <n-checkbox
-                      v-model:checked="quickInputDirectSendEnabled"
-                      size="small"
-                      @mousedown.stop
-                      @touchstart.stop
-                      @click.stop
-                    >
-                      {{ t('webSession.quickInputDirectSend') }}
-                    </n-checkbox>
-                  </div>
-                  <div v-if="quickInputItems.length === 0" class="quick-input-empty">
-                    {{ t('webSession.quickInputEmpty') }}
-                  </div>
-                  <div v-else class="quick-input-scroll">
-                    <div class="quick-input-item-list">
-                      <button
-                        v-for="text in quickInputItems"
-                        :key="text"
-                        type="button"
-                        class="quick-input-item"
-                        :class="{ 'is-selected': isQuickInputSelected(text) }"
-                        @click="handleQuickInputApply(text)"
-                      >
-                        <span class="quick-input-item-text">{{ text }}</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </n-popover>
-              <button
-                v-if="isMobile"
-                type="button"
-                class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
-                :title="t('webSession.attachImage')"
-                :aria-label="t('webSession.attachImage')"
-                @mousedown.stop
-                @touchstart.stop
-                @click.stop="openFilePicker"
-              >
-                <n-icon size="14"><ImageOutline /></n-icon>
-              </button>
             </div>
 
             <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
+              <div v-if="isMobile" class="composer-footer-left composer-footer-left-mobile">
+                <n-popover
+                  v-model:show="showQuickInputPopover"
+                  trigger="manual"
+                  placement="top-start"
+                  content-style="padding: 4px 0;"
+                  @clickoutside="handleMobileQuickInputClickOutside"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="composer-icon-btn composer-icon-btn-mobile"
+                      :title="quickInputButtonTitle"
+                      :aria-label="quickInputButtonTitle"
+                      @pointerdown.stop.prevent="handleMobileQuickInputTrigger"
+                      @click.stop.prevent
+                      @keydown.enter.stop.prevent="handleMobileQuickInputTrigger"
+                      @keydown.space.stop.prevent="handleMobileQuickInputTrigger"
+                    >
+                      <n-icon size="18"><FlashOutline /></n-icon>
+                    </button>
+                  </template>
+                  <div class="quick-input-popover-card">
+                    <div class="quick-input-popover-header">
+                      <n-checkbox
+                        v-model:checked="quickInputDirectSendEnabled"
+                        size="small"
+                        @mousedown.stop
+                        @touchstart.stop
+                        @click.stop
+                      >
+                        {{ t('webSession.quickInputDirectSend') }}
+                      </n-checkbox>
+                    </div>
+                    <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                      {{ t('webSession.quickInputEmpty') }}
+                    </div>
+                    <div v-else class="quick-input-scroll">
+                      <div class="quick-input-item-list">
+                        <button
+                          v-for="text in quickInputItems"
+                          :key="text"
+                          type="button"
+                          class="quick-input-item"
+                          :class="{ 'is-selected': isQuickInputSelected(text) }"
+                          @click="handleQuickInputApply(text)"
+                        >
+                          <span class="quick-input-item-text">{{ text }}</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </n-popover>
+                <button
+                  type="button"
+                  class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                  :title="t('webSession.attachImage')"
+                  :aria-label="t('webSession.attachImage')"
+                  @pointerdown.stop.prevent="handleMobileAttachmentTrigger"
+                  @click.stop.prevent
+                  @keydown.enter.stop.prevent="handleMobileAttachmentTrigger"
+                  @keydown.space.stop.prevent="handleMobileAttachmentTrigger"
+                >
+                  <n-icon size="18"><ImageOutline /></n-icon>
+                </button>
+              </div>
               <div v-if="!isMobile" class="composer-footer-left">
                 <n-popover
                   v-model:show="showQuickInputPopover"
@@ -1907,6 +1910,7 @@ const composerTransferErrorDetail = ref('');
 let composerTransferErrorTimer: number | null = null;
 let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
+let mobileQuickInputOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
@@ -2886,6 +2890,31 @@ function toggleMobileComposerExpanded() {
     return;
   }
   isMobileComposerExpanded.value = !isMobileComposerExpanded.value;
+}
+
+function handleMobileQuickInputClickOutside() {
+  if (Date.now() - mobileQuickInputOpenedAt < 180) {
+    return;
+  }
+  showQuickInputPopover.value = false;
+}
+
+function handleMobileQuickInputTrigger() {
+  if (!isMobile.value) {
+    return;
+  }
+  const nextShow = !showQuickInputPopover.value;
+  showQuickInputPopover.value = nextShow;
+  if (nextShow) {
+    mobileQuickInputOpenedAt = Date.now();
+  }
+}
+
+function handleMobileAttachmentTrigger() {
+  if (!isMobile.value) {
+    return;
+  }
+  openFilePicker();
 }
 
 function clearComposerTransferError() {
@@ -6257,6 +6286,7 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
 }
 
 function openFilePicker() {
+  showQuickInputPopover.value = false;
   fileInputRef.value?.click();
 }
 
@@ -11114,7 +11144,6 @@ onBeforeUnmount(() => {
 
 .composer-input-shell.is-mobile {
   min-height: 96px;
-  z-index: 201;
 }
 
 .composer-input-shell.is-mobile .composer-input :deep(.n-input__textarea-el) {
@@ -11154,7 +11183,8 @@ onBeforeUnmount(() => {
 
 .composer-footer.is-mobile {
   margin-top: 4px;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .composer-footer-left,
@@ -11217,6 +11247,15 @@ onBeforeUnmount(() => {
   margin-left: -2px;
 }
 
+.composer-footer-left-mobile {
+  margin-left: 0;
+  margin-right: auto;
+  width: auto;
+  justify-content: flex-start;
+  align-self: flex-start;
+  gap: 6px;
+}
+
 .composer-icon-btn {
   width: 24px;
   height: 24px;
@@ -11244,14 +11283,23 @@ onBeforeUnmount(() => {
 }
 
 .composer-icon-btn-mobile {
-  position: absolute;
-  left: 2px;
-  bottom: -44px;
-  z-index: 202;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: var(--n-text-color-3);
 }
 
 .composer-icon-btn-mobile-secondary {
-  left: 32px;
+  margin-left: 0;
+}
+
+.composer-icon-btn-mobile:hover,
+.composer-icon-btn-mobile:active {
+  background: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
 }
 
 .composer-hint {
@@ -11499,6 +11547,26 @@ onBeforeUnmount(() => {
 
   .composer-footer-right {
     flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .composer-footer.is-mobile {
+    flex-direction: row;
+    align-items: flex-end;
+  }
+
+  .composer-footer.is-mobile .composer-footer-left-mobile {
+    width: auto;
+    flex: 0 0 auto;
+    justify-content: flex-start;
+    align-self: auto;
+  }
+
+  .composer-footer.is-mobile .composer-footer-right {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 auto;
+    margin-left: auto;
     justify-content: flex-end;
   }
 
