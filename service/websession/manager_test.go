@@ -3197,11 +3197,105 @@ func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *te
 	if summary.ContextEstimateMode != ContextEstimateModeCumulativeTotal {
 		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeCumulativeTotal, summary.ContextEstimateMode)
 	}
-	if summary.ContextEstimate.UsedTokens != 160 {
-		t.Fatalf("expected usedTokens 160, got %d", summary.ContextEstimate.UsedTokens)
+	if summary.ContextEstimate.UsedTokens != 130 {
+		t.Fatalf("expected usedTokens 130, got %d", summary.ContextEstimate.UsedTokens)
 	}
 	if summary.ContextEstimate.InputTokens != 120 || summary.ContextEstimate.CachedInputTokens != 30 || summary.ContextEstimate.OutputTokens != 10 {
 		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+}
+
+func TestFinalizeLatestTurnUsageUsesTurnDeltaEstimate(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Latest Turn Delta", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	run := &activeRun{
+		sessionID:          session.ID,
+		runID:              "run_latest_turn_delta",
+		assistantDeltaSeen: make(map[string]bool),
+	}
+
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":120,"cachedInputTokens":30,"outputTokens":10}}}`),
+	)
+	if err := manager.finalizeLatestTurnUsage(context.Background(), session.ID); err != nil {
+		t.Fatalf("finalizeLatestTurnUsage returned error: %v", err)
+	}
+
+	record, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary := manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeLatestTurnDelta {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeLatestTurnDelta, summary.ContextEstimateMode)
+	}
+	if summary.LatestTurnUsage.InputTokens != 120 || summary.LatestTurnUsage.CachedInputTokens != 30 || summary.LatestTurnUsage.OutputTokens != 10 {
+		t.Fatalf("unexpected latest turn usage after first turn: %#v", summary.LatestTurnUsage)
+	}
+	if summary.LatestTurnUsage.UsedTokens != 130 {
+		t.Fatalf("expected latest turn usedTokens 130, got %d", summary.LatestTurnUsage.UsedTokens)
+	}
+	if summary.ContextEstimate != summary.LatestTurnUsage {
+		t.Fatalf("expected context estimate to mirror latest turn usage, got %#v vs %#v", summary.ContextEstimate, summary.LatestTurnUsage)
+	}
+
+	if err := manager.updateRuntimeState(context.Background(), session.ID, map[string]any{
+		"status":     string(StatusRunning),
+		"updated_at": time.Now(),
+	}); err != nil {
+		t.Fatalf("updateRuntimeState returned error: %v", err)
+	}
+	manager.handleCodexAppServerUsage(
+		*session,
+		run,
+		[]byte(`{"tokenUsage":{"total":{"inputTokens":150,"cachedInputTokens":35,"outputTokens":12}}}`),
+	)
+
+	record, err = manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary = manager.mapSessionSummary(record)
+	if summary.ContextEstimateMode != ContextEstimateModeLatestTurnDelta {
+		t.Fatalf("expected running context estimate mode %q, got %q", ContextEstimateModeLatestTurnDelta, summary.ContextEstimateMode)
+	}
+	if summary.ContextEstimate.InputTokens != 30 || summary.ContextEstimate.CachedInputTokens != 5 || summary.ContextEstimate.OutputTokens != 2 {
+		t.Fatalf("unexpected running turn delta: %#v", summary.ContextEstimate)
+	}
+	if summary.ContextEstimate.UsedTokens != 32 {
+		t.Fatalf("expected running usedTokens 32, got %d", summary.ContextEstimate.UsedTokens)
+	}
+
+	if err := manager.finalizeLatestTurnUsage(context.Background(), session.ID); err != nil {
+		t.Fatalf("finalizeLatestTurnUsage returned error: %v", err)
+	}
+	if err := manager.updateRuntimeState(context.Background(), session.ID, map[string]any{
+		"status":     string(StatusDone),
+		"updated_at": time.Now(),
+	}); err != nil {
+		t.Fatalf("updateRuntimeState returned error: %v", err)
+	}
+
+	record, err = manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	summary = manager.mapSessionSummary(record)
+	if summary.LatestTurnUsage.InputTokens != 30 || summary.LatestTurnUsage.CachedInputTokens != 5 || summary.LatestTurnUsage.OutputTokens != 2 {
+		t.Fatalf("unexpected finalized latest turn usage: %#v", summary.LatestTurnUsage)
+	}
+	if summary.LatestTurnUsage.UsedTokens != 32 {
+		t.Fatalf("expected finalized latest turn usedTokens 32, got %d", summary.LatestTurnUsage.UsedTokens)
 	}
 }
 
@@ -3253,8 +3347,8 @@ func TestHandleCodexAppServerContextCompactionResetsContextEstimateBaseline(t *t
 	if summary.ContextEstimate.InputTokens != 30 || summary.ContextEstimate.CachedInputTokens != 5 || summary.ContextEstimate.OutputTokens != 2 {
 		t.Fatalf("unexpected context estimate after compaction: %#v", summary.ContextEstimate)
 	}
-	if summary.ContextEstimate.UsedTokens != 37 {
-		t.Fatalf("expected usedTokens 37 after compaction, got %d", summary.ContextEstimate.UsedTokens)
+	if summary.ContextEstimate.UsedTokens != 32 {
+		t.Fatalf("expected usedTokens 32 after compaction, got %d", summary.ContextEstimate.UsedTokens)
 	}
 
 	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)

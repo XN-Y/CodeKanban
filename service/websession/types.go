@@ -98,6 +98,7 @@ type ContextEstimateMode string
 const (
 	ContextEstimateModeCumulativeTotal ContextEstimateMode = "cumulative_total"
 	ContextEstimateModeSinceCompaction ContextEstimateMode = "since_compaction"
+	ContextEstimateModeLatestTurnDelta ContextEstimateMode = "latest_turn_delta"
 )
 
 type ContextWindowSource string
@@ -170,6 +171,7 @@ type SessionSummary struct {
 	CreatedAt               time.Time           `json:"createdAt"`
 	UpdatedAt               time.Time           `json:"updatedAt"`
 	Usage                   Usage               `json:"usage"`
+	LatestTurnUsage         ContextEstimate     `json:"latestTurnUsage"`
 	ContextEstimate         ContextEstimate     `json:"contextEstimate"`
 	ContextEstimateMode     ContextEstimateMode `json:"contextEstimateMode"`
 	LastContextCompactionAt *time.Time          `json:"lastContextCompactionAt,omitempty"`

@@ -2052,6 +2052,9 @@ func (m *Manager) handleRunFailureWithCode(
 		code = "runtime_error"
 	}
 	now := time.Now()
+	if normalizeAgent(Agent(session.Agent)) == AgentCodex {
+		_ = m.finalizeLatestTurnUsage(context.Background(), sessionID)
+	}
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, session, Event{
 		ID:        utils.NewID(),
 		Seq:       0,
@@ -3185,6 +3188,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 	assistantState := effectiveAssistantState(record)
 	statusUpdatedAt := effectiveStatusUpdatedAt(record, assistantState)
 	assistantStateUpdatedAt := effectiveAssistantStateUpdatedAt(record, assistantState)
+	latestTurnUsage, _ := buildLatestTurnUsage(record)
 	contextEstimate, contextEstimateMode := buildContextEstimate(record)
 	return SessionSummary{
 		ID:                      record.ID,
@@ -3229,13 +3233,71 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 			OutputTokens:      record.TotalOutputTokens,
 			Cost:              record.TotalCost,
 		},
+		LatestTurnUsage:         latestTurnUsage,
 		ContextEstimate:         contextEstimate,
 		ContextEstimateMode:     contextEstimateMode,
 		LastContextCompactionAt: record.LastContextCompactionAt,
 	}
 }
 
+func contextEstimateUsedTokens(inputTokens, outputTokens int64) int64 {
+	return maxInt64(0, inputTokens+outputTokens)
+}
+
+func contextEstimateHasValue(estimate ContextEstimate) bool {
+	return estimate.InputTokens > 0 ||
+		estimate.CachedInputTokens > 0 ||
+		estimate.OutputTokens > 0 ||
+		estimate.UsedTokens > 0
+}
+
+func shouldUseActiveTurnContextEstimate(record tables.WebSessionTable) bool {
+	switch effectiveStatus(record, effectiveAssistantState(record)) {
+	case StatusRunning, StatusWaitingApproval, StatusAborting:
+		return true
+	default:
+		return false
+	}
+}
+
+func buildRecordedLatestTurnUsage(record tables.WebSessionTable) (ContextEstimate, bool) {
+	if record.LatestTurnUsageUpdatedAt == nil {
+		return ContextEstimate{}, false
+	}
+	estimate := ContextEstimate{
+		InputTokens:       maxInt64(0, record.LatestTurnInputTokens),
+		CachedInputTokens: maxInt64(0, record.LatestTurnCachedInputTokens),
+		OutputTokens:      maxInt64(0, record.LatestTurnOutputTokens),
+	}
+	estimate.UsedTokens = contextEstimateUsedTokens(estimate.InputTokens, estimate.OutputTokens)
+	return estimate, contextEstimateHasValue(estimate)
+}
+
+func buildProvisionalLatestTurnUsage(record tables.WebSessionTable) (ContextEstimate, bool) {
+	if !shouldUseActiveTurnContextEstimate(record) {
+		return ContextEstimate{}, false
+	}
+	estimate := ContextEstimate{
+		InputTokens:       maxInt64(0, record.TotalInputTokens-record.LastCompletedInputTokens),
+		CachedInputTokens: maxInt64(0, record.TotalCachedInputTokens-record.LastCompletedCachedInputTokens),
+		OutputTokens:      maxInt64(0, record.TotalOutputTokens-record.LastCompletedOutputTokens),
+	}
+	estimate.UsedTokens = contextEstimateUsedTokens(estimate.InputTokens, estimate.OutputTokens)
+	return estimate, contextEstimateHasValue(estimate)
+}
+
+func buildLatestTurnUsage(record tables.WebSessionTable) (ContextEstimate, bool) {
+	if estimate, ok := buildProvisionalLatestTurnUsage(record); ok {
+		return estimate, true
+	}
+	return buildRecordedLatestTurnUsage(record)
+}
+
 func buildContextEstimate(record tables.WebSessionTable) (ContextEstimate, ContextEstimateMode) {
+	if latestTurnUsage, ok := buildLatestTurnUsage(record); ok {
+		return latestTurnUsage, ContextEstimateModeLatestTurnDelta
+	}
+
 	mode := ContextEstimateModeCumulativeTotal
 	inputTokens := record.TotalInputTokens
 	cachedInputTokens := record.TotalCachedInputTokens
@@ -3250,7 +3312,7 @@ func buildContextEstimate(record tables.WebSessionTable) (ContextEstimate, Conte
 		InputTokens:       inputTokens,
 		CachedInputTokens: cachedInputTokens,
 		OutputTokens:      outputTokens,
-		UsedTokens:        maxInt64(0, inputTokens+cachedInputTokens+outputTokens),
+		UsedTokens:        contextEstimateUsedTokens(inputTokens, outputTokens),
 	}, mode
 }
 
@@ -3290,6 +3352,38 @@ func contextEstimateBaselineResetUpdate(record tables.WebSessionTable, timestamp
 		"last_context_compaction_at":           timestamp,
 		"updated_at":                           time.Now(),
 	}
+}
+
+func (m *Manager) finalizeLatestTurnUsage(ctx context.Context, sessionID string) error {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+
+	latestTurnUsage := ContextEstimate{
+		InputTokens:       maxInt64(0, record.TotalInputTokens-record.LastCompletedInputTokens),
+		CachedInputTokens: maxInt64(0, record.TotalCachedInputTokens-record.LastCompletedCachedInputTokens),
+		OutputTokens:      maxInt64(0, record.TotalOutputTokens-record.LastCompletedOutputTokens),
+	}
+	latestTurnUsage.UsedTokens = contextEstimateUsedTokens(
+		latestTurnUsage.InputTokens,
+		latestTurnUsage.OutputTokens,
+	)
+	if !contextEstimateHasValue(latestTurnUsage) {
+		return nil
+	}
+
+	now := time.Now()
+	return m.updateRuntimeState(ctx, sessionID, map[string]any{
+		"last_completed_input_tokens":        record.TotalInputTokens,
+		"last_completed_cached_input_tokens": record.TotalCachedInputTokens,
+		"last_completed_output_tokens":       record.TotalOutputTokens,
+		"latest_turn_input_tokens":           latestTurnUsage.InputTokens,
+		"latest_turn_cached_input_tokens":    latestTurnUsage.CachedInputTokens,
+		"latest_turn_output_tokens":          latestTurnUsage.OutputTokens,
+		"latest_turn_usage_updated_at":       now,
+		"updated_at":                         now,
+	})
 }
 
 func chooseSessionActivityAt(record tables.WebSessionTable) time.Time {

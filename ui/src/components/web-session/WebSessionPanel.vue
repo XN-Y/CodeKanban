@@ -2913,8 +2913,6 @@ const mobileComposerSummaryTokens = computed(() => {
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
-const contextUsageDisclaimer =
-  '这个数据是我从codex那边读的然后原样显示，数据肯定是不对的，但我也不知道为什么他这样给显示，有明白的大佬麻烦告知';
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
   if (!session) {
@@ -2968,36 +2966,40 @@ const contextUsageIndicator = computed(() => {
   const totalInputTokens = Number(session.usage.inputTokens || 0);
   const totalCachedInputTokens = Number(session.usage.cachedInputTokens || 0);
   const totalOutputTokens = Number(session.usage.outputTokens || 0);
-  const totalUsedTokens = Math.max(
-    0,
-    totalInputTokens + totalCachedInputTokens + totalOutputTokens
-  );
+  const totalUsedTokens = Math.max(0, totalInputTokens + totalOutputTokens);
   const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
-  const remainingPercent =
-    compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
+  const usedPercent =
+    compactLimitTokens > 0 ? Math.round((usedTokens / compactLimitTokens) * 100) : 0;
   const sourceLabel =
     source === 'config'
       ? t('webSession.contextUsageSourceConfig')
       : t('webSession.contextUsageSourceDefault');
   const estimateMode =
-    session.contextEstimateMode === 'since_compaction' ? 'since_compaction' : 'cumulative_total';
+    session.contextEstimateMode === 'latest_turn_delta'
+      ? 'latest_turn_delta'
+      : session.contextEstimateMode === 'since_compaction'
+        ? 'since_compaction'
+        : 'cumulative_total';
   const estimateModeLabel =
-    estimateMode === 'since_compaction'
-      ? t('webSession.contextUsageModeSinceCompaction')
-      : t('webSession.contextUsageModeCumulativeTotal');
+    estimateMode === 'latest_turn_delta'
+      ? t('webSession.contextUsageModeLatestTurnDelta')
+      : estimateMode === 'since_compaction'
+        ? t('webSession.contextUsageModeSinceCompaction')
+        : t('webSession.contextUsageModeCumulativeTotal');
   const estimateNote =
-    estimateMode === 'since_compaction'
-      ? t('webSession.contextUsageNoteSinceCompaction')
-      : t('webSession.contextUsageNoteCumulativeTotal');
+    estimateMode === 'latest_turn_delta'
+      ? t('webSession.contextUsageNoteLatestTurnDelta')
+      : estimateMode === 'since_compaction'
+        ? t('webSession.contextUsageNoteSinceCompaction')
+        : t('webSession.contextUsageNoteCumulativeTotal');
 
   return {
-    state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
+    state: usedPercent >= 90 ? 'warning' : usedPercent >= 75 ? 'active' : 'idle',
     label: t('webSession.contextUsageLabel', {
-      percent: remainingPercent,
+      percent: usedPercent,
     }),
     title: t('webSession.contextUsageTitle'),
     lines: [
-      contextUsageDisclaimer,
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),

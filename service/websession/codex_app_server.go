@@ -636,6 +636,7 @@ func (m *Manager) handleCodexAppServerMessage(
 		return codexTurnOutcomeFailed, fmt.Errorf("%s", firstNonEmpty(run.lastError, "codex app-server turn failed"))
 	case "turn/completed":
 		status, errMessage := parseCodexTurnCompletion(message.Params)
+		_ = m.finalizeLatestTurnUsage(context.Background(), session.ID)
 		if status == "completed" {
 			return codexTurnOutcomeCompleted, nil
 		}

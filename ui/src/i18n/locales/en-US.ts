@@ -798,28 +798,32 @@ export default {
     attachmentUploading: 'Uploading image',
     attachmentUploadingBatch: 'Uploading image {current}/{total}',
     attachmentUploadFailed: 'Image upload failed',
-    contextUsageTitle: 'Remaining Budget Estimate',
-    contextUsageLabel: '{percent}%',
+    contextUsageTitle: 'Current Context Estimate',
+    contextUsageLabel: 'Used {percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
-    contextUsageRemainingEstimate: 'Estimated remaining: {count} tokens',
-    contextUsageEstimatedUsed: 'Estimated used: {count} tokens',
+    contextUsageRemainingEstimate: 'Remaining to compact limit: {count} tokens',
+    contextUsageEstimatedUsed: 'Estimated current occupancy: {count} tokens',
     contextUsageSource: 'Source: {source}',
     contextUsageSourceConfig: 'local Codex config',
     contextUsageSourceDefault: 'default 400000',
     contextUsageMode: 'Mode: {mode}',
+    contextUsageModeLatestTurnDelta: 'estimated from the latest turn delta',
     contextUsageModeSinceCompaction: 'estimated since the latest context compaction',
-    contextUsageModeCumulativeTotal: 'cumulative usage total (no context compaction observed yet)',
+    contextUsageModeCumulativeTotal:
+      'estimated from cumulative session usage (compatibility fallback)',
     contextUsageEstimatedBreakdown:
-      'Estimated breakdown: input {input} / cached {cached} / output {output}',
-    contextUsageTotalUsed: 'Cumulative total used: {count} tokens',
+      'Current estimate breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageTotalUsed: 'Cumulative session usage: {count} tokens',
     contextUsageTotalBreakdown:
       'Cumulative breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageNoteLatestTurnDelta:
+      'Note: this is an approximation of current context size derived from the latest turn, not a real-time occupancy value returned by Codex.',
     contextUsageNoteSinceCompaction:
-      'Note: the percentage is estimated from net token growth since the latest context compaction vs. the compact limit, not the true current context occupancy.',
+      'Note: this is a compatibility estimate based on net token growth since the latest context compaction, not a real-time occupancy value returned by Codex.',
     contextUsageNoteCumulativeTotal:
-      'Note: no context compaction has been observed yet, so this percentage is estimated from cumulative usage total vs. the compact limit, not the true current context occupancy.',
+      'Note: this is a compatibility fallback based on cumulative session usage and does not represent the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
       'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',

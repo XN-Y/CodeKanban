@@ -277,7 +277,10 @@ export interface WebSessionContextEstimate {
   usedTokens: number;
 }
 
-export type WebSessionContextEstimateMode = 'cumulative_total' | 'since_compaction';
+export type WebSessionContextEstimateMode =
+  | 'cumulative_total'
+  | 'since_compaction'
+  | 'latest_turn_delta';
 
 export type WebSessionContextWindowSource = 'config' | 'default' | 'unavailable';
 
@@ -330,6 +333,7 @@ export interface WebSessionSummary {
   createdAt: string;
   updatedAt: string;
   usage: WebSessionUsage;
+  latestTurnUsage?: WebSessionContextEstimate | null;
   contextEstimate: WebSessionContextEstimate;
   contextEstimateMode: WebSessionContextEstimateMode;
   lastContextCompactionAt?: string | null;

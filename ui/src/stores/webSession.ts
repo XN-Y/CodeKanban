@@ -77,7 +77,13 @@ type WireSession = {
     out?: number;
     usd?: number;
   };
-  cem?: 'cumulative_total' | 'since_compaction';
+  ltu?: {
+    in?: number;
+    cin?: number;
+    out?: number;
+    usd?: number;
+  };
+  cem?: 'cumulative_total' | 'since_compaction' | 'latest_turn_delta';
   lcca?: number | null;
   cost?: number;
   cwt?: number | null;
@@ -1424,6 +1430,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
         outputTokens: session.usa?.out ?? 0,
         cost: session.cost ?? 0,
       },
+      latestTurnUsage: session.ltu
+        ? {
+            inputTokens: session.ltu.in ?? 0,
+            cachedInputTokens: session.ltu.cin ?? 0,
+            outputTokens: session.ltu.out ?? 0,
+            usedTokens:
+              session.ltu.usd ??
+              Math.max(0, Number(session.ltu.in ?? 0) + Number(session.ltu.out ?? 0)),
+          }
+        : null,
       contextEstimate: {
         inputTokens: session.cea?.in ?? session.usa?.in ?? 0,
         cachedInputTokens: session.cea?.cin ?? session.usa?.cin ?? 0,
@@ -1433,12 +1449,15 @@ export const useWebSessionStore = defineStore('web-session', () => {
           Math.max(
             0,
             Number(session.cea?.in ?? session.usa?.in ?? 0) +
-              Number(session.cea?.cin ?? session.usa?.cin ?? 0) +
               Number(session.cea?.out ?? session.usa?.out ?? 0)
           ),
       },
       contextEstimateMode:
-        session.cem === 'since_compaction' ? 'since_compaction' : 'cumulative_total',
+        session.cem === 'latest_turn_delta'
+          ? 'latest_turn_delta'
+          : session.cem === 'since_compaction'
+            ? 'since_compaction'
+            : 'cumulative_total',
       lastContextCompactionAt: session.lcca ? new Date(session.lcca).toISOString() : null,
       contextWindowTokens:
         typeof session.cwt === 'number' && Number.isFinite(session.cwt) ? session.cwt : null,

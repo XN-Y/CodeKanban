@@ -55,6 +55,13 @@ type WebSessionTable struct {
 	TotalCachedInputTokens           int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
 	TotalOutputTokens                int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
 	TotalCost                        float64    `gorm:"type:real;not null;default:0" json:"totalCost"`
+	LastCompletedInputTokens         int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastCompletedCachedInputTokens   int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastCompletedOutputTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnInputTokens            int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnCachedInputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnOutputTokens           int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnUsageUpdatedAt         *time.Time `gorm:"type:datetime" json:"-"`
 	ContextBaselineInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	ContextBaselineCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
 	ContextBaselineOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`

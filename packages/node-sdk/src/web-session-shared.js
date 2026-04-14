@@ -73,6 +73,22 @@ function normalizeUsage(value) {
   };
 }
 
+function normalizeContextEstimate(value, usageFallback) {
+  return {
+    inputTokens: numberValue(value?.in, numberValue(usageFallback?.in, 0)),
+    cachedInputTokens: numberValue(value?.cin, numberValue(usageFallback?.cin, 0)),
+    outputTokens: numberValue(value?.out, numberValue(usageFallback?.out, 0)),
+    usedTokens: numberValue(
+      value?.usd,
+      Math.max(
+        0,
+        numberValue(value?.in, numberValue(usageFallback?.in, 0)) +
+          numberValue(value?.out, numberValue(usageFallback?.out, 0)),
+      ),
+    ),
+  };
+}
+
 function normalizeHistoryAttachment(value) {
   return {
     id: trimmedString(value?.id),
@@ -262,6 +278,10 @@ export function normalizeWebSessionSummaryFromWire(value) {
       ...normalizeUsage(value?.usa),
       cost: numberValue(value?.cost, 0),
     },
+    latestTurnUsage: value?.ltu ? normalizeContextEstimate(value.ltu, null) : null,
+    contextEstimate: normalizeContextEstimate(value?.cea, value?.usa),
+    contextEstimateMode: trimmedString(value?.cem) || "cumulative_total",
+    lastContextCompactionAt: isoFromUnixMilli(value?.lcca),
     contextWindowTokens: nullableNumberValue(value?.cwt),
     contextWindowSource: trimmedString(value?.cws) || "unavailable",
   };
