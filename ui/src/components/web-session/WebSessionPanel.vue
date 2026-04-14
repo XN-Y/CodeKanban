@@ -2,6 +2,14 @@
   <div class="web-session-panel" :style="webSessionStyleVars">
     <WebSessionCompletionNotifier />
     <WebSessionApprovalNotifier />
+    <WebSessionImportDialog
+      v-if="props.projectId"
+      v-model:show="showImportDialog"
+      :project-id="props.projectId"
+      :pending-session-id="importingCodexSessionId"
+      @import-session="handleImportCodexSession"
+      @open-existing-session="handleOpenImportedCodexSession"
+    />
 
     <div class="panel-main">
       <div class="panel-body">
@@ -156,19 +164,40 @@
                   </template>
                 </n-button>
               </n-dropdown>
-              <n-button
-                v-else
-                secondary
-                size="small"
-                class="new-session-button"
-                :title="t('webSession.newSession')"
-                :aria-label="t('webSession.newSession')"
-                @click="handleStartDraftSession()"
-              >
-                <template #icon>
-                  <n-icon><AddOutline /></n-icon>
+              <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+                <template #trigger>
+                  <n-button
+                    text
+                    size="small"
+                    class="desktop-header-icon-button"
+                    :title="t('webSession.newSession')"
+                    :aria-label="t('webSession.newSession')"
+                    @click="handleStartDraftSession()"
+                  >
+                    <template #icon>
+                      <n-icon><AddOutline /></n-icon>
+                    </template>
+                  </n-button>
                 </template>
-              </n-button>
+                {{ t('webSession.newSession') }}
+              </n-tooltip>
+              <n-tooltip v-if="!isMobile" trigger="hover" placement="bottom" :delay="100">
+                <template #trigger>
+                  <n-button
+                    text
+                    size="small"
+                    class="desktop-header-icon-button"
+                    :title="t('webSession.importCodexSession')"
+                    :aria-label="t('webSession.importCodexSession')"
+                    @click="openImportDialog()"
+                  >
+                    <template #icon>
+                      <n-icon><TimeOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                {{ t('webSession.importCodexSession') }}
+              </n-tooltip>
             </div>
           </div>
 
@@ -1566,6 +1595,7 @@ import {
   EllipsisHorizontalOutline,
   FlashOutline,
   ImageOutline,
+  TimeOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
@@ -1611,6 +1641,7 @@ import { webSessionApi } from '@/api/webSession';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
+import WebSessionImportDialog from '@/components/web-session/WebSessionImportDialog.vue';
 import {
   buildTimelineRawModeKey,
   pruneActiveTimelineRawBlockKey,
@@ -1868,6 +1899,7 @@ const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
 const showQuickInputPopover = ref(false);
+const showImportDialog = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
@@ -1898,6 +1930,7 @@ const submitStateBySessionId = ref<WebSessionSubmitState>({});
 const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
 const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
+const importingCodexSessionId = ref('');
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
 const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
@@ -3558,6 +3591,10 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
       key: 'new',
     },
     {
+      label: t('webSession.importCodexSession'),
+      key: 'import',
+    },
+    {
       label: t('common.edit'),
       key: 'rename',
       disabled: !session || isDraftSession(session),
@@ -3611,6 +3648,10 @@ const mobileActionMenuOptions = computed<DropdownOption[]>(() =>
 async function handleSessionActionSelect(action: string, session: SessionTab | null) {
   if (action === 'new') {
     await handleStartDraftSession();
+    return;
+  }
+  if (action === 'import') {
+    openImportDialog();
     return;
   }
   if (!session) {
@@ -6072,6 +6113,80 @@ function startSidebarResize(event: MouseEvent) {
   document.body.style.userSelect = 'none';
 }
 
+function openImportDialog() {
+  showMobileTabSelector.value = false;
+  contextMenuSession.value = null;
+  showImportDialog.value = true;
+}
+
+function promptSyncExistingImportedSession(session: WebSessionSummary) {
+  dialog.warning({
+    title: t('webSession.importCodexSessionReuseTitle'),
+    content: t('webSession.importCodexSessionReuseContent', {
+      title: session.title,
+    }),
+    positiveText: t('webSession.syncFromTerminal'),
+    negativeText: t('webSession.importCodexSessionReuseSkip'),
+    onPositiveClick: async () => handleSyncSession(session.id, 'fast', false),
+  });
+}
+
+async function handleOpenImportedCodexSession(session: WebSessionSummary) {
+  try {
+    showImportDialog.value = false;
+
+    let target = session;
+    if (session.archivedAt) {
+      target = await webSessionStore.unarchiveSession(session.projectId, session.id);
+      await refreshArchivedSidebar();
+      if (archivedPreviewSession.value?.id === session.id) {
+        clearArchivedPreviewSession({ preserveTabId: true });
+        activeArchivedPreviewId.value = '';
+      }
+    }
+
+    await activateTabById(target.id);
+    scrollToBottom(true);
+    promptSyncExistingImportedSession(target);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleImportCodexSession(sessionId: string) {
+  if (!props.projectId || !sessionId || importingCodexSessionId.value) {
+    return;
+  }
+
+  importingCodexSessionId.value = sessionId;
+  try {
+    const result = await webSessionStore.importSession(props.projectId, sessionId, 'fast');
+
+    if (result.reused) {
+      await refreshArchivedSidebar();
+      if (archivedPreviewSession.value?.id === result.session.id) {
+        clearArchivedPreviewSession({ preserveTabId: true });
+        activeArchivedPreviewId.value = '';
+      }
+    }
+
+    showImportDialog.value = false;
+    await activateTabById(result.session.id, { connectReal: false });
+    scrollToBottom(true);
+    message.success(t('webSession.importCodexSessionSuccess'));
+
+    if (result.reused && !result.synced) {
+      promptSyncExistingImportedSession(result.session);
+    }
+  } catch (error) {
+    message.error(
+      error instanceof Error ? error.message : t('webSession.importCodexSessionFailed')
+    );
+  } finally {
+    importingCodexSessionId.value = '';
+  }
+}
+
 async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   try {
     const source = currentSession.value;
@@ -8284,7 +8399,6 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  padding-right: 8px;
   position: relative;
 }
 
@@ -8619,8 +8733,15 @@ onBeforeUnmount(() => {
 }
 
 .new-session-button {
-  min-width: 32px;
-  width: 32px;
+  min-width: 44px;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.desktop-header-icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 34px;
   padding-left: 0 !important;
   padding-right: 0 !important;
 }

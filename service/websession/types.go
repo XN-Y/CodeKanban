@@ -276,6 +276,34 @@ type SessionSnapshot struct {
 	PendingInputs []PendingInput `json:"pendingInputs"`
 }
 
+type ImportResult struct {
+	Session       SessionSummary `json:"session"`
+	History       HistoryWindow  `json:"history"`
+	PendingInputs []PendingInput `json:"pendingInputs"`
+	Created       bool           `json:"created"`
+	Reused        bool           `json:"reused"`
+	Synced        bool           `json:"synced"`
+}
+
+type ImportSourceSummary struct {
+	AISessionID           string          `json:"aiSessionId"`
+	SessionID             string          `json:"sessionId"`
+	Model                 string          `json:"model,omitempty"`
+	Title                 string          `json:"title,omitempty"`
+	SessionStartedAt      time.Time       `json:"sessionStartedAt"`
+	LastMessageAt         *time.Time      `json:"lastMessageAt,omitempty"`
+	MessageCount          int             `json:"messageCount"`
+	AssistantMessageCount int             `json:"assistantMessageCount"`
+	FilePath              string          `json:"filePath"`
+	Duplicate             bool            `json:"duplicate"`
+	ExistingSession       *SessionSummary `json:"existingSession,omitempty"`
+}
+
+type ImportSourceList struct {
+	Items     []ImportSourceSummary `json:"items"`
+	ScanPhase string                `json:"scanPhase,omitempty"`
+}
+
 type Event struct {
 	ID        string         `json:"id"`
 	Seq       int64          `json:"seq"`

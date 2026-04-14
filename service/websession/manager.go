@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -696,6 +697,558 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 	}
 
 	return m.mapSessionSummary(record), nil
+}
+
+func importedCodexSourceCreatedAt(source tables.AISessionTable) *time.Time {
+	if source.SessionStartedAt.IsZero() {
+		return nil
+	}
+	value := source.SessionStartedAt
+	return &value
+}
+
+func importedCodexSourceUpdatedAt(source tables.AISessionTable) *time.Time {
+	if !source.FileModTime.IsZero() {
+		value := source.FileModTime
+		return &value
+	}
+	if source.LastMessageAt != nil {
+		value := *source.LastMessageAt
+		return &value
+	}
+	return nil
+}
+
+func importedCodexMetadataUpdates(source tables.AISessionTable) map[string]any {
+	updates := map[string]any{
+		"cwd":               filepath.Clean(strings.TrimSpace(source.ProjectPath)),
+		"native_session_id": nilIfEmpty(source.SessionID),
+		"source_kind":       defaultSourceKind(AgentCodex),
+		"source_created_at": importedCodexSourceCreatedAt(source),
+		"source_updated_at": importedCodexSourceUpdatedAt(source),
+		"last_message_at":   source.LastMessageAt,
+		"thread_path":       nilIfEmpty(source.FilePath),
+		"updated_at":        time.Now(),
+	}
+	if title := strings.TrimSpace(source.Title); title != "" {
+		updates["thread_preview"] = &title
+	}
+	return updates
+}
+
+func (m *Manager) findImportedCodexSession(
+	ctx context.Context,
+	projectID string,
+	nativeSessionID string,
+) (tables.WebSessionTable, error) {
+	db := model.GetDB()
+	if db == nil {
+		return tables.WebSessionTable{}, model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Where(
+			"project_id = ? AND agent = ? AND native_session_id = ?",
+			strings.TrimSpace(projectID),
+			string(AgentCodex),
+			strings.TrimSpace(nativeSessionID),
+		).
+		Order("updated_at DESC").
+		Find(&records).Error; err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	if len(records) == 0 {
+		return tables.WebSessionTable{}, gorm.ErrRecordNotFound
+	}
+	for _, record := range records {
+		if record.ArchivedAt == nil {
+			return record, nil
+		}
+	}
+	return records[0], nil
+}
+
+func (m *Manager) createImportedCodexSession(
+	ctx context.Context,
+	project *model.Project,
+	source tables.AISessionTable,
+) (tables.WebSessionTable, error) {
+	title := strings.TrimSpace(source.Title)
+	titleAuto := title == ""
+	if titleAuto {
+		title = defaultTitle(AgentCodex, project.Name)
+	}
+
+	orderIndex, err := m.getNextSessionOrderIndex(ctx, project.Id)
+	if err != nil {
+		return tables.WebSessionTable{}, err
+	}
+
+	now := time.Now()
+	record := tables.WebSessionTable{
+		ProjectID:               project.Id,
+		WorktreeID:              nil,
+		OrderIndex:              orderIndex,
+		Agent:                   string(AgentCodex),
+		Backend:                 string(defaultSessionBackend(AgentCodex)),
+		Title:                   title,
+		TitleAuto:               titleAuto,
+		Model:                   defaultModel(AgentCodex, source.Model),
+		ReasoningEffort:         string(defaultReasoningEffort(AgentCodex, "")),
+		WorkflowMode:            string(WorkflowModeDefault),
+		PermissionLevel:         string(PermissionLevelElevated),
+		AutoRetryEnabled:        false,
+		AutoRetryScope:          string(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:         string(AutoRetryPresetGentleStop),
+		LegacyPermissionMode:    "default",
+		Cwd:                     filepath.Clean(strings.TrimSpace(source.ProjectPath)),
+		NativeSessionID:         nilIfEmpty(source.SessionID),
+		Status:                  string(StatusIdle),
+		AssistantState:          "",
+		HasUnread:               false,
+		ArchivedAt:              nil,
+		ActivityAt:              now,
+		StatusUpdatedAt:         &now,
+		AssistantStateUpdatedAt: nil,
+		SourceKind:              defaultSourceKind(AgentCodex),
+		SyncState:               string(SyncStateMissing),
+		LastSyncMode:            "",
+		SourceCreatedAt:         importedCodexSourceCreatedAt(source),
+		SourceUpdatedAt:         importedCodexSourceUpdatedAt(source),
+		LastSyncedAt:            nil,
+		ThreadPath:              nilIfEmpty(source.FilePath),
+		ThreadPreview:           nilIfEmpty(source.Title),
+		TurnCount:               0,
+		ItemCount:               0,
+		LastMessageAt:           source.LastMessageAt,
+		LastEventSeq:            0,
+		TotalInputTokens:        0,
+		TotalCachedInputTokens:  0,
+		TotalOutputTokens:       0,
+		TotalCost:               0,
+	}
+	record.Init()
+
+	if err := model.GetDB().WithContext(ctx).Create(&record).Error; err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	return record, nil
+}
+
+func preferImportedCodexSession(current, candidate tables.WebSessionTable) tables.WebSessionTable {
+	if strings.TrimSpace(current.ID) == "" {
+		return candidate
+	}
+
+	currentArchived := current.ArchivedAt != nil
+	candidateArchived := candidate.ArchivedAt != nil
+	if currentArchived != candidateArchived {
+		if !candidateArchived {
+			return candidate
+		}
+		return current
+	}
+
+	if candidate.ActivityAt.After(current.ActivityAt) {
+		return candidate
+	}
+	if current.ActivityAt.After(candidate.ActivityAt) {
+		return current
+	}
+
+	if candidate.UpdatedAt.After(current.UpdatedAt) {
+		return candidate
+	}
+	return current
+}
+
+func (m *Manager) existingImportedCodexSessionsByNativeID(
+	ctx context.Context,
+	projectID string,
+	sessionIDs []string,
+) (map[string]tables.WebSessionTable, error) {
+	normalized := make([]string, 0, len(sessionIDs))
+	seen := make(map[string]struct{}, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		trimmed := strings.TrimSpace(sessionID)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+
+	result := make(map[string]tables.WebSessionTable, len(normalized))
+	if len(normalized) == 0 {
+		return result, nil
+	}
+
+	var existing []tables.WebSessionTable
+	if err := model.GetDB().WithContext(ctx).
+		Where(
+			"project_id = ? AND agent = ? AND native_session_id IN ?",
+			projectID,
+			string(AgentCodex),
+			normalized,
+		).
+		Find(&existing).Error; err != nil {
+		return nil, err
+	}
+
+	for _, record := range existing {
+		nativeID := ""
+		if record.NativeSessionID != nil {
+			nativeID = strings.TrimSpace(*record.NativeSessionID)
+		}
+		if nativeID == "" {
+			continue
+		}
+		result[nativeID] = preferImportedCodexSession(result[nativeID], record)
+	}
+	return result, nil
+}
+
+func sortImportSourceItems(items []ImportSourceSummary) {
+	sort.Slice(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+
+		leftTime := left.SessionStartedAt
+		if left.LastMessageAt != nil {
+			leftTime = *left.LastMessageAt
+		}
+		rightTime := right.SessionStartedAt
+		if right.LastMessageAt != nil {
+			rightTime = *right.LastMessageAt
+		}
+
+		if leftTime.After(rightTime) {
+			return true
+		}
+		if rightTime.After(leftTime) {
+			return false
+		}
+		return left.SessionID > right.SessionID
+	})
+}
+
+func (m *Manager) buildImportSourceItemFromThread(
+	thread codexThreadSummary,
+	cached *tables.AISessionTable,
+	existingByNativeID map[string]tables.WebSessionTable,
+) ImportSourceSummary {
+	title := strings.TrimSpace(thread.Preview)
+	model := ""
+	filePath := strings.TrimSpace(thread.Path)
+	sessionStartedAt := time.Now()
+	if thread.CreatedAt != nil {
+		sessionStartedAt = *thread.CreatedAt
+	} else if thread.UpdatedAt != nil {
+		sessionStartedAt = *thread.UpdatedAt
+	}
+	lastMessageAt := thread.UpdatedAt
+	messageCount := 0
+	assistantMessageCount := 0
+	aiSessionID := ""
+
+	if cached != nil {
+		aiSessionID = strings.TrimSpace(cached.ID)
+		if cachedTitle := strings.TrimSpace(cached.Title); cachedTitle != "" {
+			title = cachedTitle
+		}
+		if cachedModel := strings.TrimSpace(cached.Model); cachedModel != "" {
+			model = cachedModel
+		}
+		if cachedPath := strings.TrimSpace(cached.FilePath); cachedPath != "" {
+			filePath = cachedPath
+		}
+		if !cached.SessionStartedAt.IsZero() {
+			sessionStartedAt = cached.SessionStartedAt
+		}
+		if cached.LastMessageAt != nil {
+			value := *cached.LastMessageAt
+			lastMessageAt = &value
+		}
+		messageCount = cached.MessageCount
+		assistantMessageCount = cached.AssistantMessageCount
+	}
+
+	item := ImportSourceSummary{
+		AISessionID:           aiSessionID,
+		SessionID:             strings.TrimSpace(thread.ID),
+		Model:                 model,
+		Title:                 title,
+		SessionStartedAt:      sessionStartedAt,
+		LastMessageAt:         lastMessageAt,
+		MessageCount:          messageCount,
+		AssistantMessageCount: assistantMessageCount,
+		FilePath:              filePath,
+	}
+	if existing, ok := existingByNativeID[item.SessionID]; ok {
+		summary := m.mapSessionSummary(existing)
+		item.Duplicate = true
+		item.ExistingSession = &summary
+	}
+	return item
+}
+
+func (m *Manager) buildImportSourceItemFromAISession(
+	source *service.AISessionSummary,
+	existingByNativeID map[string]tables.WebSessionTable,
+) ImportSourceSummary {
+	item := ImportSourceSummary{
+		AISessionID:           strings.TrimSpace(source.ID),
+		SessionID:             strings.TrimSpace(source.SessionID),
+		Model:                 strings.TrimSpace(source.Model),
+		Title:                 strings.TrimSpace(source.Title),
+		SessionStartedAt:      source.SessionStartedAt,
+		LastMessageAt:         source.LastMessageAt,
+		MessageCount:          source.MessageCount,
+		AssistantMessageCount: source.AssistantMessageCount,
+		FilePath:              strings.TrimSpace(source.FilePath),
+	}
+	if existing, ok := existingByNativeID[item.SessionID]; ok {
+		summary := m.mapSessionSummary(existing)
+		item.Duplicate = true
+		item.ExistingSession = &summary
+	}
+	return item
+}
+
+func (m *Manager) listCodexImportSourcesFromThreadList(
+	ctx context.Context,
+	project *model.Project,
+) (ImportSourceList, error) {
+	currentThreads, err := m.listCodexThreadsByCwd(ctx, project.Path, false)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	archivedThreads, err := m.listCodexThreadsByCwd(ctx, project.Path, true)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+
+	merged := make(map[string]codexThreadSummary, len(currentThreads)+len(archivedThreads))
+	for id, summary := range archivedThreads {
+		merged[id] = summary
+	}
+	for id, summary := range currentThreads {
+		merged[id] = summary
+	}
+
+	sessionIDs := make([]string, 0, len(merged))
+	for sessionID := range merged {
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	existingByNativeID, err := m.existingImportedCodexSessionsByNativeID(ctx, project.Id, sessionIDs)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+
+	cachedBySessionID := make(map[string]*tables.AISessionTable, len(sessionIDs))
+	if len(sessionIDs) > 0 {
+		var cachedRows []tables.AISessionTable
+		if err := model.GetDB().WithContext(ctx).
+			Where(
+				"project_path = ? AND type = ? AND session_id IN ?",
+				project.Path,
+				tables.AISessionTypeCodex,
+				sessionIDs,
+			).
+			Find(&cachedRows).Error; err != nil {
+			return ImportSourceList{}, err
+		}
+		for i := range cachedRows {
+			row := cachedRows[i]
+			cachedBySessionID[strings.TrimSpace(row.SessionID)] = &row
+		}
+	}
+
+	items := make([]ImportSourceSummary, 0, len(merged))
+	for sessionID, thread := range merged {
+		if strings.TrimSpace(sessionID) == "" {
+			continue
+		}
+		items = append(
+			items,
+			m.buildImportSourceItemFromThread(
+				thread,
+				cachedBySessionID[strings.TrimSpace(sessionID)],
+				existingByNativeID,
+			),
+		)
+	}
+	sortImportSourceItems(items)
+	return ImportSourceList{
+		Items:     items,
+		ScanPhase: "complete",
+	}, nil
+}
+
+func (m *Manager) ListCodexImportSources(
+	ctx context.Context,
+	projectID string,
+) (ImportSourceList, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportSourceList{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	list, err := m.listCodexImportSourcesFromThreadList(ctx, project)
+	if err == nil {
+		return list, nil
+	}
+
+	aiSessions, fallbackErr := m.aiSessionSvc.GetProjectAISessions(ctx, project.Path)
+	if fallbackErr != nil {
+		return ImportSourceList{}, err
+	}
+
+	sessionIDs := make([]string, 0, len(aiSessions.CodexSessions))
+	for _, source := range aiSessions.CodexSessions {
+		if source == nil {
+			continue
+		}
+		sessionID := strings.TrimSpace(source.SessionID)
+		if sessionID == "" {
+			continue
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+
+	existingByNativeID, existingErr := m.existingImportedCodexSessionsByNativeID(ctx, project.Id, sessionIDs)
+	if existingErr != nil {
+		return ImportSourceList{}, existingErr
+	}
+
+	items := make([]ImportSourceSummary, 0, len(aiSessions.CodexSessions))
+	for _, source := range aiSessions.CodexSessions {
+		if source == nil {
+			continue
+		}
+		items = append(items, m.buildImportSourceItemFromAISession(source, existingByNativeID))
+	}
+	sortImportSourceItems(items)
+	return ImportSourceList{
+		Items:     items,
+		ScanPhase: strings.TrimSpace(aiSessions.CodexScanPhase),
+	}, nil
+}
+
+func (m *Manager) importCodexSessionResolved(
+	ctx context.Context,
+	project *model.Project,
+	source *tables.AISessionTable,
+	mode SyncMode,
+) (ImportResult, error) {
+	if source == nil {
+		return ImportResult{}, gorm.ErrRecordNotFound
+	}
+	if strings.TrimSpace(source.SessionID) == "" {
+		return ImportResult{}, fmt.Errorf("codex session id is empty")
+	}
+	if strings.TrimSpace(source.FilePath) == "" {
+		return ImportResult{}, fmt.Errorf("codex session file path is empty")
+	}
+	if model.NormalizePathCase(source.ProjectPath) != model.NormalizePathCase(project.Path) {
+		return ImportResult{}, fmt.Errorf("codex session does not belong to the current project")
+	}
+
+	record, err := m.findImportedCodexSession(ctx, project.Id, source.SessionID)
+	if err == nil {
+		if err := m.updateRuntimeState(ctx, record.ID, importedCodexMetadataUpdates(*source)); err != nil {
+			return ImportResult{}, err
+		}
+		if record.ArchivedAt != nil {
+			if _, err := m.UnarchiveSession(ctx, record.ID); err != nil {
+				return ImportResult{}, err
+			}
+		}
+		snapshot, err := m.Snapshot(ctx, record.ID, DefaultHistoryWindow)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		return ImportResult{
+			Session:       snapshot.Session,
+			History:       snapshot.History,
+			PendingInputs: snapshot.PendingInputs,
+			Created:       false,
+			Reused:        true,
+			Synced:        false,
+		}, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ImportResult{}, err
+	}
+
+	record, err = m.createImportedCodexSession(ctx, project, *source)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	snapshot, err := m.syncSessionFromSource(ctx, record.ID, mode, true, false)
+	if err != nil {
+		_ = m.DeleteSession(ctx, record.ID)
+		return ImportResult{}, err
+	}
+
+	return ImportResult{
+		Session:       snapshot.Session,
+		History:       snapshot.History,
+		PendingInputs: snapshot.PendingInputs,
+		Created:       true,
+		Reused:        false,
+		Synced:        true,
+	}, nil
+}
+
+func (m *Manager) ImportCodexSession(
+	ctx context.Context,
+	projectID string,
+	aiSessionID string,
+	mode SyncMode,
+) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	source, err := m.aiSessionSvc.ResolveCodexSessionByID(ctx, aiSessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importCodexSessionResolved(ctx, project, source, mode)
+}
+
+func (m *Manager) ImportCodexSessionBySessionID(
+	ctx context.Context,
+	projectID string,
+	sessionID string,
+	mode SyncMode,
+) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	source, err := m.aiSessionSvc.ResolveCodexSessionBySessionID(ctx, sessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importCodexSessionResolved(ctx, project, source, mode)
 }
 
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebSessionTable, error) {

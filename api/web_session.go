@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"code-kanban/api/h"
+	"code-kanban/model"
 	"code-kanban/service/websession"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -18,6 +19,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 const (
@@ -154,6 +156,30 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 		op.Tags = []string{webSessionTag}
 	})
 
+	huma.Get(group, "/projects/{projectId}/web-sessions/import-sources", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+		},
+	) (*h.ItemResponse[websession.ImportSourceList], error) {
+		item, err := c.manager.ListCodexImportSources(ctx, input.ProjectID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			default:
+				return nil, huma.Error500InternalServerError("failed to list codex import sources", err)
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-import-sources"
+		op.Summary = "获取 Codex 导入源列表"
+		op.Tags = []string{webSessionTag}
+	})
+
 	huma.Get(group, "/web-sessions/runtime-config", func(
 		ctx context.Context,
 		_ *struct{},
@@ -235,6 +261,55 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "web-session-create"
 		op.Summary = "创建会话"
+		op.Tags = []string{webSessionTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/web-sessions/import", func(
+		ctx context.Context,
+		input *struct {
+			ProjectID string `path:"projectId"`
+			Body      struct {
+				AISessionID string `json:"aiSessionId"`
+				SessionID   string `json:"sessionId,omitempty"`
+				Mode        string `json:"mode,omitempty"`
+			}
+		},
+	) (*h.ItemResponse[websession.ImportResult], error) {
+		var (
+			item websession.ImportResult
+			err  error
+		)
+		if strings.TrimSpace(input.Body.SessionID) != "" {
+			item, err = c.manager.ImportCodexSessionBySessionID(
+				ctx,
+				input.ProjectID,
+				input.Body.SessionID,
+				websession.SyncMode(input.Body.Mode),
+			)
+		} else {
+			item, err = c.manager.ImportCodexSession(
+				ctx,
+				input.ProjectID,
+				input.Body.AISessionID,
+				websession.SyncMode(input.Body.Mode),
+			)
+		}
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			case errors.Is(err, gorm.ErrRecordNotFound):
+				return nil, huma.Error404NotFound("codex session not found")
+			default:
+				return nil, huma.Error400BadRequest(err.Error())
+			}
+		}
+		resp := h.NewItemResponse(item)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "web-session-import"
+		op.Summary = "导入 Codex 历史会话"
 		op.Tags = []string{webSessionTag}
 	})
 
