@@ -11,6 +11,7 @@ function createWebSessionSnapshot({
   session = {},
   items = [],
   history = {},
+  pendingUserInput = null,
 } = {}) {
   return {
     session: {
@@ -63,6 +64,7 @@ function createWebSessionSnapshot({
       total: items.length,
       ...history,
     },
+    pendingUserInput,
   };
 }
 
@@ -151,8 +153,8 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
       assert.deepEqual(body, { title: 'Renamed' });
       return createJsonResponse({ item: { id: 'ws1', projectId: 'p1', title: 'Renamed' } });
     }],
-    ['POST /api/v1/projects/p1/web-sessions/ws1/close', () => createJsonResponse({ message: 'session aborted' })],
-    ['DELETE /api/v1/projects/p1/web-sessions/ws1', () => createJsonResponse({ message: 'session deleted' })],
+    ['POST /api/v1/projects/p1/web-sessions/ws1/close', () => createJsonResponse({ body: { message: 'session aborted' } })],
+    ['DELETE /api/v1/projects/p1/web-sessions/ws1', () => createJsonResponse({ body: { message: 'session deleted' } })],
     ['POST /api/v1/web-sessions/archived/query', ({ body }) => {
       assert.deepEqual(body, { projectIds: ['p1'], offset: 10, limit: 5 });
       return createJsonResponse({
@@ -247,6 +249,39 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
   assert.equal(runtimeConfig.contextWindowTokens, 200000);
 });
 
+
+
+test('CodeKanbanClient createWebSession resolves projectName for remote-friendly targeting', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects', () =>
+      createJsonResponse({
+        items: [{ id: 'p1', path: '/repo/demo', name: 'demo' }],
+      })],
+    ['GET /api/v1/projects/p1/worktrees', () =>
+      createJsonResponse({
+        items: [{ id: 'w-main', projectId: 'p1', isMain: true, path: '/repo/demo' }],
+      })],
+    ['POST /api/v1/projects/p1/web-sessions', () =>
+      createJsonResponse({ item: { id: 'ws-created', projectId: 'p1', worktreeId: 'w-main' } }, 201)],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const created = await client.createWebSession({
+    projectName: 'demo',
+    agent: 'codex',
+    workflowMode: 'plan',
+    permissionLevel: 'elevated',
+  });
+
+  assert.equal(created.projectId, 'p1');
+  assert.equal(created.worktreeId, 'w-main');
+});
+
 test('CodeKanbanClient createWebSession auto-selects main worktree and required defaults without fetching project metadata', async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1/worktrees', () =>
@@ -334,13 +369,15 @@ test('CodeKanbanClient uploadWebSessionAttachment sends multipart image data wit
       assert.equal(file.name, 'image.png');
       assert.equal(file.type, 'image/png');
       return createJsonResponse({
-        item: {
-          id: 'att-1',
-          name: 'image.png',
-          mime: 'image/png',
-          size: 4,
-          path: '/tmp/image.png',
-          createdAt: '2026-04-10T00:00:00Z',
+        body: {
+          item: {
+            id: 'att-1',
+            name: 'image.png',
+            mime: 'image/png',
+            size: 4,
+            path: '/tmp/image.png',
+            createdAt: '2026-04-10T00:00:00Z',
+          },
         },
       }, 201);
     }],
@@ -496,6 +533,50 @@ test('CodeKanbanClient getWebSessionState identifies pending user input for poll
   assert.equal(state.nextAction.type, 'answer_user_input');
   assert.equal(state.pendingUserInput.itemId, 'call_1');
   assert.equal(state.canSend, false);
+});
+
+test('CodeKanbanClient getWebSessionState prefers snapshot.pendingUserInput when provided', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_input',
+          },
+          pendingUserInput: {
+            itemId: 'call_snapshot',
+            prompt: 'Pick one',
+            questions: [
+              {
+                id: 'scope',
+                header: 'Scope',
+                question: 'Pick one',
+                isOther: false,
+                isSecret: false,
+                options: [{ label: 'A', description: 'option A' }],
+              },
+            ],
+            requestedAt: '2026-04-10T00:00:03Z',
+          },
+        }),
+      })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.getWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+  });
+
+  assert.equal(state.pendingUserInput.itemId, 'call_snapshot');
+  assert.equal(state.nextAction.type, 'answer_user_input');
 });
 
 test('CodeKanbanClient answerPendingUserInput uses the active itemId from snapshot analysis', async () => {
@@ -782,4 +863,317 @@ test('CodeKanbanClient waitForWebSessionState tolerates transient fetch failures
 
   assert.equal(state.phase, 'done');
   assert.equal(snapshotReads, 4);
+});
+
+
+test('CodeKanbanClient waitForWebSessionState settleMs requires a stable match window', async () => {
+  let snapshotReads = 0;
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () => {
+      snapshotReads += 1;
+      return createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: snapshotReads === 1 || snapshotReads >= 3 ? 'done' : 'running',
+            assistantState: snapshotReads === 2 ? 'working' : null,
+          },
+        }),
+      });
+    }],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const state = await client.waitForWebSessionState({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    until: 'done',
+    intervalMs: 5,
+    settleMs: 8,
+    timeoutMs: 1000,
+  });
+
+  assert.equal(state.phase, 'done');
+  assert.equal(snapshotReads, 5);
+});
+
+test('CodeKanbanClient waitForWebSessionPause stops on actionable states without assuming user input always exists', async () => {
+  let snapshotReads = 0;
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () => {
+      snapshotReads += 1;
+      if (snapshotReads === 1) {
+        return createJsonResponse({
+          item: createWebSessionSnapshot({
+            session: {
+              status: 'done',
+              assistantState: null,
+            },
+          }),
+        });
+      }
+      if (snapshotReads === 2) {
+        return createJsonResponse({
+          item: createWebSessionSnapshot({
+            session: {
+              status: 'running',
+              assistantState: 'working',
+            },
+          }),
+        });
+      }
+      return createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_input',
+          },
+          items: [
+            {
+              id: 'req-1',
+              sourceItemId: 'call_99',
+              orderIndex: 1,
+              kind: 'system',
+              itemType: 'user_input_request',
+              text: 'Pick one',
+              timestamp: '2026-04-10T00:00:03Z',
+              observedAt: '2026-04-10T00:00:03Z',
+              detail: {
+                type: 'user_input_request',
+                prompt: 'Pick one',
+                questions: [
+                  {
+                    id: 'choice',
+                    header: 'Choice',
+                    question: 'Pick one',
+                    isOther: false,
+                    options: [{ label: 'A', description: 'first' }],
+                  },
+                ],
+              },
+              payload: { iid: 'call_99' },
+            },
+          ],
+        }),
+      });
+    }],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const pause = await client.waitForWebSessionPause({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    intervalMs: 1,
+    settleMs: 20,
+    timeoutMs: 1000,
+  });
+
+  assert.equal(pause.reason, 'user_input');
+  assert.equal(pause.state.pendingUserInput.itemId, 'call_99');
+  assert.equal(snapshotReads, 3);
+});
+
+test('CodeKanbanClient runWebSessionUntilDone auto-answers user input and executes the latest plan', async () => {
+  let snapshotReads = 0;
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () => {
+      snapshotReads += 1;
+      if (snapshotReads <= 2) {
+        return createJsonResponse({
+          item: createWebSessionSnapshot({
+            session: {
+              status: 'running',
+              assistantState: 'waiting_input',
+              workflowMode: 'plan',
+            },
+            items: [
+              {
+                id: 'req-1',
+                sourceItemId: 'call_42',
+                orderIndex: 1,
+                kind: 'system',
+                itemType: 'user_input_request',
+                text: 'Pick one',
+                timestamp: '2026-04-10T00:00:03Z',
+                observedAt: '2026-04-10T00:00:03Z',
+                detail: {
+                  type: 'user_input_request',
+                  prompt: 'Pick one',
+                  questions: [
+                    {
+                      id: 'choice',
+                      header: 'Choice',
+                      question: 'Pick one',
+                      isOther: false,
+                      options: [
+                        { label: 'A', description: 'first' },
+                        { label: 'B', description: 'second' },
+                      ],
+                    },
+                  ],
+                },
+                payload: { iid: 'call_42' },
+              },
+            ],
+          }),
+        });
+      }
+      if (snapshotReads <= 4) {
+        return createJsonResponse({
+          item: createWebSessionSnapshot({
+            session: {
+              status: 'running',
+              assistantState: 'waiting_plan_approval',
+              workflowMode: 'plan',
+            },
+            items: [
+              {
+                id: 'plan-1',
+                orderIndex: 2,
+                kind: 'tool',
+                itemType: 'plan',
+                text: '',
+                timestamp: '2026-04-10T00:00:04Z',
+                observedAt: '2026-04-10T00:00:04Z',
+                tool: {
+                  id: 'plan-tool-1',
+                  name: 'Plan',
+                  kind: 'plan',
+                  output: '# Plan',
+                  status: 'done',
+                  meta: { title: 'Plan' },
+                },
+                payload: {},
+              },
+            ],
+          }),
+        });
+      }
+      return createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'done',
+            assistantState: null,
+            workflowMode: 'default',
+          },
+          items: [
+            {
+              id: 'assistant-1',
+              orderIndex: 3,
+              kind: 'assistant',
+              itemType: 'message',
+              text: 'Done.',
+              timestamp: '2026-04-10T00:00:05Z',
+              observedAt: '2026-04-10T00:00:05Z',
+              payload: {},
+            },
+          ],
+        }),
+      });
+    }],
+  ]);
+
+  const seenOps = [];
+  withAckingWebSocket(frame => {
+    seenOps.push(frame.op);
+    if (frame.op === 'user_input') {
+      assert.deepEqual(frame.p, {
+        iid: 'call_42',
+        ans: { choice: ['B'] },
+      });
+    }
+    if (frame.op === 'set_wm') {
+      assert.deepEqual(frame.p, { wm: 'default' });
+    }
+    if (frame.op === 'send') {
+      assert.deepEqual(frame.p, {
+        txt: 'Implement the plan.',
+        atts: [],
+      });
+    }
+  });
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.runWebSessionUntilDone({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    intervalMs: 1,
+    timeoutMs: 1000,
+    settleMs: 0,
+  });
+
+  assert.equal(result.stopReason, 'done');
+  assert.equal(result.finalState.phase, 'done');
+  assert.equal(result.actions.length, 2);
+  assert.equal(result.actions[0].type, 'answer_user_input');
+  assert.equal(result.actions[1].type, 'execute_plan');
+  assert.equal(result.lastExecuteMode, 'followup_message');
+  assert.deepEqual(seenOps, ['user_input', 'set_wm', 'send']);
+});
+
+test('CodeKanbanClient runWebSessionUntilDone stops on approvals for caller judgment', async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: '/repo/demo', name: 'demo' } })],
+    ['GET /api/v1/projects/p1/web-sessions/ws1/snapshot', () =>
+      createJsonResponse({
+        item: createWebSessionSnapshot({
+          session: {
+            status: 'running',
+            assistantState: 'waiting_approval',
+          },
+          items: [
+            {
+              id: 'approval-1',
+              sourceItemId: 'approval-1',
+              orderIndex: 1,
+              kind: 'system',
+              itemType: 'approval_request',
+              text: 'Need approval',
+              timestamp: '2026-04-10T00:00:03Z',
+              observedAt: '2026-04-10T00:00:03Z',
+              detail: {
+                type: 'approval_request',
+                prompt: 'Need approval',
+                questions: [],
+              },
+              payload: {},
+            },
+          ],
+        }),
+      })],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.runWebSessionUntilDone({
+    projectId: 'p1',
+    sessionId: 'ws1',
+    intervalMs: 1,
+    timeoutMs: 1000,
+    settleMs: 0,
+  });
+
+  assert.equal(result.stopReason, 'needs_approval');
+  assert.equal(result.finalState.phase, 'waiting_approval');
 });

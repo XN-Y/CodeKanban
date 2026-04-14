@@ -1,8 +1,8 @@
-# `@codekanban/sdk`
+﻿# `@codekanban/sdk`
 
-Node SDK and CLI for CodeKanban coding workflows, terminal sessions, and web sessions.
+Node SDK for CodeKanban workflows, terminal sessions, and web sessions.
 
-Use it as a programming-assistant toolkit for launching, observing, and steering CodeKanban work in a registered project or local path, with `web session` as the default structured path and `terminal session` for PTY-style flows.
+Use `@codekanban/sdk` when you want to integrate with CodeKanban from JavaScript. For command-line usage and Codex skill packaging, use `@codekanban/cli`.
 
 ## Features
 
@@ -13,41 +13,26 @@ Use it as a programming-assistant toolkit for launching, observing, and steering
 - Support `standard`, `plan`, and `yolo` Codex profiles
 - Read terminal session lists and AI session summaries
 - Read AI conversations and continue existing terminal sessions
-- Control CodeKanban `web session` runs over HTTP and WebSocket
-- Read `web session` snapshots, history, runtime config, command groups, and archived sessions
-- Send `web session` messages, approvals, user-input answers, model/workflow/permission updates, and move operations
-- Receive normalized `web session` events through `on/off`, `waitFor`, or `for await`
-- Poll a `web session` for a derived actionable state instead of reconstructing history logic yourself
-- Execute the latest plan or answer the active structured prompt with one SDK call
+- Control CodeKanban `web-session` runs over HTTP and WebSocket
+- Read `web-session` snapshots, history, runtime config, command groups, and archived sessions
+- Send `web-session` messages, approvals, user-input answers, model/workflow/permission updates, and move operations
+- Receive normalized `web-session` events through `on/off`, `waitFor`, or `for await`
+- Poll a `web-session` for derived actionable state
+- Wait for a `web-session` to reach a pause/actionable state
+- Run a short web-session loop with automatic user-input answers and latest-plan execution
 
-## CLI
-
-```bash
-node packages/node-sdk/bin/codekanban-sdk.js workflow start --base-url http://127.0.0.1:3000 --path D:\repo --profile plan --add-dir D:\shared --prompt "Inspect and plan the refactor"
-node packages/node-sdk/bin/codekanban-sdk.js session list --base-url http://127.0.0.1:3000 --path D:\repo
-node packages/node-sdk/bin/codekanban-sdk.js session conversation --base-url http://127.0.0.1:3000 --id <db-id>
-node packages/node-sdk/bin/codekanban-sdk.js terminal continue --base-url http://127.0.0.1:3000 --session-id <terminal-session-id> --prompt "Continue from the previous plan"
-```
-
-### Web Session CLI
+## Install
 
 ```bash
-node packages/node-sdk/bin/codekanban-sdk.js web-session create --base-url http://127.0.0.1:3000 --path D:\repo --agent codex --workflow-mode plan --permission-level elevated --title "Planning session"
-node packages/node-sdk/bin/codekanban-sdk.js web-session snapshot --base-url http://127.0.0.1:3000 --project-id <project-id> --session-id <session-id> --limit 80
-node packages/node-sdk/bin/codekanban-sdk.js web-session send --base-url http://127.0.0.1:3000 --session-id <session-id> --text "Continue from the last plan"
-node packages/node-sdk/bin/codekanban-sdk.js web-session approve --base-url http://127.0.0.1:3000 --session-id <session-id>
-node packages/node-sdk/bin/codekanban-sdk.js web-session user-input --base-url http://127.0.0.1:3000 --session-id <session-id> --item-id <item-id> --answers-json '{"scope":["full repo"]}'
-node packages/node-sdk/bin/codekanban-sdk.js web-session watch --base-url http://127.0.0.1:3000 --session-id <session-id> --max-events 20
+npm install @codekanban/sdk
 ```
-
-`web-session watch` writes NDJSON. Add `--raw` to print raw short-key protocol frames.
 
 ## Library
 
 ```js
 import { CodeKanbanClient } from '@codekanban/sdk';
 
-const client = new CodeKanbanClient({ baseURL: 'http://127.0.0.1:3000' });
+const client = new CodeKanbanClient({ baseURL: 'http://127.0.0.1:3007' });
 
 const result = await client.startWorkflow({
   path: 'D:/repo',
@@ -62,7 +47,7 @@ const result = await client.startWorkflow({
 ### Web Session HTTP
 
 ```js
-const client = new CodeKanbanClient({ baseURL: 'http://127.0.0.1:3000' });
+const client = new CodeKanbanClient({ baseURL: 'http://127.0.0.1:3007' });
 
 const session = await client.createWebSession({
   path: 'D:/repo',
@@ -85,10 +70,6 @@ const state = await client.getWebSessionState({
   projectId: session.projectId,
   sessionId: session.id,
 });
-
-if (state.phase === 'running') {
-  return;
-}
 
 if (state.nextAction?.type === 'answer_user_input') {
   await client.answerPendingUserInput({
@@ -129,10 +110,53 @@ const doneState = await client.waitForWebSessionState({
   until: 'done',
   intervalMs: 5000,
   timeoutMs: 120000,
+  settleMs: 2000,
 });
 
 console.log(doneState.lastAssistantMessage?.text);
 ```
+
+### Waiting For Pause States
+
+```js
+const pause = await client.waitForWebSessionPause({
+  projectId: session.projectId,
+  sessionId: session.id,
+  intervalMs: 1500,
+  timeoutMs: 120000,
+  settleMs: 2000,
+});
+
+console.log(pause.reason);
+```
+
+`waitForWebSessionPause()` returns when the session stops making forward progress and needs outside judgment, for example:
+
+- `done`
+- `error`
+- `approval`
+- `user_input`
+- `execute_plan`
+
+### Minimal Web Session Loop
+
+```js
+const result = await client.runWebSessionUntilDone({
+  projectId: session.projectId,
+  sessionId: session.id,
+  intervalMs: 1500,
+  timeoutMs: 120000,
+  settleMs: 2000,
+});
+
+console.log(result.stopReason, result.finalState?.phase);
+```
+
+`runWebSessionUntilDone()` automatically:
+
+- answers ordinary structured user-input prompts with the default `prefer-second-or-text` strategy
+- executes the latest plan when the session reaches an execute-plan pause
+- returns control on `needs_approval`, `needs_user_input`, `needs_execute_plan`, `done`, `error`, `until`, or `timeout`
 
 ### Web Session Command Channel
 
