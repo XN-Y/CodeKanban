@@ -59,6 +59,59 @@ export function isWebSessionRouteQuerySynced(
   return getWebSessionRouteSessionId(query) === normalizeWebSessionRouteSessionId(sessionId);
 }
 
+function normalizeRouteText(value: unknown): string {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const normalized = normalizeRouteText(item);
+      if (normalized) {
+        return normalized;
+      }
+    }
+    return '';
+  }
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function shouldPreserveWebSessionRouteSessionId(options: {
+  workspaceTab?: string | null;
+  pendingRouteSessionId?: string;
+  currentProjectId?: string;
+  currentSessionId?: string;
+  currentSessionProjectId?: string;
+  currentSessionIsDraft?: boolean;
+}): boolean {
+  const workspaceTab = normalizeRouteText(options.workspaceTab);
+  const pendingRouteSessionId = normalizeWebSessionRouteSessionId(options.pendingRouteSessionId);
+
+  if (workspaceTab !== 'web' || !pendingRouteSessionId) {
+    return false;
+  }
+
+  if (options.currentSessionIsDraft) {
+    return true;
+  }
+
+  const currentSessionId = normalizeWebSessionRouteSessionId(options.currentSessionId);
+  if (!currentSessionId) {
+    return true;
+  }
+
+  const currentProjectId = normalizeWebSessionRouteSessionId(options.currentProjectId);
+  const currentSessionProjectId = normalizeWebSessionRouteSessionId(
+    options.currentSessionProjectId
+  );
+
+  if (
+    !currentProjectId ||
+    !currentSessionProjectId ||
+    currentSessionProjectId !== currentProjectId
+  ) {
+    return true;
+  }
+
+  return currentSessionId !== pendingRouteSessionId;
+}
+
 function normalizeComparableQuery(
   query?: RouteQueryLike | null,
   ignoredKeys: string[] = []

@@ -6,6 +6,7 @@ import {
   isWebSessionRouteQuerySynced,
   isWebSessionOnlyRouteChange,
   resolveWebSessionDeepLinkTarget,
+  shouldPreserveWebSessionRouteSessionId,
 } from '@/utils/webSessionRoute';
 
 describe('webSessionRoute', () => {
@@ -48,6 +49,85 @@ describe('webSessionRoute', () => {
   it('compares the current query and target session id after normalization', () => {
     expect(isWebSessionRouteQuerySynced({ webSessionId: ' session-1 ' }, 'session-1')).toBe(true);
     expect(isWebSessionRouteQuerySynced({ webSessionId: 'session-1' }, 'session-2')).toBe(false);
+  });
+
+  it('preserves explicit web deep links while a different remembered session is selected', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+        currentSessionId: 'session-a',
+        currentSessionProjectId: 'project-1',
+      })
+    ).toBe(true);
+  });
+
+  it('preserves explicit web deep links while no real session is active yet', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+      })
+    ).toBe(true);
+
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+        currentSessionId: 'draft-1',
+        currentSessionIsDraft: true,
+      })
+    ).toBe(true);
+  });
+
+  it('allows route sync once the requested session is active, including archived previews', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+        currentSessionId: 'session-b',
+        currentSessionProjectId: 'project-1',
+      })
+    ).toBe(false);
+  });
+
+  it('keeps preserving the deep link when the current session belongs to a different project', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+        currentSessionId: 'session-b',
+        currentSessionProjectId: 'project-2',
+      })
+    ).toBe(true);
+  });
+
+  it('does not preserve the route when there is no pending route-driven activation', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'web',
+        currentProjectId: 'project-1',
+        currentSessionId: 'session-a',
+        currentSessionProjectId: 'project-1',
+      })
+    ).toBe(false);
+  });
+
+  it('does not preserve a webSessionId when the workspace is not on the web tab', () => {
+    expect(
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab: 'terminal',
+        pendingRouteSessionId: 'session-b',
+        currentProjectId: 'project-1',
+        currentSessionId: 'session-a',
+        currentSessionProjectId: 'project-1',
+      })
+    ).toBe(false);
   });
 
   it('detects query-only session changes on the same route', () => {

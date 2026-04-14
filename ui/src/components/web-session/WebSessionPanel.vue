@@ -1704,6 +1704,7 @@ import {
   getWebSessionRouteSessionId,
   isWebSessionRouteQuerySynced,
   resolveWebSessionDeepLinkTarget,
+  shouldPreserveWebSessionRouteSessionId,
 } from '@/utils/webSessionRoute';
 
 const MAX_TAB_TITLE_WIDTH = 160;
@@ -1936,6 +1937,7 @@ const liveCardContinuePending = ref(false);
 const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
 const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
+const pendingRouteActivationSessionId = ref('');
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
 const pendingHistoryAnchor = ref<{
   sessionId: string;
@@ -4491,10 +4493,16 @@ function resolveNextTabAfterClose(sessionId: string) {
   return nextOrderIds[closedIndex] ?? nextOrderIds[closedIndex - 1] ?? nextOrderIds[0] ?? '';
 }
 
-async function activateTabById(sessionId: string, options?: { connectReal?: boolean }) {
+async function activateTabById(
+  sessionId: string,
+  options?: { connectReal?: boolean; routeDriven?: boolean }
+) {
   const session = visibleSessionById.value.get(sessionId);
   if (!session) {
     return false;
+  }
+  if (!options?.routeDriven) {
+    pendingRouteActivationSessionId.value = '';
   }
 
   if (isDraftSession(session)) {
@@ -4541,8 +4549,11 @@ async function syncWebSessionRouteSessionId(sessionId = '') {
 
 async function openArchivedPreviewSession(
   session: WebSessionSummary,
-  options?: { snapshotLoaded?: boolean }
+  options?: { snapshotLoaded?: boolean; routeDriven?: boolean }
 ) {
+  if (!options?.routeDriven) {
+    pendingRouteActivationSessionId.value = '';
+  }
   const previousPreviewId = archivedPreviewSession.value?.id ?? '';
   if (previousPreviewId && previousPreviewId !== session.id) {
     clearArchivedPreviewSession();
@@ -4609,7 +4620,11 @@ async function activateSessionFromRoute(
   }
 
   if (routeTarget.action === 'activate-loaded') {
-    return await activateTabById(routeTarget.sessionId);
+    const handled = await activateTabById(routeTarget.sessionId, { routeDriven: true });
+    if (handled) {
+      pendingRouteActivationSessionId.value = '';
+    }
+    return handled;
   }
 
   if (routeTarget.action !== 'load-snapshot') {
@@ -4633,23 +4648,32 @@ async function activateSessionFromRoute(
     });
 
     if (snapshotTarget.action === 'activate-real') {
-      return await activateTabById(snapshotTarget.sessionId, {
+      const handled = await activateTabById(snapshotTarget.sessionId, {
         connectReal: false,
+        routeDriven: true,
       });
+      if (handled) {
+        pendingRouteActivationSessionId.value = '';
+      }
+      return handled;
     }
 
     if (snapshotTarget.action === 'open-archived-preview' && snapshot?.session) {
       await openArchivedPreviewSession(snapshot.session, {
         snapshotLoaded: true,
+        routeDriven: true,
       });
+      pendingRouteActivationSessionId.value = '';
       return true;
     }
 
+    pendingRouteActivationSessionId.value = '';
     await syncWebSessionRouteSessionId('');
   } catch (error) {
     if (isAbortLikeError(error) || !realSessionSnapshotLoadController.isCurrent(snapshotLoad)) {
       return false;
     }
+    pendingRouteActivationSessionId.value = '';
     await syncWebSessionRouteSessionId('');
     if (options?.showError !== false) {
       message.error(error instanceof Error ? error.message : t('common.error'));
@@ -6049,6 +6073,7 @@ async function initializeProjectSessions(projectId: string) {
     });
     await webSessionStore.openEventStream();
     if (routeWebSessionId.value) {
+      pendingRouteActivationSessionId.value = routeWebSessionId.value;
       const handled = await activateSessionFromRoute(projectId, routeWebSessionId.value, {
         loadedSessions,
       });
@@ -6100,6 +6125,13 @@ async function handleSessionSelect(sessionId: string) {
   }
   showMobileTabSelector.value = false;
   if (sessionId === activeSessionId.value) {
+    pendingRouteActivationSessionId.value = '';
+    const session = currentSession.value;
+    void syncWebSessionRouteSessionId(
+      session && !isDraftSession(session) && session.projectId === props.projectId ? session.id : ''
+    ).catch(error => {
+      console.error('[Web Session] Failed to sync route session id', error);
+    });
     rememberTabVisit(sessionId);
     scrollToBottom(true);
     return;
@@ -6120,6 +6152,10 @@ async function handleSidebarSessionSelect(item: CrossProjectSessionItem) {
   }
   try {
     if (item.projectId === props.projectId && sessionId === activeSessionId.value) {
+      pendingRouteActivationSessionId.value = '';
+      void syncWebSessionRouteSessionId(sessionId).catch(error => {
+        console.error('[Web Session] Failed to sync route session id', error);
+      });
       scrollToBottom(true);
       return;
     }
@@ -6148,6 +6184,10 @@ async function handleArchivedSidebarSessionSelect(item: CrossProjectSessionItem)
       return;
     }
     if (archivedPreviewSession.value?.id === item.session.id) {
+      pendingRouteActivationSessionId.value = '';
+      void syncWebSessionRouteSessionId(item.session.id).catch(error => {
+        console.error('[Web Session] Failed to sync route session id', error);
+      });
       activeArchivedPreviewId.value = item.session.id;
       scrollToBottom(true);
       return;
@@ -7920,7 +7960,15 @@ watch(
 watch(
   () => routeWebSessionId.value,
   sessionId => {
-    if (!sessionId || !props.projectId || isProjectSessionInitializing.value) {
+    if (!sessionId) {
+      pendingRouteActivationSessionId.value = '';
+      return;
+    }
+    if (!props.projectId) {
+      return;
+    }
+    if (isProjectSessionInitializing.value) {
+      pendingRouteActivationSessionId.value = sessionId;
       return;
     }
     const session = currentSession.value;
@@ -7930,8 +7978,10 @@ watch(
       session.id === sessionId &&
       session.projectId === props.projectId
     ) {
+      pendingRouteActivationSessionId.value = '';
       return;
     }
+    pendingRouteActivationSessionId.value = sessionId;
     void activateSessionFromRoute(props.projectId, sessionId).catch(error => {
       console.error('[Web Session] Failed to activate session from route', error);
     });
@@ -8110,24 +8160,29 @@ useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointe
 });
 
 watch(
-  [() => currentSession.value, routeWorkspaceTab],
+  [() => currentSession.value, routeWorkspaceTab, routeWebSessionId],
   ([session, workspaceTab]) => {
+    const sessionIsDraft = Boolean(session && isDraftSession(session));
     if (
-      isProjectSessionInitializing.value &&
-      routeWebSessionId.value &&
-      workspaceTab === 'web' &&
-      (!session || isDraftSession(session))
+      shouldPreserveWebSessionRouteSessionId({
+        workspaceTab,
+        pendingRouteSessionId: pendingRouteActivationSessionId.value,
+        currentProjectId: props.projectId,
+        currentSessionId: session?.id,
+        currentSessionProjectId: session && !sessionIsDraft ? session.projectId : '',
+        currentSessionIsDraft: sessionIsDraft,
+      })
     ) {
       return;
     }
-    const routeSessionId =
+    const nextRouteSessionId =
       workspaceTab === 'web' &&
       session &&
-      !isDraftSession(session) &&
+      !sessionIsDraft &&
       session.projectId === props.projectId
         ? session.id
         : '';
-    void syncWebSessionRouteSessionId(routeSessionId).catch(error => {
+    void syncWebSessionRouteSessionId(nextRouteSessionId).catch(error => {
       console.error('[Web Session] Failed to sync route session id', error);
     });
   },
