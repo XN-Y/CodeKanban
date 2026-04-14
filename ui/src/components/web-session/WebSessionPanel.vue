@@ -2913,6 +2913,8 @@ const mobileComposerSummaryTokens = computed(() => {
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
+const contextUsageDisclaimer =
+  '这个数据是我从codex那边读的然后原样显示，数据可能并不准确，但我也不知道为什么他这样给显示，有明白的大佬麻烦告知';
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
   if (!session) {
@@ -2968,8 +2970,8 @@ const contextUsageIndicator = computed(() => {
   const totalOutputTokens = Number(session.usage.outputTokens || 0);
   const totalUsedTokens = Math.max(0, totalInputTokens + totalOutputTokens);
   const remainingEstimateTokens = Math.max(0, compactLimitTokens - usedTokens);
-  const usedPercent =
-    compactLimitTokens > 0 ? Math.round((usedTokens / compactLimitTokens) * 100) : 0;
+  const remainingPercent =
+    compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
   const sourceLabel =
     source === 'config'
       ? t('webSession.contextUsageSourceConfig')
@@ -2994,12 +2996,13 @@ const contextUsageIndicator = computed(() => {
         : t('webSession.contextUsageNoteCumulativeTotal');
 
   return {
-    state: usedPercent >= 90 ? 'warning' : usedPercent >= 75 ? 'active' : 'idle',
+    state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
     label: t('webSession.contextUsageLabel', {
-      percent: usedPercent,
+      percent: remainingPercent,
     }),
     title: t('webSession.contextUsageTitle'),
     lines: [
+      contextUsageDisclaimer,
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),

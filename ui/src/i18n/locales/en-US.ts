@@ -798,8 +798,8 @@ export default {
     attachmentUploading: 'Uploading image',
     attachmentUploadingBatch: 'Uploading image {current}/{total}',
     attachmentUploadFailed: 'Image upload failed',
-    contextUsageTitle: 'Current Context Estimate',
-    contextUsageLabel: 'Used {percent}%',
+    contextUsageTitle: 'Remaining Budget Estimate',
+    contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
@@ -811,8 +811,7 @@ export default {
     contextUsageMode: 'Mode: {mode}',
     contextUsageModeLatestTurnDelta: 'estimated from the latest turn delta',
     contextUsageModeSinceCompaction: 'estimated since the latest context compaction',
-    contextUsageModeCumulativeTotal:
-      'estimated from cumulative session usage (compatibility fallback)',
+    contextUsageModeCumulativeTotal: 'estimated from cumulative session usage',
     contextUsageEstimatedBreakdown:
       'Current estimate breakdown: input {input} / cached {cached} / output {output}',
     contextUsageTotalUsed: 'Cumulative session usage: {count} tokens',
@@ -821,9 +820,9 @@ export default {
     contextUsageNoteLatestTurnDelta:
       'Note: this is an approximation of current context size derived from the latest turn, not a real-time occupancy value returned by Codex.',
     contextUsageNoteSinceCompaction:
-      'Note: this is a compatibility estimate based on net token growth since the latest context compaction, not a real-time occupancy value returned by Codex.',
+      'Note: this is estimated from net token growth since the latest context compaction, not a real-time occupancy value returned by Codex.',
     contextUsageNoteCumulativeTotal:
-      'Note: this is a compatibility fallback based on cumulative session usage and does not represent the true current context occupancy.',
+      'Note: this is estimated from cumulative session usage and does not represent the true current context occupancy.',
     contextUsageUnavailableTitle: 'Context estimate unavailable',
     contextUsageUnavailableDescription:
       'This estimate is currently available only for Codex AI sessions. Claude sessions do not expose a comparable context-window value here yet.',

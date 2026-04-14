@@ -780,8 +780,8 @@ export default {
     attachmentUploading: '正在上传图片',
     attachmentUploadingBatch: '正在上传图片 {current}/{total}',
     attachmentUploadFailed: '图片上传失败',
-    contextUsageTitle: '当前上下文估算',
-    contextUsageLabel: '已用 {percent}%',
+    contextUsageTitle: '剩余预算估算',
+    contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
     contextUsageWindow: '上限：{count} tokens',
     contextUsageCompactLimit: '压缩线：{count} tokens',
@@ -793,7 +793,7 @@ export default {
     contextUsageMode: '口径：{mode}',
     contextUsageModeLatestTurnDelta: '按最近一轮 turn 增量估算',
     contextUsageModeSinceCompaction: '最近一次上下文压缩后估算',
-    contextUsageModeCumulativeTotal: '按累计 session usage 估算（兼容回退）',
+    contextUsageModeCumulativeTotal: '按累计 session usage 估算',
     contextUsageEstimatedBreakdown:
       '当前估算明细：input {input} / cached {cached} / output {output}',
     contextUsageTotalUsed: '本 session 累计消耗：{count} tokens',
@@ -801,9 +801,9 @@ export default {
     contextUsageNoteLatestTurnDelta:
       '注意：这是最近一轮 turn 对当前上下文体积的近似估算，不是 Codex 直接返回的实时上下文占用。',
     contextUsageNoteSinceCompaction:
-      '注意：这是按最近一次上下文压缩后的净新增 token 做的兼容估算，不是 Codex 直接返回的实时上下文占用。',
+      '注意：这是按最近一次上下文压缩后的净新增 token 估算，不是 Codex 直接返回的实时上下文占用。',
     contextUsageNoteCumulativeTotal:
-      '注意：当前按累计 session usage 做兼容估算，只适用于旧会话回退，不代表当前真实上下文占用。',
+      '注意：这是按累计 session usage 估算，不代表当前真实上下文占用。',
     contextUsageUnavailableTitle: 'Context 估算暂不可用',
     contextUsageUnavailableDescription:
       '当前只有 Codex 网页会话会显示这个估算值；Claude 会话暂未暴露可对齐的 context window 信息。',
