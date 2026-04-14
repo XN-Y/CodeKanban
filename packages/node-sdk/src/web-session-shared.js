@@ -185,6 +185,25 @@ function normalizePendingInput(value) {
   };
 }
 
+function normalizePendingUserInputState(value) {
+  const itemId = trimmedString(value?.iid ?? value?.itemId);
+  if (!itemId) {
+    return null;
+  }
+  return {
+    itemId,
+    prompt: trimmedString(value?.txt ?? value?.prompt) || "",
+    questions: Array.isArray(value?.qs ?? value?.questions)
+      ? (value.qs ?? value.questions).map(normalizeUserInputQuestion)
+      : [],
+    requestedAt:
+      isoFromUnixMilli(value?.ra) ||
+      (typeof value?.requestedAt === "string"
+        ? trimmedString(value.requestedAt) || null
+        : null),
+  };
+}
+
 export function normalizeWebSessionHistoryItem(value) {
   const updatedTimestamp =
     isoFromUnixMilli(value?.ts2) || isoFromUnixMilli(value?.obs);
@@ -274,6 +293,7 @@ export function normalizeWebSessionSnapshotFromWire(frame) {
     pendingInputs: Array.isArray(frame?.pi)
       ? frame.pi.map(normalizePendingInput).filter(Boolean)
       : [],
+    pendingUserInput: normalizePendingUserInputState(frame?.ui),
   };
 }
 
@@ -468,7 +488,9 @@ export function analyzeWebSession(snapshot) {
     : [];
   const items = Array.isArray(history.items) ? history.items : [];
   const pendingApproval = findPendingApproval(items);
-  const pendingUserInput = findPendingUserInput(items);
+  const pendingUserInput =
+    normalizePendingUserInputState(snapshot?.pendingUserInput) ||
+    findPendingUserInput(items);
   const latestPlan = findLatestPlan(items);
   const lastAssistantMessage = findLastAssistantMessage(items);
 
@@ -543,6 +565,7 @@ export function analyzeWebSession(snapshot) {
       session,
       history,
       pendingInputs,
+      pendingUserInput,
     },
   };
 }

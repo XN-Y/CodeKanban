@@ -34,7 +34,7 @@ function normalizeHistoryLimit(value) {
 }
 
 export class WebSessionCommandChannel {
-  constructor({ url, WebSocketImpl } = {}) {
+  constructor({ url, WebSocketImpl, webSocketOptions } = {}) {
     const resolvedUrl = ensureString(url, "url");
     const Socket = WebSocketImpl || globalThis.WebSocket;
     if (!Socket) {
@@ -44,7 +44,7 @@ export class WebSessionCommandChannel {
     }
 
     this.url = resolvedUrl;
-    this.socket = new Socket(resolvedUrl);
+    this.socket = webSocketOptions ? new Socket(resolvedUrl, webSocketOptions) : new Socket(resolvedUrl);
     this.protocolVersion = WEB_SESSION_PROTOCOL_VERSION;
     this._pendingRequests = new Map();
     this._pendingFollowUp = null;

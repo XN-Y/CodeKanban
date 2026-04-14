@@ -45,8 +45,9 @@ export class FakeWebSocket {
     FakeWebSocket.factory = factory;
   }
 
-  constructor(url) {
+  constructor(url, options) {
     this.url = url;
+    this.options = options || null;
     this.readyState = 0;
     this.listeners = new Map();
     this.sent = [];
