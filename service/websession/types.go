@@ -270,10 +270,18 @@ type PendingInput struct {
 	CreatedAt     time.Time        `json:"createdAt"`
 }
 
+type PendingUserInput struct {
+	ItemID      string                `json:"itemId"`
+	Prompt      string                `json:"prompt,omitempty"`
+	Questions   []toolRequestQuestion `json:"questions,omitempty"`
+	RequestedAt *time.Time            `json:"requestedAt,omitempty"`
+}
+
 type SessionSnapshot struct {
-	Session       SessionSummary `json:"session"`
-	History       HistoryWindow  `json:"history"`
-	PendingInputs []PendingInput `json:"pendingInputs"`
+	Session          SessionSummary    `json:"session"`
+	History          HistoryWindow     `json:"history"`
+	PendingInputs    []PendingInput    `json:"pendingInputs"`
+	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
 }
 
 type ImportResult struct {

@@ -1337,9 +1337,10 @@ func (m *Manager) loadSnapshotLocal(
 		summary.HasUnread = false
 	}
 	return SessionSnapshot{
-		Session:       summary,
-		History:       history,
-		PendingInputs: m.pendingInputsSnapshot(record.ID),
+		Session:          summary,
+		History:          history,
+		PendingInputs:    m.pendingInputsSnapshot(record.ID),
+		PendingUserInput: pendingUserInputFromHistory(history.Items),
 	}, nil
 }
 
