@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collapseProjectDraftTabs,
   pickPreferredDraftTab,
+  resolveStartDraftSessionDecision,
 } from '@/components/web-session/webSessionDraftTabs';
 
 function makeDraft(id: string, updatedAt: string) {
@@ -45,6 +46,48 @@ describe('webSessionDraftTabs', () => {
     const selected = pickPreferredDraftTab([draftA, draftB, draftC]);
 
     expect(selected).toEqual(draftB);
+  });
+
+  it('reuses the current draft and requests a notice only when already on that draft', () => {
+    const draftA = makeDraft('draft-a', '2026-04-12T09:00:00.000Z');
+    const draftB = makeDraft('draft-b', '2026-04-12T10:00:00.000Z');
+
+    const decision = resolveStartDraftSessionDecision([draftA, draftB], {
+      activeDraftId: 'draft-a',
+      mruIds: ['draft-b'],
+    });
+
+    expect(decision).toEqual({
+      kind: 'reuse',
+      draft: draftA,
+      shouldNotifyExistingDraft: true,
+    });
+  });
+
+  it('reuses an existing draft without a notice when switching from a non-draft tab', () => {
+    const draftA = makeDraft('draft-a', '2026-04-12T09:00:00.000Z');
+    const draftB = makeDraft('draft-b', '2026-04-12T10:00:00.000Z');
+
+    const decision = resolveStartDraftSessionDecision([draftA, draftB], {
+      activeDraftId: '',
+      mruIds: ['draft-b', 'draft-a'],
+    });
+
+    expect(decision).toEqual({
+      kind: 'reuse',
+      draft: draftB,
+      shouldNotifyExistingDraft: false,
+    });
+  });
+
+  it('creates a new draft without a notice when no draft exists yet', () => {
+    const decision = resolveStartDraftSessionDecision([]);
+
+    expect(decision).toEqual({
+      kind: 'create',
+      draft: null,
+      shouldNotifyExistingDraft: false,
+    });
   });
 
   it('collapses legacy multi-draft state to a single draft and cleans tab navigation ids', () => {

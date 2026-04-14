@@ -1741,6 +1741,7 @@ import {
 import {
   collapseProjectDraftTabs,
   pickPreferredDraftTab,
+  resolveStartDraftSessionDecision,
 } from '@/components/web-session/webSessionDraftTabs';
 import {
   normalizeWebSessionSidebarScope,
@@ -6492,12 +6493,12 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
-  const existingDraft = pickPreferredDraftTab(draftSessions.value, {
+  const decision = resolveStartDraftSessionDecision(draftSessions.value, {
     activeDraftId: activeDraftSessionId.value,
     mruIds: tabMruIds.value,
   });
-  if (existingDraft) {
-    await activateTabById(existingDraft.id, { connectReal: false });
+  if (decision.kind === 'reuse') {
+    await activateTabById(decision.draft.id, { connectReal: false });
     showMobileTabSelector.value = false;
     contextMenuSession.value = null;
     expandedTools.value = {};
@@ -6505,6 +6506,9 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
     scrollToBottom(true);
     updateActiveTabIndicator();
     focusComposer();
+    if (decision.shouldNotifyExistingDraft) {
+      message.info(t('webSession.existingDraftSessionNotice'));
+    }
     return;
   }
   const draft = createDraftSession(forceAgent);

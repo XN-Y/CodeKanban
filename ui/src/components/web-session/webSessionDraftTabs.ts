@@ -19,6 +19,18 @@ export type CollapseProjectDraftTabsResult<T extends DraftTabLike> = {
   mruIds: string[];
 };
 
+export type StartDraftSessionDecision<T extends DraftTabLike> =
+  | {
+      kind: 'create';
+      draft: null;
+      shouldNotifyExistingDraft: false;
+    }
+  | {
+      kind: 'reuse';
+      draft: T;
+      shouldNotifyExistingDraft: boolean;
+    };
+
 function normalizeId(value: string | null | undefined) {
   return String(value || '').trim();
 }
@@ -115,6 +127,29 @@ export function pickPreferredDraftTab<T extends DraftTabLike>(
   }
 
   return normalizedDrafts[0] ?? null;
+}
+
+export function resolveStartDraftSessionDecision<T extends DraftTabLike>(
+  drafts: T[],
+  options?: {
+    activeDraftId?: string;
+    mruIds?: string[];
+  }
+): StartDraftSessionDecision<T> {
+  const draft = pickPreferredDraftTab(drafts, options);
+  if (!draft) {
+    return {
+      kind: 'create',
+      draft: null,
+      shouldNotifyExistingDraft: false,
+    };
+  }
+
+  return {
+    kind: 'reuse',
+    draft,
+    shouldNotifyExistingDraft: normalizeId(options?.activeDraftId) === draft.id,
+  };
 }
 
 export function collapseProjectDraftTabs<T extends DraftTabLike>(

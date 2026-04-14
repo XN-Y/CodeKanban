@@ -678,6 +678,7 @@ export default {
     archivedBadge: '归档',
     loadMoreArchived: '加载更多',
     newSession: '新建会话',
+    existingDraftSessionNotice: '已有新建会话页面',
     importCodexSession: '导入 Codex 会话',
     importCodexSessionTitle: '导入 Codex 历史会话',
     importCodexSessionSearchPlaceholder: '搜索标题、会话 ID 或日志路径',

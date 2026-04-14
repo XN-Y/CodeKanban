@@ -693,6 +693,7 @@ export default {
     archivedBadge: 'Archived',
     loadMoreArchived: 'Load More',
     newSession: 'New Session',
+    existingDraftSessionNotice: 'A new session page already exists',
     importCodexSession: 'Import Codex Session',
     importCodexSessionTitle: 'Import Codex History Session',
     importCodexSessionSearchPlaceholder: 'Search by title, session ID, or log path',
