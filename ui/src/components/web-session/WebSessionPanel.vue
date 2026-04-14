@@ -6393,7 +6393,7 @@ async function handleOpenImportedCodexSession(session: WebSessionSummary) {
       target = await webSessionStore.unarchiveSession(session.projectId, session.id);
       await refreshArchivedSidebar();
       if (archivedPreviewSession.value?.id === session.id) {
-        clearArchivedPreviewSession({ preserveTabId: true });
+        clearArchivedPreviewSession();
         activeArchivedPreviewId.value = '';
       }
     }
@@ -6418,7 +6418,7 @@ async function handleImportCodexSession(sessionId: string) {
     if (result.reused) {
       await refreshArchivedSidebar();
       if (archivedPreviewSession.value?.id === result.session.id) {
-        clearArchivedPreviewSession({ preserveTabId: true });
+        clearArchivedPreviewSession();
         activeArchivedPreviewId.value = '';
       }
     }
