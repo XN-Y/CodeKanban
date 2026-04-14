@@ -70,7 +70,7 @@ func TestNormalizeDeveloperConfigDefaultsActiveCallTimeout(t *testing.T) {
 	}
 }
 
-func TestNormalizeWebSessionActiveCallTimeoutConfigClampsAndTrims(t *testing.T) {
+func TestNormalizeWebSessionActiveCallTimeoutConfigClampsMinAndTrims(t *testing.T) {
 	got := NormalizeWebSessionActiveCallTimeoutConfig(WebSessionActiveCallTimeoutConfig{
 		EnabledMode:          SettingMode("ON"),
 		TimeoutMode:          WebSessionActiveCallTimeoutModeCustom,
@@ -102,6 +102,16 @@ func TestNormalizeWebSessionActiveCallTimeoutConfigClampsAndTrims(t *testing.T) 
 	}
 	if !got.CallKinds.MCP || got.CallKinds.Command || got.CallKinds.Tool {
 		t.Fatalf("expected only MCP to remain enabled, got %#v", got.CallKinds)
+	}
+}
+
+func TestNormalizeWebSessionActiveCallTimeoutConfigPreservesLargeCustomValue(t *testing.T) {
+	got := NormalizeWebSessionActiveCallTimeoutConfig(WebSessionActiveCallTimeoutConfig{
+		TimeoutMode:          WebSessionActiveCallTimeoutModeCustom,
+		CustomTimeoutSeconds: 7200,
+	})
+	if got.CustomTimeoutSeconds != 7200 {
+		t.Fatalf("expected large custom timeout to be preserved, got %d", got.CustomTimeoutSeconds)
 	}
 }
 

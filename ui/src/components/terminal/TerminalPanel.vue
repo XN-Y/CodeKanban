@@ -949,13 +949,10 @@ async function ensureDeveloperConfigLoaded() {
           : 'default';
       developerConfigState.webSessionActiveCallTimeout.timeoutMode =
         config?.webSessionActiveCallTimeout?.timeoutMode === 'custom' ? 'custom' : 'default';
-      developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds = Math.min(
-        3600,
-        Math.max(
-          10,
-          Number(config?.webSessionActiveCallTimeout?.customTimeoutSeconds) ||
-            DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
-        )
+      developerConfigState.webSessionActiveCallTimeout.customTimeoutSeconds = Math.max(
+        10,
+        Number(config?.webSessionActiveCallTimeout?.customTimeoutSeconds) ||
+          DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
       );
       developerConfigState.webSessionActiveCallTimeout.promptTemplate =
         config?.webSessionActiveCallTimeout?.promptTemplate?.trim() ||

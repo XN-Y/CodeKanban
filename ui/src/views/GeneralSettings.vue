@@ -655,7 +655,6 @@
                   v-if="developerUsesCustomActiveCallTimeout"
                   v-model:value="developerForm.webSessionActiveCallTimeout.customTimeoutSeconds"
                   :min="10"
-                  :max="3600"
                   :step="10"
                   :disabled="developerLoading"
                 />
@@ -1258,12 +1257,9 @@ function sanitizeActiveCallTimeoutConfig(
     enabledMode:
       value?.enabledMode === 'on' || value?.enabledMode === 'off' ? value.enabledMode : 'default',
     timeoutMode: value?.timeoutMode === 'custom' ? 'custom' : 'default',
-    customTimeoutSeconds: Math.min(
-      3600,
-      Math.max(
-        10,
-        Number(value?.customTimeoutSeconds) || DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
-      )
+    customTimeoutSeconds: Math.max(
+      10,
+      Number(value?.customTimeoutSeconds) || DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS
     ),
     promptTemplate: value?.promptTemplate?.trim() || DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT,
     callKinds: useDefaultCallKinds

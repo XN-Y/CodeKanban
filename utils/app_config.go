@@ -117,7 +117,6 @@ var defaultWebSessionQuickInputConfig = WebSessionQuickInputConfig{
 const (
 	DefaultWebSessionActiveCallTimeoutSeconds = 120
 	minWebSessionActiveCallTimeoutSeconds     = 10
-	maxWebSessionActiveCallTimeoutSeconds     = 3600
 	DefaultWebSessionActiveCallTimeoutPrompt  = "The current ${call} call has been running for ${duration} and may be stuck. It was interrupted automatically. Continue."
 )
 
@@ -453,9 +452,6 @@ func clampWebSessionActiveCallTimeoutSeconds(value int) int {
 	}
 	if value < minWebSessionActiveCallTimeoutSeconds {
 		return minWebSessionActiveCallTimeoutSeconds
-	}
-	if value > maxWebSessionActiveCallTimeoutSeconds {
-		return maxWebSessionActiveCallTimeoutSeconds
 	}
 	return value
 }
