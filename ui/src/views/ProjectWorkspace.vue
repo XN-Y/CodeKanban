@@ -70,9 +70,11 @@
 
         <div v-show="mobileActiveView === 'webSession'" class="mobile-view mobile-websession-view">
           <WebSessionPanel
+            ref="webSessionPanelRef"
             :project-id="currentProjectId"
             :is-active="mobileActiveView === 'webSession'"
             @mobile-composer-focus-change="handleMobileWebSessionComposerFocusChange"
+            @request-mobile-view="handleWebSessionPanelMobileViewRequest"
           />
         </div>
 
@@ -158,10 +160,19 @@
             <span>{{ t('nav.terminal') }}</span>
           </button>
           <button
+            ref="webSessionNavButtonRef"
             type="button"
             class="nav-item"
-            :class="{ active: mobileActiveView === 'webSession' }"
-            @click="setMobileView('webSession')"
+            :class="{
+              active: mobileActiveView === 'webSession',
+              'is-pressed': isWebSessionNavPressed,
+            }"
+            @click="handleWebSessionNavClick"
+            @contextmenu.prevent
+            @pointerdown="handleWebSessionNavPointerDown"
+            @pointermove="handleWebSessionNavPointerMove"
+            @pointerup="handleWebSessionNavPointerUp"
+            @pointercancel="handleWebSessionNavPointerCancel"
           >
             <n-icon size="20">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -235,6 +246,7 @@ import {
   isWorkspaceRouteTabQuerySynced,
   resolveMobileWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
+import { createLongPressTracker } from '@/utils/longPress';
 import {
   PROJECT_SIDEBAR_DEFAULT_WIDTH,
   clampProjectSidebarWidth,
@@ -267,11 +279,22 @@ const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const { windowWidth } = useResponsive();
 const { t, locale } = useLocale();
+type WebSessionPanelControl = {
+  openMobileSessionSelectorFromElement: (
+    anchorEl: HTMLElement,
+    source: 'header' | 'bottom-nav'
+  ) => void;
+  closeMobileSessionSelector: () => void;
+};
+
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
 const showDailyTipDialog = ref(false);
 const activeDailyTipIndex = ref(0);
+const isWebSessionNavPressed = ref(false);
 const mobileKanbanEnabled = false;
+const webSessionPanelRef = ref<WebSessionPanelControl | null>(null);
+const webSessionNavButtonRef = ref<HTMLButtonElement | null>(null);
 let mobileWebSessionComposerFocusFrame: number | null = null;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
@@ -381,6 +404,18 @@ const storedMobileViews = useStorage<Record<string, MobileView>>(
   {}
 );
 const mobileActiveView = ref<MobileView>(DEFAULT_MOBILE_VIEW);
+const mobileWebSessionLongPress = createLongPressTracker({
+  onLongPress: () => {
+    if (!isMobileLayout.value) {
+      return;
+    }
+    const anchorEl = webSessionNavButtonRef.value;
+    if (!anchorEl) {
+      return;
+    }
+    webSessionPanelRef.value?.openMobileSessionSelectorFromElement(anchorEl, 'bottom-nav');
+  },
+});
 
 function syncMobileRouteTab(view: MobileView) {
   const routeTab = mobileViewToRouteTab(view);
@@ -477,6 +512,7 @@ onBeforeUnmount(() => {
     window.cancelAnimationFrame(mobileWebSessionComposerFocusFrame);
     mobileWebSessionComposerFocusFrame = null;
   }
+  mobileWebSessionLongPress.pointerCancel();
   stopProjectSidebarResize();
 });
 
@@ -562,6 +598,70 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
   });
 }
 
+function handleWebSessionPanelMobileViewRequest(view: 'webSession') {
+  setMobileView(view);
+}
+
+function releaseWebSessionNavPointerCapture(event: PointerEvent) {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement) || !target.hasPointerCapture(event.pointerId)) {
+    return;
+  }
+  try {
+    target.releasePointerCapture(event.pointerId);
+  } catch {
+    // Ignore capture release failures from browsers that race pointer cleanup.
+  }
+}
+
+function handleWebSessionNavPointerDown(event: PointerEvent) {
+  if (!isMobileLayout.value || !event.isPrimary || event.pointerType === 'mouse') {
+    return;
+  }
+  isWebSessionNavPressed.value = true;
+  const target = event.currentTarget;
+  if (target instanceof HTMLElement) {
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      // Ignore capture failures on browsers that do not support it for this element.
+    }
+  }
+  mobileWebSessionLongPress.pointerDown(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+}
+
+function handleWebSessionNavPointerMove(event: PointerEvent) {
+  if (!isMobileLayout.value || !event.isPrimary || event.pointerType === 'mouse') {
+    return;
+  }
+  mobileWebSessionLongPress.pointerMove(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+  isWebSessionNavPressed.value = mobileWebSessionLongPress.isPressing();
+}
+
+function handleWebSessionNavPointerUp(event: PointerEvent) {
+  if (!isMobileLayout.value || !event.isPrimary || event.pointerType === 'mouse') {
+    return;
+  }
+  mobileWebSessionLongPress.pointerUp(event.pointerId);
+  isWebSessionNavPressed.value = false;
+  releaseWebSessionNavPointerCapture(event);
+}
+
+function handleWebSessionNavPointerCancel(event: PointerEvent) {
+  if (!isMobileLayout.value || !event.isPrimary || event.pointerType === 'mouse') {
+    return;
+  }
+  mobileWebSessionLongPress.pointerCancel(event.pointerId);
+  isWebSessionNavPressed.value = false;
+  releaseWebSessionNavPointerCapture(event);
+}
+
 function handleGoToSettings() {
   void router.push({ name: 'settings' });
 }
@@ -617,11 +717,22 @@ function handleDailyTipDisable() {
   });
 }
 
+function handleWebSessionNavClick(event: MouseEvent) {
+  isWebSessionNavPressed.value = false;
+  if (mobileWebSessionLongPress.consumeClick()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  setMobileView('webSession');
+}
+
 // 移动端视图切换
 function setMobileView(view: MobileView) {
   const normalizedView = normalizeMobileView(view);
   if (normalizedView !== 'webSession') {
     isMobileWebSessionComposerFocused.value = false;
+    webSessionPanelRef.value?.closeMobileSessionSelector();
   }
   mobileActiveView.value = normalizedView;
   if (isMobileLayout.value) {
@@ -835,6 +946,11 @@ function setMobileView(view: MobileView) {
 
 .mobile-bottom-nav .nav-item:active {
   opacity: 0.7;
+}
+
+.mobile-bottom-nav .nav-item.is-pressed {
+  opacity: 0.88;
+  transform: translateY(1px);
 }
 
 /* 平板端适配 */

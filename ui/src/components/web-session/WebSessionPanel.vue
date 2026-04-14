@@ -15,6 +15,21 @@
       <div class="panel-body">
         <div class="panel-content">
           <div class="panel-header">
+            <n-dropdown
+              v-if="isMobile"
+              trigger="manual"
+              :placement="mobileTabDropdownPlacement"
+              :show="showMobileTabSelector"
+              :value="activeSessionId"
+              :options="mobileTabOptions"
+              :menu-props="mobileTabDropdownMenuProps"
+              :node-props="getMobileTabOptionNodeProps"
+              :render-label="renderMobileTabOptionLabel"
+              :x="mobileTabDropdownX"
+              :y="mobileTabDropdownY"
+              @select="handleMobileTabSelect"
+              @clickoutside="handleMobileTabDropdownClickoutside"
+            />
             <div
               v-if="isMobile && (sessions.length > 0 || archivedPreviewSession)"
               class="mobile-tab-selector"
@@ -29,46 +44,34 @@
                   <ChevronBackOutline />
                 </n-icon>
               </button>
-              <n-dropdown
-                trigger="click"
-                placement="bottom-start"
-                width="trigger"
-                :show="showMobileTabSelector"
-                :value="activeSessionId"
-                :options="mobileTabOptions"
-                :menu-props="mobileTabDropdownMenuProps"
-                :node-props="getMobileTabOptionNodeProps"
-                :render-label="renderMobileTabOptionLabel"
-                @select="handleMobileTabSelect"
-                @update:show="handleMobileTabShowUpdate"
+              <button
+                ref="mobileTabTriggerRef"
+                type="button"
+                class="mobile-tab-trigger"
+                :title="currentSession ? getSessionStatusTooltip(currentSession) : undefined"
+                @click="handleMobileTabTriggerClick"
               >
-                <button
-                  type="button"
-                  class="mobile-tab-trigger"
-                  :title="currentSession ? getSessionStatusTooltip(currentSession) : undefined"
-                >
-                  <span class="mobile-tab-trigger-main">
-                    <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
-                    <span
-                      v-if="activeSessionStatusLabel"
-                      class="ai-status-pill mobile-tab-trigger-status"
-                      :class="`state-${activeSessionAttentionStateClass}`"
-                    >
-                      <span class="mobile-tab-trigger-status-text">
-                        {{ activeSessionStatusLabel }}
-                      </span>
+                <span class="mobile-tab-trigger-main">
+                  <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
+                  <span
+                    v-if="activeSessionStatusLabel"
+                    class="ai-status-pill mobile-tab-trigger-status"
+                    :class="`state-${activeSessionAttentionStateClass}`"
+                  >
+                    <span class="mobile-tab-trigger-status-text">
+                      {{ activeSessionStatusLabel }}
                     </span>
-                    <span
-                      v-if="activeSessionHasWorkflowPlanBadge"
-                      class="mobile-tab-trigger-plan-badge"
-                      aria-hidden="true"
-                    ></span>
                   </span>
-                  <n-icon class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
-                    <ChevronDownOutline />
-                  </n-icon>
-                </button>
-              </n-dropdown>
+                  <span
+                    v-if="activeSessionHasWorkflowPlanBadge"
+                    class="mobile-tab-trigger-plan-badge"
+                    aria-hidden="true"
+                  ></span>
+                </span>
+                <n-icon class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
+                  <ChevronDownOutline />
+                </n-icon>
+              </button>
               <button
                 type="button"
                 class="mobile-nav-btn"
@@ -1778,6 +1781,7 @@ const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
+const MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS = 220;
 const STREAMING_MARKDOWN_RENDER_OPTIONS = Object.freeze({
   disableCodeHighlight: true,
 });
@@ -1806,6 +1810,7 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (event: 'mobile-composer-focus-change', focused: boolean): void;
+  (event: 'request-mobile-view', view: 'webSession'): void;
 }>();
 
 const liveStateClockMs = ref(Date.now());
@@ -1841,6 +1846,14 @@ type MobileTabRenderOption = {
 };
 
 type MobileTabDropdownOption = DropdownOption | MobileTabRenderOption;
+type MobileTabSelectorSource = 'header' | 'bottom-nav';
+type MobileTabSelectorAnchor = {
+  source: MobileTabSelectorSource;
+  x: number;
+  y: number;
+  width: number;
+};
+
 type InlinePlanChoiceOption = {
   label: string;
   isExecute: boolean;
@@ -1941,6 +1954,7 @@ const routeWebSessionId = computed(() => getWebSessionRouteSessionId(route.query
 const routeWorkspaceTab = computed(() => inferWorkspaceRouteTab(route.query));
 
 const tabsContainerRef = ref<HTMLElement | null>(null);
+const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
@@ -1952,6 +1966,7 @@ const expandedTools = ref<Record<string, boolean>>({});
 const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
+const mobileTabSelectorAnchor = shallowRef<MobileTabSelectorAnchor | null>(null);
 const showQuickInputPopover = ref(false);
 const showImportDialog = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
@@ -2024,6 +2039,7 @@ let composerTransferErrorTimer: number | null = null;
 let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
 let mobileQuickInputOpenedAt = 0;
+let mobileTabSelectorOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
@@ -3490,6 +3506,11 @@ const mobileNavigationSessions = computed<SessionTab[]>(() =>
     ? mobileArchivedSessions.value
     : mobileCurrentSessions.value
 );
+const mobileTabDropdownPlacement = computed(() =>
+  mobileTabSelectorAnchor.value?.source === 'bottom-nav' ? 'top' : 'bottom-start'
+);
+const mobileTabDropdownX = computed(() => mobileTabSelectorAnchor.value?.x ?? 0);
+const mobileTabDropdownY = computed(() => mobileTabSelectorAnchor.value?.y ?? 0);
 const currentSessionIndex = computed(() =>
   mobileNavigationSessions.value.findIndex(session => session.id === activeSessionId.value)
 );
@@ -3576,8 +3597,19 @@ const mobileTabOptions = computed<MobileTabDropdownOption[]>(
 );
 
 function mobileTabDropdownMenuProps() {
+  const anchor = mobileTabSelectorAnchor.value;
+  const isBottomNav = anchor?.source === 'bottom-nav';
   return {
-    class: 'web-session-mobile-dropdown',
+    class: ['web-session-mobile-dropdown', isBottomNav && 'is-from-bottom-nav']
+      .filter(Boolean)
+      .join(' '),
+    style: {
+      width: isBottomNav
+        ? 'min(320px, calc(100vw - 24px))'
+        : `${Math.max(anchor?.width ?? 0, 220)}px`,
+      maxWidth: 'calc(100vw - 24px)',
+      '--mobile-tab-dropdown-origin': isBottomNav ? 'center bottom' : 'left top',
+    } as CSSProperties,
   };
 }
 
@@ -3787,14 +3819,71 @@ function syncMobileSessionCategoryToCurrentSession() {
     : 'current';
 }
 
-function handleMobileTabShowUpdate(show: boolean) {
-  if (show) {
-    syncMobileSessionCategoryToCurrentSession();
-    if (mobileSessionCategory.value === 'archived') {
-      void setMobileSessionCategory('archived');
-    }
+function buildMobileTabSelectorAnchor(
+  anchorEl: HTMLElement,
+  source: MobileTabSelectorSource
+): MobileTabSelectorAnchor {
+  const rect = anchorEl.getBoundingClientRect();
+  if (source === 'bottom-nav') {
+    return {
+      source,
+      x: Math.round(rect.left + rect.width / 2),
+      y: Math.max(8, Math.round(rect.top) - 8),
+      width: Math.round(rect.width),
+    };
   }
-  showMobileTabSelector.value = show;
+  return {
+    source,
+    x: Math.round(rect.left),
+    y: Math.round(rect.bottom) + 4,
+    width: Math.round(rect.width),
+  };
+}
+
+function closeMobileSessionSelector() {
+  showMobileTabSelector.value = false;
+}
+
+function openMobileSessionSelectorFromElement(
+  anchorEl: HTMLElement,
+  source: MobileTabSelectorSource
+) {
+  if (!isMobile.value) {
+    return;
+  }
+  syncMobileSessionCategoryToCurrentSession();
+  if (mobileSessionCategory.value === 'archived') {
+    void setMobileSessionCategory('archived');
+  }
+  mobileTabSelectorAnchor.value = buildMobileTabSelectorAnchor(anchorEl, source);
+  mobileTabSelectorOpenedAt = Date.now();
+  showMobileTabSelector.value = true;
+}
+
+function handleMobileTabTriggerClick() {
+  const anchorEl = mobileTabTriggerRef.value;
+  if (!anchorEl) {
+    return;
+  }
+  if (showMobileTabSelector.value && mobileTabSelectorAnchor.value?.source === 'header') {
+    closeMobileSessionSelector();
+    return;
+  }
+  openMobileSessionSelectorFromElement(anchorEl, 'header');
+}
+
+function handleMobileTabDropdownClickoutside() {
+  if (Date.now() - mobileTabSelectorOpenedAt < MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS) {
+    return;
+  }
+  closeMobileSessionSelector();
+}
+
+function requestMobileViewForBottomNavSelector() {
+  if (mobileTabSelectorAnchor.value?.source !== 'bottom-nav') {
+    return;
+  }
+  emit('request-mobile-view', 'webSession');
 }
 
 function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
@@ -6220,7 +6309,7 @@ async function handleSessionSelect(sessionId: string) {
   if (!sessionId) {
     return;
   }
-  showMobileTabSelector.value = false;
+  closeMobileSessionSelector();
   if (sessionId === activeSessionId.value) {
     pendingRouteActivationSessionId.value = '';
     const session = currentSession.value;
@@ -6368,7 +6457,7 @@ function startSidebarResize(event: MouseEvent) {
 }
 
 function openImportDialog() {
-  showMobileTabSelector.value = false;
+  closeMobileSessionSelector();
   contextMenuSession.value = null;
   showImportDialog.value = true;
 }
@@ -6499,7 +6588,7 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
   });
   if (decision.kind === 'reuse') {
     await activateTabById(decision.draft.id, { connectReal: false });
-    showMobileTabSelector.value = false;
+    closeMobileSessionSelector();
     contextMenuSession.value = null;
     expandedTools.value = {};
     autoFollowBottom.value = true;
@@ -6517,7 +6606,7 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
   draftReasoningEffort.value = draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
   draftWorkflowMode.value = draft.workflowMode;
   draftPermissionLevel.value = draft.permissionLevel;
-  showMobileTabSelector.value = false;
+  closeMobileSessionSelector();
   contextMenuSession.value = null;
   expandedTools.value = {};
   autoFollowBottom.value = true;
@@ -7973,8 +8062,9 @@ function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   if (!mobileOption?.session) {
     return;
   }
+  requestMobileViewForBottomNavSelector();
   if (mobileOption.section === 'archived') {
-    showMobileTabSelector.value = false;
+    closeMobileSessionSelector();
     if (archivedPreviewSession.value?.id === mobileOption.session.id) {
       activeArchivedPreviewId.value = mobileOption.session.id;
       scrollToBottom(true);
@@ -8286,7 +8376,7 @@ watch(
     activeRawTimelineBlockKey.value = '';
     syncMobileSessionCategoryToCurrentSession();
     if (!sessionId) {
-      showMobileTabSelector.value = false;
+      closeMobileSessionSelector();
       return;
     }
     const session = currentSession.value;
@@ -8352,6 +8442,13 @@ useEventListener(typeof document !== 'undefined' ? document : undefined, 'pointe
   if (shouldClearActiveTimelineRawBlockKey(activeRawTimelineBlockKey.value, clickedInsideRawCard)) {
     activeRawTimelineBlockKey.value = '';
   }
+});
+
+useEventListener(typeof window !== 'undefined' ? window : undefined, 'resize', () => {
+  if (!showMobileTabSelector.value) {
+    return;
+  }
+  closeMobileSessionSelector();
 });
 
 watch(
@@ -8474,7 +8571,7 @@ watch(
   () => isMobile.value,
   mobile => {
     if (mobile) {
-      showMobileTabSelector.value = false;
+      closeMobileSessionSelector();
       cleanupTabScrollListener();
       destroyTabSorting();
       activeTabIndicatorStyle.value = hiddenCardTabIndicatorStyle();
@@ -8654,6 +8751,11 @@ onBeforeUnmount(() => {
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', handleWebSessionDocumentVisibilityChange);
   }
+});
+
+defineExpose({
+  closeMobileSessionSelector,
+  openMobileSessionSelectorFromElement,
 });
 </script>
 
@@ -9183,6 +9285,7 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  transform-origin: var(--mobile-tab-dropdown-origin, left top);
 }
 
 :global(.web-session-mobile-dropdown .n-dropdown-option-body) {
