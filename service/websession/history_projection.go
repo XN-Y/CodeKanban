@@ -185,10 +185,12 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
-			if currentGroup != nil && currentGroup.kind == kind {
-				groupID = currentGroup.groupID
-			} else if groupID == "" {
-				groupID = commandExecutionGroupID(toolID)
+			if groupID == "" {
+				if currentGroup != nil && currentGroup.kind == kind {
+					groupID = currentGroup.groupID
+				} else {
+					groupID = commandExecutionGroupID(toolID)
+				}
 			}
 			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
 				flushGroup()
@@ -245,10 +247,12 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
-			if currentGroup != nil && currentGroup.kind == kind {
-				groupID = currentGroup.groupID
-			} else if groupID == "" {
-				groupID = commandExecutionGroupID(toolID)
+			if groupID == "" {
+				if currentGroup != nil && currentGroup.kind == kind {
+					groupID = currentGroup.groupID
+				} else {
+					groupID = commandExecutionGroupID(toolID)
+				}
 			}
 			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
 				currentGroup = nil

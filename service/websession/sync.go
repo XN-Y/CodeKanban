@@ -386,6 +386,7 @@ func compactSyncedHistoryItems(items []HistoryItem) []HistoryItem {
 
 		latest := group[len(group)-1]
 		groupID := commandExecutionGroupID(firstNonEmpty(current.Tool.ID, current.ID))
+		latest.SourceItemID = nilIfEmptyHistory(historyToolSourceKey(groupID))
 		latest.Tool.CommandGroup = &HistoryToolCommandGroup{
 			ID:           groupID,
 			Count:        len(group),

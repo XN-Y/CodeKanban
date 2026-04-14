@@ -149,6 +149,14 @@ func applyHistoryItemToRow(row *tables.WebSessionItemTable, sessionID string, it
 	row.PayloadJSON = mustJSONText(item.Payload)
 }
 
+func historyToolSourceKey(toolKey string) string {
+	normalized := strings.TrimSpace(toolKey)
+	if normalized == "" {
+		return ""
+	}
+	return "tool:" + normalized
+}
+
 func (m *Manager) nextHistoryOrderIndex(ctx context.Context, sessionID string) (int64, error) {
 	db := model.GetDB()
 	if db == nil {
@@ -243,6 +251,138 @@ func (m *Manager) upsertHistoryItemBySourceID(
 		return HistoryItem{}, updateErr
 	}
 	return mapHistoryItemRowWithSession(row, sessionID), nil
+}
+
+func (m *Manager) ensureCompactGroupHistorySourceKey(
+	ctx context.Context,
+	sessionID string,
+	sourceKey string,
+	groupID string,
+) error {
+	db := model.GetDB()
+	if db == nil {
+		return model.ErrDBNotInitialized
+	}
+	sourceKey = strings.TrimSpace(sourceKey)
+	groupID = strings.TrimSpace(groupID)
+	if sourceKey == "" || groupID == "" {
+		return nil
+	}
+
+	return db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var rows []tables.WebSessionItemTable
+		if err := tx.
+			Where("web_session_id = ? AND item_kind = ?", sessionID, "tool").
+			Order("order_index ASC").
+			Find(&rows).Error; err != nil {
+			return err
+		}
+
+		type candidateRow struct {
+			row  tables.WebSessionItemTable
+			item HistoryItem
+		}
+
+		candidates := make([]candidateRow, 0)
+		for _, row := range rows {
+			item := mapHistoryItemRowWithSession(row, sessionID)
+			if item.Tool == nil || !isCompactToolKind(item.Tool.Kind) {
+				continue
+			}
+			if item.Tool.CommandGroup == nil || strings.TrimSpace(item.Tool.CommandGroup.ID) != groupID {
+				continue
+			}
+			candidates = append(candidates, candidateRow{row: row, item: item})
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+
+		canonicalIndex := 0
+		for index, candidate := range candidates {
+			if candidate.item.SourceItemID != nil && strings.TrimSpace(*candidate.item.SourceItemID) == sourceKey {
+				canonicalIndex = index
+				break
+			}
+		}
+		if len(candidates) == 1 {
+			sourceItemID := ""
+			if candidates[0].item.SourceItemID != nil {
+				sourceItemID = strings.TrimSpace(*candidates[0].item.SourceItemID)
+			}
+			if sourceItemID == sourceKey {
+				return nil
+			}
+		}
+
+		canonical := candidates[canonicalIndex]
+		latest := candidates[len(candidates)-1]
+		merged := canonical.item
+		merged.SourceItemID = nilIfEmptyHistory(sourceKey)
+		merged.Kind = latest.item.Kind
+		merged.ItemType = latest.item.ItemType
+		merged.Text = latest.item.Text
+		merged.Attachments = latest.item.Attachments
+		merged.Tool = latest.item.Tool
+		merged.Level = latest.item.Level
+		merged.Done = latest.item.Done
+		merged.Detail = latest.item.Detail
+		merged.Payload = cloneMap(latest.item.Payload)
+		merged.ObservedAt = latest.item.ObservedAt
+		if merged.Timestamp == nil {
+			merged.Timestamp = latest.item.Timestamp
+		}
+
+		groupItems := []CommandExecutionGroupItem{}
+		groupCount := 0
+		for _, candidate := range candidates {
+			groupItems = mergeHistoryGroupItemLists(groupItems, decodeHistoryGroupItems(candidate.item.Payload))
+			if candidate.item.Tool != nil && candidate.item.Tool.CommandGroup != nil {
+				groupCount = max(groupCount, candidate.item.Tool.CommandGroup.Count)
+			}
+		}
+
+		if merged.Tool != nil && merged.Tool.CommandGroup != nil {
+			if len(groupItems) > 0 {
+				groupCount = max(groupCount, len(groupItems))
+			}
+			merged.Tool.CommandGroup.Count = max(1, groupCount)
+			merged.Tool.CommandGroup.ID = groupID
+			merged.Tool.CommandGroup.Compacted = true
+			if merged.Tool.Meta == nil {
+				merged.Tool.Meta = map[string]any{}
+			}
+			merged.Tool.Meta["commandGroup"] = merged.Tool.CommandGroup
+		}
+		if merged.Payload == nil {
+			merged.Payload = map[string]any{}
+		}
+		if len(groupItems) > 0 {
+			merged.Payload["groupItems"] = groupItems
+		}
+		if merged.Tool != nil && len(merged.Tool.Meta) > 0 {
+			merged.Payload["meta"] = merged.Tool.Meta
+		}
+
+		applyHistoryItemToRow(&canonical.row, sessionID, merged)
+		if err := tx.Save(&canonical.row).Error; err != nil {
+			return err
+		}
+
+		deleteIDs := make([]string, 0, len(candidates)-1)
+		for index, candidate := range candidates {
+			if index == canonicalIndex {
+				continue
+			}
+			deleteIDs = append(deleteIDs, candidate.row.ID)
+		}
+		if len(deleteIDs) > 0 {
+			if err := tx.Where("id IN ?", deleteIDs).Delete(&tables.WebSessionItemTable{}).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (m *Manager) replaceSessionHistoryCache(

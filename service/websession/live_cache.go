@@ -139,6 +139,17 @@ func mergeHistoryGroupItems(
 	return merged
 }
 
+func mergeHistoryGroupItemLists(
+	existing []CommandExecutionGroupItem,
+	next []CommandExecutionGroupItem,
+) []CommandExecutionGroupItem {
+	merged := append([]CommandExecutionGroupItem(nil), existing...)
+	for _, item := range next {
+		merged = mergeHistoryGroupItems(merged, item)
+	}
+	return merged
+}
+
 func decodeHistoryGroupItems(raw map[string]any) []CommandExecutionGroupItem {
 	groupItems, ok := raw["groupItems"]
 	if !ok {
@@ -320,11 +331,18 @@ func (m *Manager) applyEventToHistoryCache(
 			return nil, nil
 		}
 		toolKey := resolveToolHistoryKey(payload, event.ID)
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
+		sourceKey := historyToolSourceKey(toolKey)
+		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
+			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, sourceKey, group.ID); err != nil {
+				return nil, err
+			}
+		}
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(payload["kind"]), "tool")
 			next.Tool = historyToolFromEventPayload(payload, "running")
+			next.SourceItemID = nilIfEmptyHistory(sourceKey)
 			next.ObservedAt = ptr(event.Timestamp)
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
@@ -347,16 +365,23 @@ func (m *Manager) applyEventToHistoryCache(
 			return nil, nil
 		}
 		toolKey := resolveToolHistoryKey(payload, event.ID)
+		sourceKey := historyToolSourceKey(toolKey)
+		if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
+			if err := m.ensureCompactGroupHistorySourceKey(ctx, sessionID, sourceKey, group.ID); err != nil {
+				return nil, err
+			}
+		}
 		status := "done"
 		if payload["ok"] == false {
 			status = "error"
 		}
-		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, "tool:"+toolKey, func(next *HistoryItem) {
+		item, err := m.upsertHistoryItemBySourceID(ctx, sessionID, sourceKey, func(next *HistoryItem) {
 			existingPayload := cloneMap(next.Payload)
 			mergedPayload := mergeHistoryToolPayload(existingPayload, payload)
 			next.Kind = "tool"
 			next.ItemType = firstNonEmpty(stringValue(mergedPayload["kind"]), next.ItemType, "tool")
 			next.Tool = historyToolFromEventPayload(mergedPayload, status)
+			next.SourceItemID = nilIfEmptyHistory(sourceKey)
 			next.ObservedAt = ptr(event.Timestamp)
 			if next.Timestamp == nil {
 				next.Timestamp = ptr(event.Timestamp)
