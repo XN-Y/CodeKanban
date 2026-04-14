@@ -51,6 +51,28 @@ codekanban
 - **📝 Notes**
   Multi-tab notes for quick recording of ideas and issues (Hotkey: `1`).
 
+
+## Installable Codex Skill Bundle
+
+This repository ships an installable Codex skill bundle built around a single public CLI: `codekanban-cli`.
+Use it when you want the CodeKanban skill workflow on another machine without copying the full repository.
+
+JavaScript package layout:
+
+- `packages/node-sdk`: library-only SDK for JS integrations
+- `packages/codekanban-cli`: the only public CLI and the owner of the packaged Codex skills
+- `packages/codekanban-cli/skills/codekanban-cli`: the single shipped Codex skill source
+
+Key defaults:
+
+- Default service URL: `http://127.0.0.1:3007`
+- First-time auth setup: `printf '%s' '<PASSWORD>' | codekanban-cli auth save-token --password-stdin`
+- Non-default service URL: `codekanban-cli --base-url http://192.168.1.50:3007 session list --path /repo`
+- Saved auth file: Windows `%APPDATA%\codekanban-cli\session.json`; macOS/Linux `$XDG_CONFIG_HOME/codekanban-cli/session.json` or `~/.config/codekanban-cli/session.json`
+
+The offline bundle installs one CLI package and copies one Codex skill.
+After installing the CLI and skills, restart Codex so the new skill is discovered.
+
 ## Development Guide
 
 ### Requirements

@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { runCli } from '../src/cli.js';
+import { runCli } from '../src/runtime.js';
 import { createFetchMock, createJsonResponse, FakeWebSocket } from './helpers.js';
 
 function createAckingWebSocket(assertSent) {
@@ -54,6 +54,9 @@ async function runCliCaptured(argv, options = {}) {
           return true;
         },
       },
+      clientFactory: options.clientFactory,
+      clientOptions: options.clientOptions,
+      defaultBaseURL: options.defaultBaseURL,
     });
     return {
       exitCode,
@@ -66,6 +69,16 @@ async function runCliCaptured(argv, options = {}) {
     FakeWebSocket.reset();
   }
 }
+
+
+
+test('CLI --help prints usage text', { concurrency: false }, async () => {
+  const result = await runCliCaptured(['--help']);
+  assert.equal(result.exitCode, 0);
+  assert.match(result.stdout, /CodeKanban command runtime/);
+  assert.equal(result.stderr, '');
+});
+
 
 test('CLI web-session create prints the created session JSON', { concurrency: false }, async () => {
   const handlers = new Map([
@@ -315,4 +328,168 @@ test('CLI web-session watch streams one NDJSON frame when max-events is set to 1
   const payload = JSON.parse(lines[0]);
   assert.equal(payload.k, 'snap');
   assert.equal(payload.sid, 'ws1');
+});
+
+
+test('CLI web-session answer-pending can auto-answer with the second option', { concurrency: false }, async () => {
+  const seen = [];
+  const result = await runCliCaptured([
+    'web-session',
+    'answer-pending',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--session-id',
+    'ws1',
+    '--answer-strategy',
+    'prefer-second-or-text',
+  ], {
+    clientFactory: () => ({
+      async getWebSessionState() {
+        return {
+          pendingUserInput: {
+            itemId: 'call-1',
+            prompt: 'Pick one',
+            questions: [
+              {
+                id: 'choice',
+                options: [
+                  { label: 'A', description: 'first' },
+                  { label: 'B', description: 'second' },
+                ],
+              },
+            ],
+          },
+        };
+      },
+      async answerPendingUserInput(input) {
+        seen.push(input);
+        return { itemId: 'call-1', ack: { operation: 'user_input' } };
+      },
+    }),
+  });
+
+test('CLI web-session wait forwards settleMs to the SDK wait helper', { concurrency: false }, async () => {
+  const seen = [];
+  const result = await runCliCaptured([
+    'web-session',
+    'wait',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--session-id',
+    'ws1',
+    '--until',
+    'done',
+    '--interval-ms',
+    '500',
+    '--timeout-ms',
+    '5000',
+    '--settle-ms',
+    '2000',
+  ], {
+    clientFactory: () => ({
+      async waitForWebSessionState(input) {
+        seen.push(input);
+        return { phase: 'done' };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(seen[0].settleMs, 2000);
+  assert.equal(seen[0].intervalMs, 500);
+  assert.equal(seen[0].timeoutMs, 5000);
+});
+
+  assert.equal(result.exitCode, 0);
+  assert.deepEqual(seen[0].answers, { choice: ['B'] });
+});
+
+test('CLI web-session run reuses SDK orchestration and still reads optional files after completion', { concurrency: false }, async () => {
+  const calls = [];
+  const result = await runCliCaptured([
+    'web-session',
+    'run',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--agent',
+    'codex',
+    '--text',
+    'Create notes/123.md with a short summary.',
+    '--delete-file-before',
+    'notes/123.md',
+    '--read-file-after',
+    'notes/123.md',
+    '--strict-cwd',
+    '--settle-ms',
+    '2500',
+  ], {
+    clientFactory: () => ({
+      async createWebSession(input) {
+        calls.push({ type: 'create', input });
+        return { id: 'ws-created', projectId: 'p1' };
+      },
+      async deleteProjectFiles(input) {
+        calls.push({ type: 'delete-file', input });
+        return { succeeded: [], failed: [] };
+      },
+      async sendWebSessionMessage(input) {
+        calls.push({ type: 'send', input });
+        return { operation: 'send' };
+      },
+      async runWebSessionUntilDone(input) {
+        calls.push({ type: 'run-until-done', input });
+        return {
+          stopReason: 'done',
+          actions: [
+            { type: 'answer_user_input', itemId: 'call-1' },
+            { type: 'execute_plan', mode: 'followup_message' },
+          ],
+          finalState: {
+            phase: 'done',
+            lastAssistantMessage: { text: 'Done.' },
+          },
+        };
+      },
+      async readProjectFileText(input) {
+        calls.push({ type: 'read-file', input });
+        return { path: input.filePath, text: '# summary' };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.session.id, 'ws-created');
+  assert.equal(payload.actions.length, 2);
+  assert.match(calls.find(call => call.type === 'send').input.text, /Stay strictly inside the current working directory/);
+  const runInput = calls.find(call => call.type === 'run-until-done').input;
+  assert.equal(runInput.settleMs, 2500);
+  assert.equal(runInput.executePlanPrompt.includes('Stay strictly inside the current working directory'), true);
+  assert.equal(payload.filesAfter[0].text, '# summary');
+});
+
+test('CLI web-session list preserves array output', { concurrency: false }, async () => {
+  const handlers = new Map([
+    ['GET /api/v1/projects/p1/web-sessions', () => createJsonResponse({ items: [] })],
+  ]);
+
+  const result = await runCliCaptured([
+    'web-session',
+    'list',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+  ], {
+    fetchImpl: createFetchMock(handlers),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.trim(), '[]');
 });

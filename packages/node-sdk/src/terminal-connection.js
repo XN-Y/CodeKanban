@@ -6,7 +6,7 @@ function decodeJsonMessage(raw) {
 }
 
 export class TerminalConnection {
-  constructor({ sessionId, url, WebSocketImpl }) {
+  constructor({ sessionId, url, WebSocketImpl, webSocketOptions } = {}) {
     if (!sessionId) {
       throw new CodeKanbanValidationError('sessionId is required');
     }
@@ -25,7 +25,7 @@ export class TerminalConnection {
     this.readyMessage = undefined;
     this._listeners = new Map();
 
-    this.socket = new Socket(url);
+    this.socket = webSocketOptions ? new Socket(url, webSocketOptions) : new Socket(url);
     this._readyResolve = null;
     this._readyReject = null;
     this._readyPromise = new Promise((resolve, reject) => {

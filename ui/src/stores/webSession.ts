@@ -1,7 +1,11 @@
 import EventEmitter from 'eventemitter3';
 import { defineStore } from 'pinia';
 import { computed, reactive, ref } from 'vue';
-import { webSessionApi, type WebSessionAttachmentUploadProgress } from '@/api/webSession';
+import {
+  webSessionApi,
+  type WebSessionAttachmentUploadProgress,
+  type WebSessionImportResult,
+} from '@/api/webSession';
 import type {
   WebSessionAttachment,
   WebSessionContextWindowSource,
@@ -244,6 +248,7 @@ export interface WebSessionUserInputQuestion {
   id: string;
   header: string;
   question: string;
+  multiSelect: boolean;
   isOther: boolean;
   isSecret: boolean;
   options: WebSessionUserInputOption[];
@@ -740,9 +745,10 @@ function parseUserInputQuestions(value: unknown): WebSessionUserInputQuestion[] 
         return null;
       }
       return {
-        id: String(record.id ?? ''),
+        id: String(record.id ?? record.question ?? record.header ?? ''),
         header: String(record.header ?? ''),
         question: String(record.question ?? ''),
+        multiSelect: record.multiSelect === true,
         isOther: record.isOther === true,
         isSecret: record.isSecret === true,
         options: Array.isArray(record.options)
@@ -3014,6 +3020,38 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return summary;
   }
 
+  async function importSession(
+    projectId: string,
+    sessionId: string,
+    mode?: 'fast' | 'deep'
+  ): Promise<WebSessionImportResult> {
+    const result = await webSessionApi.importSession(projectId, {
+      sessionId,
+      mode,
+    });
+    if (result?.session) {
+      applySessionSnapshot(
+        result.session.id,
+        result.session,
+        Array.isArray(result.history?.items)
+          ? result.history.items.map(item => normalizeHistoryItem(item as WireHistoryItem))
+          : [],
+        Array.isArray(result.pendingInputs)
+          ? result.pendingInputs
+              .map(item => normalizePendingInput(item))
+              .filter((item): item is WebSessionPendingInput => item != null)
+          : [],
+        {
+          hasMore: Boolean(result.history?.hasMore),
+          beforeCursor: String(result.history?.beforeCursor ?? ''),
+          total: Number(result.history?.total ?? 0),
+        }
+      );
+      rememberActiveSession(projectId, result.session.id);
+    }
+    return result;
+  }
+
   async function syncSession(
     projectId: string,
     sessionId: string,
@@ -3412,6 +3450,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     setActiveSession,
     loadSessionSnapshot,
     createSession: createSessionViaHttp,
+    importSession,
     renameSession,
     archiveSession,
     unarchiveSession,

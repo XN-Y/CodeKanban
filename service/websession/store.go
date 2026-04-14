@@ -40,6 +40,14 @@ func (s *store) attachmentPath(id, ext string) string {
 	return filepath.Join(s.attachmentsDir, fmt.Sprintf("%s%s", id, ext))
 }
 
+func (s *store) claudeHookDir(sessionID string) string {
+	return filepath.Join(s.sessionDir(sessionID), "_claude-hooks")
+}
+
+func (s *store) claudeHookAnswerPath(sessionID, toolUseID string) string {
+	return filepath.Join(s.claudeHookDir(sessionID), fmt.Sprintf("%s.answer.json", toolUseID))
+}
+
 func (s *store) ensureSessionDir(sessionID string) error {
 	return os.MkdirAll(s.sessionDir(sessionID), 0o755)
 }

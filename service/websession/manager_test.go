@@ -156,6 +156,299 @@ func TestManagerCreateSessionDefaultsCodexToAppServerBackend(t *testing.T) {
 	}
 }
 
+func TestImportCodexSessionCreatesBoundSessionAndSyncsHistory(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		fmt.Sprintf(`{"timestamp":"2026-04-11T01:00:00Z","type":"session_meta","payload":{"id":"thread_import_1","timestamp":"2026-04-11T01:00:00Z","cwd":%q}}`, project.Path),
+		`{"timestamp":"2026-04-11T01:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"import this history","images":[]}}`,
+		`{"timestamp":"2026-04-11T01:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"history imported"}}`,
+	})
+	lastMessageAt := time.Date(2026, 4, 11, 1, 0, 2, 0, time.UTC)
+	aiSession := seedCodexAISession(
+		t,
+		project.Path,
+		"thread_import_1",
+		filePath,
+		"Imported Session",
+		time.Date(2026, 4, 11, 1, 0, 0, 0, time.UTC),
+		&lastMessageAt,
+	)
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	result, err := manager.ImportCodexSession(context.Background(), project.ID, aiSession.ID, SyncModeFast)
+	if err != nil {
+		t.Fatalf("ImportCodexSession returned error: %v", err)
+	}
+	if !result.Created || result.Reused || !result.Synced {
+		t.Fatalf("unexpected import result flags: %#v", result)
+	}
+	if result.Session.Title != "Imported Session" {
+		t.Fatalf("expected imported title to be preserved, got %q", result.Session.Title)
+	}
+	if result.Session.NativeSessionID == nil || strings.TrimSpace(*result.Session.NativeSessionID) != "thread_import_1" {
+		t.Fatalf("expected native session id thread_import_1, got %#v", result.Session.NativeSessionID)
+	}
+	if result.Session.ThreadPath == nil || strings.TrimSpace(*result.Session.ThreadPath) != filePath {
+		t.Fatalf("expected thread path %q, got %#v", filePath, result.Session.ThreadPath)
+	}
+	if result.Session.LastSyncMode != SyncModeDeep {
+		t.Fatalf("expected fast import to fall back to deep sync in test, got %q", result.Session.LastSyncMode)
+	}
+	if result.History.Total != 2 {
+		t.Fatalf("expected 2 imported history items, got %d", result.History.Total)
+	}
+	if len(result.History.Items) != 2 || result.History.Items[0].Text != "import this history" {
+		t.Fatalf("unexpected imported history items: %#v", result.History.Items)
+	}
+
+	record, err := manager.GetSession(context.Background(), result.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.WorktreeID != nil {
+		t.Fatalf("expected imported session to stay unbound from worktrees, got %#v", record.WorktreeID)
+	}
+	if record.Cwd != project.Path {
+		t.Fatalf("expected cwd %q, got %q", project.Path, record.Cwd)
+	}
+}
+
+func TestImportCodexSessionReusesExistingSessionWithoutResync(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		fmt.Sprintf(`{"timestamp":"2026-04-11T02:00:00Z","type":"session_meta","payload":{"id":"thread_import_existing","timestamp":"2026-04-11T02:00:00Z","cwd":%q}}`, project.Path),
+		`{"timestamp":"2026-04-11T02:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"reuse this history","images":[]}}`,
+		`{"timestamp":"2026-04-11T02:00:02Z","type":"event_msg","payload":{"type":"agent_message","message":"existing imported history"}}`,
+	})
+	lastMessageAt := time.Date(2026, 4, 11, 2, 0, 2, 0, time.UTC)
+	aiSession := seedCodexAISession(
+		t,
+		project.Path,
+		"thread_import_existing",
+		filePath,
+		"Imported Source Title",
+		time.Date(2026, 4, 11, 2, 0, 0, 0, time.UTC),
+		&lastMessageAt,
+	)
+
+	archivedAt := time.Now().Add(-time.Hour)
+	existingThreadPath := filepath.Join(t.TempDir(), "stale-thread.jsonl")
+	existingPreview := "stale preview"
+	existingNativeID := "thread_import_existing"
+	existing := &tables.WebSessionTable{
+		ProjectID:               project.ID,
+		OrderIndex:              1000,
+		Agent:                   string(AgentCodex),
+		Backend:                 string(SessionBackendCodexAppServer),
+		Title:                   "Pinned Title",
+		TitleAuto:               false,
+		Model:                   "gpt-5.4",
+		ReasoningEffort:         string(ReasoningEffortMedium),
+		WorkflowMode:            string(WorkflowModeDefault),
+		PermissionLevel:         string(PermissionLevelElevated),
+		AutoRetryEnabled:        false,
+		AutoRetryScope:          string(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:         string(AutoRetryPresetGentleStop),
+		LegacyPermissionMode:    "default",
+		Cwd:                     project.Path,
+		NativeSessionID:         &existingNativeID,
+		Status:                  string(StatusIdle),
+		HasUnread:               true,
+		ArchivedAt:              &archivedAt,
+		ActivityAt:              time.Now().Add(-time.Minute),
+		StatusUpdatedAt:         nil,
+		AssistantStateUpdatedAt: nil,
+		SourceKind:              defaultSourceKind(AgentCodex),
+		SyncState:               string(SyncStateFresh),
+		LastSyncMode:            string(SyncModeDeep),
+		SourceCreatedAt:         nil,
+		SourceUpdatedAt:         nil,
+		LastSyncedAt:            nil,
+		ThreadPath:              &existingThreadPath,
+		ThreadPreview:           &existingPreview,
+		TurnCount:               0,
+		ItemCount:               1,
+		LastMessageAt:           nil,
+		LastEventSeq:            0,
+	}
+	existing.Init()
+	if err := model.GetDB().Create(existing).Error; err != nil {
+		t.Fatalf("seed existing web session failed: %v", err)
+	}
+
+	itemRow := tables.WebSessionItemTable{}
+	itemRow.Init()
+	itemRow.WebSessionID = existing.ID
+	applyHistoryItemToRow(&itemRow, existing.ID, HistoryItem{
+		ID:         "cached_history",
+		OrderIndex: 1,
+		Kind:       "assistant",
+		ItemType:   "agent_message",
+		Text:       "cached history",
+		Timestamp:  ptr(time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)),
+		ObservedAt: ptr(time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)),
+		Done:       true,
+	})
+	if err := model.GetDB().Create(&itemRow).Error; err != nil {
+		t.Fatalf("seed web session item failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: filepath.Join(t.TempDir(), "missing-codex"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	result, err := manager.ImportCodexSession(context.Background(), project.ID, aiSession.ID, SyncModeFast)
+	if err != nil {
+		t.Fatalf("ImportCodexSession returned error: %v", err)
+	}
+	if result.Created || !result.Reused || result.Synced {
+		t.Fatalf("unexpected reuse result flags: %#v", result)
+	}
+	if result.Session.ID != existing.ID {
+		t.Fatalf("expected reused session id %q, got %q", existing.ID, result.Session.ID)
+	}
+	if result.Session.Title != "Pinned Title" {
+		t.Fatalf("expected existing title to be preserved, got %q", result.Session.Title)
+	}
+	if result.Session.ArchivedAt != nil {
+		t.Fatalf("expected reused session to be unarchived, got %#v", result.Session.ArchivedAt)
+	}
+	if result.History.Total != 1 || len(result.History.Items) != 1 || result.History.Items[0].Text != "cached history" {
+		t.Fatalf("expected cached history to remain untouched, got %#v", result.History.Items)
+	}
+
+	record, err := manager.GetSession(context.Background(), existing.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.ArchivedAt != nil {
+		t.Fatalf("expected archived session to be restored, got %#v", record.ArchivedAt)
+	}
+	if record.ThreadPath == nil || strings.TrimSpace(*record.ThreadPath) != filePath {
+		t.Fatalf("expected thread path to refresh to %q, got %#v", filePath, record.ThreadPath)
+	}
+	if record.Title != "Pinned Title" {
+		t.Fatalf("expected existing title to remain, got %q", record.Title)
+	}
+}
+
+func TestImportCodexSessionRejectsProjectPathMismatch(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	projectA := seedProject(t)
+	projectB := seedProject(t)
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		fmt.Sprintf(`{"timestamp":"2026-04-11T03:00:00Z","type":"session_meta","payload":{"id":"thread_import_mismatch","timestamp":"2026-04-11T03:00:00Z","cwd":%q}}`, projectA.Path),
+		`{"timestamp":"2026-04-11T03:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"wrong project","images":[]}}`,
+	})
+	lastMessageAt := time.Date(2026, 4, 11, 3, 0, 1, 0, time.UTC)
+	aiSession := seedCodexAISession(
+		t,
+		projectA.Path,
+		"thread_import_mismatch",
+		filePath,
+		"Mismatch",
+		time.Date(2026, 4, 11, 3, 0, 0, 0, time.UTC),
+		&lastMessageAt,
+	)
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	_, err = manager.ImportCodexSession(context.Background(), projectB.ID, aiSession.ID, SyncModeFast)
+	if err == nil {
+		t.Fatal("expected project path mismatch to fail")
+	}
+	if !strings.Contains(err.Error(), "does not belong") {
+		t.Fatalf("expected project mismatch error, got %v", err)
+	}
+}
+
+func TestListCodexImportSourcesUsesThreadListAndMarksDuplicates(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	nativeID := "thread_list"
+	existing := &tables.WebSessionTable{
+		ProjectID:            project.ID,
+		OrderIndex:           1000,
+		Agent:                string(AgentCodex),
+		Backend:              string(SessionBackendCodexAppServer),
+		Title:                "Imported Thread",
+		Model:                "gpt-5.4",
+		WorkflowMode:         string(WorkflowModeDefault),
+		PermissionLevel:      string(PermissionLevelElevated),
+		LegacyPermissionMode: "default",
+		Cwd:                  project.Path,
+		NativeSessionID:      &nativeID,
+		Status:               string(StatusIdle),
+		ActivityAt:           time.Now(),
+	}
+	existing.Init()
+	if err := model.GetDB().Create(existing).Error; err != nil {
+		t.Fatalf("seed existing web session failed: %v", err)
+	}
+
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "list_threads"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	result, err := manager.ListCodexImportSources(context.Background(), project.ID)
+	if err != nil {
+		t.Fatalf("ListCodexImportSources returned error: %v", err)
+	}
+	if result.ScanPhase != "complete" {
+		t.Fatalf("expected scan phase complete, got %q", result.ScanPhase)
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("expected 2 import sources, got %d", len(result.Items))
+	}
+
+	var duplicate ImportSourceSummary
+	foundDuplicate := false
+	for _, item := range result.Items {
+		if item.SessionID == "thread_list" {
+			duplicate = item
+			foundDuplicate = true
+			break
+		}
+	}
+	if !foundDuplicate {
+		t.Fatalf("expected thread_list import source, got %#v", result.Items)
+	}
+	if !duplicate.Duplicate || duplicate.ExistingSession == nil {
+		t.Fatalf("expected duplicate thread to be marked, got %#v", duplicate)
+	}
+	if duplicate.ExistingSession.ID != existing.ID {
+		t.Fatalf("expected existing session id %q, got %#v", existing.ID, duplicate.ExistingSession)
+	}
+}
+
 func TestManagerBroadcastOnlyTargetsEventClients(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -3689,6 +3982,43 @@ func seedProject(t *testing.T) *tables.ProjectTable {
 	return project
 }
 
+func seedCodexAISession(
+	t *testing.T,
+	projectPath string,
+	sessionID string,
+	filePath string,
+	title string,
+	startedAt time.Time,
+	lastMessageAt *time.Time,
+) *tables.AISessionTable {
+	t.Helper()
+
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("stat ai session file failed: %v", err)
+	}
+
+	session := &tables.AISessionTable{
+		SessionID:             sessionID,
+		Type:                  tables.AISessionTypeCodex,
+		ProjectPath:           projectPath,
+		FilePath:              filePath,
+		Model:                 "gpt-5.4",
+		Title:                 title,
+		SessionStartedAt:      startedAt,
+		LastMessageAt:         lastMessageAt,
+		MessageCount:          1,
+		AssistantMessageCount: 1,
+		FileModTime:           info.ModTime(),
+		FileSize:              info.Size(),
+	}
+	session.Init()
+	if err := model.GetDB().Create(session).Error; err != nil {
+		t.Fatalf("seed ai session failed: %v", err)
+	}
+	return session
+}
+
 func seedWebSession(t *testing.T, projectID, title string, orderIndex float64) *tables.WebSessionTable {
 	return seedWebSessionWithAgent(t, projectID, title, orderIndex, AgentCodex)
 }
@@ -3731,6 +4061,52 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_
 `
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex cli failed: %v", err)
+	}
+	return path
+}
+
+func writeFakeClaudeStreamCLI(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-claude.sh")
+	script := `#!/bin/sh
+read first_line
+printf '%s\n' '{"type":"system","session_id":"claude-session-test"}'
+printf '%s\n' '{"type":"assistant","uuid":"assistant_1","message":{"type":"message","role":"assistant","id":"assistant_msg_1","content":[{"type":"text","text":"done"}],"stop_reason":"end_turn"}}'
+cat >/dev/null
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake claude cli failed: %v", err)
+	}
+	return path
+}
+
+func writeFakeClaudeDeferredCLI(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "fake-claude-deferred.sh")
+	script := `#!/bin/sh
+state_file="` + filepath.Join(t.TempDir(), "claude-deferred-state.txt") + `"
+count=0
+if [ -f "$state_file" ]; then
+  count=$(cat "$state_file")
+fi
+count=$((count + 1))
+printf '%s' "$count" >"$state_file"
+if [ "$count" -eq 1 ]; then
+  cat >/dev/null
+  printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+  printf '%s\n' '{"type":"assistant","uuid":"assistant_tool","message":{"type":"message","role":"assistant","id":"assistant_tool_msg","content":[{"type":"tool_use","id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}],"stop_reason":"tool_use"}}'
+  printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"tool_deferred","deferred_tool_use":{"id":"tool_ask_resume","name":"AskUserQuestion","input":{"questions":[{"header":"Direction","question":"What should happen next?","multiSelect":false,"options":[{"label":"Implement","description":"Start coding now."},{"label":"Plan","description":"Stay in planning mode."}]}]}}}'
+  exit 0
+fi
+cat >/dev/null
+printf '%s\n' '{"type":"system","subtype":"init","session_id":"claude-session-test"}'
+printf '%s\n' '{"type":"assistant","uuid":"assistant_done","message":{"type":"message","role":"assistant","id":"assistant_done_msg","content":[{"type":"text","text":"continuing after the answer"}],"stop_reason":"end_turn"}}'
+printf '%s\n' '{"type":"result","session_id":"claude-session-test","stop_reason":"end_turn"}'
+`
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake claude deferred cli failed: %v", err)
 	}
 	return path
 }
@@ -4002,6 +4378,44 @@ rl.on('line', line => {
         platformOs: 'linux',
       },
     });
+    return;
+  }
+
+  if (message.method === 'thread/list') {
+    const archived = !!(message.params && message.params.archived);
+    if (mode === 'list_threads') {
+      send({
+        id: message.id,
+        result: {
+          data: archived
+            ? [
+                {
+                  id: 'thread_archived',
+                  preview: 'Archived preview',
+                  path: '/tmp/thread-archived.jsonl',
+                  cwd: message.params && message.params.cwd,
+                  status: 'archived',
+                  createdAt: 1712793600,
+                  updatedAt: 1712797200,
+                },
+              ]
+            : [
+                {
+                  id: 'thread_list',
+                  preview: 'Thread preview',
+                  path: '/tmp/thread-list.jsonl',
+                  cwd: message.params && message.params.cwd,
+                  status: 'idle',
+                  createdAt: 1712793600,
+                  updatedAt: 1712797200,
+                },
+              ],
+          nextCursor: '',
+        },
+      });
+      return;
+    }
+    send({ id: message.id, result: { data: [], nextCursor: '' } });
     return;
   }
 

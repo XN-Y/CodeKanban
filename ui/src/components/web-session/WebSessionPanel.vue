@@ -2,6 +2,14 @@
   <div class="web-session-panel" :style="webSessionStyleVars">
     <WebSessionCompletionNotifier />
     <WebSessionApprovalNotifier />
+    <WebSessionImportDialog
+      v-if="props.projectId"
+      v-model:show="showImportDialog"
+      :project-id="props.projectId"
+      :pending-session-id="importingCodexSessionId"
+      @import-session="handleImportCodexSession"
+      @open-existing-session="handleOpenImportedCodexSession"
+    />
 
     <div class="panel-main">
       <div class="panel-body">
@@ -161,19 +169,40 @@
                   </template>
                 </n-button>
               </n-dropdown>
-              <n-button
-                v-else
-                secondary
-                size="small"
-                class="new-session-button"
-                :title="t('webSession.newSession')"
-                :aria-label="t('webSession.newSession')"
-                @click="handleStartDraftSession()"
-              >
-                <template #icon>
-                  <n-icon><AddOutline /></n-icon>
+              <n-tooltip v-else trigger="hover" placement="bottom" :delay="100">
+                <template #trigger>
+                  <n-button
+                    text
+                    size="small"
+                    class="desktop-header-icon-button"
+                    :title="t('webSession.newSession')"
+                    :aria-label="t('webSession.newSession')"
+                    @click="handleStartDraftSession()"
+                  >
+                    <template #icon>
+                      <n-icon><AddOutline /></n-icon>
+                    </template>
+                  </n-button>
                 </template>
-              </n-button>
+                {{ t('webSession.newSession') }}
+              </n-tooltip>
+              <n-tooltip v-if="!isMobile" trigger="hover" placement="bottom" :delay="100">
+                <template #trigger>
+                  <n-button
+                    text
+                    size="small"
+                    class="desktop-header-icon-button"
+                    :title="t('webSession.importCodexSession')"
+                    :aria-label="t('webSession.importCodexSession')"
+                    @click="openImportDialog()"
+                  >
+                    <template #icon>
+                      <n-icon><TimeOutline /></n-icon>
+                    </template>
+                  </n-button>
+                </template>
+                {{ t('webSession.importCodexSession') }}
+              </n-tooltip>
             </div>
           </div>
 
@@ -762,7 +791,7 @@
                         {{ question.question }}
                       </div>
                       <n-checkbox-group
-                        v-if="question.options.length > 0"
+                        v-if="question.options.length > 0 && question.multiSelect"
                         v-model:value="userInputSelections[question.id]"
                         :disabled="isUserInputInteractionDisabled"
                         class="user-input-options"
@@ -780,6 +809,26 @@
                           </div>
                         </div>
                       </n-checkbox-group>
+                      <n-radio-group
+                        v-else-if="question.options.length > 0"
+                        :value="userInputSelections[question.id]?.[0] || null"
+                        :disabled="isUserInputInteractionDisabled"
+                        class="user-input-options"
+                        @update:value="handleUserInputSingleSelect(question.id, $event)"
+                      >
+                        <div
+                          v-for="option in question.options"
+                          :key="`${question.id}:${option.label}`"
+                          class="user-input-option"
+                        >
+                          <n-radio :value="option.label">
+                            <span class="user-input-option-label">{{ option.label }}</span>
+                          </n-radio>
+                          <div v-if="option.description" class="user-input-option-description">
+                            {{ option.description }}
+                          </div>
+                        </div>
+                      </n-radio-group>
                       <n-input
                         v-if="question.isOther || question.options.length === 0"
                         v-model:value="userInputDrafts[question.id]"
@@ -1585,6 +1634,7 @@ import {
   EllipsisHorizontalOutline,
   FlashOutline,
   ImageOutline,
+  TimeOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
@@ -1631,6 +1681,7 @@ import TransferProgressDialog from '@/components/common/TransferProgressDialog.v
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
+import WebSessionImportDialog from '@/components/web-session/WebSessionImportDialog.vue';
 import {
   buildTimelineRawModeKey,
   pruneActiveTimelineRawBlockKey,
@@ -1901,6 +1952,7 @@ const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
 const showMobileTabSelector = ref(false);
 const showQuickInputPopover = ref(false);
+const showImportDialog = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
@@ -1932,6 +1984,7 @@ const submitStateBySessionId = ref<WebSessionSubmitState>({});
 const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
 const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
 const archiveStateBySessionId = ref<WebSessionSubmitState>({});
+const importingCodexSessionId = ref('');
 const sendConfirmationState = ref<WebSessionSendConfirmationState | null>(null);
 const liveCardContinuePending = ref(false);
 const optimisticUnreadClearedVersionBySession = ref<Record<string, number>>({});
@@ -3744,33 +3797,30 @@ function handleMobileTabShowUpdate(show: boolean) {
 }
 
 function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
-  return [
+  const canClaudeSync =
+    !!session &&
+    !isDraftSession(session) &&
+    session.agent === 'claude' &&
+    (Boolean(session.nativeSessionId) || Boolean(session.threadPath));
+  const canCodexSync =
+    !!session &&
+    !isDraftSession(session) &&
+    session.agent === 'codex' &&
+    Boolean(session.nativeSessionId);
+
+  const options: DropdownOption[] = [
     {
       label: t('webSession.newSession'),
       key: 'new',
     },
     {
+      label: t('webSession.importCodexSession'),
+      key: 'import',
+    },
+    {
       label: t('common.edit'),
       key: 'rename',
       disabled: !session || isDraftSession(session),
-    },
-    {
-      label: t('webSession.syncFromTerminal'),
-      key: 'sync',
-      disabled:
-        !session ||
-        isDraftSession(session) ||
-        session.agent !== 'codex' ||
-        !session.nativeSessionId,
-    },
-    {
-      label: t('webSession.deepSyncFromTerminal'),
-      key: 'deep-sync',
-      disabled:
-        !session ||
-        isDraftSession(session) ||
-        session.agent !== 'codex' ||
-        !session.nativeSessionId,
     },
     {
       label: t('webSession.archiveAction'),
@@ -3787,6 +3837,27 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
       disabled: !session,
     },
   ];
+
+  if (canClaudeSync || canCodexSync) {
+    options.splice(2, 0, {
+      label:
+        session?.agent === 'claude'
+          ? t('webSession.syncSessionAction')
+          : t('webSession.syncFromTerminal'),
+      key: 'sync',
+      disabled: session?.agent === 'claude' ? !canClaudeSync : !canCodexSync,
+    });
+  }
+
+  if (canCodexSync) {
+    options.splice(3, 0, {
+      label: t('webSession.deepSyncFromTerminal'),
+      key: 'deep-sync',
+      disabled: !canCodexSync,
+    });
+  }
+
+  return options;
 }
 
 const contextMenuOptions = computed<DropdownOption[]>(() =>
@@ -3800,6 +3871,10 @@ const mobileActionMenuOptions = computed<DropdownOption[]>(() =>
 async function handleSessionActionSelect(action: string, session: SessionTab | null) {
   if (action === 'new') {
     await handleStartDraftSession();
+    return;
+  }
+  if (action === 'import') {
+    openImportDialog();
     return;
   }
   if (!session) {
@@ -4384,7 +4459,10 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
       draftReasoningEffort.value ||
       defaultReasoningEffortForAgent(nextAgent),
     workflowMode: source?.workflowMode || draftWorkflowMode.value,
-    permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+    permissionLevel:
+      (source?.permissionLevel === 'default' && nextAgent === 'claude'
+        ? 'elevated'
+        : source?.permissionLevel) || draftPermissionLevel.value,
     autoRetryEnabled: source?.autoRetryEnabled === true,
     autoRetryScope:
       source?.autoRetryEnabled === true ? source.autoRetryScope : webSessionAutoContinueScope.value,
@@ -5020,6 +5098,9 @@ const selectedAgent = computed({
       draftModel.value = 'gpt-5.4';
     }
     draftReasoningEffort.value = defaultReasoningEffortForAgent(next);
+    if (next === 'claude' && draftPermissionLevel.value === 'default') {
+      draftPermissionLevel.value = 'elevated';
+    }
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
         ...current,
@@ -5031,6 +5112,10 @@ const selectedAgent = computed({
               ? 'gpt-5.4'
               : current.model,
         reasoningEffort: defaultReasoningEffortForAgent(next),
+        permissionLevel:
+          next === 'claude' && current.permissionLevel === 'default'
+            ? 'elevated'
+            : current.permissionLevel,
         updatedAt: new Date().toISOString(),
       }));
       return;
@@ -5090,7 +5175,9 @@ const selectedReasoningEffort = computed<'default' | 'none' | 'low' | 'medium' |
 });
 
 const permissionLevelOptions = computed(() => [
-  { label: t('webSession.permissionDefault'), value: 'default' },
+  ...(selectedAgent.value === 'claude'
+    ? []
+    : [{ label: t('webSession.permissionDefault'), value: 'default' }]),
   { label: t('webSession.permissionElevated'), value: 'elevated' },
   { label: t('webSession.permissionYolo'), value: 'yolo' },
 ]);
@@ -5117,9 +5204,18 @@ const selectedWorkflowMode = computed<'default' | 'plan'>({
 });
 
 const selectedPermissionLevel = computed<'default' | 'elevated' | 'yolo'>({
-  get: () => currentSession.value?.permissionLevel ?? draftPermissionLevel.value,
+  get: () => {
+    const value = currentSession.value?.permissionLevel ?? draftPermissionLevel.value;
+    if (selectedAgent.value === 'claude' && value === 'default') {
+      return 'elevated';
+    }
+    return value;
+  },
   set: value => {
-    const next = value as 'default' | 'elevated' | 'yolo';
+    const next =
+      selectedAgent.value === 'claude' && value === 'default'
+        ? 'elevated'
+        : (value as 'default' | 'elevated' | 'yolo');
     draftPermissionLevel.value = next;
     if (isDraftSession(currentSession.value)) {
       updateActiveDraftSession(current => ({
@@ -6270,6 +6366,80 @@ function startSidebarResize(event: MouseEvent) {
   document.body.style.userSelect = 'none';
 }
 
+function openImportDialog() {
+  showMobileTabSelector.value = false;
+  contextMenuSession.value = null;
+  showImportDialog.value = true;
+}
+
+function promptSyncExistingImportedSession(session: WebSessionSummary) {
+  dialog.warning({
+    title: t('webSession.importCodexSessionReuseTitle'),
+    content: t('webSession.importCodexSessionReuseContent', {
+      title: session.title,
+    }),
+    positiveText: t('webSession.syncFromTerminal'),
+    negativeText: t('webSession.importCodexSessionReuseSkip'),
+    onPositiveClick: async () => handleSyncSession(session.id, 'fast', false),
+  });
+}
+
+async function handleOpenImportedCodexSession(session: WebSessionSummary) {
+  try {
+    showImportDialog.value = false;
+
+    let target = session;
+    if (session.archivedAt) {
+      target = await webSessionStore.unarchiveSession(session.projectId, session.id);
+      await refreshArchivedSidebar();
+      if (archivedPreviewSession.value?.id === session.id) {
+        clearArchivedPreviewSession({ preserveTabId: true });
+        activeArchivedPreviewId.value = '';
+      }
+    }
+
+    await activateTabById(target.id);
+    scrollToBottom(true);
+    promptSyncExistingImportedSession(target);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleImportCodexSession(sessionId: string) {
+  if (!props.projectId || !sessionId || importingCodexSessionId.value) {
+    return;
+  }
+
+  importingCodexSessionId.value = sessionId;
+  try {
+    const result = await webSessionStore.importSession(props.projectId, sessionId, 'fast');
+
+    if (result.reused) {
+      await refreshArchivedSidebar();
+      if (archivedPreviewSession.value?.id === result.session.id) {
+        clearArchivedPreviewSession({ preserveTabId: true });
+        activeArchivedPreviewId.value = '';
+      }
+    }
+
+    showImportDialog.value = false;
+    await activateTabById(result.session.id, { connectReal: false });
+    scrollToBottom(true);
+    message.success(t('webSession.importCodexSessionSuccess'));
+
+    if (result.reused && !result.synced) {
+      promptSyncExistingImportedSession(result.session);
+    }
+  } catch (error) {
+    message.error(
+      error instanceof Error ? error.message : t('webSession.importCodexSessionFailed')
+    );
+  } finally {
+    importingCodexSessionId.value = '';
+  }
+}
+
 async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
   try {
     const source = currentSession.value;
@@ -6285,7 +6455,10 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
         source?.reasoningEffort ||
         (agent === 'codex' ? selectedReasoningEffort.value : defaultReasoningEffortForAgent(agent)),
       workflowMode: source?.workflowMode || draftWorkflowMode.value,
-      permissionLevel: source?.permissionLevel || draftPermissionLevel.value,
+      permissionLevel:
+        (source?.permissionLevel === 'default' && agent === 'claude'
+          ? 'elevated'
+          : source?.permissionLevel) || draftPermissionLevel.value,
       autoRetryEnabled: source?.autoRetryEnabled === true,
       autoRetryScope:
         source?.autoRetryEnabled === true
@@ -7032,6 +7205,18 @@ function handleUserInputEnter(event: KeyboardEvent) {
   void handleUserInputSubmit();
 }
 
+function handleUserInputSingleSelect(questionId: string, value: string | null) {
+  const normalizedQuestionId = String(questionId || '').trim();
+  if (!normalizedQuestionId) {
+    return;
+  }
+  const normalizedValue = String(value || '').trim();
+  userInputSelections.value = {
+    ...userInputSelections.value,
+    [normalizedQuestionId]: normalizedValue ? [normalizedValue] : [],
+  };
+}
+
 function pendingModeLabel(mode: WebSessionPendingInput['mode']) {
   return mode === 'redirect' ? t('webSession.pendingRedirect') : t('webSession.pendingQueue');
 }
@@ -7722,12 +7907,15 @@ function syncModeLabel(mode: 'fast' | 'deep') {
 
 function confirmSyncSession(session: WebSessionSummary, mode: 'fast' | 'deep') {
   const clearExisting = ref(false);
+  const isClaude = session.agent === 'claude';
   dialog.warning({
     title: t('webSession.syncConfirmTitle'),
     content: () =>
       h('div', { class: 'web-session-close-confirm' }, [
         h('div', { class: 'web-session-close-confirm__message' }, [
-          t('webSession.syncConfirmContent', { mode: syncModeLabel(mode) }),
+          isClaude
+            ? t('webSession.syncConfirmContentClaude')
+            : t('webSession.syncConfirmContent', { mode: syncModeLabel(mode) }),
         ]),
         h(
           'div',
@@ -7744,8 +7932,11 @@ function confirmSyncSession(session: WebSessionSummary, mode: 'fast' | 'deep') {
           )
         ),
       ]),
-    positiveText:
-      mode === 'deep' ? t('webSession.deepSyncFromTerminal') : t('webSession.syncFromTerminal'),
+    positiveText: isClaude
+      ? t('webSession.syncSessionAction')
+      : mode === 'deep'
+        ? t('webSession.deepSyncFromTerminal')
+        : t('webSession.syncFromTerminal'),
     negativeText: t('common.cancel'),
     onPositiveClick: async () => handleSyncSession(session.id, mode, clearExisting.value),
   });
@@ -8519,7 +8710,6 @@ onBeforeUnmount(() => {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  padding-right: 8px;
   position: relative;
 }
 
@@ -8854,8 +9044,15 @@ onBeforeUnmount(() => {
 }
 
 .new-session-button {
-  min-width: 32px;
-  width: 32px;
+  min-width: 44px;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+.desktop-header-icon-button {
+  width: 30px;
+  min-width: 30px;
+  height: 34px;
   padding-left: 0 !important;
   padding-right: 0 !important;
 }

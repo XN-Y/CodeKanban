@@ -1,6 +1,14 @@
-import path from 'node:path';
+﻿import path from 'node:path';
 
 import { CodeKanbanConfigError, CodeKanbanValidationError } from './errors.js';
+
+function isWindowsAbsolutePath(value) {
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith('\\\\');
+}
+
+function isPosixAbsolutePath(value) {
+  return value.startsWith('/');
+}
 
 export function normalizeBaseUrl(baseURL) {
   const value = String(baseURL || '').trim();
@@ -46,14 +54,27 @@ export function ensureArrayOfStrings(value, fieldName) {
 
 export function normalizeFsPath(inputPath) {
   const value = ensureString(inputPath, 'path');
+  if (isWindowsAbsolutePath(value)) {
+    return path.win32.normalize(value).toLowerCase();
+  }
+  if (isPosixAbsolutePath(value)) {
+    return path.posix.normalize(value);
+  }
   const resolved = path.resolve(value);
   const normalized = path.normalize(resolved);
   return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 export function pathBasename(inputPath) {
-  const resolved = path.resolve(String(inputPath || ''));
-  const base = path.basename(resolved);
+  const value = String(inputPath || '').trim();
+  if (!value) {
+    return 'project';
+  }
+  const base = isWindowsAbsolutePath(value)
+    ? path.win32.basename(path.win32.normalize(value))
+    : isPosixAbsolutePath(value)
+      ? path.posix.basename(path.posix.normalize(value))
+      : path.basename(path.resolve(value));
   return base || 'project';
 }
 
@@ -97,3 +118,4 @@ export function toCommandString(argv) {
 export function createJsonOutput(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
+

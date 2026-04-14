@@ -17,6 +17,7 @@ import {
   normalizeWebSessionAttachment,
 } from "./web-session-shared.js";
 import {
+  ensureArrayOfStrings,
   ensureOptionalString,
   ensureString,
   normalizeBaseUrl,
@@ -143,12 +144,274 @@ function getRetryDelayMs(retryConfig, attemptIndex) {
   );
 }
 
+function normalizeWebSessionQuestionChoice(value) {
+  return String(value || "").trim();
+}
+
+function buildAutoWebSessionAnswers(
+  questions = [],
+  strategy = "prefer-second-or-text",
+) {
+  const normalizedStrategy = String(
+    strategy || "prefer-second-or-text",
+  ).trim().toLowerCase();
+  if (
+    !["prefer-second-or-text", "prefer-second-or-first"].includes(
+      normalizedStrategy,
+    )
+  ) {
+    throw new CodeKanbanValidationError(
+      `unsupported answer strategy: ${strategy}`,
+    );
+  }
+
+  const answers = {};
+  for (const question of Array.isArray(questions) ? questions : []) {
+    const questionId = normalizeWebSessionQuestionChoice(question?.id);
+    if (!questionId) {
+      continue;
+    }
+    const options = Array.isArray(question?.options)
+      ? question.options
+          .map((option) => normalizeWebSessionQuestionChoice(option?.label))
+          .filter(Boolean)
+      : [];
+    if (options[1]) {
+      answers[questionId] = [options[1]];
+      continue;
+    }
+    if (normalizedStrategy === "prefer-second-or-first" && options[0]) {
+      answers[questionId] = [options[0]];
+      continue;
+    }
+    answers[questionId] = [question?.isSecret ? "redacted" : "continue"];
+  }
+  return answers;
+}
+
+function normalizeWebSessionStateMatcher(until) {
+  if (!until) {
+    throw new CodeKanbanValidationError("until is required");
+  }
+  return typeof until === "function"
+    ? until
+    : Array.isArray(until)
+      ? (state) => until.includes(state.phase)
+      : (state) => state.phase === until;
+}
+
+function getWebSessionPauseReason(state, untilMatcher) {
+  if (!state) {
+    return null;
+  }
+  if (state.phase === "done") {
+    return "done";
+  }
+  if (state.phase === "error") {
+    return "error";
+  }
+  if (typeof untilMatcher === "function" && untilMatcher(state)) {
+    return "until";
+  }
+  if (state.nextAction?.type === "approval") {
+    return "approval";
+  }
+  if (state.nextAction?.type === "answer_user_input") {
+    return "user_input";
+  }
+  if (
+    state.nextAction?.type === "execute_plan" ||
+    (state.latestPlan?.awaitingExecution && state.canSend)
+  ) {
+    return "execute_plan";
+  }
+  return null;
+}
+
+function isDebouncedPauseReason(reason) {
+  return reason === "done" || reason === "error" || reason === "until";
+}
+
+function hasOwnField(value, fieldName) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      Object.prototype.hasOwnProperty.call(value, fieldName),
+  );
+}
+
+function extractPayloadItem(payload) {
+  if (hasOwnField(payload?.body, "item")) {
+    return payload.body.item;
+  }
+  if (hasOwnField(payload, "item")) {
+    return payload.item;
+  }
+  return null;
+}
+
+function extractPayloadItems(payload) {
+  if (Array.isArray(payload?.body?.items)) {
+    return payload.body.items;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  return [];
+}
+
+function extractPayloadMessage(payload) {
+  if (typeof payload?.body?.message === "string") {
+    return payload.body.message;
+  }
+  if (typeof payload?.message === "string") {
+    return payload.message;
+  }
+  return "";
+}
+
+function normalizeProjectSearchToken(value) {
+  return ensureOptionalString(value).toLowerCase();
+}
+
+function uniqueProjectsById(projects) {
+  const seen = new Set();
+  return projects.filter((project) => {
+    const id = ensureOptionalString(project?.id);
+    if (!id || seen.has(id)) {
+      return false;
+    }
+    seen.add(id);
+    return true;
+  });
+}
+
+function projectPathBaseName(project) {
+  const projectPath = ensureOptionalString(project?.path);
+  return projectPath ? normalizeProjectSearchToken(pathBasename(projectPath)) : "";
+}
+
+function normalizeProjectIndex(projectIndex) {
+  if (projectIndex == null || projectIndex === "") {
+    return null;
+  }
+  const normalized = Number(projectIndex);
+  if (!Number.isInteger(normalized) || normalized < 1) {
+    throw new CodeKanbanValidationError(
+      "projectIndex must be a positive integer",
+    );
+  }
+  return normalized;
+}
+
+function selectProjectCandidate(
+  projectName,
+  candidates,
+  projectIndex,
+  reason,
+  matchedBy,
+) {
+  const normalizedProjectIndex = normalizeProjectIndex(projectIndex);
+  if (normalizedProjectIndex != null) {
+    const selected = candidates[normalizedProjectIndex - 1];
+    if (!selected) {
+      throw new CodeKanbanValidationError(
+        `projectIndex ${normalizedProjectIndex} is out of range for projectName ${projectName}`,
+      );
+    }
+    return {
+      project: selected,
+      matchedBy,
+    };
+  }
+  throw new CodeKanbanValidationError(
+    `projectName ${projectName} ${reason}; provide projectIndex or projectId`,
+  );
+}
+
+function resolveProjectByName(projects, projectName, projectIndex) {
+  const needle = normalizeProjectSearchToken(projectName);
+  if (!needle) {
+    throw new CodeKanbanValidationError("projectName is required");
+  }
+
+  const exactName = uniqueProjectsById(
+    projects.filter(
+      (project) => normalizeProjectSearchToken(project?.name) === needle,
+    ),
+  );
+  if (exactName.length === 1) {
+    return {
+      project: exactName[0],
+      matchedBy: "projectName",
+    };
+  }
+  if (exactName.length > 1) {
+    return selectProjectCandidate(
+      projectName,
+      exactName,
+      projectIndex,
+      "matches multiple projects",
+      "projectName",
+    );
+  }
+
+  const exactBaseName = uniqueProjectsById(
+    projects.filter((project) => projectPathBaseName(project) === needle),
+  );
+  if (exactBaseName.length === 1) {
+    return {
+      project: exactBaseName[0],
+      matchedBy: "projectPathBaseName",
+    };
+  }
+  if (exactBaseName.length > 1) {
+    return selectProjectCandidate(
+      projectName,
+      exactBaseName,
+      projectIndex,
+      "matches multiple project paths",
+      "projectPathBaseName",
+    );
+  }
+
+  const fuzzy = uniqueProjectsById(
+    projects.filter((project) => {
+      const normalizedName = normalizeProjectSearchToken(project?.name);
+      const normalizedBaseName = projectPathBaseName(project);
+      return (
+        normalizedName.includes(needle) || normalizedBaseName.includes(needle)
+      );
+    }),
+  );
+  if (fuzzy.length === 1) {
+    return {
+      project: fuzzy[0],
+      matchedBy: "projectNameFuzzy",
+    };
+  }
+  if (fuzzy.length > 1) {
+    return selectProjectCandidate(
+      projectName,
+      fuzzy,
+      projectIndex,
+      "is ambiguous",
+      "projectNameFuzzy",
+    );
+  }
+
+  throw new CodeKanbanValidationError(
+    `no CodeKanban project is registered for projectName: ${projectName}`,
+  );
+}
+
 export class CodeKanbanClient {
   constructor(options = {}) {
     this.baseURL = normalizeBaseUrl(options.baseURL);
     this.headers = { ...(options.headers || {}) };
     this.fetchImpl = options.fetchImpl || globalThis.fetch;
     this.WebSocketImpl = options.WebSocketImpl || globalThis.WebSocket;
+    this.webSocketOptions = options.webSocketOptions || null;
     this.requestRetry = normalizeRequestRetryConfig(options.requestRetry);
     if (!this.fetchImpl) {
       throw new CodeKanbanConfigError("fetch implementation is unavailable");
@@ -215,22 +478,104 @@ export class CodeKanbanClient {
     );
   }
 
-  async resolveProjectReference({ projectId, path, ensureProject = true }) {
+  async requestText(path, options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
+    const headers = {
+      ...this.headers,
+      ...(options.headers || {}),
+    };
+    const request = {
+      method,
+      headers,
+    };
+
+    const retryConfig = resolveRequestRetryConfig(
+      method,
+      this.requestRetry,
+      options.retry,
+    );
+    const maxAttempts = retryConfig?.attempts ?? 1;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const response = await this.fetchImpl(
+          new URL(path, this.baseURL),
+          request,
+        );
+        const text = await response.text();
+        if (!response.ok) {
+          let body = null;
+          try {
+            body = text ? JSON.parse(text) : null;
+          } catch {
+            body = text || null;
+          }
+          throw new CodeKanbanHttpError(
+            `request failed with ${response.status}`,
+            {
+              status: response.status,
+              method,
+              path,
+              body,
+            },
+          );
+        }
+        return {
+          text,
+          contentType:
+            typeof response.headers?.get === "function"
+              ? response.headers.get("content-type") || ""
+              : "",
+        };
+      } catch (error) {
+        const canRetry =
+          retryConfig &&
+          attempt + 1 < maxAttempts &&
+          isRetryableRequestError(error);
+        if (!canRetry) {
+          throw error;
+        }
+        await sleep(getRetryDelayMs(retryConfig, attempt));
+      }
+    }
+
+    throw new CodeKanbanValidationError(
+      `request retry loop exited unexpectedly for ${method} ${path}`,
+    );
+  }
+
+  async resolveProjectReference({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    ensureProject = true,
+  }) {
     const { project } = await this.resolveProject({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject,
     });
     return project;
   }
 
-  async resolveProjectId({ projectId, path, ensureProject = true }) {
+  async resolveProjectId({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    ensureProject = true,
+  }) {
     const resolvedProjectId = ensureOptionalString(projectId);
     if (resolvedProjectId) {
       return resolvedProjectId;
     }
     const { project } = await this.resolveProject({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject,
     });
@@ -239,13 +584,13 @@ export class CodeKanbanClient {
 
   async listProjects() {
     const response = await this.requestJson("/api/v1/projects");
-    return response?.items || [];
+    return extractPayloadItems(response);
   }
 
   async getProject(projectId) {
     ensureString(projectId, "projectId");
     const response = await this.requestJson(`/api/v1/projects/${projectId}`);
-    return response?.item;
+    return extractPayloadItem(response);
   }
 
   async createProject({
@@ -267,7 +612,7 @@ export class CodeKanbanClient {
         hidePath,
       },
     });
-    return response?.item;
+    return extractPayloadItem(response);
   }
 
   async listWorktrees(projectId) {
@@ -275,7 +620,7 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${projectId}/worktrees`,
     );
-    return response?.items || [];
+    return extractPayloadItems(response);
   }
 
   async listTerminalSessions(projectId) {
@@ -283,7 +628,7 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${projectId}/terminals`,
     );
-    return response?.items || [];
+    return extractPayloadItems(response);
   }
 
   async listAISessionsByProject(projectId) {
@@ -291,7 +636,7 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${projectId}/ai-sessions`,
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async listAISessionsByPath(projectPath) {
@@ -300,7 +645,7 @@ export class CodeKanbanClient {
       method: "POST",
       body: { path: projectPath },
     });
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async getAISessionConversation({ id, sessionId, refresh = false }) {
@@ -322,13 +667,13 @@ export class CodeKanbanClient {
       const response = await this.requestJson(path, {
         method: refresh ? "POST" : "GET",
       });
-      return response?.item || null;
+      return extractPayloadItem(response);
     }
 
     const response = await this.requestJson(
       `/api/v1/ai-sessions/by-session-id/${rawSessionId}/conversation`,
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async getAISessionToolResult({ id, sessionId, toolUseId }) {
@@ -342,7 +687,7 @@ export class CodeKanbanClient {
       ? `/api/v1/ai-sessions/${dbId}/conversation/tool-results/${resolvedToolUseId}`
       : `/api/v1/ai-sessions/by-session-id/${rawSessionId}/conversation/tool-results/${resolvedToolUseId}`;
     const response = await this.requestJson(path);
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async createTerminalSession({
@@ -367,11 +712,18 @@ export class CodeKanbanClient {
         },
       },
     );
-    return response?.item;
+    return extractPayloadItem(response);
   }
 
-  async resolveProject({ projectId, path, ensureProject = true }) {
+  async resolveProject({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    ensureProject = true,
+  }) {
     const resolvedProjectId = ensureOptionalString(projectId);
+    const resolvedProjectName = ensureOptionalString(projectName);
     const resolvedPath = ensureOptionalString(path);
 
     if (resolvedProjectId) {
@@ -382,12 +734,20 @@ export class CodeKanbanClient {
       };
     }
 
+    const projects =
+      resolvedProjectName || resolvedPath ? await this.listProjects() : [];
+
+    if (resolvedProjectName) {
+      return resolveProjectByName(projects, resolvedProjectName, projectIndex);
+    }
+
     if (!resolvedPath) {
-      throw new CodeKanbanValidationError("projectId or path is required");
+      throw new CodeKanbanValidationError(
+        "projectId, projectName, or path is required",
+      );
     }
 
     const target = normalizeFsPath(resolvedPath);
-    const projects = await this.listProjects();
     const project = projects.find(
       (item) => normalizeFsPath(item.path) === target,
     );
@@ -451,6 +811,7 @@ export class CodeKanbanClient {
       sessionId: resolvedSessionId,
       url,
       WebSocketImpl: this.WebSocketImpl,
+      webSocketOptions: this.webSocketOptions,
     });
   }
 
@@ -458,6 +819,7 @@ export class CodeKanbanClient {
     return new WebSessionCommandChannel({
       url: toWsUrl(this.baseURL, WEB_SESSION_COMMAND_WS_PATH),
       WebSocketImpl: this.WebSocketImpl,
+      webSocketOptions: this.webSocketOptions,
     });
   }
 
@@ -466,6 +828,7 @@ export class CodeKanbanClient {
       url: toWsUrl(this.baseURL, WEB_SESSION_EVENTS_WS_PATH),
       sessionId: ensureOptionalString(options.sessionId),
       WebSocketImpl: this.WebSocketImpl,
+      webSocketOptions: this.webSocketOptions,
     });
   }
 
@@ -481,6 +844,8 @@ export class CodeKanbanClient {
 
   async listSessions({
     projectId,
+    projectName,
+    projectIndex,
     path,
     includeTerminal = true,
     includeAI = true,
@@ -488,6 +853,8 @@ export class CodeKanbanClient {
   }) {
     const { project, matchedBy } = await this.resolveProject({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject,
     });
@@ -514,21 +881,108 @@ export class CodeKanbanClient {
     };
   }
 
-  async listWebSessions({ projectId, path, ensureProject = true } = {}) {
+  async listProjectFileScopes({ projectId, projectName, projectIndex, path, ensureProject = true } = {}) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject,
+    });
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/files/scopes`,
+    );
+    return extractPayloadItems(response);
+  }
+
+  async readProjectFileText({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    scopeId,
+    filePath,
+    ensureProject = true,
+  } = {}) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject,
+    });
+    const params = new URLSearchParams();
+    if (ensureOptionalString(scopeId)) {
+      params.set("scopeId", ensureOptionalString(scopeId));
+    }
+    params.set("path", ensureString(filePath, "filePath"));
+    params.set("disposition", "inline");
+    const { text, contentType } = await this.requestText(
+      `/api/v1/projects/${resolvedProjectId}/files/content?${params.toString()}`,
+    );
+    return {
+      projectId: resolvedProjectId,
+      scopeId: ensureOptionalString(scopeId) || null,
+      path: ensureString(filePath, "filePath"),
+      contentType,
+      text,
+    };
+  }
+
+  async deleteProjectFiles({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    scopeId,
+    paths,
+    ensureProject = true,
+  } = {}) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
+      path,
+      ensureProject,
+    });
+    const normalizedPaths = ensureArrayOfStrings(paths, "paths");
+    if (normalizedPaths.length === 0) {
+      throw new CodeKanbanValidationError("paths is required");
+    }
+    const response = await this.requestJson(
+      `/api/v1/projects/${resolvedProjectId}/files/delete`,
+      {
+        method: "POST",
+        body: {
+          ...(ensureOptionalString(scopeId)
+            ? { scopeId: ensureOptionalString(scopeId) }
+            : {}),
+          paths: normalizedPaths,
+        },
+      },
+    );
+    return extractPayloadItem(response);
+  }
+
+  async listWebSessions({ projectId, projectName, projectIndex, path, ensureProject = true } = {}) {
+    const resolvedProjectId = await this.resolveProjectId({
+      projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject,
     });
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions`,
     );
-    return response?.items || [];
+    return extractPayloadItems(response);
   }
 
   async createWebSession(input = {}) {
     const projectId = await this.resolveProjectId({
       projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
       path: input.path,
       ensureProject: true,
     });
@@ -572,12 +1026,14 @@ export class CodeKanbanClient {
         },
       },
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
-  async getWebSessionSnapshot({ projectId, path, sessionId, limit = 80 }) {
+  async getWebSessionSnapshot({ projectId, projectName, projectIndex, path, sessionId, limit = 80 }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -588,11 +1044,13 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/snapshot?limit=${normalizedLimit}`,
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async getWebSessionHistory({
     projectId,
+    projectName,
+    projectIndex,
     path,
     sessionId,
     beforeCursor,
@@ -600,6 +1058,8 @@ export class CodeKanbanClient {
   }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -615,11 +1075,13 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/history${suffix ? `?${suffix}` : ""}`,
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async syncWebSession({
     projectId,
+    projectName,
+    projectIndex,
     path,
     sessionId,
     mode,
@@ -627,6 +1089,8 @@ export class CodeKanbanClient {
   }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -643,12 +1107,14 @@ export class CodeKanbanClient {
         },
       },
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
-  async archiveWebSession({ projectId, path, sessionId }) {
+  async archiveWebSession({ projectId, projectName, projectIndex, path, sessionId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -659,12 +1125,14 @@ export class CodeKanbanClient {
         method: "POST",
       },
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
-  async unarchiveWebSession({ projectId, path, sessionId }) {
+  async unarchiveWebSession({ projectId, projectName, projectIndex, path, sessionId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -675,12 +1143,14 @@ export class CodeKanbanClient {
         method: "POST",
       },
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
-  async renameWebSession({ projectId, path, sessionId, title }) {
+  async renameWebSession({ projectId, projectName, projectIndex, path, sessionId, title }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -694,12 +1164,14 @@ export class CodeKanbanClient {
         },
       },
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
-  async closeWebSession({ projectId, path, sessionId }) {
+  async closeWebSession({ projectId, projectName, projectIndex, path, sessionId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -711,13 +1183,15 @@ export class CodeKanbanClient {
       },
     );
     return {
-      message: response?.message || "session aborted",
+      message: extractPayloadMessage(response) || "session aborted",
     };
   }
 
-  async deleteWebSession({ projectId, path, sessionId }) {
+  async deleteWebSession({ projectId, projectName, projectIndex, path, sessionId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -729,7 +1203,7 @@ export class CodeKanbanClient {
       },
     );
     return {
-      message: response?.message || "session deleted",
+      message: extractPayloadMessage(response) || "session deleted",
     };
   }
 
@@ -746,13 +1220,15 @@ export class CodeKanbanClient {
       },
     );
     return (
-      response?.item || { items: [], total: 0, hasMore: false, nextOffset: 0 }
+      extractPayloadItem(response) || { items: [], total: 0, hasMore: false, nextOffset: 0 }
     );
   }
 
-  async getWebSessionCommandGroup({ projectId, path, sessionId, groupId }) {
+  async getWebSessionCommandGroup({ projectId, projectName, projectIndex, path, sessionId, groupId }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -761,18 +1237,20 @@ export class CodeKanbanClient {
     const response = await this.requestJson(
       `/api/v1/projects/${resolvedProjectId}/web-sessions/${resolvedSessionId}/command-groups/${resolvedGroupId}`,
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async getWebSessionRuntimeConfig() {
     const response = await this.requestJson(
       "/api/v1/web-sessions/runtime-config",
     );
-    return response?.item || null;
+    return extractPayloadItem(response);
   }
 
   async uploadWebSessionAttachment({
     projectId,
+    projectName,
+    projectIndex,
     path,
     filePath,
     fileName,
@@ -780,6 +1258,8 @@ export class CodeKanbanClient {
   }) {
     const resolvedProjectId = await this.resolveProjectId({
       projectId,
+      projectName,
+      projectIndex,
       path,
       ensureProject: true,
     });
@@ -821,16 +1301,18 @@ export class CodeKanbanClient {
         body,
       });
     }
-    return normalizeWebSessionAttachment(body?.item);
+    return normalizeWebSessionAttachment(extractPayloadItem(body));
   }
 
   analyzeWebSession(snapshot) {
     return analyzeWebSession(snapshot);
   }
 
-  async getWebSessionState({ projectId, path, sessionId, limit = 120 }) {
+  async getWebSessionState({ projectId, projectName, projectIndex, path, sessionId, limit = 120 }) {
     const snapshot = await this.getWebSessionSnapshot({
       projectId,
+      projectName,
+      projectIndex,
       path,
       sessionId,
       limit,
@@ -887,6 +1369,8 @@ export class CodeKanbanClient {
 
   async answerPendingUserInput({
     projectId,
+    projectName,
+    projectIndex,
     path,
     sessionId,
     answers,
@@ -894,6 +1378,8 @@ export class CodeKanbanClient {
   }) {
     const state = await this.getWebSessionState({
       projectId,
+      projectName,
+      projectIndex,
       path,
       sessionId,
       limit,
@@ -917,9 +1403,11 @@ export class CodeKanbanClient {
     };
   }
 
-  async approvePending({ projectId, path, sessionId, limit = 120 }) {
+  async approvePending({ projectId, projectName, projectIndex, path, sessionId, limit = 120 }) {
     const state = await this.getWebSessionState({
       projectId,
+      projectName,
+      projectIndex,
       path,
       sessionId,
       limit,
@@ -938,9 +1426,11 @@ export class CodeKanbanClient {
     };
   }
 
-  async rejectPending({ projectId, path, sessionId, limit = 120 }) {
+  async rejectPending({ projectId, projectName, projectIndex, path, sessionId, limit = 120 }) {
     const state = await this.getWebSessionState({
       projectId,
+      projectName,
+      projectIndex,
       path,
       sessionId,
       limit,
@@ -961,6 +1451,8 @@ export class CodeKanbanClient {
 
   async executeLatestPlan({
     projectId,
+    projectName,
+    projectIndex,
     path,
     sessionId,
     prompt = "Implement the plan.",
@@ -968,6 +1460,8 @@ export class CodeKanbanClient {
   }) {
     const state = await this.getWebSessionState({
       projectId,
+      projectName,
+      projectIndex,
       path,
       sessionId,
       limit,
@@ -1030,64 +1524,322 @@ export class CodeKanbanClient {
 
   async waitForWebSessionState({
     projectId,
+    projectName,
+    projectIndex,
     path,
     sessionId,
     until,
     intervalMs = 5000,
     timeoutMs = 60000,
     limit = 120,
+    settleMs = 0,
   }) {
-    if (!until) {
-      throw new CodeKanbanValidationError("until is required");
-    }
-
-    const matches =
-      typeof until === "function"
-        ? until
-        : Array.isArray(until)
-          ? (state) => until.includes(state.phase)
-          : (state) => state.phase === until;
+    const matches = normalizeWebSessionStateMatcher(until);
+    const normalizedIntervalMs = Math.max(1, Math.trunc(intervalMs));
+    const normalizedSettleMs = Number.isFinite(settleMs)
+      ? Math.max(0, Math.trunc(settleMs))
+      : 0;
 
     const startedAt = Date.now();
     let lastRetryableError = null;
+    let matchedAt = null;
     while (Date.now() - startedAt <= timeoutMs) {
       try {
         const state = await this.getWebSessionState({
           projectId,
+          projectName,
+          projectIndex,
           path,
           sessionId,
           limit,
         });
         lastRetryableError = null;
         if (matches(state)) {
-          return state;
+          if (normalizedSettleMs <= 0) {
+            return state;
+          }
+          if (matchedAt == null) {
+            matchedAt = Date.now();
+          }
+          if (Date.now() - matchedAt >= normalizedSettleMs) {
+            return state;
+          }
+        } else {
+          matchedAt = null;
         }
       } catch (error) {
         if (!isRetryableRequestError(error)) {
           throw error;
         }
         lastRetryableError = error;
+        matchedAt = null;
       }
 
-      await sleep(Math.max(1, Math.trunc(intervalMs)));
+      const remainingSettleMs =
+        matchedAt == null || normalizedSettleMs <= 0
+          ? normalizedIntervalMs
+          : Math.max(1, normalizedSettleMs - (Date.now() - matchedAt));
+      await sleep(Math.min(normalizedIntervalMs, remainingSettleMs));
     }
 
     if (lastRetryableError) {
       throw new CodeKanbanValidationError(
         `web session ${sessionId} did not reach the requested state within ${timeoutMs}ms (last transient error: ${lastRetryableError.message})`,
-        { cause: lastRetryableError },
+        { cause: lastRetryableError, reason: "timeout" },
       );
     }
 
     throw new CodeKanbanValidationError(
       `web session ${sessionId} did not reach the requested state within ${timeoutMs}ms`,
+      { reason: "timeout" },
     );
+  }
+
+  async waitForWebSessionPause({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    sessionId,
+    until,
+    intervalMs = 5000,
+    timeoutMs = 60000,
+    limit = 120,
+    settleMs = 0,
+  }) {
+    const untilMatcher = until ? normalizeWebSessionStateMatcher(until) : null;
+    const normalizedIntervalMs = Math.max(1, Math.trunc(intervalMs));
+    const normalizedSettleMs = Number.isFinite(settleMs)
+      ? Math.max(0, Math.trunc(settleMs))
+      : 0;
+
+    const startedAt = Date.now();
+    let lastRetryableError = null;
+    let settledReason = null;
+    let settledAt = null;
+    while (Date.now() - startedAt <= timeoutMs) {
+      try {
+        const state = await this.getWebSessionState({
+          projectId,
+          projectName,
+          projectIndex,
+          path,
+          sessionId,
+          limit,
+        });
+        lastRetryableError = null;
+        const reason = getWebSessionPauseReason(state, untilMatcher);
+        if (reason) {
+          if (
+            normalizedSettleMs > 0 &&
+            isDebouncedPauseReason(reason)
+          ) {
+            if (settledReason !== reason) {
+              settledReason = reason;
+              settledAt = Date.now();
+            }
+            if (Date.now() - settledAt >= normalizedSettleMs) {
+              return { reason, state };
+            }
+          } else {
+            return { reason, state };
+          }
+        } else {
+          settledReason = null;
+          settledAt = null;
+        }
+      } catch (error) {
+        if (!isRetryableRequestError(error)) {
+          throw error;
+        }
+        lastRetryableError = error;
+        settledReason = null;
+        settledAt = null;
+      }
+
+      const remainingSettleMs =
+        settledAt == null || normalizedSettleMs <= 0
+          ? normalizedIntervalMs
+          : Math.max(1, normalizedSettleMs - (Date.now() - settledAt));
+      await sleep(Math.min(normalizedIntervalMs, remainingSettleMs));
+    }
+
+    if (lastRetryableError) {
+      throw new CodeKanbanValidationError(
+        `web session ${sessionId} did not reach a pause state within ${timeoutMs}ms (last transient error: ${lastRetryableError.message})`,
+        { cause: lastRetryableError, reason: "timeout" },
+      );
+    }
+
+    throw new CodeKanbanValidationError(
+      `web session ${sessionId} did not reach a pause state within ${timeoutMs}ms`,
+      { reason: "timeout" },
+    );
+  }
+
+  async runWebSessionUntilDone({
+    projectId,
+    projectName,
+    projectIndex,
+    path,
+    sessionId,
+    until,
+    intervalMs = 2000,
+    timeoutMs = 120000,
+    limit = 120,
+    settleMs = 2000,
+    terminalDebounceMs,
+    answerStrategy = "prefer-second-or-text",
+    autoExecutePlan = true,
+    executePlanPrompt = "Implement the plan.",
+  }) {
+    const normalizedTerminalDebounceMs = Number.isFinite(terminalDebounceMs)
+      ? Math.max(0, Math.trunc(terminalDebounceMs))
+      : Number.isFinite(settleMs)
+        ? Math.max(0, Math.trunc(settleMs))
+        : 2000;
+    const actions = [];
+    const answeredItemIds = new Set();
+    const executedPlanIds = new Set();
+    let lastExecuteMode = null;
+    let lastState = null;
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt <= timeoutMs) {
+      const remainingTimeoutMs = Math.max(1, timeoutMs - (Date.now() - startedAt));
+      let pause = null;
+      try {
+        pause = await this.waitForWebSessionPause({
+          projectId,
+          projectName,
+          projectIndex,
+          path,
+          sessionId,
+          until,
+          intervalMs,
+          timeoutMs: remainingTimeoutMs,
+          limit,
+          settleMs: normalizedTerminalDebounceMs,
+        });
+      } catch (error) {
+        if (error?.reason !== "timeout") {
+          throw error;
+        }
+        try {
+          lastState = await this.getWebSessionState({
+            projectId,
+            projectName,
+            projectIndex,
+            path,
+            sessionId,
+            limit,
+          });
+        } catch {
+          // Ignore a best-effort state refresh on timeout.
+        }
+        return {
+          stopReason: "timeout",
+          finalState: lastState,
+          actions,
+          lastExecuteMode,
+        };
+      }
+
+      lastState = pause.state;
+      if (pause.reason === "done" || pause.reason === "error" || pause.reason === "until") {
+        return {
+          stopReason: pause.reason,
+          finalState: pause.state,
+          actions,
+          lastExecuteMode,
+        };
+      }
+      if (pause.reason === "approval") {
+        return {
+          stopReason: "needs_approval",
+          finalState: pause.state,
+          actions,
+          lastExecuteMode,
+        };
+      }
+      if (pause.reason === "user_input") {
+        const itemId = pause.state.pendingUserInput?.itemId || null;
+        if (!itemId || answeredItemIds.has(itemId) || !answerStrategy) {
+          return {
+            stopReason: "needs_user_input",
+            finalState: pause.state,
+            actions,
+            lastExecuteMode,
+          };
+        }
+        const answers = buildAutoWebSessionAnswers(
+          pause.state.pendingUserInput?.questions,
+          answerStrategy,
+        );
+        await this.answerPendingUserInput({
+          projectId,
+          projectName,
+          projectIndex,
+          path,
+          sessionId,
+          answers,
+          limit,
+        });
+        answeredItemIds.add(itemId);
+        actions.push({
+          type: "answer_user_input",
+          at: new Date().toISOString(),
+          itemId,
+          answers,
+        });
+        continue;
+      }
+      if (pause.reason === "execute_plan") {
+        const planId = pause.state.latestPlan?.itemId || pause.state.latestPlan?.id || null;
+        if (!autoExecutePlan || (planId && executedPlanIds.has(planId))) {
+          return {
+            stopReason: "needs_execute_plan",
+            finalState: pause.state,
+            actions,
+            lastExecuteMode,
+          };
+        }
+        const result = await this.executeLatestPlan({
+          projectId,
+          projectName,
+          projectIndex,
+          path,
+          sessionId,
+          prompt: executePlanPrompt,
+          limit,
+        });
+        if (planId) {
+          executedPlanIds.add(planId);
+        }
+        lastExecuteMode = result.mode;
+        actions.push({
+          type: "execute_plan",
+          at: new Date().toISOString(),
+          itemId: planId,
+          mode: result.mode,
+        });
+      }
+    }
+
+    return {
+      stopReason: "timeout",
+      finalState: lastState,
+      actions,
+      lastExecuteMode,
+    };
   }
 
   async startWorkflow(input = {}) {
     const launch = buildAgentLaunchSpec(input);
     const { project, matchedBy } = await this.resolveProject({
       projectId: input.projectId,
+      projectName: input.projectName,
+      projectIndex: input.projectIndex,
       path: input.path,
       ensureProject: true,
     });
@@ -1135,14 +1887,16 @@ export class CodeKanbanClient {
     };
   }
 
-  async continueTerminalSession({ projectId, path, sessionId, prompt }) {
+  async continueTerminalSession({ projectId, projectName, projectIndex, path, sessionId, prompt }) {
     const resolvedSessionId = ensureString(sessionId, "sessionId");
     const resolvedPrompt = ensureString(prompt, "prompt");
 
     let project;
-    if (projectId || path) {
+    if (projectId || projectName || path) {
       ({ project } = await this.resolveProject({
         projectId,
+        projectName,
+        projectIndex,
         path,
         ensureProject: true,
       }));

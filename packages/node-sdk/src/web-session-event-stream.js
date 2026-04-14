@@ -22,7 +22,7 @@ function nowEventBase() {
 }
 
 export class WebSessionEventStream {
-  constructor({ url, sessionId, WebSocketImpl } = {}) {
+  constructor({ url, sessionId, WebSocketImpl, webSocketOptions } = {}) {
     const resolvedUrl = ensureString(url, 'url');
     const Socket = WebSocketImpl || globalThis.WebSocket;
     if (!Socket) {

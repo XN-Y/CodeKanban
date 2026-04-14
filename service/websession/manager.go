@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -62,14 +62,20 @@ type Manager struct {
 	worktreeSvc  *service.WorktreeService
 	aiSessionSvc *service.AISessionService
 
-	mu                 sync.RWMutex
-	runs               map[string]*activeRun
-	clients            map[*client]struct{}
-	autoRetryTimers    map[string]*time.Timer
-	pendingInputs      map[string][]PendingInput
-	pendingProcessing  map[string]bool
-	pendingDirty       map[string]bool
-	codexContextWindow codexContextWindowResolver
+	mu                     sync.RWMutex
+	runs                   map[string]*activeRun
+	clients                map[*client]struct{}
+	autoRetryTimers        map[string]*time.Timer
+	pendingInputs          map[string][]PendingInput
+	pendingProcessing      map[string]bool
+	pendingDirty           map[string]bool
+	codexContextWindow     codexContextWindowResolver
+	claudeHookOnce         sync.Once
+	claudeHookBaseURL      string
+	claudeHookToken        string
+	claudeHookSettingsPath string
+	claudeHookErr          error
+	claudeHookServer       *http.Server
 }
 
 type clientKind string
@@ -119,6 +125,8 @@ type activeRun struct {
 	pendingServerReq   *pendingServerRequest
 	app                *codexAppServerClient
 	assistantDeltaSeen map[string]bool
+	claudeResumeOnly   bool
+	deferredUserInput  bool
 	completedPlanTool  bool
 	commandGroupID     string
 	commandGroupKind   string
@@ -624,6 +632,9 @@ func (m *Manager) ListArchivedSessions(
 }
 
 func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (SessionSummary, error) {
+	if err := validateWebSessionPermissionLevel(params.Agent, params.PermissionLevel); err != nil {
+		return SessionSummary{}, err
+	}
 	project, worktreeID, cwd, err := m.resolveContext(ctx, params.ProjectID, params.WorktreeID)
 	if err != nil {
 		return SessionSummary{}, err
@@ -663,7 +674,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		ActivityAt:              now,
 		StatusUpdatedAt:         &now,
 		AssistantStateUpdatedAt: nil,
-		SourceKind:              string(defaultSessionBackend(normalizeAgent(params.Agent))),
+		SourceKind:              defaultSourceKind(normalizeAgent(params.Agent)),
 		SyncState:               string(SyncStateMissing),
 		LastSyncMode:            "",
 		SourceCreatedAt:         nil,
@@ -686,6 +697,558 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 	}
 
 	return m.mapSessionSummary(record), nil
+}
+
+func importedCodexSourceCreatedAt(source tables.AISessionTable) *time.Time {
+	if source.SessionStartedAt.IsZero() {
+		return nil
+	}
+	value := source.SessionStartedAt
+	return &value
+}
+
+func importedCodexSourceUpdatedAt(source tables.AISessionTable) *time.Time {
+	if !source.FileModTime.IsZero() {
+		value := source.FileModTime
+		return &value
+	}
+	if source.LastMessageAt != nil {
+		value := *source.LastMessageAt
+		return &value
+	}
+	return nil
+}
+
+func importedCodexMetadataUpdates(source tables.AISessionTable) map[string]any {
+	updates := map[string]any{
+		"cwd":               filepath.Clean(strings.TrimSpace(source.ProjectPath)),
+		"native_session_id": nilIfEmpty(source.SessionID),
+		"source_kind":       defaultSourceKind(AgentCodex),
+		"source_created_at": importedCodexSourceCreatedAt(source),
+		"source_updated_at": importedCodexSourceUpdatedAt(source),
+		"last_message_at":   source.LastMessageAt,
+		"thread_path":       nilIfEmpty(source.FilePath),
+		"updated_at":        time.Now(),
+	}
+	if title := strings.TrimSpace(source.Title); title != "" {
+		updates["thread_preview"] = &title
+	}
+	return updates
+}
+
+func (m *Manager) findImportedCodexSession(
+	ctx context.Context,
+	projectID string,
+	nativeSessionID string,
+) (tables.WebSessionTable, error) {
+	db := model.GetDB()
+	if db == nil {
+		return tables.WebSessionTable{}, model.ErrDBNotInitialized
+	}
+
+	var records []tables.WebSessionTable
+	if err := db.WithContext(ctx).
+		Where(
+			"project_id = ? AND agent = ? AND native_session_id = ?",
+			strings.TrimSpace(projectID),
+			string(AgentCodex),
+			strings.TrimSpace(nativeSessionID),
+		).
+		Order("updated_at DESC").
+		Find(&records).Error; err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	if len(records) == 0 {
+		return tables.WebSessionTable{}, gorm.ErrRecordNotFound
+	}
+	for _, record := range records {
+		if record.ArchivedAt == nil {
+			return record, nil
+		}
+	}
+	return records[0], nil
+}
+
+func (m *Manager) createImportedCodexSession(
+	ctx context.Context,
+	project *model.Project,
+	source tables.AISessionTable,
+) (tables.WebSessionTable, error) {
+	title := strings.TrimSpace(source.Title)
+	titleAuto := title == ""
+	if titleAuto {
+		title = defaultTitle(AgentCodex, project.Name)
+	}
+
+	orderIndex, err := m.getNextSessionOrderIndex(ctx, project.Id)
+	if err != nil {
+		return tables.WebSessionTable{}, err
+	}
+
+	now := time.Now()
+	record := tables.WebSessionTable{
+		ProjectID:               project.Id,
+		WorktreeID:              nil,
+		OrderIndex:              orderIndex,
+		Agent:                   string(AgentCodex),
+		Backend:                 string(defaultSessionBackend(AgentCodex)),
+		Title:                   title,
+		TitleAuto:               titleAuto,
+		Model:                   defaultModel(AgentCodex, source.Model),
+		ReasoningEffort:         string(defaultReasoningEffort(AgentCodex, "")),
+		WorkflowMode:            string(WorkflowModeDefault),
+		PermissionLevel:         string(PermissionLevelElevated),
+		AutoRetryEnabled:        false,
+		AutoRetryScope:          string(AutoRetryScopeNetworkOnly),
+		AutoRetryPreset:         string(AutoRetryPresetGentleStop),
+		LegacyPermissionMode:    "default",
+		Cwd:                     filepath.Clean(strings.TrimSpace(source.ProjectPath)),
+		NativeSessionID:         nilIfEmpty(source.SessionID),
+		Status:                  string(StatusIdle),
+		AssistantState:          "",
+		HasUnread:               false,
+		ArchivedAt:              nil,
+		ActivityAt:              now,
+		StatusUpdatedAt:         &now,
+		AssistantStateUpdatedAt: nil,
+		SourceKind:              defaultSourceKind(AgentCodex),
+		SyncState:               string(SyncStateMissing),
+		LastSyncMode:            "",
+		SourceCreatedAt:         importedCodexSourceCreatedAt(source),
+		SourceUpdatedAt:         importedCodexSourceUpdatedAt(source),
+		LastSyncedAt:            nil,
+		ThreadPath:              nilIfEmpty(source.FilePath),
+		ThreadPreview:           nilIfEmpty(source.Title),
+		TurnCount:               0,
+		ItemCount:               0,
+		LastMessageAt:           source.LastMessageAt,
+		LastEventSeq:            0,
+		TotalInputTokens:        0,
+		TotalCachedInputTokens:  0,
+		TotalOutputTokens:       0,
+		TotalCost:               0,
+	}
+	record.Init()
+
+	if err := model.GetDB().WithContext(ctx).Create(&record).Error; err != nil {
+		return tables.WebSessionTable{}, err
+	}
+	return record, nil
+}
+
+func preferImportedCodexSession(current, candidate tables.WebSessionTable) tables.WebSessionTable {
+	if strings.TrimSpace(current.ID) == "" {
+		return candidate
+	}
+
+	currentArchived := current.ArchivedAt != nil
+	candidateArchived := candidate.ArchivedAt != nil
+	if currentArchived != candidateArchived {
+		if !candidateArchived {
+			return candidate
+		}
+		return current
+	}
+
+	if candidate.ActivityAt.After(current.ActivityAt) {
+		return candidate
+	}
+	if current.ActivityAt.After(candidate.ActivityAt) {
+		return current
+	}
+
+	if candidate.UpdatedAt.After(current.UpdatedAt) {
+		return candidate
+	}
+	return current
+}
+
+func (m *Manager) existingImportedCodexSessionsByNativeID(
+	ctx context.Context,
+	projectID string,
+	sessionIDs []string,
+) (map[string]tables.WebSessionTable, error) {
+	normalized := make([]string, 0, len(sessionIDs))
+	seen := make(map[string]struct{}, len(sessionIDs))
+	for _, sessionID := range sessionIDs {
+		trimmed := strings.TrimSpace(sessionID)
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		normalized = append(normalized, trimmed)
+	}
+
+	result := make(map[string]tables.WebSessionTable, len(normalized))
+	if len(normalized) == 0 {
+		return result, nil
+	}
+
+	var existing []tables.WebSessionTable
+	if err := model.GetDB().WithContext(ctx).
+		Where(
+			"project_id = ? AND agent = ? AND native_session_id IN ?",
+			projectID,
+			string(AgentCodex),
+			normalized,
+		).
+		Find(&existing).Error; err != nil {
+		return nil, err
+	}
+
+	for _, record := range existing {
+		nativeID := ""
+		if record.NativeSessionID != nil {
+			nativeID = strings.TrimSpace(*record.NativeSessionID)
+		}
+		if nativeID == "" {
+			continue
+		}
+		result[nativeID] = preferImportedCodexSession(result[nativeID], record)
+	}
+	return result, nil
+}
+
+func sortImportSourceItems(items []ImportSourceSummary) {
+	sort.Slice(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+
+		leftTime := left.SessionStartedAt
+		if left.LastMessageAt != nil {
+			leftTime = *left.LastMessageAt
+		}
+		rightTime := right.SessionStartedAt
+		if right.LastMessageAt != nil {
+			rightTime = *right.LastMessageAt
+		}
+
+		if leftTime.After(rightTime) {
+			return true
+		}
+		if rightTime.After(leftTime) {
+			return false
+		}
+		return left.SessionID > right.SessionID
+	})
+}
+
+func (m *Manager) buildImportSourceItemFromThread(
+	thread codexThreadSummary,
+	cached *tables.AISessionTable,
+	existingByNativeID map[string]tables.WebSessionTable,
+) ImportSourceSummary {
+	title := strings.TrimSpace(thread.Preview)
+	model := ""
+	filePath := strings.TrimSpace(thread.Path)
+	sessionStartedAt := time.Now()
+	if thread.CreatedAt != nil {
+		sessionStartedAt = *thread.CreatedAt
+	} else if thread.UpdatedAt != nil {
+		sessionStartedAt = *thread.UpdatedAt
+	}
+	lastMessageAt := thread.UpdatedAt
+	messageCount := 0
+	assistantMessageCount := 0
+	aiSessionID := ""
+
+	if cached != nil {
+		aiSessionID = strings.TrimSpace(cached.ID)
+		if cachedTitle := strings.TrimSpace(cached.Title); cachedTitle != "" {
+			title = cachedTitle
+		}
+		if cachedModel := strings.TrimSpace(cached.Model); cachedModel != "" {
+			model = cachedModel
+		}
+		if cachedPath := strings.TrimSpace(cached.FilePath); cachedPath != "" {
+			filePath = cachedPath
+		}
+		if !cached.SessionStartedAt.IsZero() {
+			sessionStartedAt = cached.SessionStartedAt
+		}
+		if cached.LastMessageAt != nil {
+			value := *cached.LastMessageAt
+			lastMessageAt = &value
+		}
+		messageCount = cached.MessageCount
+		assistantMessageCount = cached.AssistantMessageCount
+	}
+
+	item := ImportSourceSummary{
+		AISessionID:           aiSessionID,
+		SessionID:             strings.TrimSpace(thread.ID),
+		Model:                 model,
+		Title:                 title,
+		SessionStartedAt:      sessionStartedAt,
+		LastMessageAt:         lastMessageAt,
+		MessageCount:          messageCount,
+		AssistantMessageCount: assistantMessageCount,
+		FilePath:              filePath,
+	}
+	if existing, ok := existingByNativeID[item.SessionID]; ok {
+		summary := m.mapSessionSummary(existing)
+		item.Duplicate = true
+		item.ExistingSession = &summary
+	}
+	return item
+}
+
+func (m *Manager) buildImportSourceItemFromAISession(
+	source *service.AISessionSummary,
+	existingByNativeID map[string]tables.WebSessionTable,
+) ImportSourceSummary {
+	item := ImportSourceSummary{
+		AISessionID:           strings.TrimSpace(source.ID),
+		SessionID:             strings.TrimSpace(source.SessionID),
+		Model:                 strings.TrimSpace(source.Model),
+		Title:                 strings.TrimSpace(source.Title),
+		SessionStartedAt:      source.SessionStartedAt,
+		LastMessageAt:         source.LastMessageAt,
+		MessageCount:          source.MessageCount,
+		AssistantMessageCount: source.AssistantMessageCount,
+		FilePath:              strings.TrimSpace(source.FilePath),
+	}
+	if existing, ok := existingByNativeID[item.SessionID]; ok {
+		summary := m.mapSessionSummary(existing)
+		item.Duplicate = true
+		item.ExistingSession = &summary
+	}
+	return item
+}
+
+func (m *Manager) listCodexImportSourcesFromThreadList(
+	ctx context.Context,
+	project *model.Project,
+) (ImportSourceList, error) {
+	currentThreads, err := m.listCodexThreadsByCwd(ctx, project.Path, false)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	archivedThreads, err := m.listCodexThreadsByCwd(ctx, project.Path, true)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+
+	merged := make(map[string]codexThreadSummary, len(currentThreads)+len(archivedThreads))
+	for id, summary := range archivedThreads {
+		merged[id] = summary
+	}
+	for id, summary := range currentThreads {
+		merged[id] = summary
+	}
+
+	sessionIDs := make([]string, 0, len(merged))
+	for sessionID := range merged {
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+	existingByNativeID, err := m.existingImportedCodexSessionsByNativeID(ctx, project.Id, sessionIDs)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+
+	cachedBySessionID := make(map[string]*tables.AISessionTable, len(sessionIDs))
+	if len(sessionIDs) > 0 {
+		var cachedRows []tables.AISessionTable
+		if err := model.GetDB().WithContext(ctx).
+			Where(
+				"project_path = ? AND type = ? AND session_id IN ?",
+				project.Path,
+				tables.AISessionTypeCodex,
+				sessionIDs,
+			).
+			Find(&cachedRows).Error; err != nil {
+			return ImportSourceList{}, err
+		}
+		for i := range cachedRows {
+			row := cachedRows[i]
+			cachedBySessionID[strings.TrimSpace(row.SessionID)] = &row
+		}
+	}
+
+	items := make([]ImportSourceSummary, 0, len(merged))
+	for sessionID, thread := range merged {
+		if strings.TrimSpace(sessionID) == "" {
+			continue
+		}
+		items = append(
+			items,
+			m.buildImportSourceItemFromThread(
+				thread,
+				cachedBySessionID[strings.TrimSpace(sessionID)],
+				existingByNativeID,
+			),
+		)
+	}
+	sortImportSourceItems(items)
+	return ImportSourceList{
+		Items:     items,
+		ScanPhase: "complete",
+	}, nil
+}
+
+func (m *Manager) ListCodexImportSources(
+	ctx context.Context,
+	projectID string,
+) (ImportSourceList, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportSourceList{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportSourceList{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	list, err := m.listCodexImportSourcesFromThreadList(ctx, project)
+	if err == nil {
+		return list, nil
+	}
+
+	aiSessions, fallbackErr := m.aiSessionSvc.GetProjectAISessions(ctx, project.Path)
+	if fallbackErr != nil {
+		return ImportSourceList{}, err
+	}
+
+	sessionIDs := make([]string, 0, len(aiSessions.CodexSessions))
+	for _, source := range aiSessions.CodexSessions {
+		if source == nil {
+			continue
+		}
+		sessionID := strings.TrimSpace(source.SessionID)
+		if sessionID == "" {
+			continue
+		}
+		sessionIDs = append(sessionIDs, sessionID)
+	}
+
+	existingByNativeID, existingErr := m.existingImportedCodexSessionsByNativeID(ctx, project.Id, sessionIDs)
+	if existingErr != nil {
+		return ImportSourceList{}, existingErr
+	}
+
+	items := make([]ImportSourceSummary, 0, len(aiSessions.CodexSessions))
+	for _, source := range aiSessions.CodexSessions {
+		if source == nil {
+			continue
+		}
+		items = append(items, m.buildImportSourceItemFromAISession(source, existingByNativeID))
+	}
+	sortImportSourceItems(items)
+	return ImportSourceList{
+		Items:     items,
+		ScanPhase: strings.TrimSpace(aiSessions.CodexScanPhase),
+	}, nil
+}
+
+func (m *Manager) importCodexSessionResolved(
+	ctx context.Context,
+	project *model.Project,
+	source *tables.AISessionTable,
+	mode SyncMode,
+) (ImportResult, error) {
+	if source == nil {
+		return ImportResult{}, gorm.ErrRecordNotFound
+	}
+	if strings.TrimSpace(source.SessionID) == "" {
+		return ImportResult{}, fmt.Errorf("codex session id is empty")
+	}
+	if strings.TrimSpace(source.FilePath) == "" {
+		return ImportResult{}, fmt.Errorf("codex session file path is empty")
+	}
+	if model.NormalizePathCase(source.ProjectPath) != model.NormalizePathCase(project.Path) {
+		return ImportResult{}, fmt.Errorf("codex session does not belong to the current project")
+	}
+
+	record, err := m.findImportedCodexSession(ctx, project.Id, source.SessionID)
+	if err == nil {
+		if err := m.updateRuntimeState(ctx, record.ID, importedCodexMetadataUpdates(*source)); err != nil {
+			return ImportResult{}, err
+		}
+		if record.ArchivedAt != nil {
+			if _, err := m.UnarchiveSession(ctx, record.ID); err != nil {
+				return ImportResult{}, err
+			}
+		}
+		snapshot, err := m.Snapshot(ctx, record.ID, DefaultHistoryWindow)
+		if err != nil {
+			return ImportResult{}, err
+		}
+		return ImportResult{
+			Session:       snapshot.Session,
+			History:       snapshot.History,
+			PendingInputs: snapshot.PendingInputs,
+			Created:       false,
+			Reused:        true,
+			Synced:        false,
+		}, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return ImportResult{}, err
+	}
+
+	record, err = m.createImportedCodexSession(ctx, project, *source)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	snapshot, err := m.syncSessionFromSource(ctx, record.ID, mode, true, false)
+	if err != nil {
+		_ = m.DeleteSession(ctx, record.ID)
+		return ImportResult{}, err
+	}
+
+	return ImportResult{
+		Session:       snapshot.Session,
+		History:       snapshot.History,
+		PendingInputs: snapshot.PendingInputs,
+		Created:       true,
+		Reused:        false,
+		Synced:        true,
+	}, nil
+}
+
+func (m *Manager) ImportCodexSession(
+	ctx context.Context,
+	projectID string,
+	aiSessionID string,
+	mode SyncMode,
+) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	source, err := m.aiSessionSvc.ResolveCodexSessionByID(ctx, aiSessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importCodexSessionResolved(ctx, project, source, mode)
+}
+
+func (m *Manager) ImportCodexSessionBySessionID(
+	ctx context.Context,
+	projectID string,
+	sessionID string,
+	mode SyncMode,
+) (ImportResult, error) {
+	project, err := m.projectSvc.GetProject(ctx, projectID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	if m.aiSessionSvc == nil {
+		return ImportResult{}, fmt.Errorf("ai session service is not configured")
+	}
+
+	source, err := m.aiSessionSvc.ResolveCodexSessionBySessionID(ctx, sessionID)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	return m.importCodexSessionResolved(ctx, project, source, mode)
 }
 
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (tables.WebSessionTable, error) {
@@ -737,13 +1300,12 @@ func shouldAutoSyncSnapshot(record tables.WebSessionTable, historyTotal int) boo
 	if historyTotal > 0 {
 		return false
 	}
-	if normalizeAgent(Agent(record.Agent)) != AgentCodex {
+	switch normalizeAgent(Agent(record.Agent)) {
+	case AgentCodex:
+		return record.NativeSessionID != nil && strings.TrimSpace(*record.NativeSessionID) != ""
+	default:
 		return false
 	}
-	if record.NativeSessionID == nil || strings.TrimSpace(*record.NativeSessionID) == "" {
-		return false
-	}
-	return true
 }
 
 func (m *Manager) loadSnapshotLocal(
@@ -775,9 +1337,10 @@ func (m *Manager) loadSnapshotLocal(
 		summary.HasUnread = false
 	}
 	return SessionSnapshot{
-		Session:       summary,
-		History:       history,
-		PendingInputs: m.pendingInputsSnapshot(record.ID),
+		Session:          summary,
+		History:          history,
+		PendingInputs:    m.pendingInputsSnapshot(record.ID),
+		PendingUserInput: pendingUserInputFromHistory(history.Items),
 	}, nil
 }
 
@@ -855,6 +1418,13 @@ func (m *Manager) UpdatePermissionLevel(
 	sessionID string,
 	level PermissionLevel,
 ) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if err := validateWebSessionPermissionLevel(Agent(record.Agent), level); err != nil {
+		return SessionSummary{}, err
+	}
 	return m.updateFields(ctx, sessionID, map[string]any{
 		"permission_level": string(normalizePermissionLevel(level)),
 		"updated_at":       time.Now(),
@@ -888,13 +1458,22 @@ func (m *Manager) UpdateAutoRetry(
 
 func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent) (SessionSummary, error) {
 	normalized := normalizeAgent(agent)
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	permissionLevel := effectivePermissionLevel(record)
+	if normalized == AgentClaude && permissionLevel == PermissionLevelDefault {
+		permissionLevel = PermissionLevelElevated
+	}
 	return m.updateFields(ctx, sessionID, map[string]any{
 		"agent":             string(normalized),
 		"backend":           string(defaultSessionBackend(normalized)),
 		"model":             defaultModel(normalized, ""),
 		"reasoning_effort":  string(defaultReasoningEffort(normalized, "")),
+		"permission_level":  string(permissionLevel),
 		"native_session_id": nil,
-		"source_kind":       string(defaultSessionBackend(normalized)),
+		"source_kind":       defaultSourceKind(normalized),
 		"sync_state":        SyncStateMissing,
 		"last_sync_mode":    "",
 		"source_created_at": nil,
@@ -1907,6 +2486,10 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		m.runCodexAppServerSession(ctx, run, session, text, attachments)
 		return
 	}
+	if run.claudeResumeOnly && normalizeAgent(Agent(session.Agent)) == AgentClaude {
+		m.runClaudeResumeSession(ctx, run, session)
+		return
+	}
 
 	cmd, stdinBytes, closeStdinAfterWrite, err := m.buildExecCommand(ctx, session, text, attachments)
 	if err != nil {
@@ -1997,7 +2580,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		return
 	}
 
-	if run.assistantMessageID != "" {
+	if run.assistantMessageID != "" && run.assistantDeltaWasSeen(run.assistantMessageID) {
 		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 			ID:        utils.NewID(),
 			Seq:       0,
@@ -2034,7 +2617,130 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 			"auto_retry_last_error_code": nil,
 		}, finalAssistantState, now),
 	)
+	if run.deferredUserInput {
+		if pending, ok := run.pendingUserInputRequest(); ok {
+			m.deleteClaudeHookAnswer(session.ID, pending.ItemID)
+		}
+	}
 	m.cancelAutoRetryTimer(session.ID)
+	m.broadcastSessionSummary(context.Background(), session.ID)
+	m.maybeSyncSessionAfterRun(session)
+}
+
+func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, session tables.WebSessionTable) {
+	cmd, err := m.buildClaudeResumeCommand(ctx, session)
+	if err != nil {
+		m.handleRunFailure(session.ID, session, run, err)
+		return
+	}
+	run.cmd = cmd
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		m.handleRunFailure(session.ID, session, run, err)
+		return
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		m.handleRunFailure(session.ID, session, run, err)
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		m.handleRunFailure(session.ID, session, run, err)
+		return
+	}
+
+	if err := cmd.Start(); err != nil {
+		m.handleRunFailure(session.ID, session, run, err)
+		return
+	}
+	run.setInput(stdin)
+	_ = stdin.Close()
+	run.clearInput()
+
+	stderrBuffer := bytes.NewBuffer(nil)
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		m.consumeRuntimePlainOutput(ctx, session, run, io.TeeReader(stderr, stderrBuffer))
+	}()
+
+	m.consumeRuntimeOutput(ctx, session, run, stdout)
+
+	waitErr := cmd.Wait()
+	<-stderrDone
+	if ctx.Err() != nil {
+		now := time.Now()
+		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "run_abort",
+			RunID:     run.runID,
+			Timestamp: now,
+		})
+		_ = m.updateRuntimeState(
+			context.Background(),
+			session.ID,
+			applyAssistantStateUpdates(map[string]any{
+				"status":     string(StatusIdle),
+				"updated_at": now,
+			}, AssistantStateNone, now),
+		)
+		m.broadcastSessionSummary(context.Background(), session.ID)
+		return
+	}
+	if waitErr != nil {
+		message := strings.TrimSpace(run.lastError)
+		if message == "" {
+			message = strings.TrimSpace(stderrBuffer.String())
+		}
+		if message == "" {
+			message = waitErr.Error()
+		}
+		m.handleRunFailure(session.ID, session, run, errors.New(message))
+		return
+	}
+
+	if run.assistantMessageID != "" && run.assistantDeltaWasSeen(run.assistantMessageID) {
+		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "txt_end",
+			RunID:     run.runID,
+			ParentID:  run.assistantMessageID,
+			Timestamp: time.Now(),
+			Payload: map[string]any{
+				"mid": run.assistantMessageID,
+			},
+		})
+	}
+	finalStatus, finalAssistantState := m.completedRunState(context.Background(), session, run)
+	now := time.Now()
+	_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+		ID:        utils.NewID(),
+		Seq:       0,
+		Type:      "run_done",
+		RunID:     run.runID,
+		Timestamp: now,
+		Payload: map[string]any{
+			"ok": true,
+			"st": string(finalStatus),
+		},
+	})
+	_ = m.updateRuntimeState(
+		context.Background(),
+		session.ID,
+		applyAssistantStateUpdates(map[string]any{
+			"status":     string(finalStatus),
+			"updated_at": now,
+		}, finalAssistantState, now),
+	)
+	if run.deferredUserInput {
+		if pending, ok := run.pendingUserInputRequest(); ok {
+			m.deleteClaudeHookAnswer(session.ID, pending.ItemID)
+		}
+	}
 	m.broadcastSessionSummary(context.Background(), session.ID)
 	m.maybeSyncSessionAfterRun(session)
 }
@@ -2211,30 +2917,63 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 	eventType, _ := raw["type"].(string)
 	switch eventType {
 	case "system":
-		if sessionID, _ := raw["session_id"].(string); sessionID != "" {
-			_ = m.updateRuntimeState(context.Background(), session.ID, map[string]any{
-				"native_session_id": sessionID,
-				"updated_at":        time.Now(),
-			})
+		sessionID, _ := raw["session_id"].(string)
+		subtype := strings.TrimSpace(stringValue(raw["subtype"]))
+		updates := map[string]any{
+			"updated_at": time.Now(),
 		}
-	case "assistant":
-		message, _ := raw["message"].(map[string]any)
-		content, _ := message["content"].([]any)
-		if run.assistantMessageID == "" {
-			run.assistantMessageID = utils.NewID()
+		if sessionID != "" {
+			updates["native_session_id"] = sessionID
+			updates["source_kind"] = sourceKindClaudeStreamJSON
+			if threadPath, err := claudeSessionFilePath(session.Cwd, sessionID); err == nil {
+				updates["thread_path"] = nilIfEmpty(threadPath)
+			}
+		}
+		if len(updates) > 1 {
+			_ = m.updateRuntimeState(context.Background(), session.ID, updates)
+		}
+		if subtype == "api_retry" {
+			message := fmt.Sprintf(
+				"Claude API retry %d/%d after %s (%s %s)",
+				int(numberValue(raw["attempt"])),
+				int(numberValue(raw["max_retries"])),
+				time.Duration(numberValue(raw["retry_delay_ms"]))*time.Millisecond,
+				strings.TrimSpace(stringValue(raw["error_status"])),
+				strings.TrimSpace(stringValue(raw["error"])),
+			)
 			_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 				ID:        utils.NewID(),
 				Seq:       0,
-				Type:      "msg_a_st",
+				Type:      "note",
 				RunID:     run.runID,
-				ParentID:  run.assistantMessageID,
 				Timestamp: time.Now(),
 				Payload: map[string]any{
-					"mid": run.assistantMessageID,
+					"lvl": "warn",
+					"txt": strings.TrimSpace(message),
 				},
 			})
 		}
+	case "user":
+		m.handleClaudeUserEvent(session, run, raw)
+	case "assistant":
+		message, _ := raw["message"].(map[string]any)
+		content, _ := message["content"].([]any)
+		stopReason := strings.TrimSpace(stringValue(message["stop_reason"]))
+		assistantMessageID := firstNonEmpty(stringValue(raw["uuid"]), stringValue(message["id"]), utils.NewID())
+		run.assistantMessageID = assistantMessageID
+		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "msg_a_st",
+			RunID:     run.runID,
+			ParentID:  assistantMessageID,
+			Timestamp: time.Now(),
+			Payload: map[string]any{
+				"mid": assistantMessageID,
+			},
+		})
 
+		sawText := false
 		for _, item := range content {
 			block, ok := item.(map[string]any)
 			if !ok {
@@ -2247,15 +2986,16 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
+				sawText = true
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 					ID:        utils.NewID(),
 					Seq:       0,
 					Type:      "txt_d",
 					RunID:     run.runID,
-					ParentID:  run.assistantMessageID,
+					ParentID:  assistantMessageID,
 					Timestamp: time.Now(),
 					Payload: map[string]any{
-						"mid": run.assistantMessageID,
+						"mid": assistantMessageID,
 						"txt": text,
 					},
 				})
@@ -2264,38 +3004,91 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				if toolID == "" {
 					toolID = utils.NewID()
 				}
+				toolName := strings.TrimSpace(stringValue(block["name"]))
+				if toolName == "AskUserQuestion" {
+					continue
+				}
+				if toolName == "ExitPlanMode" {
+					run.markCompletedPlanTool()
+					input := decodeRawObject(block["input"])
+					planText := strings.TrimSpace(stringValue(input["plan"]))
+					planFilePath := strings.TrimSpace(stringValue(input["planFilePath"]))
+					meta := map[string]any{
+						"title": "Plan",
+						"kind":  "plan",
+					}
+					if planFilePath != "" {
+						meta["path"] = planFilePath
+						meta["subtitle"] = planFilePath
+					}
+					_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+						ID:        utils.NewID(),
+						Seq:       0,
+						Type:      "tool_st",
+						RunID:     run.runID,
+						ParentID:  assistantMessageID,
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"tid":  toolID,
+							"name": "Plan",
+							"kind": "plan",
+							"meta": meta,
+						},
+					})
+					_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+						ID:        utils.NewID(),
+						Seq:       0,
+						Type:      "tool_end",
+						RunID:     run.runID,
+						ParentID:  assistantMessageID,
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"tid":  toolID,
+							"name": "Plan",
+							"kind": "plan",
+							"out":  planText,
+							"ok":   true,
+							"meta": meta,
+						},
+					})
+					continue
+				}
+
 				run.currentToolMessage = toolID
+				kind := claudeToolKind(toolName)
+				input := claudeToolInput(toolName, block["input"])
 				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
 					ID:        utils.NewID(),
 					Seq:       0,
 					Type:      "tool_st",
 					RunID:     run.runID,
-					ParentID:  run.assistantMessageID,
+					ParentID:  assistantMessageID,
 					Timestamp: time.Now(),
 					Payload: map[string]any{
 						"tid":  toolID,
-						"name": stringValue(block["name"]),
-						"kind": "tool_use",
-						"in":   block["input"],
-					},
-				})
-			case "tool_result":
-				toolUseID, _ := block["tool_use_id"].(string)
-				contentText := claudeToolResultText(block["content"])
-				_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
-					ID:        utils.NewID(),
-					Seq:       0,
-					Type:      "tool_end",
-					RunID:     run.runID,
-					ParentID:  run.assistantMessageID,
-					Timestamp: time.Now(),
-					Payload: map[string]any{
-						"tid": toolUseID,
-						"out": truncateString(contentText, 4000),
-						"ok":  true,
+						"name": claudeToolDisplayName(toolName, kind),
+						"kind": kind,
+						"in":   input,
+						"meta": claudeToolMeta(toolName, kind, input),
 					},
 				})
 			}
+		}
+		if sawText {
+			_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+				ID:        utils.NewID(),
+				Seq:       0,
+				Type:      "txt_end",
+				RunID:     run.runID,
+				ParentID:  assistantMessageID,
+				Timestamp: time.Now(),
+				Payload: map[string]any{
+					"mid": assistantMessageID,
+				},
+			})
+		}
+		if shouldCloseClaudeInput(stopReason, content) {
+			run.closeInput()
 		}
 	case "result":
 		if sessionID, _ := raw["session_id"].(string); sessionID != "" {
@@ -2303,6 +3096,76 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 				"native_session_id": sessionID,
 				"updated_at":        time.Now(),
 			})
+		}
+		stopReason := strings.TrimSpace(stringValue(raw["stop_reason"]))
+		if stopReason == "tool_deferred" {
+			deferred := decodeRawObject(raw["deferred_tool_use"])
+			switch strings.TrimSpace(stringValue(deferred["name"])) {
+			case "AskUserQuestion":
+				questions := decodeToolQuestions(decodeRawObject(deferred["input"])["questions"])
+				request := &pendingServerRequest{
+					Kind:      pendingServerRequestUserInput,
+					ItemID:    strings.TrimSpace(stringValue(deferred["id"])),
+					Prompt:    summarizeToolQuestions(questions),
+					Questions: questions,
+				}
+				if request.ItemID != "" {
+					run.deferredUserInput = true
+					run.setPendingServerRequest(request)
+					now := time.Now()
+					_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+						ID:        utils.NewID(),
+						Seq:       0,
+						Type:      "user_input_req",
+						RunID:     run.runID,
+						ParentID:  run.assistantMessageID,
+						Timestamp: now,
+						Payload: map[string]any{
+							"iid": request.ItemID,
+							"txt": request.Prompt,
+							"qs":  questions,
+						},
+					})
+					_ = m.updateRuntimeState(
+						context.Background(),
+						session.ID,
+						applyAssistantStateUpdates(map[string]any{
+							"updated_at": now,
+						}, AssistantStateWaitingInput, now),
+					)
+					m.broadcastSessionSummary(context.Background(), session.ID)
+				}
+			case "ExitPlanMode":
+				request := &pendingServerRequest{
+					Kind:   pendingServerRequestPlanApproval,
+					ItemID: strings.TrimSpace(stringValue(deferred["id"])),
+					Prompt: "Approve Claude's plan and exit plan mode?",
+				}
+				if request.ItemID != "" {
+					run.setPendingServerRequest(request)
+					now := time.Now()
+					_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+						ID:        utils.NewID(),
+						Seq:       0,
+						Type:      "approval_req",
+						RunID:     run.runID,
+						ParentID:  run.assistantMessageID,
+						Timestamp: now,
+						Payload: map[string]any{
+							"iid":    request.ItemID,
+							"prompt": request.Prompt,
+						},
+					})
+					_ = m.updateRuntimeState(
+						context.Background(),
+						session.ID,
+						applyAssistantStateUpdates(map[string]any{
+							"updated_at": now,
+						}, AssistantStateWaitingPlanApproval, now),
+					)
+					m.broadcastSessionSummary(context.Background(), session.ID)
+				}
+			}
 		}
 		totalCost, _ := raw["total_cost_usd"].(float64)
 		if totalCost > 0 {
@@ -2329,6 +3192,83 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 		}
 	case "error":
 		run.lastError = stringValue(raw["message"])
+	}
+}
+
+func (m *Manager) handleClaudeUserEvent(session tables.WebSessionTable, run *activeRun, raw map[string]any) {
+	message := decodeRawObject(raw["message"])
+	if strings.TrimSpace(stringValue(message["role"])) != "user" {
+		return
+	}
+	content, ok := message["content"].([]any)
+	if !ok {
+		return
+	}
+	for _, rawBlock := range content {
+		block := decodeRawObject(rawBlock)
+		if strings.TrimSpace(stringValue(block["type"])) != "tool_result" {
+			continue
+		}
+		toolUseID := strings.TrimSpace(stringValue(block["tool_use_id"]))
+		if toolUseID == "" {
+			continue
+		}
+		if pending, ok := run.pendingUserInputRequest(); ok && strings.TrimSpace(pending.ItemID) == toolUseID {
+			run.clearPendingServerRequest()
+			contentText := strings.TrimSpace(claudeToolResultContentText(block["content"]))
+			if contentText == "" {
+				contentText = claudeToolUseResultSummary(raw["toolUseResult"])
+			}
+			payload := map[string]any{
+				"iid": toolUseID,
+			}
+			if block["is_error"] == true {
+				payload["err"] = firstNonEmpty(contentText, "User input request failed")
+			}
+			_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+				ID:        utils.NewID(),
+				Seq:       0,
+				Type:      "user_input_res",
+				RunID:     run.runID,
+				ParentID:  run.assistantMessageID,
+				Timestamp: time.Now(),
+				Payload:   payload,
+			})
+			_ = m.updateRuntimeState(
+				context.Background(),
+				session.ID,
+				applyAssistantStateUpdates(map[string]any{
+					"updated_at": time.Now(),
+				}, AssistantStateWorking, time.Now()),
+			)
+			m.broadcastSessionSummary(context.Background(), session.ID)
+			continue
+		}
+
+		contentText := strings.TrimSpace(claudeToolResultContentText(block["content"]))
+		if contentText == "" {
+			contentText = claudeToolUseResultSummary(raw["toolUseResult"])
+		}
+		payload := map[string]any{
+			"tid": toolUseID,
+			"out": truncateString(contentText, 4000),
+			"ok":  block["is_error"] != true,
+		}
+		if existing, err := m.findHistoryItemByToolKey(context.Background(), session.ID, toolUseID); err == nil && existing.Tool != nil {
+			payload["name"] = existing.Tool.Name
+			payload["kind"] = existing.Tool.Kind
+			payload["in"] = existing.Tool.Input
+			payload["meta"] = existing.Tool.Meta
+		}
+		_, _ = m.appendAndBroadcast(context.Background(), session.ID, session, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "tool_end",
+			RunID:     run.runID,
+			ParentID:  run.assistantMessageID,
+			Timestamp: time.Now(),
+			Payload:   payload,
+		})
 	}
 }
 
@@ -2700,6 +3640,9 @@ func (m *Manager) completedRunState(ctx context.Context, session tables.WebSessi
 	if effectiveWorkflowMode(current) == WorkflowModePlan && run.completedPlanToolSeen() {
 		return StatusRunning, AssistantStateWaitingPlanApproval
 	}
+	if run.deferredUserInput && !run.claudeResumeOnly {
+		return StatusDone, AssistantStateWaitingInput
+	}
 	return StatusDone, AssistantStateNone
 }
 
@@ -2869,17 +3812,31 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 
 	switch normalizeAgent(Agent(session.Agent)) {
 	case AgentClaude:
-		args := []string{"-p", "--output-format", "stream-json", "--verbose"}
-		if len(attachments) > 0 {
-			args = append(args, "--input-format", "stream-json")
+		settingsPath, err := m.ensureClaudeHookServer()
+		if err != nil {
+			return nil, nil, false, err
 		}
-		switch permissionLevel {
-		case PermissionLevelYolo:
-			args = append(args, "--dangerously-skip-permissions")
-		case PermissionLevelElevated:
-			args = append(args, "--permission-mode", "acceptEdits")
+		args := []string{
+			"-p",
+			"--output-format", "stream-json",
+			"--input-format", "stream-json",
+			"--replay-user-messages",
+			"--verbose",
+			"--settings", settingsPath,
+		}
+		if err := validateWebSessionPermissionLevel(AgentClaude, permissionLevel); err != nil {
+			return nil, nil, false, err
+		}
+		switch normalizeWorkflowMode(workflowMode) {
+		case WorkflowModePlan:
+			args = append(args, "--permission-mode", "plan")
 		default:
-			args = append(args, "--permission-mode", "default")
+			switch permissionLevel {
+			case PermissionLevelYolo:
+				args = append(args, "--dangerously-skip-permissions")
+			case PermissionLevelElevated:
+				args = append(args, "--permission-mode", "acceptEdits")
+			}
 		}
 		if session.NativeSessionID != nil && strings.TrimSpace(*session.NativeSessionID) != "" {
 			args = append(args, "--resume", strings.TrimSpace(*session.NativeSessionID))
@@ -2887,48 +3844,17 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		if strings.TrimSpace(session.Model) != "" {
 			args = append(args, "--model", strings.TrimSpace(session.Model))
 		}
-
-		var stdin []byte
-		if len(attachments) > 0 {
-			content := make([]map[string]any, 0, len(attachments)+1)
-			if strings.TrimSpace(preparedText) != "" {
-				content = append(content, map[string]any{
-					"type": "text",
-					"text": preparedText,
-				})
-			}
-			for _, attachment := range attachments {
-				data, err := os.ReadFile(attachment.Path)
-				if err != nil {
-					return nil, nil, false, err
-				}
-				content = append(content, map[string]any{
-					"type": "image",
-					"source": map[string]any{
-						"type":       "base64",
-						"media_type": attachment.Mime,
-						"data":       base64.StdEncoding.EncodeToString(data),
-					},
-				})
-			}
-			stdin, _ = json.Marshal(map[string]any{
-				"type": "user",
-				"message": map[string]any{
-					"role":    "user",
-					"content": content,
-				},
-			})
-			stdin = append(stdin, '\n')
-		} else {
-			trimmedText := strings.TrimSpace(preparedText)
-			if trimmedText != "" {
-				args = append(args, trimmedText)
-			}
+		if effort := claudeReasoningEffortArg(ReasoningEffort(session.ReasoningEffort)); effort != "" {
+			args = append(args, "--effort", effort)
+		}
+		stdin, err := claudeUserMessagePayload(text, attachments, workflowMode)
+		if err != nil {
+			return nil, nil, false, err
 		}
 		cmd := exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
 		cmd.Dir = session.Cwd
 		cmd.Env = os.Environ()
-		return cmd, stdin, len(attachments) > 0, nil
+		return cmd, stdin, true, nil
 	case AgentCodex:
 		args := []string{"exec", "--json", "--skip-git-repo-check"}
 		trimmedText := strings.TrimSpace(preparedText)
@@ -2986,6 +3912,50 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
+	record, err := m.GetSession(context.Background(), sessionID)
+	if err != nil {
+		return err
+	}
+	if normalizeAgent(Agent(record.Agent)) == AgentClaude {
+		var pending *pendingServerRequest
+		if ok && run != nil {
+			if request, hasRequest := run.pendingApprovalRequest(); hasRequest {
+				pending = request
+			}
+		}
+		if pending == nil {
+			var err error
+			pending, err = m.findClaudePendingApprovalRequest(context.Background(), sessionID)
+			if err != nil {
+				return err
+			}
+		}
+		decision := "deny"
+		if action != "reject" {
+			decision = "allow"
+		}
+		if err := m.writeClaudeHookAnswer(sessionID, pending.ItemID, claudeHookAnswerFile{
+			PermissionDecision: decision,
+		}); err != nil {
+			return err
+		}
+		now := time.Now()
+		_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "approval_res",
+			RunID:     utils.NewID(),
+			Timestamp: now,
+			Payload: map[string]any{
+				"act":    action,
+				"prompt": pending.Prompt,
+			},
+		})
+		if err := m.startClaudeDeferredResume(context.Background(), record, pending); err != nil {
+			return err
+		}
+		return nil
+	}
 	if !ok {
 		return fmt.Errorf("session is not running")
 	}
@@ -2999,7 +3969,7 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 		}
 		run.clearPendingServerRequest()
 		m.resumeActiveCallTimeout(run)
-		record, err := m.GetSession(context.Background(), sessionID)
+		record, err = m.GetSession(context.Background(), sessionID)
 		if err != nil {
 			return err
 		}
@@ -3035,7 +4005,7 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 		return err
 	}
 	run.clearPendingApproval()
-	record, err := m.GetSession(context.Background(), sessionID)
+	record, err = m.GetSession(context.Background(), sessionID)
 	if err != nil {
 		return err
 	}
@@ -3067,7 +4037,51 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
 	m.mu.RUnlock()
-	if !ok {
+	record, err := m.GetSession(context.Background(), sessionID)
+	if err != nil {
+		return err
+	}
+	if normalizeAgent(Agent(record.Agent)) == AgentClaude {
+		pending, err := m.findClaudePendingUserInputRequest(context.Background(), sessionID, itemID)
+		if err != nil {
+			return err
+		}
+		answerFile := claudeHookAnswerFile{Answers: map[string]string{}}
+		for _, question := range pending.Questions {
+			values := answers[strings.TrimSpace(question.ID)]
+			if len(values) == 0 {
+				continue
+			}
+			key := strings.TrimSpace(firstNonEmpty(question.Question, question.Header, question.ID))
+			if key == "" {
+				continue
+			}
+			answerFile.Answers[key] = strings.Join(values, ", ")
+		}
+		if len(answerFile.Answers) == 0 {
+			return fmt.Errorf("no answers were provided")
+		}
+		if err := m.writeClaudeHookAnswer(sessionID, pending.ItemID, answerFile); err != nil {
+			return err
+		}
+		if err := m.startClaudeDeferredResume(context.Background(), record, pending); err != nil {
+			return err
+		}
+		now := time.Now()
+		_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
+			ID:        utils.NewID(),
+			Seq:       0,
+			Type:      "user_input_res",
+			RunID:     utils.NewID(),
+			Timestamp: now,
+			Payload: map[string]any{
+				"iid": pending.ItemID,
+				"ans": answers,
+			},
+		})
+		return nil
+	}
+	if !ok || run == nil {
 		return fmt.Errorf("session is not running")
 	}
 	pending, ok := run.pendingUserInputRequest()
@@ -3086,10 +4100,6 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 	run.clearPendingServerRequest()
 	m.resumeActiveCallTimeout(run)
 
-	record, err := m.GetSession(context.Background(), sessionID)
-	if err != nil {
-		return err
-	}
 	now := time.Now()
 	_, _ = m.appendAndBroadcast(context.Background(), sessionID, record, Event{
 		ID:        utils.NewID(),
@@ -3521,6 +4531,30 @@ func normalizePermissionLevel(level PermissionLevel) PermissionLevel {
 		return PermissionLevelYolo
 	default:
 		return PermissionLevelElevated
+	}
+}
+
+func validateWebSessionPermissionLevel(agent Agent, level PermissionLevel) error {
+	if normalizeAgent(agent) == AgentClaude && normalizePermissionLevel(level) == PermissionLevelDefault {
+		return fmt.Errorf("claude web sessions do not support the default permission level in claude_stream_json mode")
+	}
+	return nil
+}
+
+func shouldCloseClaudeInput(stopReason string, content []any) bool {
+	switch strings.TrimSpace(stopReason) {
+	case "end_turn", "stop_sequence":
+		return true
+	case "":
+		return false
+	default:
+		for _, rawBlock := range content {
+			block := decodeRawObject(rawBlock)
+			if strings.TrimSpace(stringValue(block["type"])) == "tool_use" {
+				return false
+			}
+		}
+		return false
 	}
 }
 

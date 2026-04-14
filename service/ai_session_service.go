@@ -1685,6 +1685,34 @@ func (s *AISessionService) ResolveCodexSessionBySessionID(
 	return &record, nil
 }
 
+// ResolveCodexSessionByID locates a cached Codex session by database ID and
+// refreshes the cached row when the underlying rollout file changed.
+func (s *AISessionService) ResolveCodexSessionByID(
+	ctx context.Context,
+	dbID string,
+) (*tables.AISessionTable, error) {
+	ctx = ensureContext(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	dbID = strings.TrimSpace(dbID)
+	if dbID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var session tables.AISessionTable
+	if err := db.WithContext(ctx).
+		Where("id = ? AND type = ?", dbID, tables.AISessionTypeCodex).
+		First(&session).Error; err != nil {
+		return nil, err
+	}
+
+	return s.ResolveCodexSessionBySessionID(ctx, session.SessionID)
+}
+
 // CleanupStaleSessions removes cached sessions whose files no longer exist.
 func (s *AISessionService) CleanupStaleSessions(ctx context.Context) (int64, error) {
 	ctx = ensureContext(ctx)

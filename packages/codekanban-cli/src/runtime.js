@@ -1,6 +1,8 @@
-import { CodeKanbanClient } from './client.js';
-import { buildAgentLaunchSpec } from './command-builder.js';
-import { createJsonOutput } from './utils.js';
+import { CodeKanbanClient, buildAgentLaunchSpec } from '@codekanban/sdk';
+
+function createJsonOutput(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
 
 function readFlagValue(argv, index, flag) {
   const value = argv[index + 1];
@@ -37,12 +39,16 @@ function parseCliArgs(argv) {
   const flags = {
     addDirs: [],
     attachmentIds: [],
+    deleteFilesBefore: [],
     extraArgs: [],
+    readFilesAfter: [],
     includeTerminal: true,
     includeAI: true,
     refresh: false,
     clearExisting: false,
     raw: false,
+    strictCwd: false,
+    ifExists: false,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -161,6 +167,10 @@ function parseCliArgs(argv) {
         flags.groupId = readFlagValue(argv, index, token);
         index += 1;
         break;
+      case '--scope-id':
+        flags.scopeId = readFlagValue(argv, index, token);
+        index += 1;
+        break;
       case '--file':
         flags.file = readFlagValue(argv, index, token);
         index += 1;
@@ -171,6 +181,10 @@ function parseCliArgs(argv) {
         break;
       case '--answers-json':
         flags.answersJson = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--answer-strategy':
+        flags.answerStrategy = readFlagValue(argv, index, token);
         index += 1;
         break;
       case '--prev-session-id':
@@ -189,6 +203,30 @@ function parseCliArgs(argv) {
         flags.maxEvents = readFlagValue(argv, index, token);
         index += 1;
         break;
+      case '--interval-ms':
+        flags.intervalMs = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--settle-ms':
+        flags.settleMs = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--timeout-ms':
+        flags.timeoutMs = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--until':
+        flags.until = readFlagValue(argv, index, token);
+        index += 1;
+        break;
+      case '--delete-file-before':
+        flags.deleteFilesBefore.push(readFlagValue(argv, index, token));
+        index += 1;
+        break;
+      case '--read-file-after':
+        flags.readFilesAfter.push(readFlagValue(argv, index, token));
+        index += 1;
+        break;
       case '--refresh':
         flags.refresh = true;
         break;
@@ -197,6 +235,12 @@ function parseCliArgs(argv) {
         break;
       case '--raw':
         flags.raw = true;
+        break;
+      case '--strict-cwd':
+        flags.strictCwd = true;
+        break;
+      case '--if-exists':
+        flags.ifExists = true;
         break;
       case '--no-terminal':
         flags.includeTerminal = false;
@@ -215,6 +259,39 @@ function parseCliArgs(argv) {
   };
 }
 
+export function createHelpText(commandName = 'codekanban-cli') {
+  return `${commandName} - CodeKanban command runtime
+
+Usage:
+  ${commandName} <scope> <action> [options]
+
+Scopes:
+  workflow     start, command
+  session      list, conversation, tool-result
+  terminal     continue
+  file         scopes, read, delete
+  web-session  list, create, connect, snapshot, history, sync,
+               state, answer-pending, execute-plan, wait, run,
+               archived, archive, unarchive, rename, close, delete,
+               runtime-config, command-group, attach, send, approve,
+               reject, user-input, set-model, set-reasoning,
+               set-workflow, set-permission, set-agent, move, watch
+
+Common options:
+  --base-url <url>      CodeKanban server base URL
+  --project-id <id>     Project identifier
+  --path <path>         Local project path
+  --session-id <id>     Session identifier
+  --help                Show this help text
+
+Examples:
+  ${commandName} session list --base-url http://127.0.0.1:3007 --path D:/repo
+  ${commandName} web-session state --base-url http://127.0.0.1:3007 --path D:/repo --session-id <id>
+  ${commandName} web-session run --base-url http://127.0.0.1:3007 --path D:/repo --agent codex --text "Create notes/123.md" --delete-file-before notes/123.md --read-file-after notes/123.md --strict-cwd
+`;
+
+}
+
 function buildPermissions(flags) {
   const permissions = {};
   if (flags.sandbox) {
@@ -230,6 +307,9 @@ function buildPermissions(flags) {
 }
 
 function sanitizeConnection(value) {
+  if (Array.isArray(value)) {
+    return value.map(item => sanitizeConnection(item));
+  }
   if (!value || typeof value !== 'object') {
     return value;
   }
@@ -318,15 +398,223 @@ async function watchWebSession(client, flags, stdout) {
   }
 }
 
+const STRICT_CWD_INSTRUCTION =
+  'Stay strictly inside the current working directory. Do not search sibling directories, parent directories, or nearby repositories unless the user explicitly asks.';
+
+function normalizeChoiceLabel(value) {
+  return String(value || '').trim();
+}
+
+function buildAutoUserInputAnswers(questions = [], strategy = 'prefer-second-or-text') {
+  const normalizedStrategy = String(strategy || 'prefer-second-or-text').trim().toLowerCase();
+  if (!['prefer-second-or-text', 'prefer-second-or-first'].includes(normalizedStrategy)) {
+    throw new Error(`unsupported answer strategy: ${strategy}`);
+  }
+
+  const answers = {};
+  for (const question of Array.isArray(questions) ? questions : []) {
+    const questionId = normalizeChoiceLabel(question?.id);
+    if (!questionId) {
+      continue;
+    }
+    const options = Array.isArray(question?.options)
+      ? question.options.map(option => normalizeChoiceLabel(option?.label)).filter(Boolean)
+      : [];
+    if (options[1]) {
+      answers[questionId] = [options[1]];
+      continue;
+    }
+    if (normalizedStrategy === 'prefer-second-or-first' && options[0]) {
+      answers[questionId] = [options[0]];
+      continue;
+    }
+    answers[questionId] = [question?.isSecret ? 'redacted' : 'continue'];
+  }
+  return answers;
+}
+
+function normalizeUntil(value) {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return 'done';
+  }
+  const phases = raw
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(Boolean);
+  if (phases.length === 0) {
+    return 'done';
+  }
+  return phases.length === 1 ? phases[0] : phases;
+}
+
+function withStrictCwdPrompt(text, strictCwd) {
+  const body = String(text || '').trim();
+  if (!strictCwd) {
+    return body;
+  }
+  return body
+    ? `${STRICT_CWD_INSTRUCTION}
+
+${body}`
+    : STRICT_CWD_INSTRUCTION;
+}
+
+async function answerPendingWithStrategy(client, flags) {
+  const answers = flags.answersJson
+    ? parseJsonFlag(flags.answersJson, 'answersJson')
+    : buildAutoUserInputAnswers([], flags.answerStrategy);
+  const state = await client.getWebSessionState({
+    projectId: flags.projectId,
+    path: flags.path,
+    sessionId: flags.sessionId,
+    limit: parseIntegerFlag(flags.limit, 'limit'),
+  });
+  if (!state.pendingUserInput) {
+    throw new Error(`web session ${flags.sessionId} has no pending user input`);
+  }
+  const resolvedAnswers = flags.answersJson
+    ? answers
+    : buildAutoUserInputAnswers(
+        state.pendingUserInput.questions,
+        flags.answerStrategy,
+      );
+  return await client.answerPendingUserInput({
+    projectId: flags.projectId,
+    path: flags.path,
+    sessionId: flags.sessionId,
+    answers: resolvedAnswers,
+    limit: parseIntegerFlag(flags.limit, 'limit'),
+  });
+}
+
+async function maybeDeleteFilesBefore(client, flags, sessionProjectId) {
+  const deleted = [];
+  for (const filePath of flags.deleteFilesBefore) {
+    const result = await client.deleteProjectFiles({
+      projectId: sessionProjectId || flags.projectId,
+      path: sessionProjectId ? undefined : flags.path,
+      scopeId: flags.scopeId,
+      paths: [filePath],
+    });
+    deleted.push({ path: filePath, result });
+  }
+  return deleted;
+}
+
+async function readFilesAfter(client, flags, sessionProjectId) {
+  const files = [];
+  for (const filePath of flags.readFilesAfter) {
+    const item = await client.readProjectFileText({
+      projectId: sessionProjectId || flags.projectId,
+      path: sessionProjectId ? undefined : flags.path,
+      scopeId: flags.scopeId,
+      filePath,
+    });
+    files.push(item);
+  }
+  return files;
+}
+
+async function runWebSessionFlow(client, flags) {
+  const intervalMs = parseIntegerFlag(flags.intervalMs, 'intervalMs') || 2000;
+  const timeoutMs = parseIntegerFlag(flags.timeoutMs, 'timeoutMs') || 120000;
+  const settleMs = parseIntegerFlag(flags.settleMs, 'settleMs') || 2000;
+
+  let session = null;
+  let sessionId = flags.sessionId;
+  let sessionProjectId = flags.projectId;
+  const initialPrompt = withStrictCwdPrompt(flags.text || flags.prompt, flags.strictCwd);
+
+  if (!sessionId) {
+    if (!initialPrompt) {
+      throw new Error('web-session run requires --session-id or an initial --text/--prompt');
+    }
+    session = await client.createWebSession({
+      projectId: flags.projectId,
+      path: flags.path,
+      worktreeId: flags.worktreeId,
+      agent: flags.agent || 'codex',
+      model: flags.model,
+      reasoningEffort: flags.reasoningEffort,
+      workflowMode: flags.workflowMode || 'plan',
+      permissionLevel: flags.permissionLevel,
+      permissionMode: flags.permissionMode,
+      title: flags.title,
+    });
+    sessionId = session?.id;
+    sessionProjectId = session?.projectId || sessionProjectId;
+  }
+
+  if (!sessionId) {
+    throw new Error('unable to resolve a web session id');
+  }
+
+  const deletedBefore = await maybeDeleteFilesBefore(client, flags, sessionProjectId);
+
+  if (initialPrompt) {
+    await client.sendWebSessionMessage({
+      sessionId,
+      text: initialPrompt,
+      attachmentIds: flags.attachmentIds,
+      mode: flags.mode,
+    });
+  }
+
+  const flow = await client.runWebSessionUntilDone({
+    projectId: sessionProjectId || flags.projectId,
+    path: sessionProjectId ? undefined : flags.path,
+    sessionId,
+    until: normalizeUntil(flags.until),
+    intervalMs,
+    timeoutMs,
+    limit: parseIntegerFlag(flags.limit, 'limit'),
+    settleMs,
+    answerStrategy: flags.answerStrategy || 'prefer-second-or-text',
+    autoExecutePlan: true,
+    executePlanPrompt: withStrictCwdPrompt('Implement the plan.', flags.strictCwd),
+  });
+
+  if (flow.stopReason === 'needs_approval') {
+    throw new Error('web-session run stopped on a pending approval; use web-session approve or reject explicitly');
+  }
+  if (flow.stopReason === 'needs_user_input') {
+    throw new Error('web-session run stopped on a pending user input; use web-session answer-pending explicitly');
+  }
+  if (flow.stopReason === 'needs_execute_plan') {
+    throw new Error('web-session run stopped before executing the latest plan; use web-session execute-plan explicitly');
+  }
+  if (flow.stopReason === 'timeout') {
+    throw new Error(`web-session run timed out after ${timeoutMs}ms`);
+  }
+
+  const filesAfter = await readFilesAfter(client, flags, sessionProjectId);
+  return {
+    session: session || { id: sessionId, projectId: sessionProjectId || flags.projectId },
+    deletedBefore,
+    actions: flow.actions,
+    finalState: flow.finalState,
+    filesAfter,
+  };
+}
+
+
 export async function runCli(argv, options = {}) {
   const stdout = options.stdout || process.stdout;
   const stderr = options.stderr || process.stderr;
+  const commandName = options.commandName || 'codekanban-cli';
 
   try {
+    if (argv.includes('--help') || argv.includes('-h')) {
+      stdout.write(createHelpText(commandName));
+      return 0;
+    }
+
     const { positionals, flags } = parseCliArgs(argv);
     const [scope, action] = positionals;
     if (!scope || !action) {
-      throw new Error('usage: <workflow|session|terminal|web-session> <action> --base-url <url> [...]');
+      stdout.write(createHelpText(commandName));
+      return 0;
     }
 
     if (scope === 'workflow' && action === 'command') {
@@ -341,11 +629,20 @@ export async function runCli(argv, options = {}) {
       return 0;
     }
 
+    if (!flags.baseURL && options.defaultBaseURL) {
+      flags.baseURL = options.defaultBaseURL;
+    }
+
     if (!flags.baseURL) {
       throw new Error('--base-url is required');
     }
 
-    const client = new CodeKanbanClient({ baseURL: flags.baseURL });
+    const client =
+      options.clientFactory?.({ baseURL: flags.baseURL, flags }) ||
+      new CodeKanbanClient({
+        baseURL: flags.baseURL,
+        ...(options.clientOptions || {}),
+      });
     let result;
 
     if (scope === 'workflow' && action === 'start') {
@@ -386,6 +683,25 @@ export async function runCli(argv, options = {}) {
         path: flags.path,
         sessionId: flags.sessionId,
         prompt: flags.prompt,
+      });
+    } else if (scope === 'file' && action === 'scopes') {
+      result = await client.listProjectFileScopes({
+        projectId: flags.projectId,
+        path: flags.path,
+      });
+    } else if (scope === 'file' && action === 'read') {
+      result = await client.readProjectFileText({
+        projectId: flags.projectId,
+        path: flags.path,
+        scopeId: flags.scopeId,
+        filePath: flags.file,
+      });
+    } else if (scope === 'file' && action === 'delete') {
+      result = await client.deleteProjectFiles({
+        projectId: flags.projectId,
+        path: flags.path,
+        scopeId: flags.scopeId,
+        paths: [flags.file],
       });
     } else if (scope === 'web-session' && action === 'list') {
       result = await client.listWebSessions({
@@ -430,6 +746,36 @@ export async function runCli(argv, options = {}) {
         mode: flags.mode,
         clearExisting: flags.clearExisting,
       });
+    } else if (scope === 'web-session' && action === 'state') {
+      result = await client.getWebSessionState({
+        projectId: flags.projectId,
+        path: flags.path,
+        sessionId: flags.sessionId,
+        limit: parseIntegerFlag(flags.limit, 'limit'),
+      });
+    } else if (scope === 'web-session' && action === 'answer-pending') {
+      result = await answerPendingWithStrategy(client, flags);
+    } else if (scope === 'web-session' && action === 'execute-plan') {
+      result = await client.executeLatestPlan({
+        projectId: flags.projectId,
+        path: flags.path,
+        sessionId: flags.sessionId,
+        prompt: withStrictCwdPrompt('Implement the plan.', flags.strictCwd),
+        limit: parseIntegerFlag(flags.limit, 'limit'),
+      });
+    } else if (scope === 'web-session' && action === 'wait') {
+      result = await client.waitForWebSessionState({
+        projectId: flags.projectId,
+        path: flags.path,
+        sessionId: flags.sessionId,
+        until: normalizeUntil(flags.until),
+        intervalMs: parseIntegerFlag(flags.intervalMs, 'intervalMs') || 2000,
+        timeoutMs: parseIntegerFlag(flags.timeoutMs, 'timeoutMs') || 120000,
+        limit: parseIntegerFlag(flags.limit, 'limit'),
+        settleMs: parseIntegerFlag(flags.settleMs, 'settleMs') || 0,
+      });
+    } else if (scope === 'web-session' && action === 'run') {
+      result = await runWebSessionFlow(client, flags);
     } else if (scope === 'web-session' && action === 'archive') {
       result = await client.archiveWebSession({
         projectId: flags.projectId,
@@ -479,8 +825,9 @@ export async function runCli(argv, options = {}) {
     } else if (scope === 'web-session' && action === 'send') {
       result = await withWebSessionCommandChannel(client, channel =>
         channel.sendMessage(flags.sessionId, {
-          text: flags.text || flags.prompt,
+          text: withStrictCwdPrompt(flags.text || flags.prompt, flags.strictCwd),
           attachmentIds: flags.attachmentIds,
+          mode: flags.mode,
         }),
       );
     } else if (scope === 'web-session' && action === 'approve') {

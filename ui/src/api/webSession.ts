@@ -58,6 +58,12 @@ export type WebSessionSnapshot = {
   pendingInputs?: WebSessionPendingInputRecord[];
 };
 
+export type WebSessionImportResult = WebSessionSnapshot & {
+  created: boolean;
+  reused: boolean;
+  synced: boolean;
+};
+
 export const webSessionApi = {
   async runtimeConfig(): Promise<WebSessionCodexRuntimeConfig> {
     const config = extractItem<WebSessionCodexRuntimeConfig>(
@@ -118,6 +124,28 @@ export const webSessionApi = {
         .send()) ?? {};
     if (!body.item) {
       throw new Error('failed to create AI session');
+    }
+    return body.item;
+  },
+
+  async importSession(
+    projectId: string,
+    data: {
+      aiSessionId?: string;
+      sessionId?: string;
+      mode?: 'fast' | 'deep';
+    }
+  ): Promise<WebSessionImportResult> {
+    const body =
+      (await http
+        .Post<ItemResponse<WebSessionImportResult>>(`/projects/${projectId}/web-sessions/import`, {
+          aiSessionId: data.aiSessionId ?? '',
+          sessionId: data.sessionId ?? '',
+          ...(data.mode ? { mode: data.mode } : {}),
+        })
+        .send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to import AI session');
     }
     return body.item;
   },

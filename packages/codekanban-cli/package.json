@@ -1,0 +1,48 @@
+{
+  "name": "@codekanban/cli",
+  "version": "0.1.0",
+  "description": "Installable Codex skill CLI for operating CodeKanban workflows, sessions, and web sessions.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "codekanban-cli": "./bin/codekanban-cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md"
+  ],
+  "dependencies": {
+    "@codekanban/sdk": "0.1.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "keywords": [
+    "codekanban",
+    "codex",
+    "skill",
+    "cli",
+    "web-session",
+    "workflow"
+  ],
+  "author": "fy0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fy0/CodeKanban"
+  },
+  "homepage": "https://github.com/fy0/CodeKanban#readme",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "pack:dry-run": "python scripts/pack_bundled_cli.py --dry-run",
+    "bundle:release": "python scripts/build-release-bundle.py"
+  },
+  "bundleDependencies": [
+    "@codekanban/sdk"
+  ]
+}

@@ -29,21 +29,22 @@ type wireHeartbeatFrame struct {
 }
 
 type wireFrame struct {
-	Version   int                `json:"v"`
-	Kind      string             `json:"k"`
-	RequestID string             `json:"rid,omitempty"`
-	SessionID string             `json:"sid,omitempty"`
-	Timestamp int64              `json:"ts"`
-	Operation string             `json:"op,omitempty"`
-	Payload   any                `json:"p,omitempty"`
-	OK        *int               `json:"ok,omitempty"`
-	Session   *wireSess          `json:"s,omitempty"`
-	History   *wireHist          `json:"h,omitempty"`
-	Item      *wireHistItem      `json:"i,omitempty"`
-	Pending   []wirePendingInput `json:"pi,omitempty"`
-	Code      string             `json:"code,omitempty"`
-	Message   string             `json:"msg,omitempty"`
-	Retry     bool               `json:"retry,omitempty"`
+	Version          int                   `json:"v"`
+	Kind             string                `json:"k"`
+	RequestID        string                `json:"rid,omitempty"`
+	SessionID        string                `json:"sid,omitempty"`
+	Timestamp        int64                 `json:"ts"`
+	Operation        string                `json:"op,omitempty"`
+	Payload          any                   `json:"p,omitempty"`
+	OK               *int                  `json:"ok,omitempty"`
+	Session          *wireSess             `json:"s,omitempty"`
+	History          *wireHist             `json:"h,omitempty"`
+	Item             *wireHistItem         `json:"i,omitempty"`
+	Pending          []wirePendingInput    `json:"pi,omitempty"`
+	PendingUserInput *wirePendingUserInput `json:"ui,omitempty"`
+	Code             string                `json:"code,omitempty"`
+	Message          string                `json:"msg,omitempty"`
+	Retry            bool                  `json:"retry,omitempty"`
 }
 
 type wireSess struct {
@@ -175,6 +176,13 @@ type wirePendingInput struct {
 	CreatedAt     int64    `json:"ca"`
 }
 
+type wirePendingUserInput struct {
+	ItemID      string                `json:"iid"`
+	Prompt      string                `json:"txt,omitempty"`
+	Questions   []toolRequestQuestion `json:"qs,omitempty"`
+	RequestedAt *int64                `json:"ra,omitempty"`
+}
+
 func newAckFrame(requestID, op, sessionID string, payload any) wireFrame {
 	ok := 1
 	return wireFrame{
@@ -228,7 +236,8 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 			BeforeCursor: snap.History.BeforeCursor,
 			Total:        snap.History.Total,
 		},
-		Pending: mapWirePendingInputs(snap.PendingInputs),
+		Pending:          mapWirePendingInputs(snap.PendingInputs),
+		PendingUserInput: mapWirePendingUserInput(snap.PendingUserInput),
 	}
 }
 
@@ -413,6 +422,23 @@ func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
 		})
 	}
 	return wireItems
+}
+
+func mapWirePendingUserInput(input *PendingUserInput) *wirePendingUserInput {
+	if input == nil {
+		return nil
+	}
+	var requestedAt *int64
+	if input.RequestedAt != nil {
+		value := input.RequestedAt.UnixMilli()
+		requestedAt = &value
+	}
+	return &wirePendingUserInput{
+		ItemID:      input.ItemID,
+		Prompt:      input.Prompt,
+		Questions:   cloneToolRequestQuestions(input.Questions),
+		RequestedAt: requestedAt,
+	}
 }
 
 func mapWireHistoryItem(item HistoryItem) wireHistItem {

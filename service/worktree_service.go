@@ -442,7 +442,7 @@ func (s *WorktreeService) SyncWorktrees(ctx context.Context, projectID string) e
 		return err
 	}
 
-	// 如果不是 git 仓库，直接返回成功（非 git 目录没有 worktrees 需要同步）
+	// 非 git 项目跳过 git 层同步；这类项目可能已经持久化了虚拟主 worktree。
 	gitRepo, err := git.DetectRepository(project.Path)
 	if err != nil {
 		utils.Logger().Debug("project is not a git repository, skip worktree sync",

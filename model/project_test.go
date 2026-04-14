@@ -109,8 +109,8 @@ func TestProjectServiceCreateProjectWithoutGitRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query worktrees failed: %v", err)
 	}
-	if len(worktrees) != 0 {
-		t.Fatalf("expected no worktrees synced for non-git project")
+	if len(worktrees) == 0 {
+		t.Fatalf("expected virtual main worktree for non-git project")
 	}
 }
 
