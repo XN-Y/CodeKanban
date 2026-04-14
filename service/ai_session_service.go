@@ -1812,7 +1812,39 @@ func (s *AISessionService) GetSessionConversation(ctx context.Context, dbID stri
 
 // GetSessionConversationBySessionID retrieves the full conversation for a given session ID (UUID).
 func (s *AISessionService) GetSessionConversationBySessionID(ctx context.Context, sessionID string) (*ConversationResponse, error) {
-	return s.getConversationByQuery(ctx, "session_id = ?", sessionID)
+	ctx = ensureContext(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
+	}
+
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	var session tables.AISessionTable
+	err := db.WithContext(ctx).Where("session_id = ?", sessionID).First(&session).Error
+	if err == nil {
+		if session.Type == tables.AISessionTypeCodex {
+			resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
+			if resolveErr != nil {
+				return nil, resolveErr
+			}
+			return s.getConversationFromSession(ctx, *resolved)
+		}
+		return s.getConversationFromSession(ctx, session)
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	resolved, resolveErr := s.ResolveCodexSessionBySessionID(ctx, sessionID)
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	return s.getConversationFromSession(ctx, *resolved)
 }
 
 // RefreshSessionAndGetConversation clears the cached session data in DB and re-parses the file.
@@ -1941,6 +1973,18 @@ func (s *AISessionService) getConversationByQuery(ctx context.Context, query str
 	if err != nil {
 		logger.Debug("session not found", zap.String("query", query), zap.Error(err))
 		return nil, err
+	}
+
+	return s.getConversationFromSession(ctx, session)
+}
+
+func (s *AISessionService) getConversationFromSession(ctx context.Context, session tables.AISessionTable) (*ConversationResponse, error) {
+	ctx = ensureContext(ctx)
+	logger := s.logger(ctx)
+
+	db := model.GetDB()
+	if db == nil {
+		return nil, model.ErrDBNotInitialized
 	}
 
 	// Check file size - refuse to load files larger than 50MB

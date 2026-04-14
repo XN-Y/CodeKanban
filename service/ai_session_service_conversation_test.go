@@ -1,9 +1,18 @@
 package service
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"code-kanban/model"
+	"code-kanban/model/tables"
+
+	"gorm.io/gorm"
 )
 
 func TestParseCodexConversationPreservesImageOnlyMessages(t *testing.T) {
@@ -156,6 +165,133 @@ func TestBuildConversationImageAttachmentMarksRemoteURLsAsUnpreviewable(t *testi
 	}
 }
 
+func TestGetSessionConversationBySessionIDResolvesMissingCodexCache(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	projectPath := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	sessionID := "019d792d-5fe5-74b2-bc43-8770241cbea4"
+	filePath := writeCodexRolloutFile(t, homeDir, sessionID, projectPath)
+
+	svc := NewAISessionService()
+	conversation, err := svc.GetSessionConversationBySessionID(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationBySessionID returned error: %v", err)
+	}
+	if conversation.SessionID != sessionID {
+		t.Fatalf("expected session id %q, got %q", sessionID, conversation.SessionID)
+	}
+	if conversation.Title != "hello from preview" {
+		t.Fatalf("expected title to be restored from rollout, got %q", conversation.Title)
+	}
+	if len(conversation.Messages) != 2 {
+		t.Fatalf("expected 2 conversation messages, got %d", len(conversation.Messages))
+	}
+	if conversation.Messages[0].Role != "user" || conversation.Messages[0].Content != "hello from preview" {
+		t.Fatalf("unexpected first message: %#v", conversation.Messages[0])
+	}
+	if conversation.Messages[1].Role != "assistant" || conversation.Messages[1].Content != "preview works" {
+		t.Fatalf("unexpected second message: %#v", conversation.Messages[1])
+	}
+
+	var cached tables.AISessionTable
+	if err := model.GetDB().
+		Where("session_id = ? AND type = ?", sessionID, tables.AISessionTypeCodex).
+		First(&cached).Error; err != nil {
+		t.Fatalf("expected codex session to be cached after preview, got error: %v", err)
+	}
+	if cached.FilePath != filePath {
+		t.Fatalf("expected cached file path %q, got %q", filePath, cached.FilePath)
+	}
+	if cached.ProjectPath != projectPath {
+		t.Fatalf("expected cached project path %q, got %q", projectPath, cached.ProjectPath)
+	}
+}
+
+func TestGetSessionConversationBySessionIDUsesExistingCodexCache(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	projectPath := filepath.Join(t.TempDir(), "project")
+	if err := os.MkdirAll(projectPath, 0o755); err != nil {
+		t.Fatalf("failed to create project dir: %v", err)
+	}
+
+	sessionID := "019d792d-5fe5-74b2-bc43-8770241cbea5"
+	filePath := writeCodexRolloutFile(t, homeDir, sessionID, projectPath)
+	info, err := os.Stat(filePath)
+	if err != nil {
+		t.Fatalf("failed to stat rollout file: %v", err)
+	}
+
+	startedAt := time.Date(2026, 4, 15, 12, 0, 0, 0, time.UTC)
+	lastMessageAt := startedAt.Add(3 * time.Second)
+	cached := &tables.AISessionTable{
+		SessionID:             sessionID,
+		Type:                  tables.AISessionTypeCodex,
+		ProjectPath:           projectPath,
+		FilePath:              filePath,
+		Model:                 "gpt-5.4",
+		Title:                 "hello from preview",
+		SessionStartedAt:      startedAt,
+		LastMessageAt:         &lastMessageAt,
+		MessageCount:          0,
+		AssistantMessageCount: 0,
+		FileModTime:           info.ModTime(),
+		FileSize:              info.Size(),
+	}
+	cached.Init()
+	if err := model.GetDB().Create(cached).Error; err != nil {
+		t.Fatalf("failed to seed cached codex session: %v", err)
+	}
+
+	svc := NewAISessionService()
+	conversation, err := svc.GetSessionConversationBySessionID(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetSessionConversationBySessionID returned error: %v", err)
+	}
+	if len(conversation.Messages) != 2 {
+		t.Fatalf("expected 2 conversation messages, got %d", len(conversation.Messages))
+	}
+
+	var refreshed tables.AISessionTable
+	if err := model.GetDB().First(&refreshed, "id = ?", cached.ID).Error; err != nil {
+		t.Fatalf("failed to reload cached codex session: %v", err)
+	}
+	if refreshed.MessageCount != 1 {
+		t.Fatalf("expected message count to refresh to 1, got %d", refreshed.MessageCount)
+	}
+	if refreshed.AssistantMessageCount != 1 {
+		t.Fatalf("expected assistant message count to refresh to 1, got %d", refreshed.AssistantMessageCount)
+	}
+}
+
+func TestGetSessionConversationBySessionIDReturnsNotFoundWithoutRollout(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	t.Setenv("HOME", t.TempDir())
+
+	svc := NewAISessionService()
+	_, err := svc.GetSessionConversationBySessionID(
+		context.Background(),
+		"019d792d-5fe5-74b2-bc43-8770241cbea6",
+	)
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("expected record not found error, got %v", err)
+	}
+}
+
 func writeConversationTempFile(t *testing.T, content string) string {
 	t.Helper()
 	file, err := os.CreateTemp(t.TempDir(), "conversation-*.jsonl")
@@ -170,4 +306,25 @@ func writeConversationTempFile(t *testing.T, content string) string {
 		t.Fatalf("failed to close temp file: %v", err)
 	}
 	return file.Name()
+}
+
+func writeCodexRolloutFile(t *testing.T, homeDir string, sessionID string, projectPath string) string {
+	t.Helper()
+
+	dir := filepath.Join(homeDir, ".codex", "sessions", "2026", "04", "15")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create rollout dir: %v", err)
+	}
+
+	filePath := filepath.Join(dir, fmt.Sprintf("rollout-2026-04-15T12-00-00-%s.jsonl", sessionID))
+	lines := []string{
+		fmt.Sprintf(`{"timestamp":"2026-04-15T12:00:00Z","type":"session_meta","payload":{"cwd":%q,"timestamp":"2026-04-15T12:00:00Z"}}`, projectPath),
+		`{"timestamp":"2026-04-15T12:00:01Z","type":"turn_context","payload":{"model":"gpt-5.4"}}`,
+		`{"timestamp":"2026-04-15T12:00:02Z","type":"event_msg","payload":{"type":"user_message","message":"hello from preview"}}`,
+		`{"timestamp":"2026-04-15T12:00:03Z","type":"event_msg","payload":{"type":"agent_message","message":"preview works"}}`,
+	}
+	if err := os.WriteFile(filePath, []byte(lines[0]+"\n"+lines[1]+"\n"+lines[2]+"\n"+lines[3]+"\n"), 0o644); err != nil {
+		t.Fatalf("failed to write rollout file: %v", err)
+	}
+	return filePath
 }
