@@ -879,21 +879,9 @@ func (m *Manager) UpdateAutoRetry(
 	if err != nil {
 		return SessionSummary{}, err
 	}
-	record, err := m.GetSession(ctx, sessionID)
-	if err != nil {
-		return SessionSummary{}, err
-	}
 	m.cancelAutoRetryTimer(sessionID)
-	if enabled && effectiveStatus(record, effectiveAssistantState(record)) == StatusError {
-		code := ""
-		if record.AutoRetryLastErrorCode != nil {
-			code = strings.TrimSpace(*record.AutoRetryLastErrorCode)
-		}
-		message := ""
-		if record.LastError != nil {
-			message = strings.TrimSpace(*record.LastError)
-		}
-		m.scheduleAutoRetry(record, code, message, time.Now())
+	if err := m.reconcileAutoRetry(ctx, sessionID, time.Now()); err != nil {
+		return SessionSummary{}, err
 	}
 	return summary, nil
 }
@@ -1122,6 +1110,31 @@ func (m *Manager) clearAutoRetryNextAt(ctx context.Context, sessionID string) {
 		"auto_retry_next_at": nil,
 		"updated_at":         time.Now(),
 	})
+}
+
+func autoRetryFailureDetails(record tables.WebSessionTable) (string, string) {
+	code := ""
+	if record.AutoRetryLastErrorCode != nil {
+		code = strings.TrimSpace(*record.AutoRetryLastErrorCode)
+	}
+	message := ""
+	if record.LastError != nil {
+		message = strings.TrimSpace(*record.LastError)
+	}
+	return code, message
+}
+
+func (m *Manager) reconcileAutoRetry(ctx context.Context, sessionID string, now time.Time) error {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return err
+	}
+	if effectiveStatus(record, effectiveAssistantState(record)) != StatusError {
+		return nil
+	}
+	code, message := autoRetryFailureDetails(record)
+	m.scheduleAutoRetry(record, code, message, now)
+	return nil
 }
 
 func (m *Manager) scheduleAutoRetry(record tables.WebSessionTable, code string, message string, now time.Time) {
@@ -2076,9 +2089,8 @@ func (m *Manager) handleRunFailureWithCode(
 			"updated_at":                 now,
 		}, AssistantStateNone, now),
 	)
-	current, currentErr := m.GetSession(context.Background(), sessionID)
-	if currentErr == nil {
-		m.scheduleAutoRetry(current, code, message, now)
+	if err := m.reconcileAutoRetry(context.Background(), sessionID, now); err != nil && m.logger != nil {
+		m.logger.Warn("auto retry reconciliation failed", zap.String("sessionId", sessionID), zap.Error(err))
 	}
 	m.broadcastSessionSummary(context.Background(), sessionID)
 }
@@ -3679,6 +3691,7 @@ func (m *Manager) recoverInterruptedSessions(ctx context.Context) error {
 		}
 		if err := m.updateRuntimeState(ctx, record.ID, map[string]any{
 			"status":                     string(StatusIdle),
+			"has_unread":                 false,
 			"last_error":                 nil,
 			"updated_at":                 now,
 			"status_updated_at":          now,

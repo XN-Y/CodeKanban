@@ -377,6 +377,14 @@ type LoadSessionSnapshotOptions = {
   preserveArchivedPosition?: boolean;
 };
 
+type PendingAutoRetryOverride = {
+  enabled: boolean;
+  scope: WebSessionSummary['autoRetryScope'];
+  preset: WebSessionSummary['autoRetryPreset'];
+  appliedAt: number;
+  expiresAt: number;
+};
+
 const ACTIVE_SESSION_STORAGE_KEY = 'kanban-web-active-session';
 const SESSION_DRAFT_STORAGE_KEY = 'kanban-web-session-drafts';
 const COMMAND_WS_PATH = '/api/v1/web-sessions/ws';
@@ -384,6 +392,7 @@ const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
 const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
 const WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS = WEB_SESSION_HEARTBEAT_INTERVAL_MS * 2 + 5000;
 const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
+const WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS = 5000;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
@@ -873,6 +882,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   >();
   const draftAttachmentUploadQueues = new Map<string, Promise<unknown>>();
+  const pendingAutoRetryOverrides = reactive(new Map<string, PendingAutoRetryOverride>());
   const appliedSnapshotVersionBySession = new Map<string, WebSessionSnapshotVersion>();
   const completedTransitionVersionBySession = new Map<string, number>();
   let draftAttachmentUploadSeed = 0;
@@ -1046,6 +1056,58 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (!currentVersion || compareWebSessionSnapshotVersion(nextVersion, currentVersion) >= 0) {
       appliedSnapshotVersionBySession.set(sessionId, nextVersion);
     }
+  }
+
+  function setPendingAutoRetryOverride(
+    sessionId: string,
+    config: {
+      enabled: boolean;
+      scope: WebSessionSummary['autoRetryScope'];
+      preset: WebSessionSummary['autoRetryPreset'];
+    },
+    appliedAt = Date.now()
+  ) {
+    pendingAutoRetryOverrides.set(sessionId, {
+      enabled: config.enabled === true,
+      scope: config.scope,
+      preset: config.preset,
+      appliedAt,
+      expiresAt: appliedAt + WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS,
+    });
+  }
+
+  function clearPendingAutoRetryOverride(sessionId: string) {
+    pendingAutoRetryOverrides.delete(sessionId);
+  }
+
+  function applyPendingAutoRetryOverride(summary: WebSessionSummary): WebSessionSummary {
+    const pendingOverride = pendingAutoRetryOverrides.get(summary.id);
+    if (!pendingOverride) {
+      return summary;
+    }
+    if (Date.now() > pendingOverride.expiresAt) {
+      pendingAutoRetryOverrides.delete(summary.id);
+      return summary;
+    }
+    const matchesPendingConfig =
+      summary.autoRetryEnabled === pendingOverride.enabled &&
+      summary.autoRetryScope === pendingOverride.scope &&
+      summary.autoRetryPreset === pendingOverride.preset;
+    if (matchesPendingConfig) {
+      pendingAutoRetryOverrides.delete(summary.id);
+      return summary;
+    }
+    const updatedAt = Date.parse(summary.updatedAt || '');
+    const mergedUpdatedAt = Number.isFinite(updatedAt)
+      ? Math.max(updatedAt, pendingOverride.appliedAt)
+      : pendingOverride.appliedAt;
+    return {
+      ...summary,
+      autoRetryEnabled: pendingOverride.enabled,
+      autoRetryScope: pendingOverride.scope,
+      autoRetryPreset: pendingOverride.preset,
+      updatedAt: new Date(mergedUpdatedAt).toISOString(),
+    };
   }
 
   function applySessionSnapshot(
@@ -1870,6 +1932,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     delete nextHistory[sessionId];
     historyBySession.value = nextHistory;
     appliedSnapshotVersionBySession.delete(sessionId);
+    pendingAutoRetryOverrides.delete(sessionId);
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
@@ -1880,22 +1943,23 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   function upsertCurrentSession(summary: WebSessionSummary) {
-    const current = sessionsByProject.value[summary.projectId] ?? [];
+    const nextSummary = applyPendingAutoRetryOverride(summary);
+    const current = sessionsByProject.value[nextSummary.projectId] ?? [];
     const next = [...current];
-    const index = next.findIndex(item => item.id === summary.id);
+    const index = next.findIndex(item => item.id === nextSummary.id);
     if (index >= 0) {
       next.splice(index, 1, {
         ...next[index],
-        ...summary,
+        ...nextSummary,
       });
     } else {
-      next.unshift(summary);
+      next.unshift(nextSummary);
     }
     sessionsByProject.value = {
       ...sessionsByProject.value,
-      [summary.projectId]: sortSessions(next),
+      [nextSummary.projectId]: sortSessions(next),
     };
-    syncSessionCount(summary.projectId);
+    syncSessionCount(nextSummary.projectId);
   }
 
   function upsertSession(
@@ -3177,6 +3241,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
   ) {
     const session = findSessionById(sessionId);
+    const optimisticUpdatedAt = new Date().toISOString();
     const previous =
       session && !session.archivedAt
         ? {
@@ -3186,11 +3251,13 @@ export const useWebSessionStore = defineStore('web-session', () => {
           }
         : null;
     if (previous) {
+      setPendingAutoRetryOverride(sessionId, config, Date.parse(optimisticUpdatedAt));
       updateSessionStatus(sessionId, current => ({
         ...current,
         autoRetryEnabled: config.enabled === true,
         autoRetryScope: config.scope,
         autoRetryPreset: config.preset,
+        updatedAt: optimisticUpdatedAt,
       }));
     }
     try {
@@ -3200,12 +3267,14 @@ export const useWebSessionStore = defineStore('web-session', () => {
         arp: config.preset,
       });
     } catch (error) {
+      clearPendingAutoRetryOverride(sessionId);
       if (previous) {
         updateSessionStatus(sessionId, current => ({
           ...current,
           autoRetryEnabled: previous.enabled,
           autoRetryScope: previous.scope,
           autoRetryPreset: previous.preset,
+          updatedAt: optimisticUpdatedAt,
         }));
       }
       throw error;

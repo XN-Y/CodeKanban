@@ -1447,6 +1447,189 @@ func TestAutoRetryEnabledSessionContinuesAfterFailure(t *testing.T) {
 	}
 }
 
+func TestAutoRetryEnabledMidRunAppliesToCurrentFailure(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "delayed_failure_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: false,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	runDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(runDeadline) {
+		if manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !manager.hasActiveRun(created.ID) {
+		t.Fatalf("expected session %s to still be running before failure", created.ID)
+	}
+
+	if _, err := manager.UpdateAutoRetry(
+		context.Background(),
+		created.ID,
+		true,
+		AutoRetryScopeNetworkOnly,
+		AutoRetryPresetAggressiveStop,
+	); err != nil {
+		t.Fatalf("UpdateAutoRetry returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusDone) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after mid-run enable, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	userMessages := make([]Event, 0, 2)
+	for _, event := range rawEvents {
+		if event.Type == "msg_u" {
+			userMessages = append(userMessages, event)
+		}
+	}
+	if len(userMessages) < 2 {
+		t.Fatalf("expected auto retry to append a second user message, got %#v", rawEvents)
+	}
+	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
+		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
+	}
+}
+
+func TestUpdateAutoRetryOnErroredSessionSchedulesContinue(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "auto_retry_then_success"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID:        project.ID,
+		Agent:            AgentCodex,
+		AutoRetryEnabled: false,
+		AutoRetryScope:   AutoRetryScopeNetworkOnly,
+		AutoRetryPreset:  AutoRetryPresetAggressiveStop,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "inspect", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+
+	errorDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(errorDeadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusError) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusError) {
+		t.Fatalf("expected session status %q before enabling auto retry, got %q", StatusError, record.Status)
+	}
+
+	if _, err := manager.UpdateAutoRetry(
+		context.Background(),
+		created.ID,
+		true,
+		AutoRetryScopeNetworkOnly,
+		AutoRetryPresetAggressiveStop,
+	); err != nil {
+		t.Fatalf("UpdateAutoRetry returned error: %v", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		record, getErr := manager.GetSession(context.Background(), created.ID)
+		if getErr != nil {
+			t.Fatalf("GetSession returned error: %v", getErr)
+		}
+		if record.Status == string(StatusDone) && !manager.hasActiveRun(created.ID) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	record, err = manager.GetSession(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if record.Status != string(StatusDone) {
+		t.Fatalf("expected session status %q after enabling auto retry on error, got %q", StatusDone, record.Status)
+	}
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	userMessages := make([]Event, 0, 2)
+	for _, event := range rawEvents {
+		if event.Type == "msg_u" {
+			userMessages = append(userMessages, event)
+		}
+	}
+	if len(userMessages) < 2 {
+		t.Fatalf("expected auto retry to append a second user message, got %#v", rawEvents)
+	}
+	if got := stringValue(userMessages[len(userMessages)-1].Payload["txt"]); got != "continue" {
+		t.Fatalf("expected automatic retry message %q, got %q", "continue", got)
+	}
+}
+
 func TestActiveCallTimeoutInterruptsCommandExecutionAndContinues(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -2585,6 +2768,121 @@ func TestGetCommandExecutionGroupReturnsFullItems(t *testing.T) {
 	}
 }
 
+func TestProjectHistoryEventsSeparatesCompactToolsWhenExplicitGroupChanges(t *testing.T) {
+	events := []Event{
+		{
+			ID:        "evt_cmd1_st",
+			Seq:       1,
+			Type:      "tool_st",
+			Timestamp: time.UnixMilli(1_000),
+			Payload: map[string]any{
+				"tid":  "cmd1",
+				"name": "CommandExecution",
+				"kind": "command_execution",
+				"in":   map[string]any{"command": "ls"},
+				"meta": map[string]any{
+					"kind":  "command_execution",
+					"title": "CommandExecution",
+					"commandGroup": map[string]any{
+						"id":           commandExecutionGroupID("cmd1"),
+						"count":        1,
+						"latestToolId": "cmd1",
+						"compacted":    true,
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt_cmd1_end",
+			Seq:       2,
+			Type:      "tool_end",
+			Timestamp: time.UnixMilli(2_000),
+			Payload: map[string]any{
+				"tid":  "cmd1",
+				"kind": "command_execution",
+				"out":  "ls output",
+				"ok":   true,
+				"meta": map[string]any{
+					"kind":  "command_execution",
+					"title": "CommandExecution",
+					"commandGroup": map[string]any{
+						"id":           commandExecutionGroupID("cmd1"),
+						"count":        1,
+						"latestToolId": "cmd1",
+						"compacted":    true,
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt_cmd2_st",
+			Seq:       3,
+			Type:      "tool_st",
+			Timestamp: time.UnixMilli(3_000),
+			Payload: map[string]any{
+				"tid":  "cmd2",
+				"name": "CommandExecution",
+				"kind": "command_execution",
+				"in":   map[string]any{"command": "pwd"},
+				"meta": map[string]any{
+					"kind":  "command_execution",
+					"title": "CommandExecution",
+					"commandGroup": map[string]any{
+						"id":           commandExecutionGroupID("cmd2"),
+						"count":        1,
+						"latestToolId": "cmd2",
+						"compacted":    true,
+					},
+				},
+			},
+		},
+		{
+			ID:        "evt_cmd2_end",
+			Seq:       4,
+			Type:      "tool_end",
+			Timestamp: time.UnixMilli(4_000),
+			Payload: map[string]any{
+				"tid":  "cmd2",
+				"kind": "command_execution",
+				"out":  "pwd output",
+				"ok":   true,
+				"meta": map[string]any{
+					"kind":  "command_execution",
+					"title": "CommandExecution",
+					"commandGroup": map[string]any{
+						"id":           commandExecutionGroupID("cmd2"),
+						"count":        1,
+						"latestToolId": "cmd2",
+						"compacted":    true,
+					},
+				},
+			},
+		},
+	}
+
+	projected := projectHistoryEvents(events, AgentCodex)
+	if len(projected) != 2 {
+		t.Fatalf("expected 2 projected events, got %d", len(projected))
+	}
+	if got := eventCommandGroupID(projected[0]); got != commandExecutionGroupID("cmd1") {
+		t.Fatalf("expected first group id %q, got %q", commandExecutionGroupID("cmd1"), got)
+	}
+	if got := eventCommandGroupID(projected[1]); got != commandExecutionGroupID("cmd2") {
+		t.Fatalf("expected second group id %q, got %q", commandExecutionGroupID("cmd2"), got)
+	}
+
+	groups := buildCommandExecutionGroupLookup(events, AgentCodex)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 command group details, got %d", len(groups))
+	}
+	if _, ok := groups[commandExecutionGroupID("cmd1")]; !ok {
+		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("cmd1"))
+	}
+	if _, ok := groups[commandExecutionGroupID("cmd2")]; !ok {
+		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("cmd2"))
+	}
+}
+
 func TestHistoryReasoningWithContentDoesNotBreakCodexCommandExecutionGroup(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -3669,6 +3967,10 @@ function failTurn(message) {
   });
 }
 
+function delayFailTurn(message, delayMs) {
+  setTimeout(() => failTurn(message), delayMs);
+}
+
 function readPersistentTurnCount() {
   try {
     return Number(fs.readFileSync(stateFile, 'utf8').trim()) || 0;
@@ -3765,6 +4067,20 @@ rl.on('line', line => {
       writePersistentTurnCount(persistedTurns);
       if (persistedTurns === 1) {
         failTurn('unexpected status 502 Bad Gateway: Upstream service temporarily unavailable');
+        return;
+      }
+      finishTurn('done');
+      return;
+    }
+
+    if (mode === 'delayed_failure_then_success') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      if (persistedTurns === 1) {
+        delayFailTurn(
+          'unexpected status 502 Bad Gateway: Upstream service temporarily unavailable',
+          200
+        );
         return;
       }
       finishTurn('done');
