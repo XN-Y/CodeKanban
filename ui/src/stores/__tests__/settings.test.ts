@@ -216,6 +216,29 @@ describe('settings theme storage', () => {
     expect(webSessionStreamingMarkdownThrottleMs.value).toBe(100);
   });
 
+  it('defaults daily tip to enabled when older settings are migrated', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 3,
+        currentPresetId: 'light',
+      })
+    );
+
+    const store = useSettingsStore();
+    const { dailyTipEnabled } = storeToRefs(store);
+
+    expect(dailyTipEnabled.value).toBe(true);
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      version?: number;
+      dailyTipEnabled?: boolean;
+    };
+
+    expect(persisted.version).toBe(4);
+    expect(persisted.dailyTipEnabled).toBe(true);
+  });
+
   it('preserves custom web session streaming markdown cadence from storage', () => {
     localStorageMock.setItem(
       SETTINGS_STORAGE_KEY,

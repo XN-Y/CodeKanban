@@ -45,6 +45,15 @@
               <span class="form-tip">{{ t('settings.terminalLimitTip') }}</span>
             </n-space>
           </n-form-item>
+          <n-form-item :label="t('settings.dailyTipEnabled')">
+            <n-space vertical size="small">
+              <n-switch v-model:value="dailyTipEnabledValue" />
+              <n-button size="small" @click="handleShowRandomDailyTip">
+                {{ t('settings.dailyTipShowRandom') }}
+              </n-button>
+              <span class="form-tip">{{ t('settings.dailyTipEnabledTip') }}</span>
+            </n-space>
+          </n-form-item>
           <n-form-item :label="t('settings.confirmTerminalClose')">
             <n-space vertical size="small">
               <n-switch v-model:value="confirmTerminalCloseValue" />
@@ -1037,6 +1046,16 @@
         </div>
       </n-card>
     </n-space>
+    <DailyTipDialog
+      v-if="activeDailyTip"
+      v-model:show="showDailyTipDialog"
+      :tip="activeDailyTip"
+      :tip-index="activeDailyTipIndex"
+      :total-tips="dailyTipCount"
+      @next="handleShowAnotherDailyTip"
+      @acknowledge="handleDailyTipClose"
+      @disable="handleDailyTipDisable"
+    />
   </div>
 </template>
 
@@ -1111,6 +1130,7 @@ import {
 import Apis from '@/api';
 import { http } from '@/api/http';
 import { useReq, useInit } from '@/api/composable';
+import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import type {
   AIAssistantStatusConfig,
   DeveloperConfig,
@@ -1118,6 +1138,12 @@ import type {
   WebSessionActiveCallTimeoutConfig,
   WorktreeConfig,
 } from '@/types/models';
+import {
+  getDailyTips,
+  selectAnotherRandomDailyTipIndex,
+  selectRandomDailyTipIndex,
+  type DailyTipDefinition,
+} from '@/utils/dailyTips';
 
 type ShortcutTarget = 'terminal' | 'notepad';
 
@@ -1152,6 +1178,7 @@ const {
   customTheme,
   recentProjectsLimit,
   maxTerminalsPerProject,
+  dailyTipEnabled,
   terminalShortcut,
   notepadShortcut,
   webSessionQuickInput,
@@ -1192,10 +1219,20 @@ const currentPassword = ref('');
 const newPassword = ref('');
 const newPasswordConfirm = ref('');
 const disablePassword = ref('');
+const showDailyTipDialog = ref(false);
+const activeDailyTipIndex = ref(0);
 
 // 使用 composable 获取主题和终端配色选项
 const presetOptions = useThemeOptions();
 const terminalThemeOptions = useTerminalThemeOptions();
+const dailyTips = computed(() => getDailyTips(locale.value));
+const dailyTipCount = computed(() => dailyTips.value.length);
+const activeDailyTip = computed<DailyTipDefinition | null>(() => {
+  if (dailyTips.value.length === 0) {
+    return null;
+  }
+  return dailyTips.value[activeDailyTipIndex.value] ?? dailyTips.value[0] ?? null;
+});
 
 // 当前预设 ID
 const currentPresetValue = computed(() => currentPresetId.value);
@@ -1926,6 +1963,44 @@ const terminalLimitValue = computed({
     debouncedUpdateTerminalLimit(value ?? 12);
   },
 });
+
+const dailyTipEnabledValue = computed({
+  get: () => dailyTipEnabled.value,
+  set: value => settingsStore.updateDailyTipEnabled(value),
+});
+
+function handleShowRandomDailyTip() {
+  if (dailyTips.value.length === 0) {
+    return;
+  }
+  activeDailyTipIndex.value = selectRandomDailyTipIndex(Math.random(), dailyTips.value.length);
+  showDailyTipDialog.value = true;
+}
+
+function handleDailyTipClose() {
+  showDailyTipDialog.value = false;
+}
+
+function handleShowAnotherDailyTip() {
+  activeDailyTipIndex.value = selectAnotherRandomDailyTipIndex(
+    activeDailyTipIndex.value,
+    Math.random(),
+    dailyTips.value.length
+  );
+}
+
+function handleDailyTipDisable() {
+  dialog.warning({
+    title: t('dailyTip.disableConfirmTitle'),
+    content: t('dailyTip.disableConfirmContent'),
+    positiveText: t('dailyTip.disableForever'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      settingsStore.updateDailyTipEnabled(false);
+      showDailyTipDialog.value = false;
+    },
+  });
+}
 
 const confirmTerminalCloseValue = computed({
   get: () => confirmBeforeTerminalClose.value,

@@ -206,6 +206,7 @@ interface GeneralSettings {
   customTheme: ThemeSettings | null;
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
+  dailyTipEnabled: boolean;
   panelShortcuts: ShortcutSettings;
   webSessionQuickInput: WebSessionQuickInputSettings;
   webSessionQuickInputDirectSend: boolean;
@@ -306,6 +307,7 @@ const defaultSettings: GeneralSettings = {
   customTheme: null,
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
+  dailyTipEnabled: true,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
   webSessionQuickInput: {
     pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
@@ -350,6 +352,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const customTheme = computed(() => settings.value.customTheme);
   const recentProjectsLimit = computed(() => settings.value.recentProjectsLimit);
   const maxTerminalsPerProject = computed(() => settings.value.maxTerminalsPerProject);
+  const dailyTipEnabled = computed(() => settings.value.dailyTipEnabled);
   const panelShortcuts = computed(() => settings.value.panelShortcuts);
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
@@ -464,6 +467,10 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function updateMaxTerminalsPerProject(limit: number) {
     settings.value.maxTerminalsPerProject = sanitizeTerminalLimit(limit);
+  }
+
+  function updateDailyTipEnabled(value: boolean) {
+    settings.value.dailyTipEnabled = sanitizeDailyTipEnabled(value);
   }
 
   function updatePanelShortcuts(partial: Partial<ShortcutSettings>) {
@@ -743,6 +750,7 @@ export const useSettingsStore = defineStore('settings', () => {
     activeTheme,
     recentProjectsLimit,
     maxTerminalsPerProject,
+    dailyTipEnabled,
     panelShortcuts,
     terminalShortcut,
     notepadShortcut,
@@ -771,6 +779,7 @@ export const useSettingsStore = defineStore('settings', () => {
     resetTheme,
     updateRecentProjectsLimit,
     updateMaxTerminalsPerProject,
+    updateDailyTipEnabled,
     updatePanelShortcuts,
     updateTerminalShortcut,
     updateNotepadShortcut,
@@ -864,6 +873,7 @@ function loadSettings(): LoadSettingsResult {
           customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
           recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
           maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
+          dailyTipEnabled: sanitizeDailyTipEnabled(parsed.dailyTipEnabled),
           panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
           webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
           webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
@@ -941,6 +951,7 @@ function cloneDefaultSettings(): GeneralSettings {
     customTheme: defaultSettings.customTheme,
     recentProjectsLimit: defaultSettings.recentProjectsLimit,
     maxTerminalsPerProject: defaultSettings.maxTerminalsPerProject,
+    dailyTipEnabled: defaultSettings.dailyTipEnabled,
     panelShortcuts: {
       terminal: { ...defaultSettings.panelShortcuts.terminal },
       notepad: { ...defaultSettings.panelShortcuts.notepad },
@@ -1016,6 +1027,10 @@ function sanitizeTerminalLimit(value: number | undefined) {
     return DEFAULT_TERMINALS_PER_PROJECT_LIMIT;
   }
   return Math.min(Math.max(Math.round(parsed), 1), 24);
+}
+
+function sanitizeDailyTipEnabled(value: unknown) {
+  return value !== false;
 }
 
 function sanitizeShowWebSessionReasoning(value: unknown, fallback = false) {

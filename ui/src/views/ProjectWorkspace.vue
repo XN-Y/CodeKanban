@@ -187,6 +187,16 @@
       :project="projectStore.currentProject"
       @success="handleProjectUpdated"
     />
+    <DailyTipDialog
+      v-if="activeDailyTip"
+      v-model:show="showDailyTipDialog"
+      :tip="activeDailyTip"
+      :tip-index="activeDailyTipIndex"
+      :total-tips="dailyTipCount"
+      @next="handleShowAnotherDailyTip"
+      @acknowledge="handleDailyTipAcknowledge"
+      @disable="handleDailyTipDisable"
+    />
   </div>
 </template>
 
@@ -194,8 +204,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
-import { useMessage } from 'naive-ui';
+import { useDialog, useMessage } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
+import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
 import { useResponsive } from '@/composables/useResponsive';
 import { useLocale } from '@/composables/useLocale';
@@ -209,6 +220,7 @@ import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import ProjectBrowser from '@/components/project/ProjectBrowser.vue';
+import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import type { Worktree } from '@/types/models';
 import {
   DEFAULT_MOBILE_VIEW,
@@ -231,6 +243,16 @@ import {
   resolveProjectSidebarDragWidth,
   resolveProjectSidebarMaxWidth,
 } from '@/views/projectWorkspaceSidebar';
+import {
+  formatLocalDateKey,
+  getDailyTips,
+  loadDailyTipState,
+  saveDailyTipState,
+  selectAnotherRandomDailyTipIndex,
+  selectDailyTipIndex,
+  shouldShowDailyTip,
+  type DailyTipDefinition,
+} from '@/utils/dailyTips';
 
 const WORKSPACE_MOBILE_MAX_WIDTH = 900;
 const PROJECT_SIDEBAR_WIDTH_STORAGE_KEY = 'workspace-left-project-sidebar-width';
@@ -238,13 +260,17 @@ const MOBILE_ACTIVE_VIEW_STORAGE_KEY = 'workspace-mobile-active-view-by-project'
 
 const route = useRoute();
 const router = useRouter();
+const dialog = useDialog();
 const message = useMessage();
 const projectStore = useProjectStore();
+const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const { windowWidth } = useResponsive();
-const { t } = useLocale();
+const { t, locale } = useLocale();
 const showEditDialog = ref(false);
 const isMobileWebSessionComposerFocused = ref(false);
+const showDailyTipDialog = ref(false);
+const activeDailyTipIndex = ref(0);
 const mobileKanbanEnabled = false;
 let mobileWebSessionComposerFocusFrame: number | null = null;
 
@@ -341,6 +367,14 @@ function startProjectSidebarResize(event: MouseEvent) {
 const currentProjectId = computed(() =>
   typeof route.params.id === 'string' ? route.params.id : ''
 );
+const dailyTipCount = computed(() => getDailyTips(locale.value).length);
+const activeDailyTip = computed<DailyTipDefinition | null>(() => {
+  const tips = getDailyTips(locale.value);
+  if (tips.length === 0) {
+    return null;
+  }
+  return tips[activeDailyTipIndex.value] ?? tips[0] ?? null;
+});
 
 const storedMobileViews = useStorage<Record<string, MobileView>>(
   MOBILE_ACTIVE_VIEW_STORAGE_KEY,
@@ -429,6 +463,7 @@ const loadProject = (id: string) => {
   }
   projectStore.fetchProject(id);
   projectStore.addRecentProject(id);
+  maybeShowDailyTip(id);
 };
 
 onMounted(() => {
@@ -529,6 +564,57 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
 
 function handleGoToSettings() {
   void router.push({ name: 'settings' });
+}
+
+function maybeShowDailyTip(projectId: string) {
+  const tips = getDailyTips(locale.value);
+  const todayDateKey = formatLocalDateKey();
+  const state = loadDailyTipState();
+
+  if (
+    !shouldShowDailyTip({
+      routeName: route.name,
+      projectId,
+      enabled: settingsStore.dailyTipEnabled,
+      lastShownDate: state.lastShownDate,
+      todayDateKey,
+      tipCount: tips.length,
+    })
+  ) {
+    return;
+  }
+
+  saveDailyTipState({
+    ...state,
+    lastShownDate: todayDateKey,
+  });
+  activeDailyTipIndex.value = selectDailyTipIndex(todayDateKey, tips.length);
+  showDailyTipDialog.value = true;
+}
+
+function handleDailyTipAcknowledge() {
+  showDailyTipDialog.value = false;
+}
+
+function handleShowAnotherDailyTip() {
+  activeDailyTipIndex.value = selectAnotherRandomDailyTipIndex(
+    activeDailyTipIndex.value,
+    Math.random(),
+    dailyTipCount.value
+  );
+}
+
+function handleDailyTipDisable() {
+  dialog.warning({
+    title: t('dailyTip.disableConfirmTitle'),
+    content: t('dailyTip.disableConfirmContent'),
+    positiveText: t('dailyTip.disableForever'),
+    negativeText: t('common.cancel'),
+    onPositiveClick: () => {
+      settingsStore.updateDailyTipEnabled(false);
+      showDailyTipDialog.value = false;
+    },
+  });
 }
 
 // 移动端视图切换

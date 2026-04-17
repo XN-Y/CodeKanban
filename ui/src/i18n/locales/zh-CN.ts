@@ -965,6 +965,10 @@ export default {
     recentProjectsLimitTip: '控制"最近项目"列表展示的数量',
     terminalLimit: '单项目终端上限',
     terminalLimitTip: '限制每个项目可同时打开的终端标签数',
+    dailyTipEnabled: '每日小技巧',
+    dailyTipShowRandom: '随机弹出一条',
+    dailyTipEnabledTip:
+      '进入项目工作区时按本地自然日检查并弹出一次。关闭后可随时回到这里重新开启。',
     confirmTerminalClose: '终端关闭确认',
     confirmTerminalCloseTip: '关闭终端前弹窗确认，避免误操作',
     sendResizeOnSwitch: '切换终端时发送 resize',
@@ -1056,7 +1060,8 @@ export default {
       '强制使用 WebGL 渲染器。性能更好，但在某些设备（尤其是高 DPI 移动端）上可能导致字体模糊或缩放异常',
     webglDisableTip: '强制禁用 WebGL 渲染器，使用 Canvas 渲染。兼容性更好，但性能略低',
     terminalShortcut: '终端快捷键',
-    terminalShortcutTip: '用于在当前工作区标签和上一个标签之间切换，默认 `。',
+    terminalShortcutTip:
+      '用于在最近访问的两个工作区标签之间切换；如果当前只访问过一个标签，则默认在终端和会话之间切换，默认 `。',
     notepadShortcut: '记事板快捷键',
     notepadShortcutTip: '用于展开/收起右侧记事板，默认 1',
     defaultEditor: '默认编辑器',
@@ -1139,6 +1144,16 @@ export default {
     shellSaveSuccess: '终端设置已保存，新建终端时生效',
     customShellPlaceholder: '输入自定义 Shell 命令，例如：pwsh.exe -NoLogo',
     currentPlatform: '当前平台',
+  },
+  dailyTip: {
+    title: '每日小技巧',
+    tipCounter: '技巧 {current} / {total}',
+    oncePerDayHint: '基于你的本地时间，每个自然日最多提示一次。关闭后可在设置中重新开启。',
+    showAnother: '再看一条',
+    acknowledge: '知道了',
+    disableForever: '永久关闭',
+    disableConfirmTitle: '永久关闭每日小技巧',
+    disableConfirmContent: '关闭后将不再自动弹出。你仍然可以随时在设置中重新开启。',
   },
   theme: {
     light: '亮色',

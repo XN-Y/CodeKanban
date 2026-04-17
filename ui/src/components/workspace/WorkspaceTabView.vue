@@ -193,6 +193,7 @@ import {
   resolveDesktopWorkspaceRouteTab,
   type DesktopWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
+import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
 
 const props = defineProps<{
   projectId: string;
@@ -259,14 +260,14 @@ function activateTab(nextTab: WorkspaceTab) {
 }
 
 function togglePreviousWorkspaceTab() {
-  const previous = previousTab.value ? normalizeWorkspaceTab(previousTab.value) : null;
-  if (!previous || previous === activeTab.value) {
+  const targetTab = resolveWorkspaceShortcutTarget(activeTab.value, previousTab.value);
+  if (targetTab === activeTab.value) {
     return;
   }
   previousTab.value = activeTab.value;
-  activeTab.value = previous;
-  storedActiveTab.value = previous;
-  syncWorkspaceRouteTab(previous);
+  activeTab.value = targetTab;
+  storedActiveTab.value = targetTab;
+  syncWorkspaceRouteTab(targetTab);
 }
 
 // 终端数量

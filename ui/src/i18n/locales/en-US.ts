@@ -1001,6 +1001,10 @@ export default {
     terminalLimit: 'Terminal Limit Per Project',
     terminalLimitTip:
       'Limit the number of terminal tabs that can be opened simultaneously per project',
+    dailyTipEnabled: 'Daily Tip',
+    dailyTipShowRandom: 'Show Random Tip',
+    dailyTipEnabledTip:
+      'Check once per local calendar day when entering a project workspace. You can turn it back on here after disabling it.',
     confirmTerminalClose: 'Confirm Terminal Close',
     confirmTerminalCloseTip:
       'Show confirmation dialog before closing terminal to avoid accidental closures',
@@ -1098,7 +1102,7 @@ export default {
       'Force disable WebGL renderer, use Canvas instead. Better compatibility but slightly lower performance',
     terminalShortcut: 'Terminal Shortcut',
     terminalShortcutTip:
-      'Used to switch between the current workspace tab and the previous one, default `.',
+      'Used to switch between the two most recently visited workspace tabs. If you have only visited one tab, it falls back to switching between Terminal and AI Sessions. Default `.',
     notepadShortcut: 'Notepad Shortcut',
     notepadShortcutTip: 'Used to expand/collapse the right notepad panel, default 1',
     defaultEditor: 'Default Editor',
@@ -1185,6 +1189,18 @@ export default {
     shellSaveSuccess: 'Terminal settings saved. New terminals will use the selected shell.',
     customShellPlaceholder: 'Enter custom shell command, e.g.: pwsh.exe -NoLogo',
     currentPlatform: 'Current platform',
+  },
+  dailyTip: {
+    title: 'Daily Tip',
+    tipCounter: 'Tip {current} / {total}',
+    oncePerDayHint:
+      'Based on your local time, this appears at most once per calendar day. You can re-enable it in Settings after disabling it.',
+    showAnother: 'Show Another',
+    acknowledge: 'Got It',
+    disableForever: 'Disable Forever',
+    disableConfirmTitle: 'Disable Daily Tip Permanently',
+    disableConfirmContent:
+      'After disabling it, the tip will no longer open automatically. You can still re-enable it anytime in Settings.',
   },
   theme: {
     light: 'Light',
