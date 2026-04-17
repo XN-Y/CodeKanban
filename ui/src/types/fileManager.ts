@@ -1,5 +1,13 @@
 export type FileManagerScopeKind = 'project' | 'worktree';
 export type FileManagerEntryKind = 'file' | 'directory' | 'symlink';
+export type FileManagerGitStatusKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted'
+  | 'dirty';
 export type FileManagerPreviewKind =
   | 'image'
   | 'text'
@@ -8,6 +16,11 @@ export type FileManagerPreviewKind =
   | 'audio'
   | 'video'
   | 'binary';
+
+export interface FileManagerGitStatus {
+  kind: FileManagerGitStatusKind;
+  previousPath?: string;
+}
 
 export interface FileManagerScope {
   id: string;
@@ -32,6 +45,7 @@ export interface FileManagerEntry {
   extension?: string;
   previewKind: FileManagerPreviewKind;
   hidden: boolean;
+  gitStatus?: FileManagerGitStatus;
 }
 
 export interface FileManagerListResult {
@@ -49,6 +63,32 @@ export interface FileManagerPreviewResult {
   truncated: boolean;
   inlineUrl: string;
   downloadUrl: string;
+}
+
+export interface FileManagerChangeEntry {
+  name: string;
+  path: string;
+  previewKind: FileManagerPreviewKind;
+  hidden: boolean;
+  exists: boolean;
+  status: FileManagerGitStatus;
+  additions: number;
+  deletions: number;
+}
+
+export interface FileManagerChangesResult {
+  scope: FileManagerScope;
+  entries: FileManagerChangeEntry[];
+}
+
+export interface FileManagerDiffResult {
+  path: string;
+  status?: FileManagerGitStatus;
+  available: boolean;
+  reason?: string;
+  previousPath?: string;
+  diffText?: string;
+  comparedTo: 'HEAD';
 }
 
 export interface FileManagerArchiveJob {

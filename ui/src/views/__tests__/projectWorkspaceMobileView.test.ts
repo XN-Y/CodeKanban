@@ -14,6 +14,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(normalizeMobileView('terminal')).toBe('terminal');
     expect(normalizeMobileView('webSession')).toBe('webSession');
     expect(normalizeMobileView('files')).toBe('files');
+    expect(normalizeMobileView('changes')).toBe('changes');
     expect(normalizeMobileView('notifications')).toBe('notifications');
   });
 
@@ -34,6 +35,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(restorePersistedMobileView('terminal')).toBe('terminal');
     expect(restorePersistedMobileView('webSession')).toBe('webSession');
     expect(restorePersistedMobileView('files')).toBe('files');
+    expect(restorePersistedMobileView('changes')).toBe('changes');
   });
 
   it('maps mobile views to route tabs', () => {
@@ -41,6 +43,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(mobileViewToRouteTab('terminal')).toBe('terminal');
     expect(mobileViewToRouteTab('webSession')).toBe('web');
     expect(mobileViewToRouteTab('files')).toBe('files');
+    expect(mobileViewToRouteTab('changes')).toBe('changes');
     expect(mobileViewToRouteTab('notifications')).toBe('notifications');
     expect(mobileViewToRouteTab('kanban')).toBe('projects');
   });
@@ -50,6 +53,7 @@ describe('projectWorkspaceMobileView', () => {
     expect(routeTabToMobileView('terminal')).toBe('terminal');
     expect(routeTabToMobileView('web')).toBe('webSession');
     expect(routeTabToMobileView('files')).toBe('files');
+    expect(routeTabToMobileView('changes')).toBe('changes');
     expect(routeTabToMobileView('notifications')).toBe('notifications');
     expect(routeTabToMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
     expect(routeTabToMobileView('unknown')).toBe(DEFAULT_MOBILE_VIEW);

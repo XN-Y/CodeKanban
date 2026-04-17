@@ -10,22 +10,24 @@ export type WorkspaceRouteTab =
   | 'projects'
   | 'terminal'
   | 'web'
+  | 'changes'
   | 'files'
   | 'kanban'
   | 'notifications';
 
 export type DesktopWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
-  'terminal' | 'web' | 'files' | 'kanban'
+  'terminal' | 'web' | 'changes' | 'files' | 'kanban'
 >;
 export type MobileWorkspaceRouteTab = Extract<
   WorkspaceRouteTab,
-  'projects' | 'terminal' | 'web' | 'files' | 'notifications'
+  'projects' | 'terminal' | 'web' | 'files' | 'changes' | 'notifications'
 >;
 
 const DESKTOP_WORKSPACE_ROUTE_TAB_SET = new Set<DesktopWorkspaceRouteTab>([
   'terminal',
   'web',
+  'changes',
   'files',
   'kanban',
 ]);
@@ -35,6 +37,7 @@ const MOBILE_WORKSPACE_ROUTE_TAB_SET = new Set<MobileWorkspaceRouteTab>([
   'terminal',
   'web',
   'files',
+  'changes',
   'notifications',
 ]);
 
@@ -55,6 +58,7 @@ export function normalizeWorkspaceRouteTab(value: unknown): WorkspaceRouteTab | 
     case 'projects':
     case 'terminal':
     case 'web':
+    case 'changes':
     case 'files':
     case 'kanban':
     case 'notifications':

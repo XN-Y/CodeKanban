@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { renderMarkdown } from '@/utils/markdown';
+import { renderHighlightedCodeBlock, renderMarkdown } from '@/utils/markdown';
 
 describe('renderMarkdown', () => {
   it('highlights fenced code blocks by default', () => {
@@ -30,5 +30,13 @@ describe('renderMarkdown', () => {
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('data-message-link="true"');
     expect(html).toContain('target="_blank"');
+  });
+
+  it('renders standalone highlighted diff blocks', () => {
+    const html = renderHighlightedCodeBlock('@@ -1 +1 @@\n-old\n+new\n', 'diff');
+
+    expect(html).toContain('class="hljs language-diff"');
+    expect(html).toContain('hljs-addition');
+    expect(html).toContain('hljs-deletion');
   });
 });

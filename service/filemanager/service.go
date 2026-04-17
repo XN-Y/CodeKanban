@@ -24,6 +24,7 @@ import (
 
 	"code-kanban/model"
 	"code-kanban/utils"
+	"code-kanban/utils/git"
 )
 
 const (
@@ -218,6 +219,7 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 		return nil, err
 	}
 
+	gitStatuses := s.loadGitStatuses(scope.RootPath)
 	items := make([]Entry, 0, len(entries))
 	for _, entry := range entries {
 		name := strings.TrimSpace(entry.Name())
@@ -253,6 +255,7 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 			item.Mime = detectMimeFromName(name)
 			item.PreviewKind = detectPreviewKind(name, item.Mime)
 		}
+		item.GitStatus = buildEntryGitStatus(item, gitStatuses)
 
 		items = append(items, item)
 	}
@@ -291,6 +294,7 @@ func (s *Service) Preview(ctx context.Context, projectID, scopeID, path string) 
 	if err != nil {
 		return nil, err
 	}
+	entry.GitStatus = buildEntryGitStatus(entry, s.loadGitStatuses(scope.RootPath))
 
 	result := &PreviewResult{
 		Entry:       entry,
@@ -342,6 +346,113 @@ func (s *Service) Preview(ctx context.Context, projectID, scopeID, path string) 
 		result.Entry.PreviewKind = PreviewKindText
 	}
 	result.TextContent = string(raw)
+	return result, nil
+}
+
+func (s *Service) ListChanges(ctx context.Context, projectID, scopeID string) (*ChangesResult, error) {
+	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ChangesResult{
+		Scope:   scope,
+		Entries: []ChangeEntry{},
+	}
+	if !git.IsRepositoryPath(scope.RootPath) {
+		return result, nil
+	}
+
+	statuses, err := git.ListFileStatuses(scope.RootPath)
+	if err != nil {
+		return nil, err
+	}
+
+	entries := make([]ChangeEntry, 0, len(statuses))
+	for _, status := range statuses {
+		entries = append(entries, s.buildChangeEntry(scope.RootPath, status))
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Path) < strings.ToLower(entries[j].Path)
+	})
+	result.Entries = entries
+	return result, nil
+}
+
+func (s *Service) Diff(ctx context.Context, projectID, scopeID, path string) (*DiffResult, error) {
+	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedPath := normalizeRelativePath(path)
+	if err := ensureProtectedPath(normalizedPath); err != nil {
+		return nil, err
+	}
+
+	result := &DiffResult{
+		Path:       toSlashPath(normalizedPath),
+		Available:  false,
+		ComparedTo: "HEAD",
+	}
+	if !git.IsRepositoryPath(scope.RootPath) {
+		result.Reason = "not_git_repository"
+		return result, nil
+	}
+
+	statuses, err := git.ListFileStatuses(scope.RootPath)
+	if err != nil {
+		return nil, err
+	}
+	status, ok := statuses[result.Path]
+	if ok {
+		result.Status = toFileManagerGitStatus(status, false)
+		result.PreviousPath = status.PreviousPath
+	}
+	if !ok {
+		result.Reason = "clean"
+		return result, nil
+	}
+
+	switch status.Kind {
+	case git.FileChangeKindUntracked:
+		result.Reason = "untracked"
+		return result, nil
+	case git.FileChangeKindConflicted:
+		result.Reason = "conflicted"
+		return result, nil
+	}
+
+	if status.Kind != git.FileChangeKindDeleted {
+		normalizedPath, absPath, info, err := s.resolveExisting(scope, path)
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("directories cannot be diffed")
+		}
+
+		entry, err := s.buildFileEntry(normalizedPath, info)
+		if err != nil {
+			return nil, err
+		}
+		if !s.supportsDiffPreview(absPath, entry.PreviewKind) {
+			result.Reason = "binary"
+			return result, nil
+		}
+	}
+
+	diffText, err := git.GenerateUnifiedDiffAgainstHEAD(scope.RootPath, result.Path, status.PreviousPath)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(diffText) == "" {
+		result.Reason = "clean"
+		return result, nil
+	}
+
+	result.Available = true
+	result.DiffText = diffText
 	return result, nil
 }
 
@@ -961,6 +1072,123 @@ func (s *Service) buildFileEntry(relativePath string, info os.FileInfo) (Entry, 
 	entry.Mime = detectMimeFromName(info.Name())
 	entry.PreviewKind = detectPreviewKind(info.Name(), entry.Mime)
 	return entry, nil
+}
+
+func (s *Service) loadGitStatuses(scopeRoot string) map[string]git.FileStatus {
+	if !git.IsRepositoryPath(scopeRoot) {
+		return nil
+	}
+	statuses, err := git.ListFileStatuses(scopeRoot)
+	if err != nil {
+		s.logger.Debug("failed to load git file statuses",
+			zap.String("scopeRoot", scopeRoot),
+			zap.Error(err),
+		)
+		return nil
+	}
+	return statuses
+}
+
+func buildEntryGitStatus(entry Entry, statuses map[string]git.FileStatus) *GitStatus {
+	if len(statuses) == 0 {
+		return nil
+	}
+	if entry.Kind == EntryKindDirectory {
+		prefix := entry.Path + "/"
+		for changedPath := range statuses {
+			if changedPath == entry.Path || strings.HasPrefix(changedPath, prefix) {
+				return &GitStatus{Kind: GitStatusKindDirty}
+			}
+		}
+		return nil
+	}
+
+	status, ok := statuses[entry.Path]
+	if !ok {
+		return nil
+	}
+	return toFileManagerGitStatus(status, false)
+}
+
+func toFileManagerGitStatus(status git.FileStatus, forceDirty bool) *GitStatus {
+	kind := GitStatusKindModified
+	switch {
+	case forceDirty:
+		kind = GitStatusKindDirty
+	case status.Kind == git.FileChangeKindAdded:
+		kind = GitStatusKindAdded
+	case status.Kind == git.FileChangeKindDeleted:
+		kind = GitStatusKindDeleted
+	case status.Kind == git.FileChangeKindRenamed:
+		kind = GitStatusKindRenamed
+	case status.Kind == git.FileChangeKindUntracked:
+		kind = GitStatusKindUntracked
+	case status.Kind == git.FileChangeKindConflicted:
+		kind = GitStatusKindConflicted
+	case status.Kind == git.FileChangeKindDirty:
+		kind = GitStatusKindDirty
+	default:
+		kind = GitStatusKindModified
+	}
+	return &GitStatus{
+		Kind:         kind,
+		PreviousPath: status.PreviousPath,
+	}
+}
+
+func (s *Service) buildChangeEntry(scopeRoot string, status git.FileStatus) ChangeEntry {
+	name := filepath.Base(status.Path)
+	mimeType := detectMimeFromName(name)
+	diffStat, err := git.GenerateDiffStatAgainstHEAD(scopeRoot, status)
+	if err != nil {
+		s.logger.Debug("failed to load git diff stat",
+			zap.String("scopeRoot", scopeRoot),
+			zap.String("path", status.Path),
+			zap.Error(err),
+		)
+	}
+	return ChangeEntry{
+		Name:        name,
+		Path:        status.Path,
+		PreviewKind: detectPreviewKind(name, mimeType),
+		Hidden:      strings.HasPrefix(name, "."),
+		Exists:      status.Kind != git.FileChangeKindDeleted,
+		Status: GitStatus{
+			Kind:         toFileManagerGitStatus(status, false).Kind,
+			PreviousPath: status.PreviousPath,
+		},
+		Additions: diffStat.Additions,
+		Deletions: diffStat.Deletions,
+	}
+}
+
+func (s *Service) supportsDiffPreview(absPath string, kind PreviewKind) bool {
+	switch kind {
+	case PreviewKindText, PreviewKindMarkdown:
+		return true
+	case PreviewKindImage, PreviewKindPDF, PreviewKindAudio, PreviewKindVideo:
+		return false
+	}
+
+	file, err := os.Open(absPath)
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 8192)
+	readBytes, err := file.Read(buffer)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return false
+	}
+	sample := buffer[:readBytes]
+	if len(sample) == 0 {
+		return true
+	}
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return false
+	}
+	return utf8.Valid(sample)
 }
 
 func (s *Service) bulkTransfer(ctx context.Context, projectID, scopeID string, sourcePaths []string, destinationPath string, move bool) (*BulkResult, error) {

@@ -5,10 +5,18 @@ const MOBILE_VIEWS = [
   'terminal',
   'webSession',
   'files',
+  'changes',
   'projects',
   'notifications',
 ] as const;
-const MOBILE_ROUTE_TABS = ['projects', 'terminal', 'web', 'files', 'notifications'] as const;
+const MOBILE_ROUTE_TABS = [
+  'projects',
+  'terminal',
+  'web',
+  'files',
+  'changes',
+  'notifications',
+] as const;
 
 export type MobileView = (typeof MOBILE_VIEWS)[number];
 export type MobileRouteTab = (typeof MOBILE_ROUTE_TABS)[number];
@@ -36,6 +44,8 @@ export function mobileViewToRouteTab(value: unknown): MobileRouteTab {
       return 'web';
     case 'files':
       return 'files';
+    case 'changes':
+      return 'changes';
     case 'notifications':
       return 'notifications';
     case 'projects':
@@ -53,6 +63,8 @@ export function routeTabToMobileView(value: unknown): MobileView {
       return 'webSession';
     case 'files':
       return 'files';
+    case 'changes':
+      return 'changes';
     case 'notifications':
       return 'notifications';
     case 'projects':

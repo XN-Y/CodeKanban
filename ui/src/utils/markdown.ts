@@ -130,6 +130,25 @@ function renderCodeBlock({ text, lang }: Tokens.Code, options: RenderMarkdownOpt
   return `<pre class="markdown-code-block"${dataLanguage}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
 }
 
+export function renderHighlightedCodeBlock(
+  value: string,
+  lang?: string,
+  options: RenderMarkdownOptions = {}
+) {
+  if (!value) {
+    return '';
+  }
+  return renderCodeBlock(
+    {
+      type: 'code',
+      raw: value,
+      text: value,
+      lang,
+    },
+    options
+  );
+}
+
 function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
   const renderer = new Marked({
     async: false,

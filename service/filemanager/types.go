@@ -29,6 +29,23 @@ const (
 	PreviewKindBinary   PreviewKind = "binary"
 )
 
+type GitStatusKind string
+
+const (
+	GitStatusKindModified   GitStatusKind = "modified"
+	GitStatusKindAdded      GitStatusKind = "added"
+	GitStatusKindDeleted    GitStatusKind = "deleted"
+	GitStatusKindRenamed    GitStatusKind = "renamed"
+	GitStatusKindUntracked  GitStatusKind = "untracked"
+	GitStatusKindConflicted GitStatusKind = "conflicted"
+	GitStatusKindDirty      GitStatusKind = "dirty"
+)
+
+type GitStatus struct {
+	Kind         GitStatusKind `json:"kind"`
+	PreviousPath string        `json:"previousPath,omitempty"`
+}
+
 type Scope struct {
 	ID         string    `json:"id"`
 	Kind       ScopeKind `json:"kind"`
@@ -52,6 +69,7 @@ type Entry struct {
 	Extension   string      `json:"extension,omitempty"`
 	PreviewKind PreviewKind `json:"previewKind"`
 	Hidden      bool        `json:"hidden"`
+	GitStatus   *GitStatus  `json:"gitStatus,omitempty"`
 }
 
 type ListResult struct {
@@ -67,6 +85,32 @@ type PreviewResult struct {
 	PreviewKind PreviewKind `json:"previewKind"`
 	TextContent string      `json:"textContent,omitempty"`
 	Truncated   bool        `json:"truncated"`
+}
+
+type ChangeEntry struct {
+	Name        string      `json:"name"`
+	Path        string      `json:"path"`
+	PreviewKind PreviewKind `json:"previewKind"`
+	Hidden      bool        `json:"hidden"`
+	Exists      bool        `json:"exists"`
+	Status      GitStatus   `json:"status"`
+	Additions   int64       `json:"additions"`
+	Deletions   int64       `json:"deletions"`
+}
+
+type ChangesResult struct {
+	Scope   Scope         `json:"scope"`
+	Entries []ChangeEntry `json:"entries"`
+}
+
+type DiffResult struct {
+	Path         string     `json:"path"`
+	Status       *GitStatus `json:"status,omitempty"`
+	Available    bool       `json:"available"`
+	Reason       string     `json:"reason,omitempty"`
+	PreviousPath string     `json:"previousPath,omitempty"`
+	DiffText     string     `json:"diffText,omitempty"`
+	ComparedTo   string     `json:"comparedTo"`
 }
 
 type FileRef struct {

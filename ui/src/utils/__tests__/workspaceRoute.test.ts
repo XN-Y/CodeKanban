@@ -15,6 +15,7 @@ describe('workspaceRoute', () => {
   it('reads the first valid workspace tab from the route query', () => {
     expect(getWorkspaceRouteTab({ tab: ' web ' })).toBe('web');
     expect(getWorkspaceRouteTab({ tab: ['', 'files'] })).toBe('files');
+    expect(getWorkspaceRouteTab({ tab: ['bad', 'changes'] })).toBe('changes');
     expect(getWorkspaceRouteTab({ tab: null })).toBe('');
   });
 
@@ -61,11 +62,13 @@ describe('workspaceRoute', () => {
 
   it('resolves desktop tabs from explicit query values, legacy deep links, and fallback state', () => {
     expect(resolveDesktopWorkspaceRouteTab({ tab: 'files' }, 'terminal')).toBe('files');
+    expect(resolveDesktopWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
     expect(resolveDesktopWorkspaceRouteTab({ webSessionId: 'session-1' }, 'terminal')).toBe('web');
     expect(resolveDesktopWorkspaceRouteTab({}, 'web')).toBe('web');
   });
 
   it('resolves mobile tabs with a projects fallback for unsupported values', () => {
+    expect(resolveMobileWorkspaceRouteTab({ tab: 'changes' }, 'terminal')).toBe('changes');
     expect(resolveMobileWorkspaceRouteTab({ tab: 'notifications' }, 'terminal')).toBe(
       'notifications'
     );

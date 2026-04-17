@@ -41,8 +41,10 @@ func registerFileManagerRoutes(app *fiber.App, cfg *utils.AppConfig, logger *zap
 
 	base := "/api/v1/projects/:projectId/files"
 	app.Get(base+"/scopes", ctrl.handleListScopes)
+	app.Get(base+"/changes", ctrl.handleListChanges)
 	app.Get(base+"/list", ctrl.handleList)
 	app.Get(base+"/preview", ctrl.handlePreview)
+	app.Get(base+"/diff", ctrl.handleDiff)
 	app.Get(base+"/content", ctrl.handleContent)
 	app.Post(base+"/directories", ctrl.handleCreateDirectory)
 	app.Post(base+"/rename", ctrl.handleRename)
@@ -67,6 +69,18 @@ func (c *fileManagerController) handleListScopes(ctx *fiber.Ctx) error {
 		return c.writeError(ctx, err)
 	}
 	resp := h.NewItemsResponse(scopes)
+	resp.Status = http.StatusOK
+	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
+func (c *fileManagerController) handleListChanges(ctx *fiber.Ctx) error {
+	projectID := strings.TrimSpace(ctx.Params("projectId"))
+	scopeID := ctx.Query("scopeId")
+	item, err := c.service.ListChanges(ctx.UserContext(), projectID, scopeID)
+	if err != nil {
+		return c.writeError(ctx, err)
+	}
+	resp := h.NewItemResponse(item)
 	resp.Status = http.StatusOK
 	return ctx.Status(http.StatusOK).JSON(resp)
 }
@@ -101,6 +115,19 @@ func (c *fileManagerController) handlePreview(ctx *fiber.Ctx) error {
 		InlineURL:     buildFileContentURL(projectID, scopeID, path, "inline"),
 		DownloadURL:   buildFileContentURL(projectID, scopeID, path, "attachment"),
 	})
+	resp.Status = http.StatusOK
+	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
+func (c *fileManagerController) handleDiff(ctx *fiber.Ctx) error {
+	projectID := strings.TrimSpace(ctx.Params("projectId"))
+	scopeID := ctx.Query("scopeId")
+	path := ctx.Query("path")
+	item, err := c.service.Diff(ctx.UserContext(), projectID, scopeID, path)
+	if err != nil {
+		return c.writeError(ctx, err)
+	}
+	resp := h.NewItemResponse(item)
 	resp.Status = http.StatusOK
 	return ctx.Status(http.StatusOK).JSON(resp)
 }

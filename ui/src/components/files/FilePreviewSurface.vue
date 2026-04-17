@@ -11,7 +11,27 @@
         >
           {{ backLabel }}
         </n-button>
-        <div v-if="headerTitle" class="file-preview-title">{{ headerTitle }}</div>
+        <div class="file-preview-title-row">
+          <div v-if="headerTitle" class="file-preview-title">{{ headerTitle }}</div>
+          <div v-if="showDiffToggle" class="file-preview-mode-toggle" role="tablist">
+            <button
+              type="button"
+              class="file-preview-mode-button"
+              :class="{ 'is-active': previewMode === 'diff' }"
+              @click="emit('mode-change', 'diff')"
+            >
+              {{ diffLabel }}
+            </button>
+            <button
+              type="button"
+              class="file-preview-mode-button"
+              :class="{ 'is-active': previewMode === 'file' }"
+              @click="emit('mode-change', 'file')"
+            >
+              {{ fileLabel }}
+            </button>
+          </div>
+        </div>
         <div v-if="headerMeta" class="file-preview-meta">{{ headerMeta }}</div>
       </div>
       <div v-if="previewResult" class="file-preview-actions">
@@ -21,7 +41,25 @@
       </div>
     </div>
 
-    <div v-if="previewLoading" class="file-preview-empty">
+    <div v-if="previewMode === 'diff' && diffLoading" class="file-preview-empty">
+      <n-spin size="small" />
+    </div>
+    <div v-else-if="previewMode === 'diff' && diffError" class="file-preview-empty">
+      <n-alert type="error" :show-icon="false">{{ diffError }}</n-alert>
+    </div>
+    <template v-else-if="previewMode === 'diff'">
+      <div
+        v-if="diffResult?.available"
+        class="file-preview-content"
+        :class="{ 'is-diff-content': previewMode === 'diff' }"
+      >
+        <div class="file-preview-diff chat-markdown" v-html="renderedDiff"></div>
+      </div>
+      <div v-else class="file-preview-empty">
+        <n-alert type="info" :show-icon="false">{{ diffUnavailableText }}</n-alert>
+      </div>
+    </template>
+    <div v-else-if="previewLoading" class="file-preview-empty">
       <n-spin size="small" />
     </div>
     <div v-else-if="previewError" class="file-preview-empty">
@@ -84,7 +122,8 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import type { FileManagerPreviewResult } from '@/types/fileManager';
+import type { FilePreviewMode } from '@/components/files/fileManagerDiff';
+import type { FileManagerDiffResult, FileManagerPreviewResult } from '@/types/fileManager';
 
 const props = withDefaults(
   defineProps<{
@@ -98,6 +137,15 @@ const props = withDefaults(
     binaryPreviewHint: string;
     previewTruncatedLabel: string;
     downloadLabel: string;
+    previewMode: FilePreviewMode;
+    showDiffToggle: boolean;
+    fileLabel: string;
+    diffLabel: string;
+    diffResult: FileManagerDiffResult | null;
+    diffLoading: boolean;
+    diffError: string;
+    renderedDiff: string;
+    diffUnavailableText: string;
     backLabel?: string;
     fallbackTitle?: string;
     mobile?: boolean;
@@ -115,11 +163,20 @@ const emit = defineEmits<{
   (e: 'close'): void;
   (e: 'download'): void;
   (e: 'image-preview'): void;
+  (e: 'mode-change', value: FilePreviewMode): void;
 }>();
 
-const showHeader = computed(() => props.showBackButton || Boolean(props.previewResult));
+const showHeader = computed(
+  () =>
+    props.showBackButton ||
+    Boolean(props.previewResult) ||
+    props.showDiffToggle ||
+    Boolean(props.fallbackTitle)
+);
 const headerTitle = computed(() => props.previewResult?.entry.name || props.fallbackTitle);
-const headerMeta = computed(() => (props.previewResult ? props.previewMeta : ''));
+const headerMeta = computed(() =>
+  props.previewResult || props.fallbackTitle ? props.previewMeta : ''
+);
 </script>
 
 <style scoped>
@@ -144,7 +201,7 @@ const headerMeta = computed(() => (props.previewResult ? props.previewMeta : '')
   position: sticky;
   top: 0;
   z-index: 1;
-  padding-top: calc(14px + env(safe-area-inset-top, 0px));
+  padding-top: calc(8px + env(safe-area-inset-top, 0px));
 }
 
 .file-preview-heading {
@@ -152,11 +209,47 @@ const headerMeta = computed(() => (props.previewResult ? props.previewMeta : '')
   min-width: 0;
 }
 
+.file-preview-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .file-preview-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.file-preview-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(37, 90, 143, 0.08);
+  gap: 4px;
+}
+
+.file-preview-mode-button {
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(34, 46, 67, 0.7);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+
+.file-preview-mode-button.is-active {
+  background: #ffffff;
+  color: #1f4c7f;
+  box-shadow: 0 6px 16px rgba(31, 76, 127, 0.16);
 }
 
 .file-preview-back {
@@ -241,6 +334,20 @@ const headerMeta = computed(() => (props.previewResult ? props.previewMeta : '')
   font-size: 14px;
 }
 
+.file-preview-diff {
+  width: 100%;
+}
+
+.file-preview-diff :deep(pre.markdown-code-block) {
+  margin: 0;
+}
+
+.file-preview-diff :deep(pre.markdown-code-block code.hljs) {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
 .file-preview-binary,
 .file-preview-truncated {
   color: rgba(34, 46, 67, 0.7);
@@ -263,15 +370,92 @@ const headerMeta = computed(() => (props.previewResult ? props.previewMeta : '')
 
 @media (max-width: 820px) {
   .file-preview-header {
-    padding: 14px 16px;
+    padding: 7px 10px 6px;
+    gap: 8px;
   }
 
-  .file-preview-title {
-    font-size: 14px;
+  .file-preview-shell.is-mobile .file-preview-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-back {
+    margin: 0;
+    min-width: auto;
+    min-height: 24px;
+    padding: 0 4px;
+    align-self: flex-start;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-title {
+    font-size: 13px;
+    line-height: 1.25;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-meta {
+    margin-top: 0;
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-actions {
+    flex-shrink: 0;
+    align-self: flex-start;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-mode-toggle {
+    margin-left: auto;
+    padding: 2px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-mode-button {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-actions :deep(.n-button) {
+    min-height: 26px;
+    padding: 0 10px;
   }
 
   .file-preview-content {
-    padding: 14px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .file-preview-shell.is-mobile .file-preview-content {
+    padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .file-preview-shell.is-mobile .file-preview-diff :deep(pre.markdown-code-block) {
+    margin: 0;
+    border-left: none;
+    border-right: none;
+    border-radius: 0;
+    box-shadow: none;
+    width: 100%;
+    min-width: 100%;
+  }
+
+  .file-preview-shell.is-mobile .file-preview-diff :deep(pre.markdown-code-block code.hljs) {
+    padding: 6px 8px 8px;
+    font-size: 12px;
+  }
+
+  .file-preview-shell.is-mobile
+    .file-preview-diff
+    :deep(pre.markdown-code-block[data-language]::before) {
+    padding: 6px 8px 0;
   }
 }
 </style>

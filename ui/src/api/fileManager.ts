@@ -4,6 +4,8 @@ import { http } from '@/api/http';
 import type {
   FileManagerArchiveJob,
   FileManagerBulkResult,
+  FileManagerChangesResult,
+  FileManagerDiffResult,
   FileManagerEntry,
   FileManagerListResult,
   FileManagerPreviewResult,
@@ -93,6 +95,22 @@ export const fileManagerApi = {
     return item;
   },
 
+  async listChanges(projectId: string, scopeId: string): Promise<FileManagerChangesResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerChangesResult>
+        >(`/projects/${projectId}/files/changes?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerChangesResult>(payload);
+    if (!item) {
+      throw new Error('failed to load git changes');
+    }
+    return item;
+  },
+
   async preview(
     projectId: string,
     scopeId: string,
@@ -110,6 +128,23 @@ export const fileManagerApi = {
     const item = extractItem<FileManagerPreviewResult>(payload);
     if (!item) {
       throw new Error('failed to load file preview');
+    }
+    return item;
+  },
+
+  async diff(projectId: string, scopeId: string, path: string): Promise<FileManagerDiffResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    params.set('path', path);
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerDiffResult>
+        >(`/projects/${projectId}/files/diff?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerDiffResult>(payload);
+    if (!item) {
+      throw new Error('failed to load file diff');
     }
     return item;
   },

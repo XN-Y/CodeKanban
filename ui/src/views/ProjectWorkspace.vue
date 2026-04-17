@@ -85,6 +85,13 @@
           />
         </div>
 
+        <div v-show="mobileActiveView === 'changes'" class="mobile-view mobile-changes-view">
+          <GitChangesPanel
+            :project-id="currentProjectId"
+            :is-active="mobileActiveView === 'changes'"
+          />
+        </div>
+
         <!-- 项目视图 -->
         <div v-show="mobileActiveView === 'projects'" class="mobile-view mobile-projects-view">
           <ProjectBrowser mode="mobile-workspace" :current-project-id="currentProjectId" />
@@ -142,6 +149,22 @@
               </svg>
             </n-icon>
             <span>{{ t('nav.files') }}</span>
+          </button>
+          <button
+            type="button"
+            class="nav-item"
+            :class="{ active: mobileActiveView === 'changes' }"
+            @click="setMobileView('changes')"
+          >
+            <n-icon size="20">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path
+                  fill="currentColor"
+                  d="M7 7a2 2 0 1 1 1.732-3H16a2 2 0 1 1 0 2H8.732A2 2 0 0 1 7 7Zm0 7a2 2 0 1 1 1.732-3H11a2 2 0 1 1 0 2H8.732A2 2 0 0 1 7 14Zm10-2a2 2 0 1 1 0 2h-2a2 2 0 1 1 0-2h2Zm-8.268 7A2 2 0 1 1 7 17a2 2 0 0 1 1.732 1H16a2 2 0 1 1 0 2H8.732Z"
+                />
+              </svg>
+            </n-icon>
+            <span>{{ t('nav.changes') }}</span>
           </button>
           <button
             type="button"
@@ -229,6 +252,7 @@ import WorkspaceTabView from '@/components/workspace/WorkspaceTabView.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
 import AINotificationBar from '@/components/terminal/AINotificationBar.vue';
 import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
+import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import ProjectBrowser from '@/components/project/ProjectBrowser.vue';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';

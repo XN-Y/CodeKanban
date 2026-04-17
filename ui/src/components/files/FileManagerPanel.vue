@@ -177,11 +177,20 @@
           :preview-error="previewError"
           :preview-fallback-text="previewFallbackText"
           :rendered-markdown="renderedMarkdown"
+          :rendered-diff="''"
           :preview-meta="previewMetaText"
           :empty-label="t('fileManager.previewEmpty')"
           :binary-preview-hint="t('fileManager.binaryPreviewHint')"
           :preview-truncated-label="t('fileManager.previewTruncated')"
           :download-label="t('fileManager.download')"
+          preview-mode="file"
+          :show-diff-toggle="false"
+          :file-label="t('fileManager.fileView')"
+          :diff-label="t('fileManager.diffView')"
+          :diff-result="null"
+          :diff-loading="false"
+          diff-error=""
+          diff-unavailable-text=""
           @download="downloadPreviewItem"
           @image-preview="openImagePreviewModal"
         />
@@ -203,11 +212,20 @@
         :preview-error="previewError"
         :preview-fallback-text="previewFallbackText"
         :rendered-markdown="renderedMarkdown"
+        :rendered-diff="''"
         :preview-meta="previewMetaText"
         :empty-label="t('fileManager.previewEmpty')"
         :binary-preview-hint="t('fileManager.binaryPreviewHint')"
         :preview-truncated-label="t('fileManager.previewTruncated')"
         :download-label="t('fileManager.download')"
+        preview-mode="file"
+        :show-diff-toggle="false"
+        :file-label="t('fileManager.fileView')"
+        :diff-label="t('fileManager.diffView')"
+        :diff-result="null"
+        :diff-loading="false"
+        diff-error=""
+        diff-unavailable-text=""
         :back-label="t('common.back')"
         :fallback-title="t('fileManager.previewTitle')"
         :mobile="true"
@@ -373,6 +391,7 @@ const previewResult = ref<FileManagerPreviewResult | null>(null);
 const previewLoading = ref(false);
 const previewError = ref('');
 const previewFallbackText = ref('');
+const previewPath = ref('');
 const mobilePreviewVisible = ref(false);
 const mobilePreviewHistoryActive = ref(false);
 const mobilePreviewClosingFromHistory = ref(false);
@@ -380,6 +399,7 @@ const imagePreviewVisible = ref(false);
 const searchKeyword = ref('');
 const isDragOver = ref(false);
 let dragDepth = 0;
+let previewRequestToken = 0;
 
 const treeMetaFieldOrder = ['type', 'size', 'modifiedAt'] as const;
 
@@ -579,6 +599,17 @@ function syncTreeFromList(result: FileManagerListResult | null) {
   upsertTreeNodes(result.entries, result.currentPath);
 }
 
+function clearPreviewState() {
+  previewRequestToken += 1;
+  previewPath.value = '';
+  previewResult.value = null;
+  previewLoading.value = false;
+  previewError.value = '';
+  previewFallbackText.value = '';
+  mobilePreviewVisible.value = false;
+  imagePreviewVisible.value = false;
+}
+
 async function ensureLoaded() {
   if (!props.projectId || !props.isActive) {
     return;
@@ -609,11 +640,7 @@ async function handleNavigate(path: string) {
     });
     syncTreeFromList(result);
     selectedPaths.value = [];
-    previewResult.value = null;
-    previewError.value = '';
-    previewFallbackText.value = '';
-    mobilePreviewVisible.value = false;
-    imagePreviewVisible.value = false;
+    clearPreviewState();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -632,11 +659,7 @@ async function handleScopeChange(scopeId: string | null) {
     });
     syncTreeFromList(result);
     selectedPaths.value = [];
-    previewResult.value = null;
-    previewError.value = '';
-    previewFallbackText.value = '';
-    mobilePreviewVisible.value = false;
-    imagePreviewVisible.value = false;
+    clearPreviewState();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -694,6 +717,9 @@ async function handleRowClick(entry: FileManagerEntry) {
   if (useMobilePreview.value) {
     mobilePreviewVisible.value = true;
   }
+  const requestToken = ++previewRequestToken;
+  previewPath.value = entry.path;
+  previewResult.value = null;
   previewLoading.value = true;
   previewError.value = '';
   previewFallbackText.value = '';
@@ -706,18 +732,22 @@ async function handleRowClick(entry: FileManagerEntry) {
       });
       syncTreeFromList(result);
     }
-    previewResult.value = await fileManagerApi.preview(
+    const result = await fileManagerApi.preview(
       props.projectId,
       activeScope.value?.id ?? '',
       entry.path
     );
+    if (requestToken !== previewRequestToken) {
+      return;
+    }
+    previewResult.value = result;
     if (
-      previewResult.value.previewKind === 'binary' &&
-      previewResult.value.entry.size > 0 &&
-      previewResult.value.entry.size <= 64 * 1024
+      result.previewKind === 'binary' &&
+      result.entry.size > 0 &&
+      result.entry.size <= 64 * 1024
     ) {
       try {
-        const response = await fetch(previewResult.value.inlineUrl);
+        const response = await fetch(result.inlineUrl);
         if (response.ok) {
           previewFallbackText.value = await response.text();
         }
@@ -726,10 +756,15 @@ async function handleRowClick(entry: FileManagerEntry) {
       }
     }
   } catch (error) {
+    if (requestToken !== previewRequestToken) {
+      return;
+    }
     previewResult.value = null;
     previewError.value = error instanceof Error ? error.message : t('common.error');
   } finally {
-    previewLoading.value = false;
+    if (requestToken === previewRequestToken) {
+      previewLoading.value = false;
+    }
   }
 }
 
@@ -777,12 +812,12 @@ async function handleTreeNodeClick(node: VisibleTreeNode) {
 
 function isTreeNodeActive(node: VisibleTreeNode) {
   if (node.isDirectory) {
-    if (previewResult.value) {
+    if (previewPath.value) {
       return false;
     }
     return currentPath.value === node.path;
   }
-  return previewResult.value?.entry.path === node.path;
+  return previewPath.value === node.path;
 }
 
 function parentDirectoryPath(path: string) {
@@ -920,7 +955,7 @@ function buildPreviewMeta(entry: FileManagerEntry) {
   if (timestamp !== '-') {
     parts.push(timestamp);
   }
-  return parts.join(' · ');
+  return parts.filter(Boolean).join(' · ');
 }
 
 function openImagePreviewModal() {
@@ -1262,12 +1297,8 @@ watch(
   () => Object.keys(treeNodeMap.value).join('|'),
   () => {
     selectedPaths.value = selectedPaths.value.filter(path => Boolean(treeNodeMap.value[path]));
-    if (previewResult.value && !treeNodeMap.value[previewResult.value.entry.path]) {
-      previewResult.value = null;
-      previewError.value = '';
-      previewFallbackText.value = '';
-      mobilePreviewVisible.value = false;
-      imagePreviewVisible.value = false;
+    if (previewPath.value && !treeNodeMap.value[previewPath.value]) {
+      clearPreviewState();
     }
   }
 );

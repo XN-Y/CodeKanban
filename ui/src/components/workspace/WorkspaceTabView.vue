@@ -32,6 +32,25 @@
         <button
           type="button"
           class="tab-item"
+          :class="{ active: activeTab === 'changes' }"
+          :disabled="changesTabDisabled"
+          @click="activateTab('changes')"
+        >
+          <n-icon size="16">
+            <GitBranchOutline />
+          </n-icon>
+          <span class="tab-label">{{ t('nav.changes') }}</span>
+          <span v-if="showChangesSummaryBadge" class="tab-badge changes-summary-badge">
+            <span class="changes-summary-count">{{ changesSummary.count }}</span>
+            <span class="changes-summary-separator">,</span>
+            <span class="changes-summary-add">+{{ changesSummary.additions }}</span>
+            <span class="changes-summary-separator">,</span>
+            <span class="changes-summary-del">-{{ changesSummary.deletions }}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          class="tab-item"
           :class="{ active: activeTab === 'files' }"
           @click="activateTab('files')"
         >
@@ -155,6 +174,9 @@
           </div>
         </div>
       </div>
+      <div v-show="activeTab === 'changes'" class="tab-pane changes-pane">
+        <GitChangesPanel :project-id="projectId" :is-active="activeTab === 'changes'" />
+      </div>
       <div v-show="activeTab === 'files'" class="tab-pane files-pane">
         <FileManagerPanel :project-id="projectId" :is-active="activeTab === 'files'" />
       </div>
@@ -169,6 +191,7 @@ import { NIcon } from 'naive-ui';
 import {
   ChatbubblesOutline,
   FolderOpenOutline,
+  GitBranchOutline,
   GridOutline,
   TerminalOutline,
 } from '@vicons/ionicons5';
@@ -179,9 +202,17 @@ import {
   summarizeWebSessions,
 } from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
+import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
+import {
+  chooseGitChangesScope,
+  formatGitChangesSummary,
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  summarizeGitChangesEntries,
+} from '@/components/changes/gitChangesSummary';
+import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
 import TerminalPanel from '@/components/terminal/TerminalPanel.vue';
@@ -194,6 +225,9 @@ import {
   type DesktopWorkspaceRouteTab,
 } from '@/utils/workspaceRoute';
 import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
+import { projectSupportsGit } from '@/utils/projectGitCapability';
+import { fileManagerApi } from '@/api/fileManager';
+import type { FileManagerChangeEntry } from '@/types/fileManager';
 
 const props = defineProps<{
   projectId: string;
@@ -206,6 +240,7 @@ const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
 const { t } = useLocale();
 const route = useRoute();
 const router = useRouter();
+const projectStore = useProjectStore();
 const settingsStore = useSettingsStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
@@ -215,10 +250,29 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab {
   return resolveDesktopWorkspaceRouteTab(null, value);
 }
 
+const changesTabDisabled = computed(
+  () =>
+    Boolean(projectStore.currentProject) &&
+    !projectStore.loading &&
+    !projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
+);
+
+function coerceWorkspaceTab(tab: WorkspaceTab): WorkspaceTab {
+  if (changesTabDisabled.value && tab === 'changes') {
+    return 'files';
+  }
+  return tab;
+}
+
 const storedActiveTab = useStorage<WorkspaceTab>(WORKSPACE_ACTIVE_TAB_STORAGE_KEY, 'terminal');
-const activeTab = ref<WorkspaceTab>(normalizeWorkspaceTab(storedActiveTab.value));
+const activeTab = ref<WorkspaceTab>(
+  coerceWorkspaceTab(normalizeWorkspaceTab(storedActiveTab.value))
+);
 const previousTab = ref<WorkspaceTab | null>(null);
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
+const ignoreUntracked = useStorage<boolean>(GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY, false);
+const changesSummaryEntries = ref<FileManagerChangeEntry[] | null>(null);
+let changesSummaryTimer: number | null = null;
 
 function syncWorkspaceRouteTab(tab: WorkspaceTab) {
   if (isWorkspaceRouteTabQuerySynced(route.query, tab)) {
@@ -230,9 +284,9 @@ function syncWorkspaceRouteTab(tab: WorkspaceTab) {
 }
 
 watch(
-  [() => route.query, storedActiveTab],
+  [() => route.query, storedActiveTab, changesTabDisabled],
   ([query, storedTab]) => {
-    const nextTab = resolveDesktopWorkspaceRouteTab(query, storedTab);
+    const nextTab = coerceWorkspaceTab(resolveDesktopWorkspaceRouteTab(query, storedTab));
     if (storedActiveTab.value !== nextTab) {
       storedActiveTab.value = nextTab;
     }
@@ -245,8 +299,32 @@ watch(
   { immediate: true }
 );
 
+watch(
+  () => [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value] as const,
+  async ([projectId, , disabled]) => {
+    stopChangesSummaryTimer();
+    if (!projectId || disabled) {
+      changesSummaryEntries.value = null;
+      return;
+    }
+    await loadChangesSummary();
+    startChangesSummaryTimer();
+  },
+  { immediate: true }
+);
+
+watch(
+  () => activeTab.value,
+  async value => {
+    if (value === 'changes' && !changesTabDisabled.value && props.projectId) {
+      await loadChangesSummary();
+    }
+    startChangesSummaryTimer();
+  }
+);
+
 function activateTab(nextTab: WorkspaceTab) {
-  const normalized = normalizeWorkspaceTab(nextTab);
+  const normalized = coerceWorkspaceTab(normalizeWorkspaceTab(nextTab));
   if (storedActiveTab.value !== normalized) {
     storedActiveTab.value = normalized;
   }
@@ -286,6 +364,16 @@ const webSessionSummaryText = computed(() =>
     webSessionStore.getSessions(props.projectId).length
   )
 );
+const changesSummary = computed(() =>
+  summarizeGitChangesEntries(changesSummaryEntries.value ?? [], ignoreUntracked.value)
+);
+const changesSummaryText = computed(() => {
+  if (changesTabDisabled.value || changesSummaryEntries.value == null) {
+    return '';
+  }
+  return formatGitChangesSummary(changesSummary.value);
+});
+const showChangesSummaryBadge = computed(() => Boolean(changesSummaryText.value));
 
 const rightSidebarToggleLabel = computed(() =>
   t(isRightSidebarVisible.value ? 'webSession.hideSidebar' : 'webSession.showSidebar')
@@ -341,6 +429,50 @@ function toggleRightSidebar() {
   isRightSidebarVisible.value = !isRightSidebarVisible.value;
 }
 
+function stopChangesSummaryTimer() {
+  if (changesSummaryTimer !== null && typeof window !== 'undefined') {
+    window.clearInterval(changesSummaryTimer);
+  }
+  changesSummaryTimer = null;
+}
+
+async function loadChangesSummary() {
+  if (!props.projectId || changesTabDisabled.value) {
+    changesSummaryEntries.value = null;
+    return;
+  }
+
+  try {
+    const scopes = await fileManagerApi.listScopes(props.projectId);
+    const scope = chooseGitChangesScope(scopes, {
+      preferredWorktreeId: projectStore.selectedWorktreeId,
+    });
+    if (!scope) {
+      changesSummaryEntries.value = null;
+      return;
+    }
+    const result = await fileManagerApi.listChanges(props.projectId, scope.id);
+    changesSummaryEntries.value = result.entries;
+  } catch {
+    changesSummaryEntries.value = null;
+  }
+}
+
+function startChangesSummaryTimer() {
+  stopChangesSummaryTimer();
+  if (
+    typeof window === 'undefined' ||
+    changesTabDisabled.value ||
+    activeTab.value !== 'changes' ||
+    !props.projectId
+  ) {
+    return;
+  }
+  changesSummaryTimer = window.setInterval(() => {
+    void loadChangesSummary();
+  }, 10_000);
+}
+
 const handleEnsureExpandedEvent = (payload?: { projectId?: string }) => {
   if (payload?.projectId && payload.projectId !== props.projectId) {
     return;
@@ -366,6 +498,7 @@ terminalStore.emitter.on('terminal:ensure-expanded', handleEnsureExpandedEvent);
 terminalStore.emitter.on('terminal:created', handleTerminalCreatedEvent);
 webSessionStore.emitter.on('web-session:created', handleWebSessionCreatedEvent);
 onBeforeUnmount(() => {
+  stopChangesSummaryTimer();
   terminalStore.emitter.off('terminal:ensure-expanded', handleEnsureExpandedEvent);
   terminalStore.emitter.off('terminal:created', handleTerminalCreatedEvent);
   webSessionStore.emitter.off('web-session:created', handleWebSessionCreatedEvent);
@@ -419,9 +552,20 @@ if (typeof window !== 'undefined') {
   transition: all 0.2s ease;
 }
 
+.tab-item:disabled {
+  color: var(--n-text-color-disabled, rgba(15, 23, 42, 0.38));
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
 .tab-item:hover {
   background-color: var(--n-color-hover);
   color: var(--n-text-color);
+}
+
+.tab-item:disabled:hover {
+  background: transparent;
+  color: var(--n-text-color-disabled, rgba(15, 23, 42, 0.38));
 }
 
 .tab-item.active {
@@ -457,6 +601,52 @@ if (typeof window !== 'undefined') {
   min-width: auto;
   padding: 0 7px;
   font-variant-numeric: tabular-nums;
+}
+
+.changes-summary-badge {
+  min-width: auto;
+  padding: 0 7px;
+  font-variant-numeric: tabular-nums;
+  background: rgba(37, 90, 143, 0.12);
+  color: var(--n-text-color);
+  gap: 0;
+}
+
+.tab-item.active .changes-summary-badge {
+  background: rgba(37, 90, 143, 0.16);
+  color: var(--n-primary-color);
+}
+
+.changes-summary-count {
+  color: rgba(43, 59, 81, 0.9);
+}
+
+.changes-summary-separator {
+  color: rgba(43, 59, 81, 0.78);
+}
+
+.changes-summary-add {
+  color: #15803d;
+}
+
+.changes-summary-del {
+  color: #dc2626;
+}
+
+.tab-item.active .changes-summary-count {
+  color: rgba(31, 76, 127, 0.92);
+}
+
+.tab-item.active .changes-summary-separator {
+  color: rgba(31, 76, 127, 0.72);
+}
+
+.tab-item.active .changes-summary-add {
+  color: #15803d;
+}
+
+.tab-item.active .changes-summary-del {
+  color: #dc2626;
 }
 
 .header-action-btn {
@@ -538,6 +728,7 @@ if (typeof window !== 'undefined') {
   flex-direction: column;
 }
 
+.changes-pane,
 .files-pane {
   background-color: var(--app-surface-color, #ffffff);
 }
