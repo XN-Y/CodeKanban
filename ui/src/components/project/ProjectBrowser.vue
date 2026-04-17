@@ -176,118 +176,101 @@
           :key="project.id"
           class="project-grid-item"
         >
-          <n-popover
-            trigger="hover"
-            placement="top-start"
-            :disabled="isMobileWorkspaceMode"
+          <n-card
+            class="project-card"
+            :class="getProjectCardClass(project.id)"
+            :aria-current="isCurrentProject(project.id) ? 'page' : undefined"
+            @click="void goToProject(project.id)"
           >
-            <template #trigger>
-              <div
-                class="project-card-popover-trigger"
-                :aria-current="isCurrentProject(project.id) ? 'page' : undefined"
-              >
-                <n-card
-                  hoverable
-                  class="project-card"
-                  :class="getProjectCardClass(project.id)"
-                  @click="void goToProject(project.id)"
-                >
-                  <template #header>
-                    <div class="project-card-header">
-                      <n-ellipsis style="max-width: 240px">
-                        <span v-html="highlightText(project.name)"></span>
-                      </n-ellipsis>
-                      <div class="project-card-header-actions">
-                        <n-icon
-                          v-if="isCurrentProject(project.id)"
-                          size="18"
-                          color="#18a058"
-                          class="current-project-icon"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                            <path
-                              fill="currentColor"
-                              d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
-                            />
-                          </svg>
-                        </n-icon>
-                        <n-dropdown :options="getCardActions(project)" @select="onCardSelect">
-                          <n-button text @click.stop>
-                            <n-icon size="20"><EllipsisHorizontalOutline /></n-icon>
-                          </n-button>
-                        </n-dropdown>
-                      </div>
-                    </div>
-                  </template>
-
-                  <n-space vertical size="small">
-                    <n-text v-if="!project.hidePath" depth="3">
-                      <n-icon size="16"><FolderOutline /></n-icon>
-                      <span class="path-text" v-html="highlightText(project.path)"></span>
-                    </n-text>
-                    <n-text v-if="project.description" depth="3">
-                      <span v-html="highlightText(project.description)"></span>
-                    </n-text>
-                    <n-divider style="margin: 8px 0" />
-                    <n-space size="small">
-                      <n-tag size="small" :bordered="false">
-                        <template #icon>
-                          <n-icon size="16"><GitBranchOutline /></n-icon>
-                        </template>
-                        {{ project.defaultBranch || 'main' }}
-                      </n-tag>
-                      <n-tag
-                        v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
-                        size="small"
-                        type="success"
-                        :bordered="false"
-                        :title="`${t('project.terminalCount')}: ${terminalCounts.get(project.id)}`"
-                      >
-                        <template #icon>
-                          <n-icon size="16"><TerminalOutline /></n-icon>
-                        </template>
-                        {{ terminalCounts.get(project.id) }}
-                      </n-tag>
-                      <n-tag
-                        v-if="
-                          webSessionCounts.get(project.id) && webSessionCounts.get(project.id)! > 0
-                        "
-                        size="small"
-                        type="info"
-                        :bordered="false"
-                        :title="`${t('project.webSessionCount')}: ${webSessionCounts.get(project.id)}`"
-                      >
-                        <template #icon>
-                          <n-icon size="16"><ChatbubblesOutline /></n-icon>
-                        </template>
-                        {{ webSessionCounts.get(project.id) }}
-                      </n-tag>
-                      <n-tag
-                        v-if="project.priority"
-                        size="small"
-                        :bordered="false"
-                        :color="{ color: getPriorityTagColor(project.priority), textColor: '#fff' }"
-                      >
-                        <template #icon>
-                          <n-icon size="16">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                              <path
-                                fill="currentColor"
-                                d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-                              />
-                            </svg>
-                          </n-icon>
-                        </template>
-                        {{ getPriorityLabel(project.priority) }}
-                      </n-tag>
-                    </n-space>
-                  </n-space>
-                </n-card>
+            <template #header>
+              <div class="project-card-header">
+                <n-ellipsis style="max-width: 240px">
+                  <span v-html="highlightText(project.name)"></span>
+                </n-ellipsis>
+                <div class="project-card-header-actions">
+                  <n-icon
+                    v-if="isCurrentProject(project.id)"
+                    size="18"
+                    color="#18a058"
+                    class="current-project-icon"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                      <path
+                        fill="currentColor"
+                        d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+                      />
+                    </svg>
+                  </n-icon>
+                  <n-dropdown :options="getCardActions(project)" @select="onCardSelect">
+                    <n-button text @click.stop>
+                      <n-icon size="20"><EllipsisHorizontalOutline /></n-icon>
+                    </n-button>
+                  </n-dropdown>
+                </div>
               </div>
             </template>
 
-            <ProjectAiStatusSummaryCard v-if="!isMobileWorkspaceMode" :project-id="project.id" />
-          </n-popover>
+            <n-space vertical size="small">
+              <n-text v-if="!project.hidePath" depth="3">
+                <n-icon size="16"><FolderOutline /></n-icon>
+                <span class="path-text" v-html="highlightText(project.path)"></span>
+              </n-text>
+              <n-text v-if="project.description" depth="3">
+                <span v-html="highlightText(project.description)"></span>
+              </n-text>
+              <n-divider style="margin: 8px 0" />
+              <n-space size="small">
+                <n-tag size="small" :bordered="false">
+                  <template #icon>
+                    <n-icon size="16"><GitBranchOutline /></n-icon>
+                  </template>
+                  {{ project.defaultBranch || 'main' }}
+                </n-tag>
+                <n-tag
+                  v-if="terminalCounts.get(project.id) && terminalCounts.get(project.id)! > 0"
+                  size="small"
+                  type="success"
+                  :bordered="false"
+                  :title="`${t('project.terminalCount')}: ${terminalCounts.get(project.id)}`"
+                >
+                  <template #icon>
+                    <n-icon size="16"><TerminalOutline /></n-icon>
+                  </template>
+                  {{ terminalCounts.get(project.id) }}
+                </n-tag>
+                <n-tag
+                  v-if="webSessionCounts.get(project.id) && webSessionCounts.get(project.id)! > 0"
+                  size="small"
+                  type="info"
+                  :bordered="false"
+                  :title="`${t('project.webSessionCount')}: ${webSessionCounts.get(project.id)}`"
+                >
+                  <template #icon>
+                    <n-icon size="16"><ChatbubblesOutline /></n-icon>
+                  </template>
+                  {{ webSessionCounts.get(project.id) }}
+                </n-tag>
+                <n-tag
+                  v-if="project.priority"
+                  size="small"
+                  :bordered="false"
+                  :color="{ color: getPriorityTagColor(project.priority), textColor: '#fff' }"
+                >
+                  <template #icon>
+                    <n-icon size="16">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                        <path
+                          fill="currentColor"
+                          d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
+                        />
+                      </svg>
+                    </n-icon>
+                  </template>
+                  {{ getPriorityLabel(project.priority) }}
+                </n-tag>
+              </n-space>
+            </n-space>
+          </n-card>
         </div>
       </transition-group>
       <div v-else class="empty-container">
@@ -363,12 +346,10 @@ import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import ThemeSwitcher from '@/components/common/ThemeSwitcher.vue';
 import ProjectCreateDialog from '@/components/project/ProjectCreateDialog.vue';
 import ProjectEditDialog from '@/components/project/ProjectEditDialog.vue';
-import ProjectAiStatusSummaryCard from '@/components/project/ProjectAiStatusSummaryCard.vue';
 import {
   buildProjectBrowserProjectLocation,
   type ProjectBrowserMode,
 } from '@/components/project/projectBrowserNavigation';
-import { useAiStatusSummary } from '@/composables/useAiStatusSummary';
 import { useLocale } from '@/composables/useLocale';
 import { useAppStore } from '@/stores/app';
 import type { ProjectPriority } from '@/stores/project';
@@ -406,7 +387,6 @@ const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
 const appStore = useAppStore();
-const { getProjectSummary } = useAiStatusSummary();
 const { t } = useLocale();
 const message = useMessage();
 const dialog = useDialog();
@@ -480,11 +460,6 @@ const handleAppNameClick = () => {
     },
   });
 };
-
-function hasProjectNotifications(projectId: string): boolean {
-  const summary = getProjectSummary(projectId);
-  return summary.blocking > 0 || summary.unreadCompleted > 0;
-}
 
 function toggleSortOrder() {
   sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
@@ -560,7 +535,6 @@ function isCurrentProject(projectId: string): boolean {
 
 function getProjectCardClass(projectId: string) {
   return {
-    'has-notifications': hasProjectNotifications(projectId),
     'is-current': isCurrentProject(projectId),
     'is-switching-target': switchingProjectId.value === projectId,
   };
@@ -573,7 +547,10 @@ function clearProjectSwitchTimer() {
   }
 }
 
-async function runMobileWorkspaceProjectSwitch(projectId: string, location: Parameters<typeof router.push>[0]) {
+async function runMobileWorkspaceProjectSwitch(
+  projectId: string,
+  location: Parameters<typeof router.push>[0]
+) {
   clearProjectSwitchTimer();
   switchingProjectId.value = projectId;
   projectStore.addRecentProject(projectId);
@@ -880,10 +857,6 @@ watch(showEditDialog, value => {
   margin-top: 24px;
 }
 
-.project-card-popover-trigger {
-  display: block;
-}
-
 .project-card {
   cursor: pointer;
   transition:
@@ -893,21 +866,11 @@ watch(showEditDialog, value => {
     background 0.22s var(--project-browser-switch-ease);
 }
 
-.project-card:hover {
-  transform: translateY(-2px);
-}
-
 .project-card.is-switching-target {
   transform: translateY(-10px) scale(1.015);
   box-shadow:
     0 18px 36px rgba(15, 23, 42, 0.12),
     0 6px 14px rgba(15, 23, 42, 0.08);
-}
-
-.project-card.has-notifications {
-  background: linear-gradient(135deg, rgba(18, 183, 106, 0.08) 0%, rgba(18, 183, 106, 0.02) 100%);
-  border-left: 3px solid #12b76a;
-  animation: notificationPulse 2s ease-in-out infinite;
 }
 
 .project-card.is-current {
@@ -938,16 +901,6 @@ watch(showEditDialog, value => {
 
 .current-project-icon {
   flex-shrink: 0;
-}
-
-@keyframes notificationPulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(18, 183, 106, 0);
-  }
-  50% {
-    box-shadow: 0 0 20px 0 rgba(18, 183, 106, 0.3);
-  }
 }
 
 .path-text {
