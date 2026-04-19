@@ -106,7 +106,7 @@ func TestWorktreeServiceDeleteAndSync(t *testing.T) {
 		t.Fatalf("expected worktree to be deleted")
 	}
 
-	runGitCommand(t, repoPath, "worktree", "add", filepath.Join(repoPath, "manual"), "main")
+	runGitCommand(t, repoPath, "worktree", "add", "-b", "feature/manual-sync", filepath.Join(repoPath, "manual"), "main")
 	defer runGitCommand(t, repoPath, "worktree", "remove", filepath.Join(repoPath, "manual"))
 
 	if err := svc.SyncWorktrees(ctx, project.Id); err != nil {

@@ -1,3 +1,6 @@
+//go:build ignore
+
+// Windows-oriented session switch debug script.
 package main
 
 import (
