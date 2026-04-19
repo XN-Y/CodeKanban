@@ -98,10 +98,7 @@
 }
 
 .chat-markdown :not(pre) > code {
-  padding: 0.12em 0.45em;
-  border: 1px solid color-mix(in srgb, var(--n-primary-color) 14%, var(--n-border-color));
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--n-primary-color) 8%, transparent);
+  color: color-mix(in srgb, var(--n-info-color, #2563eb) 86%, #0f4ea8);
   font-family: 'Fira Code', 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
   font-size: 0.92em;
 }
