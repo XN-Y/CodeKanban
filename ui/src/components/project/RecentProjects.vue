@@ -739,7 +739,7 @@ const handleBackToList = () => {
 };
 
 const handleGoToSettings = () => {
-  router.push({ name: 'settings' });
+  void router.push('/settings');
 };
 
 const getProjectMonogram = (name: string) => {

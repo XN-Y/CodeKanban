@@ -65,7 +65,7 @@ const shouldShowGlobalNotificationBar = computed(() => {
   if (isMobile.value) {
     return false;
   }
-  if (route.name === 'project') {
+  if (route.name === 'project' || route.name === 'settings') {
     return false;
   }
   return true;

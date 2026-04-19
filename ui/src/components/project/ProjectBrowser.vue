@@ -586,7 +586,7 @@ async function goToProject(id: string) {
 }
 
 function goToSettings() {
-  void router.push({ name: 'settings' });
+  void router.push('/settings');
 }
 
 function goToGuide() {

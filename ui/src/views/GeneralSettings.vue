@@ -10,9 +10,9 @@
         </n-space>
       </template>
       <template #extra>
-        <n-space align="center">
-          <LanguageSwitcher />
-          <n-button tertiary @click="handleResetTheme">
+        <n-space align="center" class="settings-header-actions">
+          <LanguageSwitcher :compact="isMobile" />
+          <n-button tertiary class="settings-header-reset" @click="handleResetTheme">
             <template #icon>
               <n-icon>
                 <RefreshOutline />
@@ -24,1028 +24,1368 @@
       </template>
     </n-page-header>
 
-    <n-space vertical size="large">
-      <!-- 项目与终端设置 -->
-      <n-card :title="t('settings.projectAndTerminal')" size="huge">
-        <n-form label-placement="left" label-width="160">
-          <n-form-item :label="t('settings.recentProjectsLimit')">
-            <n-space vertical size="small">
-              <n-input-number
-                v-model:value="recentProjectsLimitValue"
-                :min="1"
-                :max="20"
-                :step="1"
-              />
-              <span class="form-tip">{{ t('settings.recentProjectsLimitTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalLimit')">
-            <n-space vertical size="small">
-              <n-input-number v-model:value="terminalLimitValue" :min="1" :max="24" :step="1" />
-              <span class="form-tip">{{ t('settings.terminalLimitTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.dailyTipEnabled')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="dailyTipEnabledValue" />
-              <n-button size="small" @click="handleShowRandomDailyTip">
-                {{ t('settings.dailyTipShowRandom') }}
-              </n-button>
-              <span class="form-tip">{{ t('settings.dailyTipEnabledTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.confirmTerminalClose')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="confirmTerminalCloseValue" />
-              <span class="form-tip">{{ t('settings.confirmTerminalCloseTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.sendResizeOnSwitch')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="sendResizeOnSwitchValue" />
-              <span class="form-tip">{{ t('settings.sendResizeOnSwitchTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalDefaultRenderMode')">
-            <n-space vertical size="small">
-              <n-radio-group v-model:value="defaultTerminalRenderModeValue">
-                <n-space>
-                  <n-radio value="live">{{ t('settings.terminalRenderModeLive') }}</n-radio>
-                  <n-radio value="snapshot">
-                    {{ t('settings.terminalRenderModeSnapshot') }}
-                  </n-radio>
-                </n-space>
-              </n-radio-group>
-              <span class="form-tip">{{ t('settings.terminalDefaultRenderModeTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalConnectionPolicy')">
-            <n-space vertical size="small">
-              <n-radio-group v-model:value="terminalConnectionPolicyValue">
-                <n-space vertical size="small">
-                  <n-radio value="active-only">
-                    {{ t('settings.terminalConnectionPolicyActiveOnly') }}
-                  </n-radio>
-                  <n-radio value="active-plus-mirror">
-                    {{ t('settings.terminalConnectionPolicyActivePlusMirror') }}
-                  </n-radio>
-                </n-space>
-              </n-radio-group>
-              <span class="form-tip">{{ t('settings.terminalConnectionPolicyTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalDefaultSnapshotInterval')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="defaultTerminalSnapshotIntervalValue"
-                :options="snapshotIntervalOptions"
-                style="max-width: 180px"
-              />
-              <span class="form-tip">
-                {{ t('settings.terminalDefaultSnapshotIntervalTip') }}
-              </span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.inactiveTerminalSnapshotInterval')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="inactiveTerminalSnapshotIntervalValue"
-                :options="inactiveSnapshotIntervalOptions"
-                style="max-width: 180px"
-                :disabled="terminalConnectionPolicyValue !== 'active-plus-mirror'"
-              />
-              <span class="form-tip">
-                {{ t('settings.inactiveTerminalSnapshotIntervalTip') }}
-              </span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalSnapshotZlibCompression')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="defaultTerminalSnapshotZlibCompressionValue" />
-              <span class="form-tip">
-                {{ t('settings.terminalSnapshotZlibCompressionTip') }}
-              </span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.showWebSessionReasoning')">
-            <n-space vertical size="small">
-              <n-switch v-model:value="showWebSessionReasoningValue" />
-              <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.webSessionStreamingMarkdownThrottle')">
-            <n-space vertical size="small">
-              <n-radio-group v-model:value="webSessionStreamingMarkdownThrottleModeValue">
-                <n-space>
-                  <n-radio value="default">{{ t('common.default') }}</n-radio>
-                  <n-radio value="custom">{{ t('common.custom') }}</n-radio>
-                </n-space>
-              </n-radio-group>
-              <n-input-number
-                v-model:value="webSessionStreamingMarkdownThrottleCustomMsValue"
-                :min="1"
-                :step="10"
-                style="max-width: 180px"
-                :disabled="webSessionStreamingMarkdownThrottleModeValue !== 'custom'"
-              />
-              <span class="form-tip">
-                {{
-                  t('settings.webSessionStreamingMarkdownThrottleTip', {
-                    defaultMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
-                  })
-                }}
-              </span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.webSessionAutoContinueScope')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="webSessionAutoContinueScopeValue"
-                :options="webSessionAutoContinueScopeOptions"
-                style="max-width: 320px"
-              />
-              <span class="form-tip">{{ t('settings.webSessionAutoContinueScopeTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.webSessionAutoContinuePreset')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="webSessionAutoContinuePresetValue"
-                :options="webSessionAutoContinuePresetOptions"
-                style="max-width: 320px"
-              />
-              <span class="form-tip">{{ t('settings.webSessionAutoContinuePresetTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.webSessionQuickInputPinned')">
-            <n-space vertical size="small" style="width: 100%">
-              <n-dynamic-input
-                v-model:value="webSessionQuickInputPinnedLocal"
-                :on-create="createWebSessionQuickInputPinnedItem"
+    <!-- 主布局 -->
+    <div class="settings-layout">
+      <!-- 左侧导航 -->
+      <aside class="settings-sidebar">
+        <!-- 搜索框 -->
+        <div class="settings-search-box">
+          <n-input
+            v-model:value="settingsSearchQuery"
+            clearable
+            :placeholder="t('settings.searchPlaceholder')"
+          >
+            <template #prefix>
+              <n-icon size="16">
+                <SearchOutline />
+              </n-icon>
+            </template>
+          </n-input>
+        </div>
+        <nav class="settings-nav">
+          <button
+            v-for="card in settingsCards"
+            :key="card.id"
+            type="button"
+            class="settings-nav-item"
+            :class="{ 'is-active': activeSettingsSection === card.id }"
+            @click="activeSettingsSection = card.id"
+          >
+            <span class="settings-nav-item__title">{{ card.title }}</span>
+            <span v-if="card.dirty" class="settings-nav-item__dot"></span>
+          </button>
+        </nav>
+      </aside>
+
+      <!-- 右侧内容区 -->
+      <main class="settings-main">
+        <div class="settings-main-stack">
+          <!-- 项目与工作区设置 -->
+          <section
+            v-show="isSettingsSectionVisible('project-workspace')"
+            :ref="el => registerSettingsSectionRef('project-workspace', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('project-workspace')"
+          >
+            <n-card :title="t('settings.projectWorkspaceSettings')" size="huge">
+              <n-form
+                :label-placement="standardFormLabelPlacement"
+                :label-width="standardFormLabelWidth"
               >
-                <template #default="{ value, index }">
-                  <n-input
-                    type="textarea"
-                    class="web-session-quick-input-textarea"
-                    :value="value"
-                    :autosize="{ minRows: 2, maxRows: 4 }"
-                    :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
-                    @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
-                  />
-                </template>
-                <template #action="{ index, remove, create }">
-                  <n-button-group size="small">
-                    <n-button quaternary circle @click="remove(index)">
-                      <template #icon>
-                        <n-icon>
-                          <Remove />
-                        </n-icon>
-                      </template>
+                <n-form-item
+                  :label="t('settings.recentProjectsLimit')"
+                  data-search-key="recentProjectsLimit"
+                >
+                  <n-space vertical size="small">
+                    <n-input-number
+                      v-model:value="recentProjectsLimitValue"
+                      :min="1"
+                      :max="20"
+                      :step="1"
+                    />
+                    <span class="form-tip">{{ t('settings.recentProjectsLimitTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.dailyTipEnabled')"
+                  data-search-key="dailyTipEnabled"
+                >
+                  <n-space vertical size="small">
+                    <n-switch v-model:value="dailyTipEnabledValue" />
+                    <n-button size="small" @click="handleShowRandomDailyTip">
+                      {{ t('settings.dailyTipShowRandom') }}
                     </n-button>
-                    <n-button quaternary circle @click="create(index)">
-                      <template #icon>
-                        <n-icon>
-                          <Add />
-                        </n-icon>
+                    <span class="form-tip">{{ t('settings.dailyTipEnabledTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalShortcut')"
+                  data-search-key="terminalShortcut"
+                >
+                  <n-space vertical size="small">
+                    <n-input
+                      :value="terminalShortcutValue"
+                      readonly
+                      :status="getShortcutStatus('terminal')"
+                      :placeholder="t('settings.recordNewKey')"
+                    >
+                      <template #suffix>
+                        <span class="shortcut-hint">
+                          {{ getShortcutHint('terminal') }}
+                        </span>
                       </template>
-                    </n-button>
-                  </n-button-group>
-                </template>
-              </n-dynamic-input>
-              <n-space>
+                    </n-input>
+                    <n-space>
+                      <n-button size="small" @click="handleStartShortcutCapture('terminal')">
+                        {{
+                          isCapturing('terminal')
+                            ? t('settings.recording')
+                            : t('settings.recordNewKey')
+                        }}
+                      </n-button>
+                      <n-button
+                        size="small"
+                        text
+                        :disabled="isTerminalShortcutDefault"
+                        @click="handleResetShortcut('terminal')"
+                      >
+                        {{ t('settings.restoreDefault') }}
+                      </n-button>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalShortcutTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.notepadShortcut')"
+                  data-search-key="notepadShortcut"
+                >
+                  <n-space vertical size="small">
+                    <n-input
+                      :value="notepadShortcutValue"
+                      readonly
+                      :status="getShortcutStatus('notepad')"
+                      :placeholder="t('settings.recordNewKey')"
+                    >
+                      <template #suffix>
+                        <span class="shortcut-hint">
+                          {{ getShortcutHint('notepad') }}
+                        </span>
+                      </template>
+                    </n-input>
+                    <n-space>
+                      <n-button size="small" @click="handleStartShortcutCapture('notepad')">
+                        {{
+                          isCapturing('notepad')
+                            ? t('settings.recording')
+                            : t('settings.recordNewKey')
+                        }}
+                      </n-button>
+                      <n-button
+                        size="small"
+                        text
+                        :disabled="isNotepadShortcutDefault"
+                        @click="handleResetShortcut('notepad')"
+                      >
+                        {{ t('settings.restoreDefault') }}
+                      </n-button>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.notepadShortcutTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.defaultEditor')" data-search-key="defaultEditor">
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="defaultEditorValue"
+                      :options="editorOptions"
+                      style="max-width: 240px"
+                    />
+                    <span class="form-tip">{{ t('settings.defaultEditorTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  v-if="showCustomEditorInput"
+                  :label="t('settings.customCommand')"
+                  data-search-key="customCommand"
+                >
+                  <div class="settings-field-stack">
+                    <n-input
+                      v-model:value="customEditorCommandValue"
+                      class="settings-command-input"
+                      :placeholder="customCommandPlaceholder"
+                    />
+                    <span class="form-tip">
+                      {{ customCommandTip }}
+                    </span>
+                  </div>
+                </n-form-item>
+              </n-form>
+            </n-card>
+          </section>
+
+          <section
+            v-show="isSettingsSectionVisible('terminal')"
+            :ref="el => registerSettingsSectionRef('terminal', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('terminal')"
+          >
+            <n-card :title="t('settings.terminalSettings')" size="huge">
+              <template #header-extra>
                 <n-button
                   size="small"
-                  type="primary"
-                  :loading="webSessionQuickInputPinnedSaving"
-                  :disabled="!webSessionQuickInputPinnedDirty"
-                  @click="handleSaveWebSessionQuickInputPinned"
+                  :loading="developerSaving"
+                  :disabled="!developerTerminalDirty || developerLoading"
+                  @click="handleSaveDeveloperConfig"
                 >
                   {{ t('common.save') }}
                 </n-button>
-                <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
-                  {{ t('settings.restoreDefault') }}
-                </n-button>
-              </n-space>
-              <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalShortcut')">
-            <n-space vertical size="small">
-              <n-input
-                :value="terminalShortcutValue"
-                readonly
-                :status="getShortcutStatus('terminal')"
-                :placeholder="t('settings.recordNewKey')"
+              </template>
+              <n-form
+                :label-placement="standardFormLabelPlacement"
+                :label-width="standardFormLabelWidth"
               >
-                <template #suffix>
-                  <span class="shortcut-hint">
-                    {{ getShortcutHint('terminal') }}
-                  </span>
-                </template>
-              </n-input>
-              <n-space>
-                <n-button size="small" @click="handleStartShortcutCapture('terminal')">
-                  {{
-                    isCapturing('terminal') ? t('settings.recording') : t('settings.recordNewKey')
-                  }}
-                </n-button>
-                <n-button
-                  size="small"
-                  text
-                  :disabled="isTerminalShortcutDefault"
-                  @click="handleResetShortcut('terminal')"
+                <n-form-item :label="t('settings.terminalLimit')" data-search-key="terminalLimit">
+                  <n-space vertical size="small">
+                    <n-input-number
+                      v-model:value="terminalLimitValue"
+                      :min="1"
+                      :max="24"
+                      :step="1"
+                    />
+                    <span class="form-tip">{{ t('settings.terminalLimitTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.confirmTerminalClose')"
+                  data-search-key="confirmTerminalClose"
                 >
-                  {{ t('settings.restoreDefault') }}
-                </n-button>
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalShortcutTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.notepadShortcut')">
-            <n-space vertical size="small">
-              <n-input
-                :value="notepadShortcutValue"
-                readonly
-                :status="getShortcutStatus('notepad')"
-                :placeholder="t('settings.recordNewKey')"
-              >
-                <template #suffix>
-                  <span class="shortcut-hint">
-                    {{ getShortcutHint('notepad') }}
-                  </span>
-                </template>
-              </n-input>
-              <n-space>
-                <n-button size="small" @click="handleStartShortcutCapture('notepad')">
-                  {{
-                    isCapturing('notepad') ? t('settings.recording') : t('settings.recordNewKey')
-                  }}
-                </n-button>
-                <n-button
-                  size="small"
-                  text
-                  :disabled="isNotepadShortcutDefault"
-                  @click="handleResetShortcut('notepad')"
+                  <n-space vertical size="small">
+                    <n-switch v-model:value="confirmTerminalCloseValue" />
+                    <span class="form-tip">{{ t('settings.confirmTerminalCloseTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.sendResizeOnSwitch')"
+                  data-search-key="sendResizeOnSwitch"
                 >
-                  {{ t('settings.restoreDefault') }}
-                </n-button>
-              </n-space>
-              <span class="form-tip">{{ t('settings.notepadShortcutTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.defaultEditor')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="defaultEditorValue"
-                :options="editorOptions"
-                style="max-width: 240px"
-              />
-              <span class="form-tip">{{ t('settings.defaultEditorTip') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item v-if="showCustomEditorInput" :label="t('settings.customCommand')">
-            <div class="settings-field-stack">
-              <n-input
-                v-model:value="customEditorCommandValue"
-                class="settings-command-input"
-                :placeholder="customCommandPlaceholder"
-              />
-              <span class="form-tip">
-                {{ customCommandTip }}
-              </span>
-            </div>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalShell')">
-            <div class="settings-field-stack">
-              <n-spin :show="shellsLoading" size="small">
-                <n-select
-                  v-model:value="selectedShellValue"
-                  :options="shellSelectOptions"
-                  :loading="shellsLoading"
-                  style="max-width: 320px"
-                  :disabled="shellsLoading"
-                />
-              </n-spin>
-              <n-collapse-transition :show="showCustomShellInput">
-                <div class="settings-collapsible-field">
-                  <n-input
-                    v-model:value="customShellCommand"
-                    class="settings-command-input settings-command-input--shell"
-                    :placeholder="t('settings.customShellPlaceholder')"
-                    :status="customShellStatus"
-                    @blur="handleCustomShellBlur"
-                  />
-                </div>
-              </n-collapse-transition>
-              <span class="form-tip">{{ t('settings.terminalShellTip') }}</span>
-              <span v-if="shellsData?.platform" class="form-tip">
-                {{ t('settings.currentPlatform') }}: {{ platformDisplayName }}
-              </span>
-            </div>
-          </n-form-item>
-        </n-form>
-      </n-card>
-
-      <n-card :title="t('settings.securityTitle')" size="huge">
-        <n-space vertical size="large">
-          <n-alert
-            :type="authStore.enabled ? 'warning' : 'info'"
-            :bordered="false"
-            :show-icon="false"
-          >
-            {{
-              authStore.enabled
-                ? t('settings.securityEnabledHint')
-                : t('settings.securityDisabledHint')
-            }}
-          </n-alert>
-
-          <template v-if="!authStore.enabled">
-            <n-form label-placement="left" label-width="160">
-              <n-form-item :label="t('settings.securityNewPassword')">
-                <n-input
-                  v-model:value="enablePassword"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item :label="t('settings.securityConfirmPassword')">
-                <n-input
-                  v-model:value="enablePasswordConfirm"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item>
-                <n-space vertical size="small" style="width: 100%">
-                  <n-button
-                    type="primary"
-                    :loading="authSaving"
-                    :disabled="!enablePassword.trim() || !enablePasswordConfirm.trim()"
-                    @click="handleEnablePasswordProtection"
-                  >
-                    {{ t('settings.securityEnableAction') }}
-                  </n-button>
-                  <span class="form-tip">{{ t('settings.securityAlgorithmHint') }}</span>
-                </n-space>
-              </n-form-item>
-            </n-form>
-          </template>
-
-          <template v-else>
-            <n-form label-placement="left" label-width="160">
-              <n-form-item :label="t('settings.securityCurrentPassword')">
-                <n-input
-                  v-model:value="currentPassword"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item :label="t('settings.securityNewPassword')">
-                <n-input
-                  v-model:value="newPassword"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item :label="t('settings.securityConfirmPassword')">
-                <n-input
-                  v-model:value="newPasswordConfirm"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item>
-                <n-space vertical size="small" style="width: 100%">
-                  <n-button
-                    type="primary"
-                    :loading="authSaving"
-                    :disabled="
-                      !currentPassword.trim() || !newPassword.trim() || !newPasswordConfirm.trim()
-                    "
-                    @click="handleChangePasswordProtection"
-                  >
-                    {{ t('settings.securityChangeAction') }}
-                  </n-button>
-                  <span class="form-tip">{{ t('settings.securityRotateHint') }}</span>
-                </n-space>
-              </n-form-item>
-            </n-form>
-
-            <n-divider style="margin: 0" />
-
-            <n-form label-placement="left" label-width="160">
-              <n-form-item :label="t('settings.securityDisablePassword')">
-                <n-input
-                  v-model:value="disablePassword"
-                  type="password"
-                  show-password-on="click"
-                  :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
-                />
-              </n-form-item>
-              <n-form-item>
-                <n-space vertical size="small" style="width: 100%">
-                  <n-button
-                    type="error"
-                    ghost
-                    :loading="authSaving"
-                    :disabled="!disablePassword.trim()"
-                    @click="handleDisablePasswordProtection"
-                  >
-                    {{ t('settings.securityDisableAction') }}
-                  </n-button>
-                  <span class="form-tip">{{ t('settings.securityDisableHint') }}</span>
-                </n-space>
-              </n-form-item>
-            </n-form>
-          </template>
-        </n-space>
-      </n-card>
-
-      <n-card :title="t('settings.terminalQuickActions')" size="huge">
-        <n-form label-placement="left" label-width="160">
-          <n-form-item :label="t('settings.terminalQuickActionsList')">
-            <n-space vertical size="small" style="width: 100%">
-              <n-dynamic-input
-                v-model:value="terminalQuickActionsLocal"
-                :on-create="createTerminalQuickAction"
-              >
-                <template #default="{ value }">
-                  <div class="terminal-quick-action-item">
-                    <div class="terminal-quick-action-row terminal-quick-action-row-switches">
-                      <n-space align="center" size="small" wrap>
-                        <n-switch v-model:value="value.enabled" />
-                        <n-tooltip trigger="hover" placement="top" :delay="80">
-                          <template #trigger>
-                            <n-checkbox v-model:checked="value.stacked">
-                              {{ t('settings.terminalQuickActionStackLabel') }}
-                            </n-checkbox>
-                          </template>
-                          {{ t('settings.terminalQuickActionStackTip') }}
-                        </n-tooltip>
+                  <n-space vertical size="small">
+                    <n-switch v-model:value="sendResizeOnSwitchValue" />
+                    <span class="form-tip">{{ t('settings.sendResizeOnSwitchTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalDefaultRenderMode')"
+                  data-search-key="terminalDefaultRenderMode"
+                >
+                  <n-space vertical size="small">
+                    <n-radio-group v-model:value="defaultTerminalRenderModeValue">
+                      <n-space>
+                        <n-radio value="live">{{ t('settings.terminalRenderModeLive') }}</n-radio>
+                        <n-radio value="snapshot">
+                          {{ t('settings.terminalRenderModeSnapshot') }}
+                        </n-radio>
                       </n-space>
-                    </div>
-                    <div class="terminal-quick-action-row terminal-quick-action-row-inputs">
-                      <n-input
-                        v-model:value="value.name"
-                        class="terminal-quick-action-input"
-                        :placeholder="t('settings.terminalQuickActionNamePlaceholder')"
+                    </n-radio-group>
+                    <span class="form-tip">{{ t('settings.terminalDefaultRenderModeTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalConnectionPolicy')"
+                  data-search-key="terminalConnectionPolicy"
+                >
+                  <n-space vertical size="small">
+                    <n-radio-group v-model:value="terminalConnectionPolicyValue">
+                      <n-space vertical size="small">
+                        <n-radio value="active-only">
+                          {{ t('settings.terminalConnectionPolicyActiveOnly') }}
+                        </n-radio>
+                        <n-radio value="active-plus-mirror">
+                          {{ t('settings.terminalConnectionPolicyActivePlusMirror') }}
+                        </n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <span class="form-tip">{{ t('settings.terminalConnectionPolicyTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalDefaultSnapshotInterval')"
+                  data-search-key="terminalDefaultSnapshotInterval"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="defaultTerminalSnapshotIntervalValue"
+                      :options="snapshotIntervalOptions"
+                      style="max-width: 180px"
+                    />
+                    <span class="form-tip">
+                      {{ t('settings.terminalDefaultSnapshotIntervalTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.inactiveTerminalSnapshotInterval')"
+                  data-search-key="inactiveTerminalSnapshotInterval"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="inactiveTerminalSnapshotIntervalValue"
+                      :options="inactiveSnapshotIntervalOptions"
+                      style="max-width: 180px"
+                      :disabled="terminalConnectionPolicyValue !== 'active-plus-mirror'"
+                    />
+                    <span class="form-tip">
+                      {{ t('settings.inactiveTerminalSnapshotIntervalTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalSnapshotZlibCompression')"
+                  data-search-key="terminalSnapshotZlibCompression"
+                >
+                  <n-space vertical size="small">
+                    <n-switch v-model:value="defaultTerminalSnapshotZlibCompressionValue" />
+                    <span class="form-tip">
+                      {{ t('settings.terminalSnapshotZlibCompressionTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.terminalShell')" data-search-key="terminalShell">
+                  <div class="settings-field-stack">
+                    <n-spin :show="shellsLoading" size="small">
+                      <n-select
+                        v-model:value="selectedShellValue"
+                        :options="shellSelectOptions"
+                        :loading="shellsLoading"
+                        style="max-width: 320px"
+                        :disabled="shellsLoading"
                       />
-                      <n-input
-                        v-model:value="value.command"
-                        class="terminal-quick-action-input"
-                        :placeholder="t('settings.terminalQuickActionCommandPlaceholder')"
-                      />
-                    </div>
-                    <div class="terminal-quick-action-row terminal-quick-action-row-icons">
-                      <n-radio-group v-model:value="value.icon" size="small">
-                        <n-radio-button
-                          v-for="option in terminalQuickActionIconButtons"
-                          :key="option.value"
-                          :value="option.value"
-                          :title="option.label"
-                        >
-                          <span
-                            v-if="'svg' in option && option.svg"
-                            class="terminal-quick-action-svg"
-                            v-html="option.svg"
-                          ></span>
-                          <n-icon v-else :size="16">
-                            <component :is="option.icon" />
-                          </n-icon>
-                        </n-radio-button>
-                      </n-radio-group>
-                    </div>
+                    </n-spin>
+                    <n-collapse-transition :show="showCustomShellInput">
+                      <div class="settings-collapsible-field">
+                        <n-input
+                          v-model:value="customShellCommand"
+                          class="settings-command-input settings-command-input--shell"
+                          :placeholder="t('settings.customShellPlaceholder')"
+                          :status="customShellStatus"
+                          @blur="handleCustomShellBlur"
+                        />
+                      </div>
+                    </n-collapse-transition>
+                    <span class="form-tip">{{ t('settings.terminalShellTip') }}</span>
+                    <span v-if="shellsData?.platform" class="form-tip">
+                      {{ t('settings.currentPlatform') }}: {{ platformDisplayName }}
+                    </span>
                   </div>
-                </template>
-                <template #action="{ index, remove, create }">
-                  <n-button-group size="small">
-                    <n-button
-                      quaternary
-                      circle
-                      @click="handleRemoveTerminalQuickAction(index, remove)"
-                    >
-                      <template #icon>
-                        <n-icon>
-                          <Remove />
-                        </n-icon>
-                      </template>
-                    </n-button>
-                    <n-button quaternary circle @click="create(index)">
-                      <template #icon>
-                        <n-icon>
-                          <Add />
-                        </n-icon>
-                      </template>
-                    </n-button>
-                  </n-button-group>
-                </template>
-              </n-dynamic-input>
-              <n-space>
-                <n-button size="small" @click="handleResetTerminalQuickActions">
-                  {{ t('settings.restoreDefault') }}
-                </n-button>
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalQuickActionsTip') }}</span>
-            </n-space>
-          </n-form-item>
-        </n-form>
-      </n-card>
-
-      <n-card :title="t('settings.aiAssistantStatusTracking')" size="huge">
-        <template #header-extra>
-          <n-button
-            size="small"
-            :loading="saveLoading"
-            :disabled="!aiStatusDirty"
-            @click="handleSaveAIStatus"
-          >
-            {{ t('common.save') }}
-          </n-button>
-        </template>
-        <n-spin :show="aiStatusLoading">
-          <n-form label-placement="left" label-width="160">
-            <n-form-item :label="t('settings.aiAssistantClaudeCode')">
-              <n-space align="center">
-                <n-switch v-model:value="aiStatusForm.claudeCode" />
-                <span class="form-tip">{{ t('settings.aiStatusClaudeSupport') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.aiAssistantCodex')">
-              <n-space align="center">
-                <n-switch v-model:value="aiStatusForm.codex" />
-                <span class="form-tip">{{ t('settings.aiStatusCodexSupport') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.aiAssistantQwenCode')">
-              <n-space align="center">
-                <n-switch v-model:value="aiStatusForm.qwenCode" />
-                <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
-              </n-space>
-            </n-form-item>
-          </n-form>
-          <span class="form-tip">{{ t('settings.aiAssistantStatusTrackingTip') }}</span>
-        </n-spin>
-      </n-card>
-
-      <n-card :title="t('settings.developerOptions')" size="huge">
-        <template #header-extra>
-          <n-button
-            size="small"
-            :loading="developerSaving"
-            :disabled="!developerDirty || developerLoading"
-            @click="handleSaveDeveloperConfig"
-          >
-            {{ t('common.save') }}
-          </n-button>
-        </template>
-        <n-spin :show="developerLoading">
-          <n-form label-placement="left" label-width="160">
-            <n-form-item :label="t('settings.developerScrollback')">
-              <n-space vertical size="small">
-                <n-switch
-                  v-model:value="developerForm.enableTerminalScrollback"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">{{ t('settings.developerScrollbackTip') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.renameSessionTitleEachCommand')">
-              <n-space vertical size="small">
-                <n-switch
-                  v-model:value="developerForm.renameSessionTitleEachCommand"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">{{ t('settings.renameSessionTitleEachCommandTip') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.webSessionCodexDefaultSyncMode')">
-              <n-space vertical size="small">
-                <n-select
-                  v-model:value="developerForm.webSessionCodexDefaultSyncMode"
-                  :options="webSessionSyncModeOptions"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">{{ t('settings.webSessionCodexDefaultSyncModeTip') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.webSessionActiveCallTimeout')">
-              <n-space vertical size="small">
-                <n-radio-group
-                  v-model:value="developerForm.webSessionActiveCallTimeout.enabledMode"
-                  :disabled="developerLoading"
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalServerStateSnapshot')"
+                  data-search-key="terminalServerStateSnapshot"
                 >
-                  <n-space>
-                    <n-radio value="default">{{ t('common.default') }}</n-radio>
-                    <n-radio value="on">{{ t('common.yes') }}</n-radio>
-                    <n-radio value="off">{{ t('common.no') }}</n-radio>
+                  <n-space vertical size="small">
+                    <n-switch
+                      v-model:value="developerForm.enableTerminalStateSnapshot"
+                      :disabled="developerLoading"
+                    />
+                    <span class="form-tip">{{ t('settings.terminalServerStateSnapshotTip') }}</span>
                   </n-space>
-                </n-radio-group>
-                <span class="form-tip">{{ t('settings.webSessionActiveCallTimeoutTip') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
-              <n-space vertical size="small">
-                <n-radio-group
-                  v-model:value="developerForm.webSessionActiveCallTimeout.timeoutMode"
-                  :disabled="developerLoading"
-                >
-                  <n-space>
-                    <n-radio value="default">{{ t('common.default') }}</n-radio>
-                    <n-radio value="custom">{{ t('common.custom') }}</n-radio>
-                  </n-space>
-                </n-radio-group>
-                <n-input-number
-                  v-if="developerUsesCustomActiveCallTimeout"
-                  v-model:value="developerForm.webSessionActiveCallTimeout.customTimeoutSeconds"
-                  :min="10"
-                  :step="10"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">
-                  {{
-                    t('settings.webSessionActiveCallTimeoutSecondsTip', {
-                      defaultSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
-                    })
-                  }}
-                </span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.webSessionActiveCallTimeoutCallKinds')">
-              <n-space vertical size="small">
-                <n-space>
-                  <n-checkbox
-                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.useDefault"
-                    :disabled="developerLoading"
-                  >
-                    {{ t('settings.webSessionActiveCallTimeoutKindDefault') }}
-                  </n-checkbox>
-                </n-space>
-                <n-space>
-                  <n-checkbox
-                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
-                    :disabled="
-                      developerLoading ||
-                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                    "
-                  >
-                    {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
-                  </n-checkbox>
-                  <n-checkbox
-                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.command"
-                    :disabled="
-                      developerLoading ||
-                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                    "
-                  >
-                    {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
-                  </n-checkbox>
-                  <n-checkbox
-                    v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
-                    :disabled="
-                      developerLoading ||
-                      developerForm.webSessionActiveCallTimeout.callKinds.useDefault
-                    "
-                  >
-                    {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
-                  </n-checkbox>
-                </n-space>
-                <span class="form-tip">
-                  {{ t('settings.webSessionActiveCallTimeoutCallKindsTip') }}
-                </span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.webSessionActiveCallTimeoutPrompt')">
-              <n-space vertical size="small" style="width: 100%">
-                <n-input
-                  v-model:value="developerForm.webSessionActiveCallTimeout.promptTemplate"
-                  type="textarea"
-                  :autosize="{ minRows: 3, maxRows: 6 }"
-                  :placeholder="DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">
-                  {{ t('settings.webSessionActiveCallTimeoutPromptTip') }}
-                </span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.terminalServerStateSnapshot')">
-              <n-space vertical size="small">
-                <n-switch
-                  v-model:value="developerForm.enableTerminalStateSnapshot"
-                  :disabled="developerLoading"
-                />
-                <span class="form-tip">{{ t('settings.terminalServerStateSnapshotTip') }}</span>
-              </n-space>
-            </n-form-item>
-          </n-form>
-        </n-spin>
-      </n-card>
+                </n-form-item>
+              </n-form>
+            </n-card>
 
-      <n-card :title="t('settings.worktreeSettings')" size="huge">
-        <template #header-extra>
-          <n-button
-            size="small"
-            :loading="worktreeSettingsSaving"
-            :disabled="!worktreeSettingsDirty || worktreeSettingsLoading || !!globalBaseDirError"
-            @click="handleSaveWorktreeSettings"
-          >
-            {{ t('common.save') }}
-          </n-button>
-        </template>
-        <n-spin :show="worktreeSettingsLoading">
-          <n-form label-placement="left" label-width="160">
-            <n-form-item
-              :label="t('settings.worktreeGlobalBaseDir')"
-              :validation-status="globalBaseDirError ? 'error' : undefined"
-              :feedback="globalBaseDirError"
-            >
-              <n-space vertical size="small" style="width: 100%">
-                <n-input
-                  v-model:value="worktreeSettingsForm.globalBaseDir"
-                  :placeholder="t('settings.worktreeGlobalBaseDirPlaceholder')"
-                  :status="globalBaseDirError ? 'error' : undefined"
-                  @blur="validateGlobalBaseDir"
-                  @input="validateGlobalBaseDir"
-                />
-                <span class="form-tip">{{ t('settings.worktreeGlobalBaseDirTip') }}</span>
-              </n-space>
-            </n-form-item>
-            <n-form-item :label="t('settings.worktreeGlobalDirNamePattern')">
-              <n-space vertical size="small" style="width: 100%">
-                <n-input v-model:value="worktreeSettingsForm.globalDirNamePattern" />
-                <span class="form-tip">{{ t('settings.worktreeGlobalDirNamePatternTip') }}</span>
-              </n-space>
-            </n-form-item>
-          </n-form>
-        </n-spin>
-      </n-card>
-
-      <!-- 主题设置 -->
-      <n-card :title="t('settings.themeSettings')" size="huge">
-        <n-form label-placement="left" label-width="140">
-          <n-form-item :label="t('theme.presetTheme')">
-            <n-select
-              :value="currentPresetValue"
-              :options="presetOptions"
-              :disabled="followSystemValue"
-              style="max-width: 240px"
-              @update:value="handlePresetThemeChange"
-            />
-          </n-form-item>
-          <n-form-item :label="t('theme.followSystem')">
-            <n-space vertical size="small">
-              <n-radio-group
-                :value="followSystemModeValue"
-                @update:value="handleFollowSystemModeChange"
+            <n-card :title="t('settings.terminalQuickActions')" size="huge">
+              <n-form
+                :label-placement="standardFormLabelPlacement"
+                :label-width="standardFormLabelWidth"
               >
-                <n-space>
-                  <n-radio :value="-1">{{ t('common.default') }}</n-radio>
-                  <n-radio :value="0">{{ t('common.no') }}</n-radio>
-                  <n-radio :value="1">{{ t('common.yes') }}</n-radio>
-                </n-space>
-              </n-radio-group>
-              <span class="form-tip">{{ t('theme.followSystemHint') }}</span>
-            </n-space>
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTheme')">
-            <n-space vertical size="small">
-              <n-select
-                v-model:value="terminalThemeValue"
-                :options="terminalThemeOptions"
-                style="max-width: 240px"
-              />
-              <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
-            </n-space>
-          </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalQuickActionsList')"
+                  data-search-key="terminalQuickActions"
+                >
+                  <n-space vertical size="small" style="width: 100%">
+                    <n-dynamic-input
+                      v-model:value="terminalQuickActionsLocal"
+                      :on-create="createTerminalQuickAction"
+                    >
+                      <template #default="{ value }">
+                        <div class="terminal-quick-action-item">
+                          <div class="terminal-quick-action-row terminal-quick-action-row-switches">
+                            <n-space align="center" size="small" wrap>
+                              <n-switch v-model:value="value.enabled" />
+                              <n-tooltip trigger="hover" placement="top" :delay="80">
+                                <template #trigger>
+                                  <n-checkbox v-model:checked="value.stacked">
+                                    {{ t('settings.terminalQuickActionStackLabel') }}
+                                  </n-checkbox>
+                                </template>
+                                {{ t('settings.terminalQuickActionStackTip') }}
+                              </n-tooltip>
+                            </n-space>
+                          </div>
+                          <div class="terminal-quick-action-row terminal-quick-action-row-inputs">
+                            <n-input
+                              v-model:value="value.name"
+                              class="terminal-quick-action-input"
+                              :placeholder="t('settings.terminalQuickActionNamePlaceholder')"
+                            />
+                            <n-input
+                              v-model:value="value.command"
+                              class="terminal-quick-action-input"
+                              :placeholder="t('settings.terminalQuickActionCommandPlaceholder')"
+                            />
+                          </div>
+                          <div class="terminal-quick-action-row terminal-quick-action-row-icons">
+                            <div class="terminal-quick-action-icon-grid">
+                              <button
+                                v-for="option in terminalQuickActionIconButtons"
+                                :key="option.value"
+                                type="button"
+                                class="terminal-quick-action-icon-button"
+                                :class="{ 'is-active': value.icon === option.value }"
+                                :title="option.label"
+                                :aria-pressed="value.icon === option.value"
+                                @click="value.icon = option.value"
+                              >
+                                <span
+                                  v-if="'svg' in option && option.svg"
+                                  class="terminal-quick-action-svg"
+                                  v-html="option.svg"
+                                ></span>
+                                <n-icon v-else :size="16">
+                                  <component :is="option.icon" />
+                                </n-icon>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+                      <template #action="{ index, remove, create }">
+                        <n-button-group size="small">
+                          <n-button
+                            quaternary
+                            circle
+                            @click="handleRemoveTerminalQuickAction(index, remove)"
+                          >
+                            <template #icon>
+                              <n-icon>
+                                <Remove />
+                              </n-icon>
+                            </template>
+                          </n-button>
+                          <n-button quaternary circle @click="create(index)">
+                            <template #icon>
+                              <n-icon>
+                                <Add />
+                              </n-icon>
+                            </template>
+                          </n-button>
+                        </n-button-group>
+                      </template>
+                    </n-dynamic-input>
+                    <n-space>
+                      <n-button size="small" @click="handleResetTerminalQuickActions">
+                        {{ t('settings.restoreDefault') }}
+                      </n-button>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalQuickActionsTip') }}</span>
+                  </n-space>
+                </n-form-item>
+              </n-form>
+            </n-card>
 
-          <n-divider style="margin: 16px 0">{{ t('settings.terminalFontSettings') }}</n-divider>
-
-          <n-form-item :label="t('settings.terminalFontFamily')">
-            <n-space vertical size="small">
-              <n-space>
-                <n-select
-                  v-model:value="terminalFontFamilyValue"
-                  :options="fontFamilyOptions"
-                  style="width: 200px"
-                  filterable
-                  tag
-                  :placeholder="t('settings.terminalFontFamilyPlaceholder')"
-                />
+            <n-card :title="t('settings.aiAssistantStatusTracking')" size="huge">
+              <template #header-extra>
                 <n-button
                   size="small"
-                  text
-                  :disabled="!terminalFontFamilyValue"
-                  @click="handleResetFontFamily"
+                  :loading="saveLoading"
+                  :disabled="!aiStatusDirty"
+                  @click="handleSaveAIStatus"
                 >
-                  {{ t('settings.restoreDefault') }}
+                  {{ t('common.save') }}
                 </n-button>
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalFontFamilyTip') }}</span>
-            </n-space>
-          </n-form-item>
+              </template>
+              <n-spin :show="aiStatusLoading">
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
+                >
+                  <n-form-item
+                    :label="t('settings.aiAssistantClaudeCode')"
+                    data-search-key="aiAssistantClaudeCode"
+                  >
+                    <n-space align="center">
+                      <n-switch v-model:value="aiStatusForm.claudeCode" />
+                      <span class="form-tip">{{ t('settings.aiStatusClaudeSupport') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.aiAssistantCodex')"
+                    data-search-key="aiAssistantCodex"
+                  >
+                    <n-space align="center">
+                      <n-switch v-model:value="aiStatusForm.codex" />
+                      <span class="form-tip">{{ t('settings.aiStatusCodexSupport') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.aiAssistantQwenCode')"
+                    data-search-key="aiAssistantQwenCode"
+                  >
+                    <n-space align="center">
+                      <n-switch v-model:value="aiStatusForm.qwenCode" />
+                      <span class="form-tip">{{ t('settings.aiStatusQwenSupport') }}</span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+                <span class="form-tip">{{ t('settings.aiAssistantStatusTrackingTip') }}</span>
+              </n-spin>
+            </n-card>
+          </section>
 
-          <n-form-item :label="t('settings.terminalFontSize')">
-            <n-space vertical size="small">
-              <n-space align="center">
-                <n-slider
-                  v-model:value="terminalFontSizeValue"
-                  :min="8"
-                  :max="32"
-                  :step="1"
-                  style="width: 180px"
-                />
-                <n-input-number
-                  v-model:value="terminalFontSizeValue"
-                  :min="8"
-                  :max="32"
-                  :step="1"
+          <section
+            v-show="isSettingsSectionVisible('session')"
+            :ref="el => registerSettingsSectionRef('session', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('session')"
+          >
+            <n-card :title="t('settings.sessionSettings')" size="huge">
+              <template #header-extra>
+                <n-button
                   size="small"
-                  style="width: 80px"
-                />
-                <span class="unit-label">px</span>
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalFontSizeTip') }}</span>
-            </n-space>
-          </n-form-item>
+                  :loading="developerSaving"
+                  :disabled="!developerSessionDirty || developerLoading"
+                  @click="handleSaveDeveloperConfig"
+                >
+                  {{ t('common.save') }}
+                </n-button>
+              </template>
+              <n-form
+                :label-placement="standardFormLabelPlacement"
+                :label-width="standardFormLabelWidth"
+              >
+                <n-form-item
+                  :label="t('settings.showWebSessionReasoning')"
+                  data-search-key="showWebSessionReasoning"
+                >
+                  <n-space vertical size="small">
+                    <n-switch v-model:value="showWebSessionReasoningValue" />
+                    <span class="form-tip">{{ t('settings.showWebSessionReasoningTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionStreamingMarkdownThrottle')"
+                  data-search-key="webSessionStreamingMarkdownThrottle"
+                >
+                  <n-space vertical size="small">
+                    <n-radio-group v-model:value="webSessionStreamingMarkdownThrottleModeValue">
+                      <n-space>
+                        <n-radio value="default">{{ t('common.default') }}</n-radio>
+                        <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <n-input-number
+                      v-model:value="webSessionStreamingMarkdownThrottleCustomMsValue"
+                      :min="1"
+                      :step="10"
+                      style="max-width: 180px"
+                      :disabled="webSessionStreamingMarkdownThrottleModeValue !== 'custom'"
+                    />
+                    <span class="form-tip">
+                      {{
+                        t('settings.webSessionStreamingMarkdownThrottleTip', {
+                          defaultMs: DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
+                        })
+                      }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionAutoContinueScope')"
+                  data-search-key="webSessionAutoContinueScope"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="webSessionAutoContinueScopeValue"
+                      :options="webSessionAutoContinueScopeOptions"
+                      style="max-width: 320px"
+                    />
+                    <span class="form-tip">{{ t('settings.webSessionAutoContinueScopeTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionAutoContinuePreset')"
+                  data-search-key="webSessionAutoContinuePreset"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="webSessionAutoContinuePresetValue"
+                      :options="webSessionAutoContinuePresetOptions"
+                      style="max-width: 320px"
+                    />
+                    <span class="form-tip">{{
+                      t('settings.webSessionAutoContinuePresetTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.webSessionCodexDefaultSyncMode')"
+                  data-search-key="webSessionCodexDefaultSyncMode"
+                >
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="developerForm.webSessionCodexDefaultSyncMode"
+                      :options="webSessionSyncModeOptions"
+                      :disabled="developerLoading"
+                    />
+                    <span class="form-tip">{{
+                      t('settings.webSessionCodexDefaultSyncModeTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.webSessionActiveCallTimeout')">
+                  <n-space vertical size="small">
+                    <n-radio-group
+                      v-model:value="developerForm.webSessionActiveCallTimeout.enabledMode"
+                      :disabled="developerLoading"
+                    >
+                      <n-space>
+                        <n-radio value="default">{{ t('common.default') }}</n-radio>
+                        <n-radio value="on">{{ t('common.yes') }}</n-radio>
+                        <n-radio value="off">{{ t('common.no') }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <span class="form-tip">{{ t('settings.webSessionActiveCallTimeoutTip') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.webSessionActiveCallTimeoutSeconds')">
+                  <n-space vertical size="small">
+                    <n-radio-group
+                      v-model:value="developerForm.webSessionActiveCallTimeout.timeoutMode"
+                      :disabled="developerLoading"
+                    >
+                      <n-space>
+                        <n-radio value="default">{{ t('common.default') }}</n-radio>
+                        <n-radio value="custom">{{ t('common.custom') }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <n-input-number
+                      v-if="developerUsesCustomActiveCallTimeout"
+                      v-model:value="developerForm.webSessionActiveCallTimeout.customTimeoutSeconds"
+                      :min="10"
+                      :step="10"
+                      :disabled="developerLoading"
+                    />
+                    <span class="form-tip">
+                      {{
+                        t('settings.webSessionActiveCallTimeoutSecondsTip', {
+                          defaultSeconds: DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS,
+                        })
+                      }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.webSessionActiveCallTimeoutCallKinds')">
+                  <n-space vertical size="small">
+                    <n-space>
+                      <n-checkbox
+                        v-model:checked="
+                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                        "
+                        :disabled="developerLoading"
+                      >
+                        {{ t('settings.webSessionActiveCallTimeoutKindDefault') }}
+                      </n-checkbox>
+                    </n-space>
+                    <n-space>
+                      <n-checkbox
+                        v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.mcp"
+                        :disabled="
+                          developerLoading ||
+                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                        "
+                      >
+                        {{ t('settings.webSessionActiveCallTimeoutKindMcp') }}
+                      </n-checkbox>
+                      <n-checkbox
+                        v-model:checked="
+                          developerForm.webSessionActiveCallTimeout.callKinds.command
+                        "
+                        :disabled="
+                          developerLoading ||
+                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                        "
+                      >
+                        {{ t('settings.webSessionActiveCallTimeoutKindCommand') }}
+                      </n-checkbox>
+                      <n-checkbox
+                        v-model:checked="developerForm.webSessionActiveCallTimeout.callKinds.tool"
+                        :disabled="
+                          developerLoading ||
+                          developerForm.webSessionActiveCallTimeout.callKinds.useDefault
+                        "
+                      >
+                        {{ t('settings.webSessionActiveCallTimeoutKindTool') }}
+                      </n-checkbox>
+                    </n-space>
+                    <span class="form-tip">
+                      {{ t('settings.webSessionActiveCallTimeoutCallKindsTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.webSessionActiveCallTimeoutPrompt')">
+                  <n-space vertical size="small" style="width: 100%">
+                    <n-input
+                      v-model:value="developerForm.webSessionActiveCallTimeout.promptTemplate"
+                      type="textarea"
+                      :autosize="{ minRows: 3, maxRows: 6 }"
+                      :placeholder="DEFAULT_ACTIVE_CALL_TIMEOUT_PROMPT"
+                      :disabled="developerLoading"
+                    />
+                    <span class="form-tip">
+                      {{ t('settings.webSessionActiveCallTimeoutPromptTip') }}
+                    </span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.webSessionQuickInputPinned')">
+                  <n-space vertical size="small" style="width: 100%">
+                    <n-dynamic-input
+                      v-model:value="webSessionQuickInputPinnedLocal"
+                      :on-create="createWebSessionQuickInputPinnedItem"
+                    >
+                      <template #default="{ value, index }">
+                        <n-input
+                          type="textarea"
+                          class="web-session-quick-input-textarea"
+                          :value="value"
+                          :autosize="{ minRows: 2, maxRows: 4 }"
+                          :placeholder="t('settings.webSessionQuickInputPinnedPlaceholder')"
+                          @update:value="handleWebSessionQuickInputPinnedChange(index, $event)"
+                        />
+                      </template>
+                      <template #action="{ index, remove, create }">
+                        <n-button-group size="small">
+                          <n-button quaternary circle @click="remove(index)">
+                            <template #icon>
+                              <n-icon>
+                                <Remove />
+                              </n-icon>
+                            </template>
+                          </n-button>
+                          <n-button quaternary circle @click="create(index)">
+                            <template #icon>
+                              <n-icon>
+                                <Add />
+                              </n-icon>
+                            </template>
+                          </n-button>
+                        </n-button-group>
+                      </template>
+                    </n-dynamic-input>
+                    <n-space>
+                      <n-button
+                        size="small"
+                        type="primary"
+                        :loading="webSessionQuickInputPinnedSaving"
+                        :disabled="!webSessionQuickInputPinnedDirty"
+                        @click="handleSaveWebSessionQuickInputPinned"
+                      >
+                        {{ t('common.save') }}
+                      </n-button>
+                      <n-button size="small" @click="handleResetWebSessionQuickInputPinned">
+                        {{ t('settings.restoreDefault') }}
+                      </n-button>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.webSessionQuickInputPinnedTip') }}</span>
+                  </n-space>
+                </n-form-item>
+              </n-form>
+            </n-card>
+          </section>
 
-          <n-form-item :label="t('settings.terminalFontWeight')">
-            <n-space vertical size="small">
-              <n-space>
-                <n-select
-                  v-model:value="terminalFontWeightValue"
-                  :options="fontWeightOptions"
-                  style="width: 160px"
-                />
-                <n-select
-                  v-model:value="terminalFontWeightBoldValue"
-                  :options="fontWeightOptions"
-                  style="width: 160px"
-                />
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalFontWeightTip') }}</span>
-            </n-space>
-          </n-form-item>
+          <section
+            v-show="isSettingsSectionVisible('security')"
+            :ref="el => registerSettingsSectionRef('security', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('security')"
+          >
+            <n-card :title="t('settings.securityTitle')" size="huge">
+              <n-space vertical size="large">
+                <n-alert
+                  :type="authStore.enabled ? 'warning' : 'info'"
+                  :bordered="false"
+                  :show-icon="false"
+                >
+                  {{
+                    authStore.enabled
+                      ? t('settings.securityEnabledHint')
+                      : t('settings.securityDisabledHint')
+                  }}
+                </n-alert>
 
-          <n-form-item :label="t('settings.terminalLineHeight')">
-            <n-space vertical size="small">
-              <n-space align="center">
-                <n-slider
-                  v-model:value="terminalLineHeightValue"
-                  :min="1.0"
-                  :max="2.0"
-                  :step="0.1"
-                  style="width: 180px"
-                />
-                <n-input-number
-                  v-model:value="terminalLineHeightValue"
-                  :min="1.0"
-                  :max="2.0"
-                  :step="0.1"
+                <template v-if="!authStore.enabled">
+                  <n-form
+                    :label-placement="standardFormLabelPlacement"
+                    :label-width="standardFormLabelWidth"
+                  >
+                    <n-form-item
+                      :label="t('settings.securityNewPassword')"
+                      data-search-key="securityNewPassword"
+                    >
+                      <n-input
+                        v-model:value="enablePassword"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityConfirmPassword')"
+                      data-search-key="securityConfirmPassword"
+                    >
+                      <n-input
+                        v-model:value="enablePasswordConfirm"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item data-search-key="securityEnablePassword">
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-button
+                          type="primary"
+                          :loading="authSaving"
+                          :disabled="!enablePassword.trim() || !enablePasswordConfirm.trim()"
+                          @click="handleEnablePasswordProtection"
+                        >
+                          {{ t('settings.securityEnableAction') }}
+                        </n-button>
+                        <span class="form-tip">{{ t('settings.securityAlgorithmHint') }}</span>
+                      </n-space>
+                    </n-form-item>
+                  </n-form>
+                </template>
+
+                <template v-else>
+                  <n-form
+                    :label-placement="standardFormLabelPlacement"
+                    :label-width="standardFormLabelWidth"
+                  >
+                    <n-form-item
+                      :label="t('settings.securityCurrentPassword')"
+                      data-search-key="securityCurrentPassword"
+                    >
+                      <n-input
+                        v-model:value="currentPassword"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityNewPassword')"
+                      data-search-key="securityChangePassword"
+                    >
+                      <n-input
+                        v-model:value="newPassword"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityConfirmPassword')"
+                      data-search-key="securityChangeConfirmPassword"
+                    >
+                      <n-input
+                        v-model:value="newPasswordConfirm"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item data-search-key="securityChangePasswordButton">
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-button
+                          type="primary"
+                          :loading="authSaving"
+                          :disabled="
+                            !currentPassword.trim() ||
+                            !newPassword.trim() ||
+                            !newPasswordConfirm.trim()
+                          "
+                          @click="handleChangePasswordProtection"
+                        >
+                          {{ t('settings.securityChangeAction') }}
+                        </n-button>
+                        <span class="form-tip">{{ t('settings.securityRotateHint') }}</span>
+                      </n-space>
+                    </n-form-item>
+                  </n-form>
+
+                  <n-divider style="margin: 0" />
+
+                  <n-form
+                    :label-placement="standardFormLabelPlacement"
+                    :label-width="standardFormLabelWidth"
+                  >
+                    <n-form-item
+                      :label="t('settings.securityDisablePassword')"
+                      data-search-key="securityDisablePassword"
+                    >
+                      <n-input
+                        v-model:value="disablePassword"
+                        type="password"
+                        show-password-on="click"
+                        :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                      />
+                    </n-form-item>
+                    <n-form-item data-search-key="securityDisablePasswordButton">
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-button
+                          type="error"
+                          ghost
+                          :loading="authSaving"
+                          :disabled="!disablePassword.trim()"
+                          @click="handleDisablePasswordProtection"
+                        >
+                          {{ t('settings.securityDisableAction') }}
+                        </n-button>
+                        <span class="form-tip">{{ t('settings.securityDisableHint') }}</span>
+                      </n-space>
+                    </n-form-item>
+                  </n-form>
+                </template>
+              </n-space>
+            </n-card>
+          </section>
+
+          <section
+            v-show="isSettingsSectionVisible('developer')"
+            :ref="el => registerSettingsSectionRef('developer', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('developer')"
+          >
+            <n-card :title="t('settings.developerOptions')" size="huge">
+              <template #header-extra>
+                <n-button
                   size="small"
-                  style="width: 80px"
-                />
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalLineHeightTip') }}</span>
-            </n-space>
-          </n-form-item>
+                  :loading="developerSaving"
+                  :disabled="!developerBehaviorDirty || developerLoading"
+                  @click="handleSaveDeveloperConfig"
+                >
+                  {{ t('common.save') }}
+                </n-button>
+              </template>
+              <n-spin :show="developerLoading">
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
+                >
+                  <n-form-item
+                    :label="t('settings.developerScrollback')"
+                    data-search-key="developerScrollback"
+                  >
+                    <n-space vertical size="small">
+                      <n-switch
+                        v-model:value="developerForm.enableTerminalScrollback"
+                        :disabled="developerLoading"
+                      />
+                      <span class="form-tip">{{ t('settings.developerScrollbackTip') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.renameSessionTitleEachCommand')"
+                    data-search-key="renameSessionTitleEachCommand"
+                  >
+                    <n-space vertical size="small">
+                      <n-switch
+                        v-model:value="developerForm.renameSessionTitleEachCommand"
+                        :disabled="developerLoading"
+                      />
+                      <span class="form-tip">{{
+                        t('settings.renameSessionTitleEachCommandTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+              </n-spin>
+            </n-card>
+          </section>
 
-          <n-form-item :label="t('settings.terminalLetterSpacing')">
-            <n-space vertical size="small">
-              <n-space align="center">
-                <n-slider
-                  v-model:value="terminalLetterSpacingValue"
-                  :min="-2"
-                  :max="5"
-                  :step="0.5"
-                  style="width: 180px"
-                />
-                <n-input-number
-                  v-model:value="terminalLetterSpacingValue"
-                  :min="-2"
-                  :max="5"
-                  :step="0.5"
+          <section
+            v-show="isSettingsSectionVisible('worktree')"
+            :ref="el => registerSettingsSectionRef('worktree', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('worktree')"
+          >
+            <n-card :title="t('settings.worktreeSettings')" size="huge">
+              <template #header-extra>
+                <n-button
                   size="small"
-                  style="width: 80px"
-                />
-                <span class="unit-label">px</span>
-              </n-space>
-              <span class="form-tip">{{ t('settings.terminalLetterSpacingTip') }}</span>
-            </n-space>
-          </n-form-item>
+                  :loading="worktreeSettingsSaving"
+                  :disabled="
+                    !worktreeSettingsDirty || worktreeSettingsLoading || !!globalBaseDirError
+                  "
+                  @click="handleSaveWorktreeSettings"
+                >
+                  {{ t('common.save') }}
+                </n-button>
+              </template>
+              <n-spin :show="worktreeSettingsLoading">
+                <n-form
+                  :label-placement="standardFormLabelPlacement"
+                  :label-width="standardFormLabelWidth"
+                >
+                  <n-form-item
+                    :label="t('settings.worktreeGlobalBaseDir')"
+                    :validation-status="globalBaseDirError ? 'error' : undefined"
+                    :feedback="globalBaseDirError"
+                    data-search-key="worktreeGlobalBaseDir"
+                  >
+                    <n-space vertical size="small" style="width: 100%">
+                      <n-input
+                        v-model:value="worktreeSettingsForm.globalBaseDir"
+                        :placeholder="t('settings.worktreeGlobalBaseDirPlaceholder')"
+                        :status="globalBaseDirError ? 'error' : undefined"
+                        @blur="validateGlobalBaseDir"
+                        @input="validateGlobalBaseDir"
+                      />
+                      <span class="form-tip">{{ t('settings.worktreeGlobalBaseDirTip') }}</span>
+                    </n-space>
+                  </n-form-item>
+                  <n-form-item
+                    :label="t('settings.worktreeGlobalDirNamePattern')"
+                    data-search-key="worktreeGlobalDirNamePattern"
+                  >
+                    <n-space vertical size="small" style="width: 100%">
+                      <n-input v-model:value="worktreeSettingsForm.globalDirNamePattern" />
+                      <span class="form-tip">{{
+                        t('settings.worktreeGlobalDirNamePatternTip')
+                      }}</span>
+                    </n-space>
+                  </n-form-item>
+                </n-form>
+              </n-spin>
+            </n-card>
+          </section>
 
-          <n-form-item :label="t('settings.terminalWebGLRenderer')">
-            <n-space vertical size="small">
-              <n-radio-group v-model:value="terminalWebGLRendererValue">
-                <n-space>
-                  <n-radio value="auto">{{ t('settings.webglAuto') }}</n-radio>
-                  <n-radio value="force">{{ t('settings.webglForce') }}</n-radio>
-                  <n-radio value="disable">{{ t('settings.webglDisable') }}</n-radio>
-                </n-space>
-              </n-radio-group>
-              <span class="form-tip">{{ webglRendererTip }}</span>
-            </n-space>
-          </n-form-item>
+          <!-- 主题设置 -->
+          <section
+            v-show="isSettingsSectionVisible('theme')"
+            :ref="el => registerSettingsSectionRef('theme', el as HTMLElement | null)"
+            class="settings-card-shell"
+            :class="settingsCardShellClass('theme')"
+          >
+            <n-card :title="t('settings.themeSettings')" size="huge">
+              <n-form
+                :label-placement="standardFormLabelPlacement"
+                :label-width="themeFormLabelWidth"
+              >
+                <n-form-item :label="t('theme.presetTheme')" data-search-key="presetTheme">
+                  <n-select
+                    :value="currentPresetValue"
+                    :options="presetOptions"
+                    :disabled="followSystemValue"
+                    style="max-width: 240px"
+                    @update:value="handlePresetThemeChange"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('theme.followSystem')" data-search-key="followSystem">
+                  <n-space vertical size="small">
+                    <n-radio-group
+                      :value="followSystemModeValue"
+                      @update:value="handleFollowSystemModeChange"
+                    >
+                      <n-space>
+                        <n-radio :value="-1">{{ t('common.default') }}</n-radio>
+                        <n-radio :value="0">{{ t('common.no') }}</n-radio>
+                        <n-radio :value="1">{{ t('common.yes') }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <span class="form-tip">{{ t('theme.followSystemHint') }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item :label="t('settings.terminalTheme')" data-search-key="terminalTheme">
+                  <n-space vertical size="small">
+                    <n-select
+                      v-model:value="terminalThemeValue"
+                      :options="terminalThemeOptions"
+                      style="max-width: 240px"
+                    />
+                    <span class="form-tip">{{ t('settings.terminalThemeTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
+                <n-divider style="margin: 16px 0">{{
+                  t('settings.terminalFontSettings')
+                }}</n-divider>
 
-          <n-alert v-if="hasCustomTheme" type="info" style="margin-bottom: 16px" :bordered="false">
-            {{ t('theme.customThemeHint') }}
-          </n-alert>
+                <n-form-item
+                  :label="t('settings.terminalFontFamily')"
+                  data-search-key="terminalFontFamily"
+                >
+                  <n-space vertical size="small">
+                    <n-space>
+                      <n-select
+                        v-model:value="terminalFontFamilyValue"
+                        :options="fontFamilyOptions"
+                        style="width: 200px"
+                        filterable
+                        tag
+                        :placeholder="t('settings.terminalFontFamilyPlaceholder')"
+                      />
+                      <n-button
+                        size="small"
+                        text
+                        :disabled="!terminalFontFamilyValue"
+                        @click="handleResetFontFamily"
+                      >
+                        {{ t('settings.restoreDefault') }}
+                      </n-button>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalFontFamilyTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-form-item :label="t('settings.primaryColor')">
-            <n-color-picker v-model:value="primaryColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.bodyColor')">
-            <n-color-picker v-model:value="bodyColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.surfaceColor')">
-            <n-color-picker v-model:value="surfaceColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.textColor')">
-            <n-color-picker v-model:value="textColor" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalFontSize')"
+                  data-search-key="terminalFontSize"
+                >
+                  <n-space vertical size="small">
+                    <n-space align="center">
+                      <n-slider
+                        v-model:value="terminalFontSizeValue"
+                        :min="8"
+                        :max="32"
+                        :step="1"
+                        style="width: 180px"
+                      />
+                      <n-input-number
+                        v-model:value="terminalFontSizeValue"
+                        :min="8"
+                        :max="32"
+                        :step="1"
+                        size="small"
+                        style="width: 80px"
+                      />
+                      <span class="unit-label">px</span>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalFontSizeTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-divider style="margin: 16px 0">{{ t('theme.terminalColors') }}</n-divider>
+                <n-form-item
+                  :label="t('settings.terminalFontWeight')"
+                  data-search-key="terminalFontWeight"
+                >
+                  <n-space vertical size="small">
+                    <n-space>
+                      <n-select
+                        v-model:value="terminalFontWeightValue"
+                        :options="fontWeightOptions"
+                        style="width: 160px"
+                      />
+                      <n-select
+                        v-model:value="terminalFontWeightBoldValue"
+                        :options="fontWeightOptions"
+                        style="width: 160px"
+                      />
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalFontWeightTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-form-item :label="t('settings.terminalBg')">
-            <n-color-picker v-model:value="terminalBg" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalFg')">
-            <n-color-picker v-model:value="terminalFg" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTabBg')">
-            <n-color-picker v-model:value="terminalTabBg" :modes="['hex']" :actions="['confirm']" />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTabActiveBg')">
-            <n-color-picker
-              v-model:value="terminalTabActiveBg"
-              :modes="['hex']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalLineHeight')"
+                  data-search-key="terminalLineHeight"
+                >
+                  <n-space vertical size="small">
+                    <n-space align="center">
+                      <n-slider
+                        v-model:value="terminalLineHeightValue"
+                        :min="1.0"
+                        :max="2.0"
+                        :step="0.1"
+                        style="width: 180px"
+                      />
+                      <n-input-number
+                        v-model:value="terminalLineHeightValue"
+                        :min="1.0"
+                        :max="2.0"
+                        :step="0.1"
+                        size="small"
+                        style="width: 80px"
+                      />
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalLineHeightTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-divider style="margin: 16px 0">{{ t('theme.statusColors') }}</n-divider>
+                <n-form-item
+                  :label="t('settings.terminalLetterSpacing')"
+                  data-search-key="terminalLetterSpacing"
+                >
+                  <n-space vertical size="small">
+                    <n-space align="center">
+                      <n-slider
+                        v-model:value="terminalLetterSpacingValue"
+                        :min="-2"
+                        :max="5"
+                        :step="0.5"
+                        style="width: 180px"
+                      />
+                      <n-input-number
+                        v-model:value="terminalLetterSpacingValue"
+                        :min="-2"
+                        :max="5"
+                        :step="0.5"
+                        size="small"
+                        style="width: 80px"
+                      />
+                      <span class="unit-label">px</span>
+                    </n-space>
+                    <span class="form-tip">{{ t('settings.terminalLetterSpacingTip') }}</span>
+                  </n-space>
+                </n-form-item>
 
-          <n-form-item :label="t('settings.terminalTabCompletionBg')">
-            <n-color-picker
-              v-model:value="terminalTabCompletionBg"
-              :modes="['hex', 'rgb']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTabCompletionBorder')">
-            <n-color-picker
-              v-model:value="terminalTabCompletionBorder"
-              :modes="['hex', 'rgb']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTabApprovalBg')">
-            <n-color-picker
-              v-model:value="terminalTabApprovalBg"
-              :modes="['hex', 'rgb']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
-          <n-form-item :label="t('settings.terminalTabApprovalBorder')">
-            <n-color-picker
-              v-model:value="terminalTabApprovalBorder"
-              :modes="['hex', 'rgb']"
-              :actions="['confirm']"
-            />
-          </n-form-item>
-        </n-form>
-      </n-card>
+                <n-form-item
+                  :label="t('settings.terminalWebGLRenderer')"
+                  data-search-key="terminalWebGLRenderer"
+                >
+                  <n-space vertical size="small">
+                    <n-radio-group v-model:value="terminalWebGLRendererValue">
+                      <n-space>
+                        <n-radio value="auto">{{ t('settings.webglAuto') }}</n-radio>
+                        <n-radio value="force">{{ t('settings.webglForce') }}</n-radio>
+                        <n-radio value="disable">{{ t('settings.webglDisable') }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <span class="form-tip">{{ webglRendererTip }}</span>
+                  </n-space>
+                </n-form-item>
 
-      <!-- 实时预览 -->
-      <n-card :title="t('settings.realtimePreview')" size="huge">
-        <div class="preview-panel" :style="previewPanelStyle">
-          <div class="preview-banner">
-            <n-space align="center" size="small">
-              <n-icon size="24">
-                <ColorPaletteOutline />
-              </n-icon>
-              <span>{{ t('settings.previewTheme') }}</span>
-            </n-space>
-          </div>
-          <div class="preview-content">
-            <n-space vertical size="medium">
-              <n-button type="primary">{{ t('common.save') }}</n-button>
-              <n-tag type="primary" :bordered="false">{{ t('settings.sampleCard') }}</n-tag>
-              <n-alert type="info" :title="t('common.info')">
-                {{ t('settings.sampleCardContent') }}
-              </n-alert>
-            </n-space>
-          </div>
+                <n-divider style="margin: 16px 0">{{ t('theme.customTheme') }}</n-divider>
+
+                <n-alert
+                  v-if="hasCustomTheme"
+                  type="info"
+                  style="margin-bottom: 16px"
+                  :bordered="false"
+                >
+                  {{ t('theme.customThemeHint') }}
+                </n-alert>
+
+                <n-form-item :label="t('settings.primaryColor')" data-search-key="primaryColor">
+                  <n-color-picker
+                    v-model:value="primaryColor"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('settings.bodyColor')" data-search-key="bodyColor">
+                  <n-color-picker
+                    v-model:value="bodyColor"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('settings.surfaceColor')" data-search-key="surfaceColor">
+                  <n-color-picker
+                    v-model:value="surfaceColor"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('settings.textColor')" data-search-key="textColor">
+                  <n-color-picker
+                    v-model:value="textColor"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+
+                <n-divider style="margin: 16px 0">{{ t('theme.terminalColors') }}</n-divider>
+
+                <n-form-item :label="t('settings.terminalBg')" data-search-key="terminalBg">
+                  <n-color-picker
+                    v-model:value="terminalBg"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('settings.terminalFg')" data-search-key="terminalFg">
+                  <n-color-picker
+                    v-model:value="terminalFg"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item :label="t('settings.terminalTabBg')" data-search-key="terminalTabBg">
+                  <n-color-picker
+                    v-model:value="terminalTabBg"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalTabActiveBg')"
+                  data-search-key="terminalTabActiveBg"
+                >
+                  <n-color-picker
+                    v-model:value="terminalTabActiveBg"
+                    :modes="['hex']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+
+                <n-divider style="margin: 16px 0">{{ t('theme.statusColors') }}</n-divider>
+
+                <n-form-item
+                  :label="t('settings.terminalTabCompletionBg')"
+                  data-search-key="terminalTabCompletionBg"
+                >
+                  <n-color-picker
+                    v-model:value="terminalTabCompletionBg"
+                    :modes="['hex', 'rgb']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalTabCompletionBorder')"
+                  data-search-key="terminalTabCompletionBorder"
+                >
+                  <n-color-picker
+                    v-model:value="terminalTabCompletionBorder"
+                    :modes="['hex', 'rgb']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalTabApprovalBg')"
+                  data-search-key="terminalTabApprovalBg"
+                >
+                  <n-color-picker
+                    v-model:value="terminalTabApprovalBg"
+                    :modes="['hex', 'rgb']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+                <n-form-item
+                  :label="t('settings.terminalTabApprovalBorder')"
+                  data-search-key="terminalTabApprovalBorder"
+                >
+                  <n-color-picker
+                    v-model:value="terminalTabApprovalBorder"
+                    :modes="['hex', 'rgb']"
+                    :actions="['confirm']"
+                  />
+                </n-form-item>
+              </n-form>
+            </n-card>
+
+            <n-card :title="t('settings.realtimePreview')" size="huge">
+              <div class="preview-panel" :style="previewPanelStyle">
+                <div class="preview-banner">
+                  <n-space align="center" size="small">
+                    <n-icon size="24">
+                      <ColorPaletteOutline />
+                    </n-icon>
+                    <span>{{ t('settings.previewTheme') }}</span>
+                  </n-space>
+                </div>
+                <div class="preview-content">
+                  <n-space vertical size="medium">
+                    <n-button type="primary">{{ t('common.save') }}</n-button>
+                    <n-tag type="primary" :bordered="false">{{ t('settings.sampleCard') }}</n-tag>
+                    <n-alert type="info" :title="t('common.info')">
+                      {{ t('settings.sampleCardContent') }}
+                    </n-alert>
+                  </n-space>
+                </div>
+              </div>
+            </n-card>
+          </section>
         </div>
-      </n-card>
-    </n-space>
+      </main>
+    </div>
     <DailyTipDialog
       v-if="activeDailyTip"
       v-model:show="showDailyTipDialog"
@@ -1060,8 +1400,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { storeToRefs } from 'pinia';
 import { useEventListener, useDebounceFn, useStorage } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
@@ -1070,20 +1410,20 @@ import {
   CodeOutline,
   ColorPaletteOutline,
   LogoGithub,
-  LogoGoogle,
   NavigateOutline,
   RefreshOutline,
   RocketOutline,
+  SearchOutline,
   SettingsOutline,
-  SparklesOutline,
   TerminalOutline,
   PlayOutline,
   Add,
   Remove,
 } from '@vicons/ionicons5';
-import LanguageSwitcher from '@/components/common/LanguageSwitcher.vue';
 import { useLocale } from '@/composables/useLocale';
+import { useResponsive } from '@/composables/useResponsive';
 import { useAuthStore } from '@/stores/auth';
+import { sanitizeSettingsSectionId, type SettingsSectionId } from '@/stores/settingsUi';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
   useSettingsStore,
@@ -1163,8 +1503,19 @@ type ItemResponse<T> = {
   item?: T;
 };
 
-const { t, locale } = useLocale();
+interface SettingsCardDefinition {
+  id: SettingsSectionId;
+  title: string;
+  description: string;
+  searchTerms: string[];
+  dirty?: boolean;
+  matchCount?: number;
+}
 
+const { t, locale } = useLocale();
+const { isMobile } = useResponsive();
+
+const route = useRoute();
 const router = useRouter();
 const message = useMessage();
 const dialog = useDialog();
@@ -1199,6 +1550,16 @@ const {
   terminalConnectionPolicy,
   inactiveTerminalSnapshotIntervalMs,
 } = storeToRefs(settingsStore);
+
+const initialRouteSection = sanitizeSettingsSectionId(
+  typeof route.query.section === 'string' ? route.query.section : undefined
+);
+const localSettingsSection = ref<SettingsSectionId>(initialRouteSection);
+const localSettingsSearchQuery = ref(typeof route.query.q === 'string' ? route.query.q : '');
+const highlightedSettingsSection = ref<SettingsSectionId | null>(null);
+const settingsSectionRefs = new Map<SettingsSectionId, HTMLElement>();
+let highlightResetTimer: ReturnType<typeof setTimeout> | null = null;
+
 const capturingTarget = ref<ShortcutTarget | null>(null);
 const themeWarningController = createThemeMaintenanceWarningController({
   t,
@@ -1243,6 +1604,103 @@ const followSystemModeValue = computed(() => followSystemThemeSetting.value);
 
 // 是否有自定义主题
 const hasCustomTheme = computed(() => customTheme.value !== null);
+const standardFormLabelPlacement = computed<'left' | 'top'>(() =>
+  isMobile.value ? 'top' : 'left'
+);
+const standardFormLabelWidth = computed<number | string>(() => (isMobile.value ? 'auto' : 160));
+const themeFormLabelWidth = computed<number | string>(() => (isMobile.value ? 'auto' : 140));
+
+const activeSettingsSection = computed<SettingsSectionId>({
+  get: () => localSettingsSection.value,
+  set: value => {
+    localSettingsSection.value = value;
+  },
+});
+
+const settingsSearchQuery = computed({
+  get: () => localSettingsSearchQuery.value,
+  set: value => {
+    localSettingsSearchQuery.value = value ?? '';
+  },
+});
+
+function syncPageSettingsRouteState() {
+  const routeSection = typeof route.query.section === 'string' ? route.query.section : '';
+  const routeQuery = typeof route.query.q === 'string' ? route.query.q : '';
+  const nextSection = activeSettingsSection.value;
+  const nextQuery = settingsSearchQuery.value.trim();
+
+  if (routeSection === nextSection && routeQuery === nextQuery) {
+    return;
+  }
+
+  const nextRouteQuery = {
+    ...route.query,
+    section: nextSection,
+    q: nextQuery || undefined,
+  };
+
+  void router.replace({ query: nextRouteQuery });
+}
+
+watch(
+  () => route.query.section,
+  value => {
+    localSettingsSection.value = sanitizeSettingsSectionId(
+      typeof value === 'string' ? value : undefined
+    );
+  }
+);
+
+watch(
+  () => route.query.q,
+  value => {
+    localSettingsSearchQuery.value = typeof value === 'string' ? value : '';
+  }
+);
+
+watch([activeSettingsSection, settingsSearchQuery], () => {
+  syncPageSettingsRouteState();
+});
+
+function registerSettingsSectionRef(section: SettingsSectionId, element: HTMLElement | null) {
+  if (element) {
+    element.dataset.sectionId = section;
+    settingsSectionRefs.set(section, element);
+    return;
+  }
+  settingsSectionRefs.delete(section);
+}
+
+function clearSettingsSectionHighlight() {
+  if (highlightResetTimer) {
+    clearTimeout(highlightResetTimer);
+    highlightResetTimer = null;
+  }
+  highlightedSettingsSection.value = null;
+}
+
+async function scrollToSettingsSection(section: SettingsSectionId, highlight = false) {
+  await nextTick();
+  const element = settingsSectionRefs.get(section);
+  if (element) {
+    element.scrollIntoView({
+      block: 'start',
+      behavior: isMobile.value ? 'auto' : 'smooth',
+    });
+  }
+  if (!highlight) {
+    return;
+  }
+  highlightedSettingsSection.value = section;
+  if (highlightResetTimer) {
+    clearTimeout(highlightResetTimer);
+  }
+  highlightResetTimer = setTimeout(() => {
+    highlightedSettingsSection.value = null;
+    highlightResetTimer = null;
+  }, 2400);
+}
 
 async function handlePresetThemeChange(value: string) {
   await themeSelectionController.selectPresetWithConfirmation(value);
@@ -1344,13 +1802,6 @@ function applyDeveloperConfig(target: DeveloperConfig, source: DeveloperConfig) 
     source.webSessionActiveCallTimeout.callKinds.tool;
 }
 
-function serializeDeveloperConfig(value: DeveloperConfig | null) {
-  if (!value) {
-    return '';
-  }
-  return JSON.stringify(sanitizeDeveloperConfig(value));
-}
-
 const developerForm = reactive<DeveloperConfig>(sanitizeDeveloperConfig());
 const developerOriginal = ref<DeveloperConfig | null>(null);
 const developerUsesCustomActiveCallTimeout = computed(
@@ -1360,12 +1811,34 @@ const webSessionSyncModeOptions = computed(() => [
   { label: t('settings.webSessionSyncModeFast'), value: 'fast' },
   { label: t('settings.webSessionSyncModeDeep'), value: 'deep' },
 ]);
-const developerDirty = computed(() => {
+const developerBehaviorDirty = computed(() => {
   if (!developerOriginal.value) {
     return false;
   }
   return (
-    serializeDeveloperConfig(developerForm) !== serializeDeveloperConfig(developerOriginal.value)
+    developerForm.enableTerminalScrollback !== developerOriginal.value.enableTerminalScrollback ||
+    developerForm.renameSessionTitleEachCommand !==
+      developerOriginal.value.renameSessionTitleEachCommand
+  );
+});
+const developerSessionDirty = computed(() => {
+  if (!developerOriginal.value) {
+    return false;
+  }
+  return (
+    developerForm.webSessionCodexDefaultSyncMode !==
+      developerOriginal.value.webSessionCodexDefaultSyncMode ||
+    JSON.stringify(developerForm.webSessionActiveCallTimeout) !==
+      JSON.stringify(developerOriginal.value.webSessionActiveCallTimeout)
+  );
+});
+const developerTerminalDirty = computed(() => {
+  if (!developerOriginal.value) {
+    return false;
+  }
+  return (
+    developerForm.enableTerminalStateSnapshot !==
+    developerOriginal.value.enableTerminalStateSnapshot
   );
 });
 
@@ -2359,6 +2832,341 @@ const webglRendererTip = computed(() => {
   }
 });
 
+const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
+  const cards: SettingsCardDefinition[] = [
+    {
+      id: 'project-workspace',
+      title: t('settings.projectWorkspaceSettings'),
+      description: t('settings.defaultEditor'),
+      searchTerms: [
+        t('settings.recentProjectsLimit'),
+        t('settings.dailyTipEnabled'),
+        t('settings.terminalShortcut'),
+        t('settings.notepadShortcut'),
+        t('settings.defaultEditor'),
+        t('settings.customCommand'),
+      ],
+    },
+    {
+      id: 'terminal',
+      title: t('settings.terminalSettings'),
+      description: t('settings.terminalDefaultRenderMode'),
+      dirty: developerTerminalDirty.value || aiStatusDirty.value,
+      searchTerms: [
+        t('settings.terminalLimit'),
+        t('settings.confirmTerminalClose'),
+        t('settings.sendResizeOnSwitch'),
+        t('settings.terminalDefaultRenderMode'),
+        t('settings.terminalConnectionPolicy'),
+        t('settings.terminalDefaultSnapshotInterval'),
+        t('settings.inactiveTerminalSnapshotInterval'),
+        t('settings.terminalSnapshotZlibCompression'),
+        t('settings.terminalShell'),
+        t('settings.terminalServerStateSnapshot'),
+        t('settings.terminalQuickActions'),
+        t('settings.terminalQuickActionsList'),
+        t('settings.terminalQuickActionNamePlaceholder'),
+        t('settings.terminalQuickActionCommandPlaceholder'),
+        t('settings.aiAssistantStatusTracking'),
+        t('settings.aiAssistantClaudeCode'),
+        t('settings.aiAssistantCodex'),
+        t('settings.aiAssistantQwenCode'),
+      ],
+    },
+    {
+      id: 'session',
+      title: t('settings.sessionSettings'),
+      description: t('settings.webSessionStreamingMarkdownThrottle'),
+      dirty: webSessionQuickInputPinnedDirty.value || developerSessionDirty.value,
+      searchTerms: [
+        t('settings.showWebSessionReasoning'),
+        t('settings.webSessionStreamingMarkdownThrottle'),
+        t('settings.webSessionAutoContinueScope'),
+        t('settings.webSessionAutoContinuePreset'),
+        t('settings.webSessionQuickInputPinned'),
+        t('settings.webSessionCodexDefaultSyncMode'),
+        t('settings.webSessionActiveCallTimeout'),
+        t('settings.webSessionActiveCallTimeoutSeconds'),
+        t('settings.webSessionActiveCallTimeoutCallKinds'),
+        t('settings.webSessionActiveCallTimeoutPrompt'),
+      ],
+    },
+    {
+      id: 'security',
+      title: t('settings.securityTitle'),
+      description: t('settings.securityNewPassword'),
+      searchTerms: [
+        t('settings.securityCurrentPassword'),
+        t('settings.securityNewPassword'),
+        t('settings.securityConfirmPassword'),
+        t('settings.securityEnableAction'),
+        t('settings.securityDisableAction'),
+      ],
+    },
+    {
+      id: 'developer',
+      title: t('settings.developerOptions'),
+      description: t('settings.developerScrollback'),
+      dirty: developerBehaviorDirty.value,
+      searchTerms: [t('settings.developerScrollback'), t('settings.renameSessionTitleEachCommand')],
+    },
+    {
+      id: 'worktree',
+      title: t('settings.worktreeSettings'),
+      description: t('settings.worktreeGlobalBaseDir'),
+      dirty: worktreeSettingsDirty.value,
+      searchTerms: [
+        t('settings.worktreeGlobalBaseDir'),
+        t('settings.worktreeGlobalDirNamePattern'),
+      ],
+    },
+    {
+      id: 'theme',
+      title: t('settings.themeSettings'),
+      description: t('settings.terminalFontSettings'),
+      searchTerms: [
+        t('theme.presetTheme'),
+        t('theme.followSystem'),
+        t('settings.terminalTheme'),
+        t('settings.terminalFontFamily'),
+        t('settings.terminalFontSize'),
+        t('settings.terminalFontWeight'),
+        t('settings.terminalLineHeight'),
+        t('settings.terminalLetterSpacing'),
+        t('settings.terminalWebGLRenderer'),
+        t('settings.primaryColor'),
+        t('settings.bodyColor'),
+        t('settings.surfaceColor'),
+        t('settings.textColor'),
+        t('settings.terminalBg'),
+        t('settings.terminalFg'),
+        t('settings.terminalTabBg'),
+        t('settings.terminalTabActiveBg'),
+        t('settings.terminalTabCompletionBg'),
+        t('settings.terminalTabCompletionBorder'),
+        t('settings.terminalTabApprovalBg'),
+        t('settings.terminalTabApprovalBorder'),
+        t('settings.realtimePreview'),
+        t('settings.previewTheme'),
+        t('settings.sampleCard'),
+      ],
+    },
+  ];
+
+  return cards;
+});
+
+const settingsCards = computed<SettingsCardDefinition[]>(() => {
+  const cards = allSettingsCards.value;
+  const query = normalizeSearchText(settingsSearchQuery.value);
+  if (!query) {
+    return cards;
+  }
+
+  // 搜索时返回匹配的卡片，并添加 matchCount
+  return cards
+    .map(card => {
+      const matches = [card.title, card.description, ...card.searchTerms].filter(term =>
+        normalizeSearchText(term).includes(query)
+      );
+      return {
+        ...card,
+        matchCount: matches.length,
+      };
+    })
+    .filter(card => card.matchCount > 0);
+});
+
+// 当搜索结果变化时，自动切换到第一个匹配的卡片
+watch(
+  () => settingsCards.value,
+  newCards => {
+    const query = normalizeSearchText(settingsSearchQuery.value);
+    if (!query) {
+      return;
+    }
+    const firstMatch = newCards[0];
+    if (firstMatch && firstMatch.id !== activeSettingsSection.value) {
+      activeSettingsSection.value = firstMatch.id;
+      // 滚动到该设置区域
+      nextTick(() => {
+        const element = settingsSectionRefs.get(firstMatch.id);
+        if (element) {
+          element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    }
+  }
+);
+
+const hasSearchQuery = computed(() => settingsSearchQuery.value.trim().length > 0);
+
+// 搜索相关的函数
+function highlightMatchText(text: string, query: string): string {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    return text;
+  }
+  const leadingWhitespace = text.match(/^\s+/)?.[0] ?? '';
+  const content = text.slice(leadingWhitespace.length);
+  const regex = new RegExp(`(${normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  return `${leadingWhitespace}${content.replace(
+    regex,
+    '<mark class="search-highlight">$1</mark>'
+  )}`;
+}
+
+function normalizeSearchText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function updateElementHighlight(element: Element | null, query: string) {
+  if (!element) {
+    return;
+  }
+
+  const savedText = element.getAttribute('data-original-text');
+  const originalText = savedText ?? element.textContent ?? '';
+  if (!savedText) {
+    element.setAttribute('data-original-text', originalText);
+  }
+
+  if (!query) {
+    element.textContent = originalText;
+    return;
+  }
+
+  if (normalizeSearchText(originalText).includes(query)) {
+    element.innerHTML = highlightMatchText(originalText, query);
+  } else {
+    element.textContent = originalText;
+  }
+}
+
+function updateSearchHighlights() {
+  const query = normalizeSearchText(settingsSearchQuery.value);
+  const allFormItems = document.querySelectorAll('.general-settings-page [data-search-key]');
+
+  allFormItems.forEach(formItem => {
+    const searchKey = formItem.getAttribute('data-search-key');
+    if (!searchKey) return;
+
+    // 查找标签元素 - NaiveUI 的 n-form-item 标签在 .n-form-item-blank 之前
+    // 尝试多种选择器
+    let labelElement = null as Element | null;
+
+    // 方法1: 直接查找 .n-form-item-label
+    labelElement = formItem.querySelector('.n-form-item-label');
+
+    // 方法2: 如果找不到，尝试查找包含标签的 span 元素
+    if (!labelElement) {
+      const children = Array.from(formItem.children);
+      for (const child of children) {
+        if (
+          child.classList.contains('n-form-item-label') ||
+          (child.querySelector && child.querySelector('.n-form-item-label'))
+        ) {
+          labelElement = child.classList.contains('n-form-item-label')
+            ? child
+            : child.querySelector('.n-form-item-label');
+          break;
+        }
+      }
+    }
+
+    // 方法3: 如果还是找不到，尝试查找第一个包含文本的子元素
+    if (!labelElement) {
+      const allChildren = formItem.querySelectorAll('*');
+      for (const child of allChildren) {
+        if (child.classList.contains('n-form-item-label')) {
+          labelElement = child;
+          break;
+        }
+      }
+    }
+
+    if (!labelElement) return;
+
+    // 获取原始文本（保存到 data 属性中避免重复处理）
+    const savedText = labelElement.getAttribute('data-original-text');
+    const originalText = savedText || labelElement.textContent || '';
+    if (!savedText) {
+      labelElement.setAttribute('data-original-text', originalText);
+    }
+
+    const labelText = originalText;
+    const normalizedSearchKey = normalizeSearchText(searchKey);
+    const formText = normalizeSearchText(formItem.textContent || '');
+    const sectionElement = formItem.closest('.settings-card-shell') as HTMLElement | null;
+    const sectionId = sectionElement?.dataset.sectionId as SettingsSectionId | undefined;
+    const sectionMeta = sectionId
+      ? allSettingsCards.value.find(card => card.id === sectionId)
+      : undefined;
+    const sectionText = sectionMeta
+      ? normalizeSearchText(
+          [sectionMeta.title, sectionMeta.description, ...sectionMeta.searchTerms].join(' ')
+        )
+      : '';
+
+    const isVisible =
+      !query ||
+      normalizedSearchKey.includes(query) ||
+      formText.includes(query) ||
+      sectionText.includes(query);
+
+    // 控制可见性
+    if (isVisible) {
+      formItem.classList.remove('form-item-hidden');
+    } else {
+      formItem.classList.add('form-item-hidden');
+    }
+
+    // 更新高亮
+    updateElementHighlight(labelElement, query);
+
+    const tipElements = formItem.querySelectorAll('.form-tip');
+    tipElements.forEach(tip => {
+      updateElementHighlight(tip, query);
+    });
+  });
+}
+
+function scheduleUpdateSearchHighlights() {
+  nextTick(() => {
+    setTimeout(() => {
+      updateSearchHighlights();
+    }, 50);
+  });
+}
+
+// 监听搜索查询变化
+watch(settingsSearchQuery, () => {
+  scheduleUpdateSearchHighlights();
+});
+
+watch(activeSettingsSection, () => {
+  scheduleUpdateSearchHighlights();
+});
+
+onMounted(() => {
+  settingsSectionRefs.forEach((element, section) => {
+    element.dataset.sectionId = section;
+  });
+  setTimeout(() => {
+    updateSearchHighlights();
+  }, 100);
+});
+
+function isSettingsSectionVisible(section: SettingsSectionId) {
+  return activeSettingsSection.value === section;
+}
+
+function settingsCardShellClass(section: SettingsSectionId) {
+  return {
+    'is-highlighted': highlightedSettingsSection.value === section,
+  };
+}
+
 function handleResetFontFamily() {
   settingsStore.updateTerminalFont({ fontFamily: '' });
 }
@@ -2377,6 +3185,7 @@ const isNotepadShortcutDefault = computed(
 );
 
 function handleBack() {
+  clearSettingsSectionHighlight();
   router.back();
 }
 
@@ -2474,18 +3283,144 @@ function formatShortcutLabel(event: KeyboardEvent) {
 </script>
 
 <style scoped>
+/* ========================================
+   设置界面样式 - 左侧边栏 + 主内容区
+   ======================================== */
+
+/* 页面容器 */
 .general-settings-page {
-  max-width: 960px;
+  max-width: 1400px;
   margin: 0 auto;
-  padding: 24px 24px 48px 24px;
+  padding: 24px 32px 48px;
 }
 
-:deep(.n-page-header) {
-  padding-bottom: 16px;
+/* 主布局 - 左侧边栏 + 右侧内容 */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 40px;
+  align-items: start;
 }
 
-:deep(.n-page-header .n-page-header-header) {
+/* 左侧导航 */
+.settings-sidebar {
+  position: sticky;
+  top: 32px;
+}
+
+/* 搜索框 */
+.settings-search-box {
+  margin-bottom: 12px;
+}
+
+.settings-search-box :deep(.n-input) {
+  height: 40px;
+}
+
+.settings-search-box :deep(.n-input__input-el) {
+  height: 38px;
+  font-size: 14px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav-item {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--n-text-color-2);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease,
+    transform 0.15s ease;
+}
+
+.settings-nav-item:hover {
+  background-color: var(--n-color-hover);
+  color: var(--n-text-color-1);
+  transform: translateX(2px);
+}
+
+.settings-nav-item.is-active {
+  background-color: var(--n-primary-color);
+  color: #ffffff;
+  transform: translateX(0);
+}
+
+.settings-nav-item__title {
+  flex: 1;
+}
+
+.settings-nav-item__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  flex-shrink: 0;
+}
+
+/* 右侧内容区 */
+.settings-main {
+  min-width: 0;
+  max-width: 800px;
+}
+
+.settings-main-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 设置卡片容器 */
+.settings-card-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  scroll-margin-top: 20px;
+}
+
+.settings-card-shell.is-highlighted :deep(.n-card) {
+  box-shadow: 0 0 0 2px var(--n-primary-color);
+}
+
+/* 表单样式 */
+.form-tip {
+  font-size: 13px;
+  color: var(--n-text-color-3);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+:deep(.n-form-item) {
+  margin-bottom: 24px;
+  align-items: flex-start;
+}
+
+:deep(.n-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+:deep(.n-form-item-label) {
+  display: flex;
+  align-items: flex-start;
+  font-weight: 500;
+  color: var(--n-text-color-1);
+  font-size: 14px;
+  padding-top: 6px;
 }
 
 :deep(.n-form-item-blank) {
@@ -2493,32 +3428,71 @@ function formatShortcutLabel(event: KeyboardEvent) {
   min-width: 0;
 }
 
+/* 统一输入框样式 */
+:deep(.n-input),
+:deep(.n-input-number),
+:deep(.n-select) {
+  border-radius: 8px;
+}
+
+:deep(.n-button) {
+  border-radius: 8px;
+}
+
+/* 卡片样式 */
+:deep(.n-card) {
+  border: 1px solid var(--n-border-color);
+  border-radius: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background-color: var(--app-surface-color, var(--n-card-color));
+}
+
+:deep(.n-card-header) {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--n-border-color);
+}
+
+:deep(.n-card__content) {
+  padding: 28px 24px;
+}
+
+/* 页面头部 */
+:deep(.n-page-header) {
+  padding-bottom: 20px;
+}
+
+:deep(.n-page-header .n-page-header-header) {
+  align-items: center;
+}
+
+:deep(.n-page-header__title) {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* 预览面板 */
 .preview-panel {
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   border: 1px solid var(--n-border-color);
-  background-color: var(--preview-panel-bg, var(--app-surface-color, #fff));
+  background-color: var(--preview-panel-bg, var(--app-surface-color));
 }
 
 .preview-banner {
-  background-color: var(--preview-banner-bg, var(--n-primary-color, #3b69a9));
-  color: var(--preview-banner-text, var(--kanban-terminal-fg, #fff));
-  padding: 16px;
-  font-size: 16px;
+  background-color: var(--preview-banner-bg, var(--n-primary-color));
+  color: var(--preview-banner-text, var(--kanban-terminal-fg));
+  padding: 12px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .preview-content {
-  padding: 24px;
-  background-color: var(--preview-content-bg, var(--app-surface-color, #fff));
-  color: var(--preview-content-text, var(--kanban-terminal-fg, #1f1f1f));
+  padding: 16px;
+  background-color: var(--preview-content-bg, var(--app-surface-color));
+  color: var(--preview-content-text, var(--kanban-terminal-fg));
 }
 
-.form-tip {
-  font-size: 12px;
-  color: var(--n-text-color-3, #8a8fa3);
-}
-
+/* 工具类 */
 .settings-field-stack {
   display: flex;
   flex-direction: column;
@@ -2543,20 +3517,21 @@ function formatShortcutLabel(event: KeyboardEvent) {
 
 .shortcut-hint {
   font-size: 12px;
-  color: var(--n-text-color-3, #8a8fa3);
+  color: var(--n-text-color-3);
 }
 
 .unit-label {
   font-size: 12px;
-  color: var(--n-text-color-3, #8a8fa3);
+  color: var(--n-text-color-3);
   margin-left: 4px;
 }
 
+/* 终端快捷操作相关 */
 .terminal-quick-action-item {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 
 .web-session-quick-input-textarea {
@@ -2567,15 +3542,16 @@ function formatShortcutLabel(event: KeyboardEvent) {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .terminal-quick-action-row-inputs {
-  gap: 12px;
+  gap: 16px;
 }
 
 .terminal-quick-action-row-icons {
+  width: 100%;
   flex-wrap: wrap;
 }
 
@@ -2584,18 +3560,45 @@ function formatShortcutLabel(event: KeyboardEvent) {
   min-width: 180px;
 }
 
-.terminal-quick-action-row-icons :deep(.n-radio-group) {
-  line-height: 1;
+.terminal-quick-action-icon-grid {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-start;
 }
 
-.terminal-quick-action-row-icons :deep(.n-radio-button__content) {
+.terminal-quick-action-icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  line-height: 1;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--n-border-color);
+  border-radius: 8px;
+  background-color: var(--n-color, transparent);
+  color: var(--n-text-color-2);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
 }
 
-.terminal-quick-action-row-icons :deep(.n-icon) {
+.terminal-quick-action-icon-button:hover {
+  border-color: var(--n-primary-color-hover, var(--n-primary-color));
+  color: var(--n-primary-color-hover, var(--n-primary-color));
+}
+
+.terminal-quick-action-icon-button.is-active {
+  border-color: var(--n-primary-color);
+  background-color: color-mix(in srgb, var(--n-primary-color) 10%, transparent);
+  color: var(--n-primary-color);
+}
+
+.terminal-quick-action-icon-button :deep(.n-icon) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2624,45 +3627,201 @@ function formatShortcutLabel(event: KeyboardEvent) {
    ======================================== */
 @media (max-width: 767px) {
   .general-settings-page {
-    padding: 16px;
-    padding-bottom: 32px;
+    padding: 10px 12px 12px;
+    max-width: 100%;
+    height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* 移动端：侧边栏变为顶部横向滚动导航 */
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+  }
+
+  .settings-sidebar {
+    position: static;
+    min-width: 0;
+    flex: 0 0 auto;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 6px;
+    gap: 8px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    overscroll-behavior-x: contain;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-search-box {
+    margin-bottom: 8px;
+  }
+
+  .settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    min-width: max-content;
+    padding: 8px 12px;
+    white-space: nowrap;
+  }
+
+  .settings-main {
+    max-width: none;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-bottom: 16px;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  .settings-main-stack,
+  .settings-card-shell {
+    width: 100%;
+    gap: 16px;
+    min-width: 0;
   }
 
   /* 表单标签置顶 */
+  .general-settings-page :deep(.n-page-header),
+  .general-settings-page :deep(.n-page-header-wrapper),
+  .general-settings-page :deep(.n-page-header-header),
+  .general-settings-page :deep(.n-page-header-content),
+  .general-settings-page :deep(.n-page-header-header__main),
+  .general-settings-page :deep(.n-page-header-header__title),
+  .general-settings-page :deep(.n-page-header-header__extra) {
+    min-width: 0;
+  }
+
+  .general-settings-page :deep(.n-page-header-header) {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .general-settings-page :deep(.n-page-header-header__extra) {
+    width: 100%;
+  }
+
+  .general-settings-page :deep(.n-page-header-header__extra .n-space) {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap !important;
+  }
+
+  .general-settings-page :deep(.n-page-header) {
+    flex: 0 0 auto;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+
+  .settings-header-actions {
+    gap: 8px !important;
+  }
+
+  .general-settings-page :deep(.settings-header-actions .n-button) {
+    min-width: 36px;
+  }
+
+  .general-settings-page :deep(.settings-header-reset .n-button__content) {
+    display: none;
+  }
+
+  .general-settings-page :deep(.settings-header-reset .n-base-icon) {
+    margin-right: 0;
+  }
+
   .general-settings-page :deep(.n-form-item) {
-    --n-label-width: auto !important;
+    margin-bottom: 18px;
+    min-width: 0;
   }
 
   .general-settings-page :deep(.n-form-item-label) {
     text-align: left;
     padding-bottom: 8px;
+    padding-top: 0;
   }
 
   .general-settings-page :deep(.n-form-item-blank) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .general-settings-page :deep(.n-form),
+  .general-settings-page :deep(.n-card),
+  .general-settings-page :deep(.n-card__content),
+  .general-settings-page :deep(.n-form-item-feedback-wrapper) {
+    min-width: 0;
+  }
+
+  .general-settings-page :deep(.n-form-item .n-space) {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap !important;
+  }
+
+  .general-settings-page :deep(.n-form-item .n-space-item) {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .general-settings-page :deep(.n-input-number),
+  .general-settings-page :deep(.n-select),
+  .general-settings-page :deep(.n-input) {
+    max-width: none !important;
+    width: 100%;
+  }
+
+  .general-settings-page :deep(.n-input-number .n-input__input-el) {
+    text-align: left;
+  }
+
+  .general-settings-page :deep(.n-button-group) {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  .general-settings-page :deep(.n-slider) {
+    width: 100% !important;
     min-width: 0;
   }
 
   /* 卡片内容紧凑 */
-  .general-settings-page :deep(.n-card) {
-    margin-bottom: 12px;
-  }
-
   .general-settings-page :deep(.n-card-header) {
     padding: 12px 16px;
   }
 
   .general-settings-page :deep(.n-card__content) {
-    padding: 12px 16px;
+    padding: 16px;
   }
 
   /* 预览面板 */
   .preview-content {
-    padding: 16px;
+    padding: 12px;
   }
 
   .preview-banner {
-    padding: 12px;
-    font-size: 14px;
+    padding: 10px;
+    font-size: 13px;
   }
 
   .settings-command-input,
@@ -2670,14 +3829,31 @@ function formatShortcutLabel(event: KeyboardEvent) {
     max-width: none;
   }
 
-  /* 表单项间距 */
-  .general-settings-page :deep(.n-form-item) {
-    margin-bottom: 16px;
-  }
-
   .terminal-quick-action-row-inputs,
   .terminal-quick-action-row-icons {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .terminal-quick-action-input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .general-settings-page :deep(.n-dynamic-input-item) {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .general-settings-page :deep(.n-dynamic-input-item__action) {
+    width: 100%;
+    margin: 0 !important;
+    justify-content: flex-end;
+  }
+
+  .terminal-quick-action-icon-grid {
+    gap: 6px;
   }
 }
 
@@ -2685,7 +3861,30 @@ function formatShortcutLabel(event: KeyboardEvent) {
 @media (min-width: 768px) and (max-width: 1023px) {
   .general-settings-page {
     padding: 20px;
-    max-width: 100%;
   }
+
+  .settings-layout {
+    grid-template-columns: 200px 1fr;
+    gap: 24px;
+  }
+
+  .settings-main {
+    max-width: none;
+  }
+}
+
+/* ========================================
+   搜索高亮样式
+   ======================================== */
+:deep(.search-highlight) {
+  background-color: var(--n-primary-color-hover, #ffec3d);
+  color: inherit;
+  padding: 1px 2px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+.form-item-hidden {
+  display: none !important;
 }
 </style>

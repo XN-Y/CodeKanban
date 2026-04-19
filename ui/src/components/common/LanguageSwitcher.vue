@@ -1,10 +1,10 @@
 <template>
   <n-dropdown :options="languageOptions" @select="handleSelect">
-    <n-button quaternary>
+    <n-button quaternary :title="currentLanguageLabel" :aria-label="currentLanguageLabel">
       <template #icon>
         <n-icon><LanguageOutline /></n-icon>
       </template>
-      {{ currentLanguageLabel }}
+      <span v-if="!compact">{{ currentLanguageLabel }}</span>
     </n-button>
   </n-dropdown>
 </template>
@@ -13,6 +13,15 @@
 import { computed } from 'vue';
 import { LanguageOutline } from '@vicons/ionicons5';
 import { useLocale, type LocaleType } from '@/composables/useLocale';
+
+withDefaults(
+  defineProps<{
+    compact?: boolean;
+  }>(),
+  {
+    compact: false,
+  }
+);
 
 const { locale, setLocale } = useLocale();
 

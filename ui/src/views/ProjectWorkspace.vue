@@ -687,7 +687,7 @@ function handleWebSessionNavPointerCancel(event: PointerEvent) {
 }
 
 function handleGoToSettings() {
-  void router.push({ name: 'settings' });
+  void router.push('/settings');
 }
 
 function maybeShowDailyTip(projectId: string) {

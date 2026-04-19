@@ -2326,7 +2326,7 @@ const quickActionDropdownOptions = computed<DropdownOption[]>(() => [
 function handleQuickActionSelect(key: string) {
   showQuickActionsMenu.value = false;
   if (key === QUICK_ACTION_SETTINGS_KEY) {
-    void router.push({ name: 'settings' });
+    void router.push('/settings?section=terminal');
     return;
   }
   const action = stackedQuickActions.value.find(item => item.id === key);
