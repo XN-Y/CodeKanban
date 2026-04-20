@@ -28,10 +28,11 @@ import (
 )
 
 const (
-	defaultUploadChunkSize  = 4 * 1024 * 1024
-	defaultUploadSessionTTL = 24 * time.Hour
-	defaultArchiveTTL       = 30 * time.Minute
-	defaultTextPreviewBytes = 256 * 1024
+	defaultUploadChunkSize       = 4 * 1024 * 1024
+	defaultUploadSessionTTL      = 24 * time.Hour
+	defaultArchiveTTL            = 30 * time.Minute
+	defaultTextPreviewBytes      = 256 * 1024
+	defaultChangesSummaryTimeout = 5 * time.Second
 )
 
 var (
@@ -376,6 +377,88 @@ func (s *Service) ListChanges(ctx context.Context, projectID, scopeID string) (*
 		return strings.ToLower(entries[i].Path) < strings.ToLower(entries[j].Path)
 	})
 	result.Entries = entries
+	return result, nil
+}
+
+func (s *Service) ChangesSummary(
+	ctx context.Context,
+	projectID,
+	scopeID string,
+	options ChangesSummaryOptions,
+) (*ChangesSummaryResult, error) {
+	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &ChangesSummaryResult{
+		Scope: scope,
+	}
+	if !git.IsRepositoryPath(scope.RootPath) {
+		if options.WithStats {
+			zero := int64(0)
+			result.Additions = &zero
+			result.Deletions = &zero
+			result.StatsComplete = true
+		}
+		return result, nil
+	}
+
+	timeout := options.StatsTimeout
+	if timeout <= 0 {
+		timeout = defaultChangesSummaryTimeout
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	statuses, err := git.ListFileStatusesContext(statusCtx, scope.RootPath, options.IncludeUntracked)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			result.StatsTimedOut = true
+			return result, nil
+		}
+		return nil, err
+	}
+
+	result.Count = int64(len(statuses))
+	if !options.WithStats {
+		return result, nil
+	}
+
+	if len(statuses) == 0 {
+		zero := int64(0)
+		result.Additions = &zero
+		result.Deletions = &zero
+		result.StatsComplete = true
+		return result, nil
+	}
+
+	var additions int64
+	var deletions int64
+	for _, status := range statuses {
+		if err := statusCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				result.StatsTimedOut = true
+				return result, nil
+			}
+			return nil, err
+		}
+
+		diffStat, err := git.GenerateDiffStatAgainstHEADContext(statusCtx, scope.RootPath, status)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				result.StatsTimedOut = true
+				return result, nil
+			}
+			return nil, err
+		}
+		additions += max(0, diffStat.Additions)
+		deletions += max(0, diffStat.Deletions)
+	}
+
+	result.Additions = &additions
+	result.Deletions = &deletions
+	result.StatsComplete = true
 	return result, nil
 }
 

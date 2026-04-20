@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"sync"
@@ -32,7 +33,15 @@ func SetTestEnvOverride(env []string) {
 }
 
 func newGitCommand(dir string, args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
+	return newGitCommandContext(context.Background(), dir, args...)
+}
+
+func newGitCommandContext(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = append([]string(nil), gitCommandEnv...)
 
 	testEnvOverrideMu.RLock()

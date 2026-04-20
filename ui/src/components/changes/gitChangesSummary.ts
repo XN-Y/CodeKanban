@@ -8,6 +8,13 @@ export interface GitChangesSummary {
   deletions: number;
 }
 
+export interface GitChangesBadgeSummary {
+  count: number;
+  additions: number | null;
+  deletions: number | null;
+  pending: boolean;
+}
+
 export function chooseGitChangesScope(
   scopes: FileManagerScope[],
   options?: {
@@ -84,4 +91,18 @@ export function formatGitChangesSummary(summary: GitChangesSummary) {
     return '';
   }
   return `${summary.count},+${summary.additions},-${summary.deletions}`;
+}
+
+export function formatGitChangesBadgeDelta(prefix: '+' | '-', value: number | null) {
+  if (value == null) {
+    return `${prefix}?`;
+  }
+  return `${prefix}${Math.max(0, Math.trunc(value ?? 0))}`;
+}
+
+export function shouldShowGitChangesBadge(summary: GitChangesBadgeSummary | null) {
+  if (!summary) {
+    return false;
+  }
+  return summary.pending || summary.count > 0;
 }

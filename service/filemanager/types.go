@@ -103,6 +103,21 @@ type ChangesResult struct {
 	Entries []ChangeEntry `json:"entries"`
 }
 
+type ChangesSummaryOptions struct {
+	IncludeUntracked bool
+	WithStats        bool
+	StatsTimeout     time.Duration
+}
+
+type ChangesSummaryResult struct {
+	Scope         Scope  `json:"scope"`
+	Count         int64  `json:"count"`
+	Additions     *int64 `json:"additions"`
+	Deletions     *int64 `json:"deletions"`
+	StatsComplete bool   `json:"statsComplete"`
+	StatsTimedOut bool   `json:"statsTimedOut"`
+}
+
 type DiffResult struct {
 	Path         string     `json:"path"`
 	Status       *GitStatus `json:"status,omitempty"`

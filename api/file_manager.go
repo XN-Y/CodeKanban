@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"go.uber.org/zap"
@@ -42,6 +43,7 @@ func registerFileManagerRoutes(app *fiber.App, cfg *utils.AppConfig, logger *zap
 	base := "/api/v1/projects/:projectId/files"
 	app.Get(base+"/scopes", ctrl.handleListScopes)
 	app.Get(base+"/changes", ctrl.handleListChanges)
+	app.Get(base+"/changes-summary", ctrl.handleChangesSummary)
 	app.Get(base+"/list", ctrl.handleList)
 	app.Get(base+"/preview", ctrl.handlePreview)
 	app.Get(base+"/diff", ctrl.handleDiff)
@@ -85,6 +87,40 @@ func (c *fileManagerController) handleListChanges(ctx *fiber.Ctx) error {
 	return ctx.Status(http.StatusOK).JSON(resp)
 }
 
+func (c *fileManagerController) handleChangesSummary(ctx *fiber.Ctx) error {
+	projectID := strings.TrimSpace(ctx.Params("projectId"))
+	scopeID := ctx.Query("scopeId")
+	includeUntracked, err := parseBoolQuery(ctx.Query("includeUntracked"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid includeUntracked")
+	}
+	withStats, err := parseBoolQuery(ctx.Query("withStats"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid withStats")
+	}
+
+	var timeout time.Duration
+	if raw := strings.TrimSpace(ctx.Query("timeoutMs")); raw != "" {
+		timeoutMs, err := strconv.Atoi(raw)
+		if err != nil || timeoutMs < 0 {
+			return fiber.NewError(http.StatusBadRequest, "invalid timeoutMs")
+		}
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	item, err := c.service.ChangesSummary(ctx.UserContext(), projectID, scopeID, filemanager.ChangesSummaryOptions{
+		IncludeUntracked: includeUntracked,
+		WithStats:        withStats,
+		StatsTimeout:     timeout,
+	})
+	if err != nil {
+		return c.writeError(ctx, err)
+	}
+	resp := h.NewItemResponse(item)
+	resp.Status = http.StatusOK
+	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
 func (c *fileManagerController) handleList(ctx *fiber.Ctx) error {
 	projectID := strings.TrimSpace(ctx.Params("projectId"))
 	scopeID := ctx.Query("scopeId")
@@ -96,6 +132,18 @@ func (c *fileManagerController) handleList(ctx *fiber.Ctx) error {
 	resp := h.NewItemResponse(item)
 	resp.Status = http.StatusOK
 	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
+func parseBoolQuery(value string) (bool, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false, nil
+	}
+	parsed, err := strconv.ParseBool(trimmed)
+	if err != nil {
+		return false, err
+	}
+	return parsed, nil
 }
 
 func (c *fileManagerController) handlePreview(ctx *fiber.Ctx) error {

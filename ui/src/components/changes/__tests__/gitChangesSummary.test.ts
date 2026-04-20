@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   chooseGitChangesScope,
+  formatGitChangesBadgeDelta,
   formatGitChangesSummary,
   orderGitChangesEntries,
+  shouldShowGitChangesBadge,
   summarizeGitChangesEntries,
 } from '@/components/changes/gitChangesSummary';
 import type { FileManagerChangeEntry, FileManagerScope } from '@/types/fileManager';
@@ -106,5 +108,27 @@ describe('gitChangesSummary', () => {
         deletions: 0,
       })
     ).toBe('');
+  });
+
+  it('formats pending badge deltas and keeps loading badges visible', () => {
+    expect(formatGitChangesBadgeDelta('+', null)).toBe('+?');
+    expect(formatGitChangesBadgeDelta('-', 4)).toBe('-4');
+
+    expect(
+      shouldShowGitChangesBadge({
+        count: 0,
+        additions: 0,
+        deletions: 0,
+        pending: true,
+      })
+    ).toBe(true);
+    expect(
+      shouldShowGitChangesBadge({
+        count: 0,
+        additions: 0,
+        deletions: 0,
+        pending: false,
+      })
+    ).toBe(false);
   });
 });

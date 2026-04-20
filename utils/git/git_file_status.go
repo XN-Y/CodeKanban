@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -35,7 +36,20 @@ type DiffStat struct {
 }
 
 func ListFileStatuses(path string) (map[string]FileStatus, error) {
-	cmd := newGitCommand(path, "status", "--porcelain=2", "-z", "--untracked-files=all")
+	return ListFileStatusesContext(context.Background(), path, true)
+}
+
+func ListFileStatusesContext(
+	ctx context.Context,
+	path string,
+	includeUntracked bool,
+) (map[string]FileStatus, error) {
+	untrackedMode := "--untracked-files=no"
+	if includeUntracked {
+		untrackedMode = "--untracked-files=all"
+	}
+
+	cmd := newGitCommandContext(ctx, path, "status", "--porcelain=2", "-z", untrackedMode)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -87,12 +101,20 @@ func GenerateUnifiedDiffAgainstHEAD(path, relativePath, previousPath string) (st
 }
 
 func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, error) {
+	return GenerateDiffStatAgainstHEADContext(context.Background(), path, status)
+}
+
+func GenerateDiffStatAgainstHEADContext(
+	ctx context.Context,
+	path string,
+	status FileStatus,
+) (DiffStat, error) {
 	normalizedPath := normalizeGitRelativePath(status.Path)
 	if normalizedPath == "" {
 		return DiffStat{}, fmt.Errorf("path is required")
 	}
 
-	if repositoryHasHead(path) && status.Kind != FileChangeKindUntracked {
+	if repositoryHasHeadContext(ctx, path) && status.Kind != FileChangeKindUntracked {
 		args := []string{
 			"diff",
 			"--numstat",
@@ -106,7 +128,7 @@ func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, erro
 		if normalizedPrevious := normalizeGitRelativePath(status.PreviousPath); normalizedPrevious != "" && normalizedPrevious != normalizedPath {
 			args = append(args, normalizedPrevious)
 		}
-		output, err := runGitOutputAllowDiffExit(path, args...)
+		output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
 		if err != nil {
 			return DiffStat{}, err
 		}
@@ -133,7 +155,7 @@ func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, erro
 			os.DevNull,
 		}
 	}
-	output, err := runGitOutputAllowDiffExit(path, args...)
+	output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
 	if err != nil {
 		return DiffStat{}, err
 	}
@@ -141,7 +163,11 @@ func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, erro
 }
 
 func repositoryHasHead(path string) bool {
-	cmd := newGitCommand(path, "rev-parse", "--verify", "HEAD^{commit}")
+	return repositoryHasHeadContext(context.Background(), path)
+}
+
+func repositoryHasHeadContext(ctx context.Context, path string) bool {
+	cmd := newGitCommandContext(ctx, path, "rev-parse", "--verify", "HEAD^{commit}")
 	return cmd.Run() == nil
 }
 
@@ -276,7 +302,15 @@ func normalizeGitRelativePath(value string) string {
 }
 
 func runGitOutputAllowDiffExit(path string, args ...string) ([]byte, error) {
-	cmd := newGitCommand(path, args...)
+	return runGitOutputAllowDiffExitContext(context.Background(), path, args...)
+}
+
+func runGitOutputAllowDiffExitContext(
+	ctx context.Context,
+	path string,
+	args ...string,
+) ([]byte, error) {
+	cmd := newGitCommandContext(ctx, path, args...)
 	output, err := cmd.Output()
 	if err == nil {
 		return output, nil

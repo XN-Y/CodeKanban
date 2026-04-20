@@ -81,6 +81,15 @@ export interface FileManagerChangesResult {
   entries: FileManagerChangeEntry[];
 }
 
+export interface FileManagerChangesSummaryResult {
+  scope: FileManagerScope;
+  count: number;
+  additions: number | null;
+  deletions: number | null;
+  statsComplete: boolean;
+  statsTimedOut: boolean;
+}
+
 export interface FileManagerDiffResult {
   path: string;
   status?: FileManagerGitStatus;

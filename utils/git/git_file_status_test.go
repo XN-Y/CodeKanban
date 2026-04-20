@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -64,6 +65,29 @@ func TestParseGitFileStatusesPorcelainV2HandlesConflicts(t *testing.T) {
 	}
 	if statuses["new file.txt"].Kind != FileChangeKindUntracked {
 		t.Fatalf("new file.txt status = %#v", statuses["new file.txt"])
+	}
+}
+
+func TestListFileStatusesContextCanSkipUntracked(t *testing.T) {
+	repoDir := initTestRepoWithTrackedFile(t, "notes.txt", "hello\n")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+
+	statuses, err := ListFileStatusesContext(context.Background(), repoDir, false)
+	if err != nil {
+		t.Fatalf("ListFileStatusesContext returned error: %v", err)
+	}
+
+	if statuses["README.md"].Kind != FileChangeKindModified {
+		t.Fatalf("README.md status = %#v", statuses["README.md"])
+	}
+	if _, exists := statuses["scratch.txt"]; exists {
+		t.Fatalf("scratch.txt should be excluded when includeUntracked=false: %#v", statuses["scratch.txt"])
 	}
 }
 

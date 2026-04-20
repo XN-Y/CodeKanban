@@ -41,11 +41,11 @@
           </n-icon>
           <span class="tab-label">{{ t('nav.changes') }}</span>
           <span v-if="showChangesSummaryBadge" class="tab-badge changes-summary-badge">
-            <span class="changes-summary-count">{{ changesSummary.count }}</span>
+            <span class="changes-summary-count">{{ changesSummaryDisplay.count }}</span>
             <span class="changes-summary-separator">,</span>
-            <span class="changes-summary-add">+{{ changesSummary.additions }}</span>
+            <span class="changes-summary-add">{{ changesSummaryDisplay.additions }}</span>
             <span class="changes-summary-separator">,</span>
-            <span class="changes-summary-del">-{{ changesSummary.deletions }}</span>
+            <span class="changes-summary-del">{{ changesSummaryDisplay.deletions }}</span>
           </span>
         </button>
         <button
@@ -208,9 +208,9 @@ import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
 import {
   chooseGitChangesScope,
-  formatGitChangesSummary,
-  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
-  summarizeGitChangesEntries,
+  formatGitChangesBadgeDelta,
+  shouldShowGitChangesBadge,
+  type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
@@ -227,7 +227,6 @@ import {
 import { resolveWorkspaceShortcutTarget } from '@/utils/workspaceTabShortcut';
 import { projectSupportsGit } from '@/utils/projectGitCapability';
 import { fileManagerApi } from '@/api/fileManager';
-import type { FileManagerChangeEntry } from '@/types/fileManager';
 
 const props = defineProps<{
   projectId: string;
@@ -236,6 +235,7 @@ const props = defineProps<{
 type WorkspaceTab = DesktopWorkspaceRouteTab;
 
 const WORKSPACE_ACTIVE_TAB_STORAGE_KEY = 'workspace-active-tab';
+const CHANGES_SUMMARY_STATS_TIMEOUT_MS = 5_000;
 
 const { t } = useLocale();
 const route = useRoute();
@@ -270,9 +270,9 @@ const activeTab = ref<WorkspaceTab>(
 );
 const previousTab = ref<WorkspaceTab | null>(null);
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
-const ignoreUntracked = useStorage<boolean>(GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY, false);
-const changesSummaryEntries = ref<FileManagerChangeEntry[] | null>(null);
+const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
 let changesSummaryTimer: number | null = null;
+let changesSummaryRequestToken = 0;
 
 function syncWorkspaceRouteTab(tab: WorkspaceTab) {
   if (isWorkspaceRouteTabQuerySynced(route.query, tab)) {
@@ -304,10 +304,10 @@ watch(
   async ([projectId, , disabled]) => {
     stopChangesSummaryTimer();
     if (!projectId || disabled) {
-      changesSummaryEntries.value = null;
+      clearChangesBadgeSummary();
       return;
     }
-    await loadChangesSummary();
+    await loadChangesSummary({ resetBeforeLoad: true });
     startChangesSummaryTimer();
   },
   { immediate: true }
@@ -364,16 +364,22 @@ const webSessionSummaryText = computed(() =>
     webSessionStore.getSessions(props.projectId).length
   )
 );
-const changesSummary = computed(() =>
-  summarizeGitChangesEntries(changesSummaryEntries.value ?? [], ignoreUntracked.value)
-);
-const changesSummaryText = computed(() => {
-  if (changesTabDisabled.value || changesSummaryEntries.value == null) {
-    return '';
-  }
-  return formatGitChangesSummary(changesSummary.value);
+const changesSummaryDisplay = computed(() => {
+  const summary = changesBadgeSummary.value ?? {
+    count: 0,
+    additions: 0,
+    deletions: 0,
+    pending: false,
+  };
+  return {
+    count: summary.count,
+    additions: formatGitChangesBadgeDelta('+', summary.additions),
+    deletions: formatGitChangesBadgeDelta('-', summary.deletions),
+  };
 });
-const showChangesSummaryBadge = computed(() => Boolean(changesSummaryText.value));
+const showChangesSummaryBadge = computed(
+  () => !changesTabDisabled.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
+);
 
 const rightSidebarToggleLabel = computed(() =>
   t(isRightSidebarVisible.value ? 'webSession.hideSidebar' : 'webSession.showSidebar')
@@ -436,25 +442,99 @@ function stopChangesSummaryTimer() {
   changesSummaryTimer = null;
 }
 
-async function loadChangesSummary() {
+function clearChangesBadgeSummary() {
+  changesSummaryRequestToken += 1;
+  changesBadgeSummary.value = null;
+}
+
+function setChangesBadgeLoading(resetBeforeLoad: boolean) {
+  if (resetBeforeLoad || !changesBadgeSummary.value) {
+    changesBadgeSummary.value = {
+      count: 0,
+      additions: 0,
+      deletions: 0,
+      pending: true,
+    };
+    return;
+  }
+  changesBadgeSummary.value = {
+    ...changesBadgeSummary.value,
+    pending: true,
+  };
+}
+
+async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
   if (!props.projectId || changesTabDisabled.value) {
-    changesSummaryEntries.value = null;
+    clearChangesBadgeSummary();
     return;
   }
 
+  const requestToken = ++changesSummaryRequestToken;
+  setChangesBadgeLoading(Boolean(options?.resetBeforeLoad));
+
   try {
     const scopes = await fileManagerApi.listScopes(props.projectId);
+    if (requestToken !== changesSummaryRequestToken) {
+      return;
+    }
     const scope = chooseGitChangesScope(scopes, {
       preferredWorktreeId: projectStore.selectedWorktreeId,
     });
     if (!scope) {
-      changesSummaryEntries.value = null;
+      clearChangesBadgeSummary();
       return;
     }
-    const result = await fileManagerApi.listChanges(props.projectId, scope.id);
-    changesSummaryEntries.value = result.entries;
+
+    const fastSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
+      includeUntracked: false,
+      withStats: false,
+    });
+    if (requestToken !== changesSummaryRequestToken) {
+      return;
+    }
+
+    if (fastSummary.count <= 0) {
+      changesBadgeSummary.value = {
+        count: 0,
+        additions: 0,
+        deletions: 0,
+        pending: false,
+      };
+      return;
+    }
+
+    changesBadgeSummary.value = {
+      count: fastSummary.count,
+      additions: null,
+      deletions: null,
+      pending: true,
+    };
+
+    const statsSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
+      includeUntracked: false,
+      withStats: true,
+      timeoutMs: CHANGES_SUMMARY_STATS_TIMEOUT_MS,
+    });
+    if (requestToken !== changesSummaryRequestToken) {
+      return;
+    }
+
+    changesBadgeSummary.value = {
+      count: statsSummary.count > 0 ? statsSummary.count : fastSummary.count,
+      additions: statsSummary.statsComplete ? (statsSummary.additions ?? 0) : null,
+      deletions: statsSummary.statsComplete ? (statsSummary.deletions ?? 0) : null,
+      pending: false,
+    };
   } catch {
-    changesSummaryEntries.value = null;
+    if (requestToken !== changesSummaryRequestToken) {
+      return;
+    }
+    changesBadgeSummary.value = {
+      count: 0,
+      additions: 0,
+      deletions: 0,
+      pending: false,
+    };
   }
 }
 

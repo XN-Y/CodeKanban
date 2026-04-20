@@ -5,6 +5,7 @@ import type {
   FileManagerArchiveJob,
   FileManagerBulkResult,
   FileManagerChangesResult,
+  FileManagerChangesSummaryResult,
   FileManagerDiffResult,
   FileManagerEntry,
   FileManagerListResult,
@@ -109,6 +110,43 @@ export const fileManagerApi = {
       throw new Error('failed to load git changes');
     }
     return item;
+  },
+
+  async changesSummary(
+    projectId: string,
+    scopeId: string,
+    options?: {
+      includeUntracked?: boolean;
+      withStats?: boolean;
+      timeoutMs?: number;
+    }
+  ): Promise<FileManagerChangesSummaryResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    if (options?.includeUntracked) {
+      params.set('includeUntracked', 'true');
+    }
+    if (options?.withStats) {
+      params.set('withStats', 'true');
+    }
+    if (typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)) {
+      params.set('timeoutMs', String(Math.max(0, Math.trunc(options.timeoutMs))));
+    }
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerChangesSummaryResult>
+        >(`/projects/${projectId}/files/changes-summary?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerChangesSummaryResult>(payload);
+    if (!item) {
+      throw new Error('failed to load git changes summary');
+    }
+    return {
+      ...item,
+      additions: item.additions ?? null,
+      deletions: item.deletions ?? null,
+    };
   },
 
   async preview(

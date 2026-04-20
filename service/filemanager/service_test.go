@@ -186,6 +186,66 @@ func TestListIncludesGitStatus(t *testing.T) {
 	}
 }
 
+func TestChangesSummarySkipsUntrackedInFastCountAndCompletesStats(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+
+	fastSummary, err := service.ChangesSummary(context.Background(), projectID, "", ChangesSummaryOptions{
+		IncludeUntracked: false,
+		WithStats:        false,
+	})
+	if err != nil {
+		t.Fatalf("ChangesSummary fast phase returned error: %v", err)
+	}
+	if fastSummary.Count != 1 {
+		t.Fatalf("fast summary count = %d, want %d", fastSummary.Count, 1)
+	}
+	if fastSummary.Additions != nil || fastSummary.Deletions != nil {
+		t.Fatalf("fast summary should not include stats: %#v", fastSummary)
+	}
+	if fastSummary.StatsComplete || fastSummary.StatsTimedOut {
+		t.Fatalf("unexpected fast summary flags: %#v", fastSummary)
+	}
+
+	statsSummary, err := service.ChangesSummary(context.Background(), projectID, "", ChangesSummaryOptions{
+		IncludeUntracked: false,
+		WithStats:        true,
+		StatsTimeout:     5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("ChangesSummary stats phase returned error: %v", err)
+	}
+	if statsSummary.Count != 1 {
+		t.Fatalf("stats summary count = %d, want %d", statsSummary.Count, 1)
+	}
+	if !statsSummary.StatsComplete || statsSummary.StatsTimedOut {
+		t.Fatalf("unexpected stats summary flags: %#v", statsSummary)
+	}
+	if statsSummary.Additions == nil || *statsSummary.Additions != 1 {
+		t.Fatalf("stats summary additions = %#v, want %d", statsSummary.Additions, 1)
+	}
+	if statsSummary.Deletions == nil || *statsSummary.Deletions != 0 {
+		t.Fatalf("stats summary deletions = %#v, want %d", statsSummary.Deletions, 0)
+	}
+}
+
 func TestDiffReturnsUnifiedPatchAndStatusReasons(t *testing.T) {
 	cleanup := initFileManagerTestDB(t)
 	defer cleanup()
