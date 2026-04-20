@@ -80,5 +80,8 @@ export function summarizeGitChangesEntries(
 }
 
 export function formatGitChangesSummary(summary: GitChangesSummary) {
+  if (summary.count === 0) {
+    return '';
+  }
   return `${summary.count},+${summary.additions},-${summary.deletions}`;
 }
