@@ -8,6 +8,10 @@ export function normalizeWebSessionSidebarScope(value: unknown): WebSessionSideb
   return value === 'current' ? 'current' : 'all';
 }
 
+export function resolveWebSessionSidebarToggleScope(scope: unknown): WebSessionSidebarScope {
+  return normalizeWebSessionSidebarScope(scope) === 'current' ? 'all' : 'current';
+}
+
 export function resolveWebSessionSidebarProjectIds(input: {
   scope: WebSessionSidebarScope;
   currentProjectId?: string | null;

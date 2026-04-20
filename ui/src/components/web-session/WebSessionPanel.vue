@@ -49,7 +49,10 @@
                 type="button"
                 class="mobile-tab-trigger"
                 :title="currentSession ? getSessionStatusTooltip(currentSession) : undefined"
-                @click="handleMobileTabTriggerClick"
+                @pointerdown.stop.prevent="handleMobileTabTriggerClick"
+                @click.stop.prevent
+                @keydown.enter.stop.prevent="handleMobileTabTriggerClick"
+                @keydown.space.stop.prevent="handleMobileTabTriggerClick"
               >
                 <span class="mobile-tab-trigger-main">
                   <span class="mobile-tab-title">{{ activeSessionTitle }}</span>
@@ -1761,6 +1764,7 @@ import {
 import {
   normalizeWebSessionSidebarScope,
   resolveWebSessionSidebarProjectIds,
+  resolveWebSessionSidebarToggleScope,
   type WebSessionSidebarScope,
 } from '@/components/web-session/webSessionSidebarScope';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
@@ -1948,9 +1952,9 @@ function isArchivedPreviewSession(
 function isAbortLikeError(error: unknown) {
   return Boolean(
     error &&
-      typeof error === 'object' &&
-      'name' in error &&
-      String((error as { name?: unknown }).name || '') === 'AbortError'
+    typeof error === 'object' &&
+    'name' in error &&
+    String((error as { name?: unknown }).name || '') === 'AbortError'
   );
 }
 
@@ -2901,7 +2905,7 @@ const isSendConflictConfirmationArmed = computed(
     sendConflictSessions.value.length > 0 &&
     Boolean(
       sendConfirmationState.value &&
-        sendConfirmationState.value.signature === sendConfirmationSignature.value
+      sendConfirmationState.value.signature === sendConfirmationSignature.value
     )
 );
 const isSubmittingMessage = computed(() =>
@@ -3487,21 +3491,38 @@ const sidebarScopeLabel = computed(() =>
 const sidebarScopeAriaLabel = computed(() =>
   t('webSession.sidebarScopeAria', { scope: sidebarScopeLabel.value })
 );
+const sidebarScopeToggleLabel = computed(() =>
+  resolveWebSessionSidebarToggleScope(sidebarScope.value) === 'current'
+    ? t('webSession.sidebarScopeCurrentProject')
+    : t('webSession.sidebarScopeAll')
+);
+const sidebarScopeToggleTitle = computed(() =>
+  t('webSession.sidebarScopeToggle', {
+    current: sidebarScopeLabel.value,
+    next: sidebarScopeToggleLabel.value,
+  })
+);
 const mobileSessionCategory = ref<MobileSessionCategory>('current');
-const mobileCurrentSessions = computed<SessionTab[]>(() =>
-  sortMobileCurrentSessions(sessions.value, session =>
+const mobileCurrentSessions = computed<SessionTab[]>(() => {
+  if (sidebarScope.value !== 'all') {
+    return sortMobileCurrentSessions(sessions.value, session =>
+      resolveWebSessionSidebarSortTimestamp(session)
+    );
+  }
+
+  const draftSessions = sessions.value.filter(isDraftSession);
+  const crossProjectCurrentSessions = crossProjectSessions.value.map(
+    item => item.session as SessionTab
+  );
+  return sortMobileCurrentSessions([...draftSessions, ...crossProjectCurrentSessions], session =>
     resolveWebSessionSidebarSortTimestamp(session)
-  )
-);
-const mobileArchivedProjectIds = computed(() => (props.projectId ? [props.projectId] : []));
-const mobileArchivedScopeKey = computed(() => String(props.projectId || '').trim());
-const mobileArchivedMeta = computed(() =>
-  webSessionStore.getArchivedMeta(mobileArchivedProjectIds.value)
-);
+  );
+});
+const mobileArchivedProjectIds = computed(() => sidebarVisibleProjectIds.value);
+const mobileArchivedScopeKey = computed(() => mobileArchivedProjectIds.value.join('|'));
+const mobileArchivedMeta = computed(() => archivedSidebarMeta.value);
 const mobileArchivedSessions = computed<SessionTab[]>(() =>
-  webSessionStore
-    .getArchivedSessions(mobileArchivedProjectIds.value)
-    .map(item => item as SessionTab)
+  crossProjectArchivedSessions.value.map(item => item.session as SessionTab)
 );
 const mobileVisibleSessions = computed<SessionTab[]>(() =>
   mobileSessionCategory.value === 'archived'
@@ -3581,64 +3602,74 @@ watch(currentUserInputSubmitOwnerId, (nextOwnerId, previousOwnerId) => {
   }
 });
 
-const mobileTabOptions = computed<MobileTabDropdownOption[]>(
-  () =>
-    buildWebSessionMobileTabDescriptors({
-      section: mobileSessionCategory.value,
-      sessions: mobileVisibleSessions.value,
-      hasArchivedLoadMore: mobileArchivedMeta.value.hasMore,
-      isArchivedLoading: mobileArchivedMeta.value.loading,
-    }).map(descriptor => {
-      switch (descriptor.kind) {
-        case 'header':
-          return {
-            type: 'render' as const,
-            key: descriptor.key,
-            render: renderMobileTabCategoryHeader,
-            props: {
-              class: 'mobile-tab-category-header-render',
-            },
-          };
-        case 'session': {
-          const displayState = getSessionDisplayState(descriptor.session);
-          return {
-            kind: 'session' as const,
-            label: descriptor.session.title,
-            key: descriptor.key,
-            section: descriptor.section,
-            session: descriptor.session,
-            displayState,
-            tooltip: getSessionStatusTooltip(descriptor.session),
-          };
-        }
-        case 'empty':
-          return {
-            type: 'render' as const,
-            key: descriptor.key,
-            render: renderMobileTabEmptyState,
-            props: {
-              class: 'mobile-tab-empty-render',
-            },
-          };
-        case 'load-more':
-          return {
-            type: 'render' as const,
-            key: descriptor.key,
-            render: renderMobileTabLoadMore,
-            props: {
-              class: 'mobile-tab-load-more-render',
-            },
-          };
-        case 'new-session':
-          return {
-            kind: 'new-session' as const,
-            key: descriptor.key,
-            label: t('webSession.newSession'),
-            section: 'current' as const,
-          };
+const mobileTabOptions = computed<MobileTabDropdownOption[]>(() => {
+  const options = buildWebSessionMobileTabDescriptors({
+    section: mobileSessionCategory.value,
+    sessions: mobileVisibleSessions.value,
+    hasArchivedLoadMore: mobileArchivedMeta.value.hasMore,
+    isArchivedLoading: mobileArchivedMeta.value.loading,
+  }).map(descriptor => {
+    switch (descriptor.kind) {
+      case 'header':
+        return {
+          type: 'render' as const,
+          key: descriptor.key,
+          render: renderMobileTabCategoryHeader,
+          props: {
+            class: 'mobile-tab-category-header-render',
+          },
+        };
+      case 'session': {
+        const displayState = getSessionDisplayState(descriptor.session);
+        return {
+          kind: 'session' as const,
+          label: descriptor.session.title,
+          key: descriptor.key,
+          section: descriptor.section,
+          session: descriptor.session,
+          displayState,
+          tooltip: getSessionStatusTooltip(descriptor.session),
+        };
       }
-    }) satisfies MobileTabDropdownOption[]
-);
+      case 'empty':
+        return {
+          type: 'render' as const,
+          key: descriptor.key,
+          render: renderMobileTabEmptyState,
+          props: {
+            class: 'mobile-tab-empty-render',
+          },
+        };
+      case 'load-more':
+        return {
+          type: 'render' as const,
+          key: descriptor.key,
+          render: renderMobileTabLoadMore,
+          props: {
+            class: 'mobile-tab-load-more-render',
+          },
+        };
+      case 'new-session':
+        return {
+          kind: 'new-session' as const,
+          key: descriptor.key,
+          label: t('webSession.newSession'),
+          section: 'current' as const,
+        };
+    }
+  }) as MobileTabDropdownOption[];
+
+  options.push({
+    type: 'render',
+    key: `mobile-session-scope-toggle:${sidebarScope.value}:${mobileSessionCategory.value}`,
+    render: renderMobileTabScopeToggle,
+    props: {
+      class: 'mobile-tab-scope-toggle-render',
+    },
+  });
+
+  return options;
+});
 
 function mobileTabDropdownMenuProps() {
   const anchor = mobileTabSelectorAnchor.value;
@@ -3753,6 +3784,68 @@ function renderMobileTabLoadMore() {
     },
     mobileArchivedMeta.value.loading ? t('common.loading') : t('webSession.loadMoreArchived')
   );
+}
+
+function renderMobileTabScopeToggle() {
+  return h('div', { class: 'mobile-tab-scope-toggle-anchor', 'aria-hidden': 'true' }, [
+    h(
+      'button',
+      {
+        type: 'button',
+        class: ['mobile-tab-scope-toggle-button', sidebarScope.value === 'current' && 'is-current'],
+        title: sidebarScopeToggleTitle.value,
+        'aria-label': sidebarScopeToggleTitle.value,
+        'aria-pressed': sidebarScope.value === 'current',
+        onClick: (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleSidebarScope();
+        },
+        onMousedown: (event: MouseEvent) => {
+          event.preventDefault();
+          event.stopPropagation();
+        },
+      },
+      [
+        h('span', { class: 'mobile-tab-scope-toggle-icon', 'aria-hidden': 'true' }, [
+          h(
+            'svg',
+            {
+              width: '18',
+              height: '18',
+              viewBox: '0 0 24 24',
+              fill: 'none',
+            },
+            [
+              h('rect', {
+                x: '4.5',
+                y: '5',
+                width: '9',
+                height: '6',
+                rx: '1.5',
+                stroke: 'currentColor',
+                'stroke-width': '1.8',
+              }),
+              h('rect', {
+                x: '10.5',
+                y: '13',
+                width: '9',
+                height: '6',
+                rx: '1.5',
+                stroke: 'currentColor',
+                'stroke-width': '1.8',
+                opacity: '0.92',
+              }),
+            ]
+          ),
+        ]),
+        h('span', {
+          class: 'mobile-tab-scope-toggle-indicator',
+          'aria-hidden': 'true',
+        }),
+      ]
+    ),
+  ]);
 }
 
 function renderMobileTabOptionLabel(option: DropdownOption) {
@@ -6113,10 +6206,10 @@ function toggleToolExpanded(tool: NonNullable<WebSessionBlock['tool']>) {
 function showPlanActions(toolId: string) {
   return Boolean(
     currentRealSession.value &&
-      latestPlanToolId.value === toolId &&
-      (!liveState.value.running || inlinePlanChoice.value) &&
-      !dismissedPlanActions.value[toolId] &&
-      !hasUserMessageAfterLatestPlan.value
+    latestPlanToolId.value === toolId &&
+    (!liveState.value.running || inlinePlanChoice.value) &&
+    !dismissedPlanActions.value[toolId] &&
+    !hasUserMessageAfterLatestPlan.value
   );
 }
 
@@ -6472,7 +6565,7 @@ function handleSidebarScopeSelect(key: string | number) {
 }
 
 function toggleSidebarScope() {
-  sidebarScope.value = sidebarScope.value === 'current' ? 'all' : 'current';
+  sidebarScope.value = resolveWebSessionSidebarToggleScope(sidebarScope.value);
 }
 
 function updateSidebarContainerWidth() {
@@ -9468,6 +9561,95 @@ defineExpose({
 :global(.web-session-mobile-dropdown .mobile-tab-load-more.is-loading) {
   cursor: progress;
   opacity: 0.82;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-render) {
+  position: sticky;
+  bottom: -4px;
+  z-index: 2;
+  height: 0;
+  padding: 0;
+  pointer-events: none;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-anchor) {
+  position: relative;
+  width: 100%;
+  height: 0;
+  pointer-events: none;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button) {
+  position: relative;
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 88%, rgba(15, 23, 42, 0.08));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 92%, var(--n-primary-color) 8%);
+  color: color-mix(in srgb, var(--n-text-color-2) 84%, var(--n-primary-color) 16%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.12);
+  cursor: pointer;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease;
+  pointer-events: auto;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button:hover) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--n-primary-color) 24%, var(--n-border-color));
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button.is-current) {
+  border-color: color-mix(in srgb, var(--n-primary-color) 36%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 14%, var(--app-surface-color, #fff));
+  color: color-mix(in srgb, var(--n-primary-color) 72%, var(--n-text-color-1));
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-button:focus-visible) {
+  outline: none;
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--n-primary-color) 18%, transparent),
+    0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-icon) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+:global(.web-session-mobile-dropdown .mobile-tab-scope-toggle-indicator) {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--app-surface-color, #fff) 80%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-text-color-2) 30%, transparent);
+  transition:
+    background-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+:global(
+  .web-session-mobile-dropdown
+    .mobile-tab-scope-toggle-button.is-current
+    .mobile-tab-scope-toggle-indicator
+) {
+  background: var(--n-primary-color);
+  transform: scale(1.08);
 }
 
 :global(

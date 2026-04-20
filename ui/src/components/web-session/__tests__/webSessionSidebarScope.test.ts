@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   normalizeWebSessionSidebarScope,
   resolveWebSessionSidebarProjectIds,
+  resolveWebSessionSidebarToggleScope,
 } from '@/components/web-session/webSessionSidebarScope';
 
 describe('webSessionSidebarScope', () => {
@@ -14,6 +15,12 @@ describe('webSessionSidebarScope', () => {
 
   it('keeps current scope when the stored value is valid', () => {
     expect(normalizeWebSessionSidebarScope('current')).toBe('current');
+  });
+
+  it('resolves the next scope for the toggle button', () => {
+    expect(resolveWebSessionSidebarToggleScope('all')).toBe('current');
+    expect(resolveWebSessionSidebarToggleScope('current')).toBe('all');
+    expect(resolveWebSessionSidebarToggleScope('unexpected')).toBe('current');
   });
 
   it('returns only the active project in current scope', () => {

@@ -702,6 +702,7 @@ export default {
     sidebarScopeAll: '全部',
     sidebarScopeCurrentProject: '当前项目',
     sidebarScopeAria: '会话范围：{scope}',
+    sidebarScopeToggle: '当前显示{current}，点击切换到{next}',
     crossProjectSessions: '跨项目会话列表',
     currentProjectSessions: '当前项目会话列表',
     currentSessions: '当前会话',

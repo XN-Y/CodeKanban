@@ -717,6 +717,7 @@ export default {
     sidebarScopeAll: 'All',
     sidebarScopeCurrentProject: 'Current Project',
     sidebarScopeAria: 'Session scope: {scope}',
+    sidebarScopeToggle: 'Showing {current}. Click to switch to {next}',
     crossProjectSessions: 'Across projects',
     currentProjectSessions: 'Current project sessions',
     currentSessions: 'Current Sessions',
