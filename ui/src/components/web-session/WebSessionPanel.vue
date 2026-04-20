@@ -1607,6 +1607,7 @@
 
 <script setup lang="ts">
 import {
+  type Component,
   type CSSProperties,
   computed,
   h,
@@ -1623,6 +1624,7 @@ import { useDebounceFn, useEventListener, useResizeObserver, useStorage } from '
 import { storeToRefs } from 'pinia';
 import {
   NCheckbox,
+  NIcon,
   NInput,
   useDialog,
   useMessage,
@@ -1631,13 +1633,18 @@ import {
 } from 'naive-ui';
 import {
   AddOutline,
+  ArchiveOutline,
   ChevronBackOutline,
   ChevronDownOutline,
   ChevronForwardOutline,
+  CreateOutline,
   EllipsisHorizontalOutline,
   FlashOutline,
   ImageOutline,
+  RefreshCircleOutline,
+  RefreshOutline,
   TimeOutline,
+  TrashOutline,
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
@@ -3939,6 +3946,10 @@ function requestMobileViewForBottomNavSelector() {
   emit('request-mobile-view', 'webSession');
 }
 
+function renderDropdownIcon(icon: Component) {
+  return () => h(NIcon, null, { default: () => h(icon) });
+}
+
 function buildSessionActionOptions(session: SessionTab | null): DropdownOption[] {
   const canClaudeSync =
     !!session &&
@@ -3955,19 +3966,23 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     {
       label: t('webSession.newSession'),
       key: 'new',
+      icon: renderDropdownIcon(AddOutline),
     },
     {
       label: t('webSession.importCodexSession'),
       key: 'import',
+      icon: renderDropdownIcon(TimeOutline),
     },
     {
       label: t('common.edit'),
       key: 'rename',
+      icon: renderDropdownIcon(CreateOutline),
       disabled: !session || isDraftSession(session),
     },
     {
       label: t('webSession.archiveAction'),
       key: 'archive',
+      icon: renderDropdownIcon(ArchiveOutline),
       disabled:
         !session ||
         isDraftSession(session) ||
@@ -3977,6 +3992,7 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     {
       label: t('common.delete'),
       key: 'delete',
+      icon: renderDropdownIcon(TrashOutline),
       disabled: !session,
     },
   ];
@@ -3988,6 +4004,7 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
           ? t('webSession.syncSessionAction')
           : t('webSession.syncFromTerminal'),
       key: 'sync',
+      icon: renderDropdownIcon(RefreshOutline),
       disabled: session?.agent === 'claude' ? !canClaudeSync : !canCodexSync,
     });
   }
@@ -3996,6 +4013,7 @@ function buildSessionActionOptions(session: SessionTab | null): DropdownOption[]
     options.splice(3, 0, {
       label: t('webSession.deepSyncFromTerminal'),
       key: 'deep-sync',
+      icon: renderDropdownIcon(RefreshCircleOutline),
       disabled: !canCodexSync,
     });
   }
