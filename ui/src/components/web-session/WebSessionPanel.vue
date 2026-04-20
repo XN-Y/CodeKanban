@@ -280,6 +280,15 @@
                       <button
                         v-if="shouldShowTimelineRawToggle(item, 'plan')"
                         type="button"
+                        class="timeline-display-toggle timeline-display-toggle--copy"
+                        title="copy"
+                        @click.stop="copyTimelineBlock(item, 'plan')"
+                      >
+                        copy
+                      </button>
+                      <button
+                        v-if="shouldShowTimelineRawToggle(item, 'plan')"
+                        type="button"
                         class="timeline-display-toggle"
                         :class="{ 'is-active': isBlockRawMode(item, 'plan') }"
                         :title="t('terminal.rawMode')"
@@ -592,6 +601,15 @@
                     @keydown.enter.self.prevent="activateTimelineRawBlock(item, 'message')"
                     @keydown.space.self.prevent="activateTimelineRawBlock(item, 'message')"
                   >
+                    <button
+                      v-if="shouldShowTimelineRawToggle(item, 'message')"
+                      type="button"
+                      class="timeline-display-toggle timeline-display-toggle--copy"
+                      title="copy"
+                      @click.stop="copyTimelineBlock(item, 'message')"
+                    >
+                      copy
+                    </button>
                     <button
                       v-if="shouldShowTimelineRawToggle(item, 'message')"
                       type="button"
@@ -1651,6 +1669,7 @@ import {
 } from '@vicons/ionicons5';
 import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
 import { useProjectStore } from '@/stores/project';
@@ -1677,7 +1696,12 @@ import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/termi
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { hexToRgba, isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
-import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
+import {
+  getClickedMarkdownCodeCopyText,
+  getClickedMarkdownLink,
+  getClickedMarkdownLinkCopyHref,
+  resolveNavigableHref,
+} from '@/utils/messageLinkNavigation';
 import {
   buildImagePlaceholder,
   buildImageViewPreviewUrl,
@@ -1957,7 +1981,21 @@ const router = useRouter();
 const dialog = useDialog();
 const message = useMessage();
 const { locale, t } = useLocale();
+const { copyText } = useAppClipboard();
 const { isMobile } = useResponsive();
+const timelineMarkdownRenderOptions = computed(() => ({
+  enableCodeBlockCopy: true,
+  codeBlockCopyLabel: 'copy',
+  enableLinkCopy: true,
+  linkCopyLabel: t('common.copyLink'),
+}));
+const streamingTimelineMarkdownRenderOptions = computed(() => ({
+  ...STREAMING_MARKDOWN_RENDER_OPTIONS,
+  enableCodeBlockCopy: true,
+  codeBlockCopyLabel: 'copy',
+  enableLinkCopy: true,
+  linkCopyLabel: t('common.copyLink'),
+}));
 const {
   activeTheme,
   currentPresetId,
@@ -2444,16 +2482,19 @@ function getMessageMarkdownText(block: WebSessionBlock) {
 }
 
 function getMessageMarkdownRenderOptions(block: WebSessionBlock) {
-  return isStreamingMessageMarkdownBlock(block) ? STREAMING_MARKDOWN_RENDER_OPTIONS : undefined;
+  return isStreamingMessageMarkdownBlock(block)
+    ? streamingTimelineMarkdownRenderOptions.value
+    : timelineMarkdownRenderOptions.value;
 }
 
 function getMessageMarkdownMemoDeps(block: WebSessionBlock) {
   const rawMode = isBlockRawMode(block, 'message');
   return rawMode
-    ? ['message-raw', block.text]
+    ? ['message-raw', block.text, locale.value]
     : [
         'message-markdown',
         getMessageMarkdownText(block),
+        locale.value,
         isStreamingMessageMarkdownBlock(block) ? 1 : 0,
       ];
 }
@@ -2466,16 +2507,19 @@ function getPlanToolMarkdownText(block: WebSessionBlock) {
 }
 
 function getPlanToolMarkdownRenderOptions(block: WebSessionBlock) {
-  return isStreamingPlanMarkdownBlock(block) ? STREAMING_MARKDOWN_RENDER_OPTIONS : undefined;
+  return isStreamingPlanMarkdownBlock(block)
+    ? streamingTimelineMarkdownRenderOptions.value
+    : timelineMarkdownRenderOptions.value;
 }
 
 function getPlanToolMarkdownMemoDeps(block: WebSessionBlock) {
   const rawMode = isBlockRawMode(block, 'plan');
   return rawMode
-    ? ['plan-raw', block.tool?.output ?? '']
+    ? ['plan-raw', block.tool?.output ?? '', locale.value]
     : [
         'plan-markdown',
         getPlanToolMarkdownText(block),
+        locale.value,
         isStreamingPlanMarkdownBlock(block) ? 1 : 0,
       ];
 }
@@ -2553,6 +2597,19 @@ function isBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
 function toggleBlockRawMode(block: WebSessionBlock, surface: TimelineRawSurface) {
   const key = getTimelineRawModeKey(block, surface);
   rawTimelineBlocks.value = toggleExclusiveTimelineRawBlock(rawTimelineBlocks.value, key);
+}
+function getTimelineBlockCopyText(block: WebSessionBlock, surface: TimelineRawSurface) {
+  if (surface === 'plan') {
+    return block.tool?.output ?? '';
+  }
+  return block.text;
+}
+async function copyTimelineBlock(block: WebSessionBlock, surface: TimelineRawSurface) {
+  const content = getTimelineBlockCopyText(block, surface);
+  await copyText(content, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('common.copySuccess'),
+  });
 }
 function isExecutePlanOption(option: WebSessionUserInputOption) {
   const text = normalizeChoiceText(`${option.label} ${option.description}`);
@@ -7734,28 +7791,34 @@ function restoreHistoryAnchor() {
   return true;
 }
 
-function getClickedTimelineAnchor(
-  target: EventTarget | null,
-  currentTarget: EventTarget | null
-): HTMLAnchorElement | null {
-  if (!(target instanceof Element) || !(currentTarget instanceof HTMLElement)) {
-    return null;
-  }
-
-  const anchor = target.closest('a[href]');
-  if (!(anchor instanceof HTMLAnchorElement) || !currentTarget.contains(anchor)) {
-    return null;
-  }
-
-  return anchor.closest('.chat-markdown') ? anchor : null;
-}
-
 function handleTimelineLinkClick(event: MouseEvent) {
   if (event.defaultPrevented || typeof window === 'undefined') {
     return;
   }
 
-  const anchor = getClickedTimelineAnchor(event.target, event.currentTarget);
+  const codeText = getClickedMarkdownCodeCopyText(event.target, event.currentTarget);
+  if (codeText) {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyText(codeText, {
+      failureMessage: t('terminal.copyFailed'),
+      successMessage: t('common.copySuccess'),
+    });
+    return;
+  }
+
+  const copyHref = getClickedMarkdownLinkCopyHref(event.target, event.currentTarget);
+  if (copyHref) {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyText(copyHref, {
+      failureMessage: t('terminal.copyFailed'),
+      successMessage: t('common.linkCopied'),
+    });
+    return;
+  }
+
+  const anchor = getClickedMarkdownLink(event.target, event.currentTarget);
   if (!anchor) {
     return;
   }
@@ -10555,6 +10618,10 @@ defineExpose({
     opacity 0.18s ease;
 }
 
+.timeline-display-toggle--copy {
+  right: 42px;
+}
+
 .timeline-display-toggle:hover {
   color: var(--n-primary-color);
   opacity: 1;
@@ -12558,6 +12625,10 @@ defineExpose({
     top: 8px;
     right: 8px;
     font-size: 9px;
+  }
+
+  .timeline-display-toggle--copy {
+    right: 36px;
   }
 }
 

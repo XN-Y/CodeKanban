@@ -72,9 +72,9 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, type CSSProperties } from 'vue';
-import { useClipboard } from '@vueuse/core';
 import { CopyOutline } from '@vicons/ionicons5';
 import { useMessage } from 'naive-ui';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { taskActions } from '@/composables/useTaskActions';
 import { extractItem } from '@/api/response';
 import type { Task } from '@/types/models';
@@ -126,7 +126,7 @@ const summaryText = computed(() => {
   return lines.join('\n');
 });
 
-const { copy, isSupported: clipboardSupported } = useClipboard();
+const { copyText, isSupported: clipboardSupported } = useAppClipboard();
 
 const allSelected = computed(
   () => props.tasks.length > 0 && selectedIds.value.length === props.tasks.length
@@ -140,15 +140,11 @@ function toggleSelectAll(checked: boolean) {
 }
 
 async function handleCopy() {
-  try {
-    if (!clipboardSupported.value) {
-      throw new Error(t('task.copyNotSupported'));
-    }
-    await copy(summaryText.value);
-    message.success(t('task.archiveCopied'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('task.archiveCopyFailed'));
-  }
+  await copyText(summaryText.value, {
+    failureMessage: t('task.archiveCopyFailed'),
+    successMessage: t('task.archiveCopied'),
+    unsupportedMessage: t('task.copyNotSupported'),
+  });
 }
 
 async function handleArchive() {

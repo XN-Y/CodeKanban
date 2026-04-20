@@ -505,6 +505,7 @@ import {
   type TerminalTabState,
   type ServerMessage,
 } from '@/composables/useTerminalClient';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import type { DropdownOption } from 'naive-ui';
 import { useSettingsStore } from '@/stores/settings';
 import { useProjectStore } from '@/stores/project';
@@ -555,6 +556,7 @@ const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
 const { t } = useLocale();
+const { copyText } = useAppClipboard();
 const panelRef = ref<HTMLElement | null>(null);
 const projectStore = useProjectStore();
 const { worktrees } = storeToRefs(projectStore);
@@ -2909,13 +2911,13 @@ async function copyWorkingDirectory(tab: TerminalTabState) {
   if (!path) {
     return;
   }
-  try {
-    await navigator.clipboard.writeText(path);
-    message.success(t('terminal.pathCopied'));
-  } catch (error) {
-    console.error('Failed to copy path:', error);
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(path, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.pathCopied'),
+    onError: error => {
+      console.error('Failed to copy path:', error);
+    },
+  });
 }
 
 async function browseDirectory(tab: TerminalTabState) {
@@ -2936,13 +2938,13 @@ async function copyAISessionId(tab: TerminalTabState) {
     message.warning(t('terminal.noAISession'));
     return;
   }
-  try {
-    await navigator.clipboard.writeText(sessionId);
-    message.success(t('terminal.aiSessionIdCopied'));
-  } catch (error) {
-    console.error('Failed to copy AI session ID:', error);
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(sessionId, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.aiSessionIdCopied'),
+    onError: error => {
+      console.error('Failed to copy AI session ID:', error);
+    },
+  });
 }
 
 function viewConversation(tab: TerminalTabState) {

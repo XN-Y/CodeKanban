@@ -20,10 +20,15 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 import { Marked, type Tokens } from 'marked';
+import { resolveCopyableAbsoluteHref } from '@/utils/messageLinkNavigation';
 
 type HljsLanguageModule = Parameters<typeof hljs.registerLanguage>[1];
 export interface RenderMarkdownOptions {
   disableCodeHighlight?: boolean;
+  enableCodeBlockCopy?: boolean;
+  codeBlockCopyLabel?: string;
+  enableLinkCopy?: boolean;
+  linkCopyLabel?: string;
 }
 
 const registeredLanguages = new Set<string>();
@@ -113,6 +118,15 @@ function normalizeLanguage(value?: string) {
   return registeredLanguages.has(normalized) ? normalized : '';
 }
 
+function renderCodeCopyButton(options: RenderMarkdownOptions = {}) {
+  if (!options.enableCodeBlockCopy) {
+    return '';
+  }
+
+  const label = escapeHtml(options.codeBlockCopyLabel || 'copy');
+  return `<button type="button" class="markdown-code-copy-button" data-message-code-copy="true" title="${label}" aria-label="${label}">${label}</button>`;
+}
+
 function renderCodeBlock({ text, lang }: Tokens.Code, options: RenderMarkdownOptions = {}) {
   const normalizedLanguage = normalizeLanguage(lang);
   const languageLabel = pickLanguageName(lang);
@@ -125,9 +139,25 @@ function renderCodeBlock({ text, lang }: Tokens.Code, options: RenderMarkdownOpt
     : escapeHtml(text);
 
   const dataLanguage = languageLabel ? ` data-language="${escapeHtml(languageLabel)}"` : '';
+  const dataCodeCopy = options.enableCodeBlockCopy ? ' data-code-copy="true"' : '';
   const languageClass = shouldHighlight ? ` language-${normalizedLanguage}` : '';
+  const codeCopyButton = renderCodeCopyButton(options);
 
-  return `<pre class="markdown-code-block"${dataLanguage}><code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
+  return `<pre class="markdown-code-block"${dataLanguage}${dataCodeCopy}>${codeCopyButton}<code class="hljs${languageClass}">${highlightedCode}</code></pre>`;
+}
+
+function renderLinkCopyButton(href: string, options: RenderMarkdownOptions) {
+  if (!options.enableLinkCopy) {
+    return '';
+  }
+
+  const copyHref = resolveCopyableAbsoluteHref(href);
+  if (!copyHref) {
+    return '';
+  }
+
+  const label = escapeHtml(options.linkCopyLabel || 'Copy link');
+  return `<button type="button" class="message-link-copy-button" data-message-link-copy="true" data-message-link-copy-href="${escapeHtml(copyHref)}" title="${label}" aria-label="${label}">${label}</button>`;
 }
 
 export function renderHighlightedCodeBlock(
@@ -162,10 +192,16 @@ function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
         return renderCodeBlock(token, options);
       },
       link(token) {
-        const href = token.href ? ` href="${escapeHtml(token.href)}"` : '';
+        const hrefValue = token.href ?? '';
+        const href = hrefValue ? ` href="${escapeHtml(hrefValue)}"` : '';
         const title = token.title ? ` title="${escapeHtml(token.title)}"` : '';
         const text = this.parser.parseInline(token.tokens);
-        return `<a${href}${title} target="_blank" rel="noopener noreferrer" data-message-link="true">${text}</a>`;
+        const linkHtml = `<a${href}${title} target="_blank" rel="noopener noreferrer" data-message-link="true">${text}</a>`;
+        const copyButtonHtml = renderLinkCopyButton(hrefValue, options);
+        if (!copyButtonHtml) {
+          return linkHtml;
+        }
+        return `<span class="message-link-inline">${linkHtml}${copyButtonHtml}</span>`;
       },
     },
   });
@@ -173,10 +209,26 @@ function createMarkdownRenderer(options: RenderMarkdownOptions = {}) {
   return renderer;
 }
 
-const markdownRenderer = createMarkdownRenderer();
-const markdownRendererWithoutCodeHighlight = createMarkdownRenderer({
-  disableCodeHighlight: true,
-});
+const markdownRendererCache = new Map<string, Marked>();
+
+function getMarkdownRenderer(options: RenderMarkdownOptions = {}) {
+  const key = JSON.stringify({
+    disableCodeHighlight: !!options.disableCodeHighlight,
+    enableCodeBlockCopy: !!options.enableCodeBlockCopy,
+    codeBlockCopyLabel: options.codeBlockCopyLabel || '',
+    enableLinkCopy: !!options.enableLinkCopy,
+    linkCopyLabel: options.linkCopyLabel || '',
+  });
+
+  const existing = markdownRendererCache.get(key);
+  if (existing) {
+    return existing;
+  }
+
+  const renderer = createMarkdownRenderer(options);
+  markdownRendererCache.set(key, renderer);
+  return renderer;
+}
 
 export function renderMarkdown(value: string, options: RenderMarkdownOptions = {}) {
   if (!value) {
@@ -184,9 +236,7 @@ export function renderMarkdown(value: string, options: RenderMarkdownOptions = {
   }
 
   try {
-    return (
-      options.disableCodeHighlight ? markdownRendererWithoutCodeHighlight : markdownRenderer
-    ).parse(value) as string;
+    return getMarkdownRenderer(options).parse(value) as string;
   } catch {
     return escapeHtml(value).replace(/\n/g, '<br>');
   }

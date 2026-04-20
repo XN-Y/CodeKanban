@@ -152,10 +152,10 @@
 <script setup lang="ts">
 import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RouterLink } from 'vue-router';
-import { useClipboard } from '@vueuse/core';
 import { NInput, useDialog, useMessage } from 'naive-ui';
 import { AddOutline, RefreshOutline } from '@vicons/ionicons5';
 import { storeToRefs } from 'pinia';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useResponsive } from '@/composables/useResponsive';
 import KanbanColumn from './KanbanColumn.vue';
 import TaskCreateDialog from './TaskCreateDialog.vue';
@@ -194,7 +194,7 @@ const settingsStore = useSettingsStore();
 const { terminalQuickActions } = storeToRefs(settingsStore);
 const message = useMessage();
 const dialog = useDialog();
-const { copy: copyTaskTitle, isSupported: clipboardSupported } = useClipboard();
+const { copyText, isSupported: clipboardSupported } = useAppClipboard();
 const { listTasks, moveTask, deleteTask } = taskActions;
 
 const showCreateDialog = ref(false);
@@ -394,15 +394,11 @@ async function performTaskDelete(task: Task) {
 }
 
 async function handleTaskCopy(task: Task) {
-  try {
-    if (!clipboardSupported.value) {
-      throw new Error(t('task.copyNotSupported'));
-    }
-    await copyTaskTitle(task.title);
-    message.success(t('task.taskNameCopied'));
-  } catch (error: any) {
-    message.error(error?.message ?? t('task.copyTaskNameFailed'));
-  }
+  await copyText(task.title, {
+    failureMessage: t('task.copyTaskNameFailed'),
+    successMessage: t('task.taskNameCopied'),
+    unsupportedMessage: t('task.copyNotSupported'),
+  });
 }
 
 function handleTaskCreated(task: Task) {

@@ -26,6 +26,8 @@ export default {
     openLinkMessage: 'This link will open in a new tab. Continue?',
     openLinkFailed: 'Failed to open the link. Check whether the browser blocked the popup.',
     invalidLink: 'This link is invalid or uses an unsupported protocol.',
+    copyLink: 'Copy link',
+    linkCopied: 'Link copied to clipboard',
     noData: 'No Data',
     noRecentProjects: 'No recent projects',
     yes: 'Yes',

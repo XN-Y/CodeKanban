@@ -39,6 +39,14 @@
                   <n-button
                     size="tiny"
                     quaternary
+                    :loading="isAssistantActionLoading(item.message)"
+                    @click="copyMessageContent(item)"
+                  >
+                    copy
+                  </n-button>
+                  <n-button
+                    size="tiny"
+                    quaternary
                     :type="isRawMode(item.key) ? 'primary' : 'default'"
                     :loading="isAssistantActionLoading(item.message)"
                     @click="toggleRawMode(item)"
@@ -58,7 +66,7 @@
             <div
               v-else-if="item.renderedContent"
               class="message-content chat-markdown"
-              v-html="renderMarkdown(item.renderedContent)"
+              v-html="renderMarkdown(item.renderedContent, markdownRenderOptions)"
             ></div>
 
             <div v-if="item.attachments.length" class="message-attachments">
@@ -260,9 +268,15 @@ import { useTimeAgo } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
 import { CopyOutline, ImageOutline, LogoGithub, RefreshOutline } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useConversationVirtualizer } from '@/composables/useConversationVirtualizer';
 import { renderMarkdown } from '@/utils/markdown';
-import { resolveNavigableHref } from '@/utils/messageLinkNavigation';
+import {
+  getClickedMarkdownCodeCopyText,
+  getClickedMarkdownLink,
+  getClickedMarkdownLinkCopyHref,
+  resolveNavigableHref,
+} from '@/utils/messageLinkNavigation';
 import {
   estimateConversationMessageHeight,
   recordConversationMessageHeight,
@@ -358,6 +372,7 @@ const emit = defineEmits<{
 const { t } = useLocale();
 const dialog = useDialog();
 const message = useMessage();
+const { copyText } = useAppClipboard();
 
 const showUserOnly = ref(false);
 const conversationContainerRef = ref<HTMLElement | null>(null);
@@ -392,6 +407,12 @@ const displayMessages = computed<DisplayMessageItem[]>(() => {
 });
 
 const emptyText = computed(() => props.emptyText || t('terminal.noMessages'));
+const markdownRenderOptions = computed(() => ({
+  enableCodeBlockCopy: true,
+  codeBlockCopyLabel: 'copy',
+  enableLinkCopy: true,
+  linkCopyLabel: t('common.copyLink'),
+}));
 
 const userMessageKeys = computed(() => {
   return displayMessages.value.filter(item => item.message.role === 'user').map(item => item.key);
@@ -781,28 +802,34 @@ function handleConversationScroll() {
   scheduleNavigationSync();
 }
 
-function getClickedMessageAnchor(
-  target: EventTarget | null,
-  currentTarget: EventTarget | null
-): HTMLAnchorElement | null {
-  if (!(target instanceof Element) || !(currentTarget instanceof HTMLElement)) {
-    return null;
-  }
-
-  const anchor = target.closest('a[href]');
-  if (!(anchor instanceof HTMLAnchorElement) || !currentTarget.contains(anchor)) {
-    return null;
-  }
-
-  return anchor.closest('.chat-markdown') ? anchor : null;
-}
-
 function handleMarkdownLinkClick(event: MouseEvent) {
   if (event.defaultPrevented || typeof window === 'undefined') {
     return;
   }
 
-  const anchor = getClickedMessageAnchor(event.target, event.currentTarget);
+  const codeText = getClickedMarkdownCodeCopyText(event.target, event.currentTarget);
+  if (codeText) {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyText(codeText, {
+      failureMessage: t('terminal.copyFailed'),
+      successMessage: t('common.copySuccess'),
+    });
+    return;
+  }
+
+  const copyHref = getClickedMarkdownLinkCopyHref(event.target, event.currentTarget);
+  if (copyHref) {
+    event.preventDefault();
+    event.stopPropagation();
+    void copyText(copyHref, {
+      failureMessage: t('terminal.copyFailed'),
+      successMessage: t('common.linkCopied'),
+    });
+    return;
+  }
+
+  const anchor = getClickedMarkdownLink(event.target, event.currentTarget);
   if (!anchor) {
     return;
   }
@@ -966,6 +993,14 @@ async function toggleRawMode(item: RenderMessageItem) {
   }
 }
 
+async function copyMessageContent(item: RenderMessageItem) {
+  const content = (await ensureToolResultLoaded(item.message)) || item.rawContent;
+  await copyText(content, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('common.copySuccess'),
+  });
+}
+
 function getImagePreviewState(attachmentId: string): ImagePreviewState {
   return previewCache.value[attachmentId] || { status: 'idle' };
 }
@@ -1070,12 +1105,10 @@ async function copySessionId() {
   if (!props.sessionInfo?.sessionId) {
     return;
   }
-  try {
-    await navigator.clipboard.writeText(props.sessionInfo.sessionId);
-    message.success(t('terminal.aiSessionIdCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(props.sessionInfo.sessionId, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.aiSessionIdCopied'),
+  });
 }
 
 onBeforeUnmount(() => {

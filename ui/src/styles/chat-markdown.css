@@ -117,6 +117,46 @@
   text-decoration-color: currentColor;
 }
 
+.chat-markdown .message-link-inline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45em;
+  max-width: 100%;
+}
+
+.chat-markdown .message-link-copy-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--n-primary-color) 18%, var(--n-border-color));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-primary-color) 9%, var(--app-surface-color, #fff));
+  color: var(--n-text-color-2);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.chat-markdown .message-link-copy-button:hover {
+  border-color: color-mix(in srgb, var(--n-primary-color) 28%, var(--n-border-color));
+  background: color-mix(in srgb, var(--n-primary-color) 16%, var(--app-surface-color, #fff));
+  color: var(--n-primary-color);
+}
+
+.chat-markdown .message-link-copy-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--n-primary-color) 35%, transparent);
+  outline-offset: 2px;
+}
+
 .chat-markdown hr {
   margin: 1.2em 0;
   border: none;
@@ -146,6 +186,30 @@
   box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
 }
 
+.chat-markdown .markdown-code-copy-button {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 1;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--n-text-color-2);
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition:
+    color 0.18s ease,
+    opacity 0.18s ease;
+}
+
+.chat-markdown .markdown-code-copy-button:hover {
+  color: var(--n-primary-color);
+  opacity: 1;
+}
+
 .chat-markdown pre.markdown-code-block[data-language]::before {
   content: attr(data-language);
   display: block;
@@ -155,6 +219,10 @@
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.chat-markdown pre.markdown-code-block[data-code-copy='true'][data-language]::before {
+  padding-right: 56px;
 }
 
 .chat-markdown pre.markdown-code-block code.hljs {
@@ -170,6 +238,10 @@
 
 .chat-markdown pre.markdown-code-block:not([data-language]) code.hljs {
   padding-top: 14px;
+}
+
+.chat-markdown pre.markdown-code-block[data-code-copy='true']:not([data-language]) code.hljs {
+  padding-top: 36px;
 }
 
 .chat-markdown table {

@@ -350,6 +350,7 @@ import {
   buildProjectBrowserProjectLocation,
   type ProjectBrowserMode,
 } from '@/components/project/projectBrowserNavigation';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useAppStore } from '@/stores/app';
 import type { ProjectPriority } from '@/stores/project';
@@ -389,6 +390,7 @@ const webSessionStore = useWebSessionStore();
 const appStore = useAppStore();
 const { t } = useLocale();
 const message = useMessage();
+const { copyText } = useAppClipboard();
 const dialog = useDialog();
 
 const isPageMode = computed(() => props.mode === 'page');
@@ -435,11 +437,14 @@ const checkForUpdates = async () => {
   }
 };
 
-const copyUpdateCommand = () => {
+const copyUpdateCommand = async () => {
   const command = 'npm install -g codekanban@latest';
-  navigator.clipboard.writeText(command).then(() => {
-    message.success(t('update.commandCopied'));
-    showUpdateModal.value = false;
+  await copyText(command, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('update.commandCopied'),
+    onSuccess: () => {
+      showUpdateModal.value = false;
+    },
   });
 };
 

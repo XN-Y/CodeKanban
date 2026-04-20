@@ -26,6 +26,8 @@ export default {
     openLinkMessage: '该链接将会在新标签页打开，确认继续？',
     openLinkFailed: '打开链接失败，请检查浏览器是否拦截了弹窗',
     invalidLink: '链接地址无效或不受支持',
+    copyLink: '复制链接',
+    linkCopied: '链接已复制到剪贴板',
     noData: '暂无数据',
     noRecentProjects: '暂无最近项目',
     yes: '是',

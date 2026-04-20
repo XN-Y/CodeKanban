@@ -269,6 +269,7 @@ import { computed, ref, watch } from 'vue';
 import { useDialog, useMessage } from 'naive-ui';
 import { CloseOutline, AddOutline, CopyOutline } from '@vicons/ionicons5';
 import dayjs from 'dayjs';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useTaskStore } from '@/stores/task';
 import { useProjectStore } from '@/stores/project';
 import { useResponsive } from '@/composables/useResponsive';
@@ -288,6 +289,7 @@ import ConversationViewer, { type SessionInfo } from '@/components/common/Conver
 
 const { t } = useLocale();
 const { isMobile, windowWidth } = useResponsive();
+const { copyText } = useAppClipboard();
 
 // 动态计算抽屉宽度
 const drawerWidth = computed(() => {
@@ -513,12 +515,10 @@ async function viewLinkedConversation(session: TaskAISessionWithDetails) {
 
 // 复制 Session ID
 async function copySessionId(session: TaskAISessionWithDetails) {
-  try {
-    await navigator.clipboard.writeText(session.sessionId);
-    message.success(t('task.sessionIdCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(session.sessionId, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('task.sessionIdCopied'),
+  });
 }
 
 // 打开关联 AI Session 模态框

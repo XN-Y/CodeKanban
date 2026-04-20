@@ -339,7 +339,7 @@
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
-import { useDialog, useMessage } from 'naive-ui';
+import { useDialog } from 'naive-ui';
 import { useProjectStore } from '@/stores/project';
 import { useTerminalStore } from '@/stores/terminal';
 import { useWebSessionStore } from '@/stores/webSession';
@@ -359,6 +359,7 @@ import {
   resolveProjectSessionBadge,
   type ProjectSessionBadge,
 } from '@/utils/projectSessionBadge';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { formatVersionForDisplay } from '@/utils/versionDisplay';
 import type { ProjectPriority } from '@/stores/project';
 import type { DropdownOption } from 'naive-ui';
@@ -367,7 +368,7 @@ import { useReq } from '@/api';
 
 const { t } = useLocale();
 const dialog = useDialog();
-const message = useMessage();
+const { copyText } = useAppClipboard();
 
 interface UpdateInfo {
   currentVersion: string;
@@ -463,11 +464,14 @@ const checkForUpdates = async () => {
   }
 };
 
-const copyUpdateCommand = () => {
+const copyUpdateCommand = async () => {
   const command = 'npm install -g codekanban@latest';
-  navigator.clipboard.writeText(command).then(() => {
-    message.success(t('update.commandCopied'));
-    showUpdateModal.value = false;
+  await copyText(command, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('update.commandCopied'),
+    onSuccess: () => {
+      showUpdateModal.value = false;
+    },
   });
 };
 

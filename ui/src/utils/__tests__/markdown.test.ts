@@ -22,6 +22,20 @@ describe('renderMarkdown', () => {
     expect(html).toContain('&lt;div class=&quot;box&quot;&gt;');
   });
 
+  it('adds a code-block copy button only when enabled', () => {
+    const enabledHtml = renderMarkdown('```bash\necho "hi"\n```', {
+      enableCodeBlockCopy: true,
+      codeBlockCopyLabel: 'copy',
+    });
+    const disabledHtml = renderMarkdown('```bash\necho "hi"\n```');
+
+    expect(enabledHtml).toContain('data-message-code-copy="true"');
+    expect(enabledHtml).toContain('class="markdown-code-copy-button"');
+    expect(enabledHtml).toContain('>copy</button>');
+    expect(enabledHtml).toContain('data-code-copy="true"');
+    expect(disabledHtml).not.toContain('data-message-code-copy="true"');
+  });
+
   it('keeps link rendering intact when highlighting is disabled', () => {
     const html = renderMarkdown('[docs](https://example.com)', {
       disableCodeHighlight: true,
@@ -30,6 +44,31 @@ describe('renderMarkdown', () => {
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('data-message-link="true"');
     expect(html).toContain('target="_blank"');
+  });
+
+  it('adds a copy button only for absolute http and https links when enabled', () => {
+    const html = renderMarkdown(
+      [
+        '[http](http://10.128.128.111:6032/)',
+        '[https](https://example.com/docs)',
+        '[relative](/docs/getting-started)',
+      ].join('\n\n'),
+      {
+        enableLinkCopy: true,
+        linkCopyLabel: 'Copy link',
+      }
+    );
+
+    expect(html).toContain('data-message-link-copy="true"');
+    expect(html).toContain('data-message-link-copy-href="http://10.128.128.111:6032/"');
+    expect(html).toContain('data-message-link-copy-href="https://example.com/docs"');
+    expect(html).not.toContain('data-message-link-copy-href="/docs/getting-started"');
+  });
+
+  it('does not add copy buttons when link copy is disabled', () => {
+    const html = renderMarkdown('[http](http://10.128.128.111:6032/)');
+
+    expect(html).not.toContain('data-message-link-copy="true"');
   });
 
   it('preserves ordered, unordered, and nested list structure', () => {

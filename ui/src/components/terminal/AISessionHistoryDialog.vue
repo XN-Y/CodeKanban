@@ -310,6 +310,7 @@ import {
   FolderOutline,
   CloseOutline,
 } from '@vicons/ionicons5';
+import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { http } from '@/api/http';
 import { useTimeAgo } from '@vueuse/core';
@@ -361,6 +362,7 @@ const emit = defineEmits<{
 
 const { t } = useLocale();
 const message = useMessage();
+const { copyText } = useAppClipboard();
 const projectStore = useProjectStore();
 
 // 通过 projectId 获取项目路径
@@ -561,12 +563,10 @@ function truncatePath(path: string, maxLen = 50) {
 }
 
 async function copyPath(path: string) {
-  try {
-    await navigator.clipboard.writeText(path);
-    message.success(t('terminal.pathCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(path, {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.pathCopied'),
+  });
 }
 
 function getResumeCommand(session: AISessionSummary) {
@@ -574,12 +574,10 @@ function getResumeCommand(session: AISessionSummary) {
 }
 
 async function copyResumeCommand(session: AISessionSummary) {
-  try {
-    await navigator.clipboard.writeText(getResumeCommand(session));
-    message.success(t('terminal.commandCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(getResumeCommand(session), {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.commandCopied'),
+  });
 }
 
 async function resumeSession(session: AISessionSummary) {
@@ -590,12 +588,10 @@ async function resumeSession(session: AISessionSummary) {
   }
 
   // Copy resume command to clipboard
-  try {
-    await navigator.clipboard.writeText(getResumeCommand(session));
-    message.success(t('terminal.resumeCommandCopied'));
-  } catch {
-    message.error(t('terminal.copyFailed'));
-  }
+  await copyText(getResumeCommand(session), {
+    failureMessage: t('terminal.copyFailed'),
+    successMessage: t('terminal.resumeCommandCopied'),
+  });
 
   // Create new terminal
   emit('resume', session.sessionId, session.type);
