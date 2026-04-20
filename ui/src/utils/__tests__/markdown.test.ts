@@ -32,6 +32,26 @@ describe('renderMarkdown', () => {
     expect(html).toContain('target="_blank"');
   });
 
+  it('preserves ordered, unordered, and nested list structure', () => {
+    const html = renderMarkdown(
+      [
+        '1. first',
+        '2. second',
+        '   - child',
+        '   - child two',
+        '3. third',
+        '   1. nested one',
+        '   2. nested two',
+      ].join('\n')
+    );
+
+    expect(html).toContain('<ol>');
+    expect(html).toContain('<ul>');
+    expect(html).toContain('<li>first</li>');
+    expect(html).toContain('<li>child</li>');
+    expect(html).toContain('<li>nested one</li>');
+  });
+
   it('renders standalone highlighted diff blocks', () => {
     const html = renderHighlightedCodeBlock('@@ -1 +1 @@\n-old\n+new\n', 'diff');
 

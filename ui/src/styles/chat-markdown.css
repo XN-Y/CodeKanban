@@ -53,6 +53,32 @@
   padding-left: 1.5em;
 }
 
+.chat-markdown ul {
+  list-style-position: outside;
+  list-style-type: disc;
+}
+
+.chat-markdown ul ul {
+  list-style-type: circle;
+}
+
+.chat-markdown ul ul ul {
+  list-style-type: square;
+}
+
+.chat-markdown ol {
+  list-style-position: outside;
+  list-style-type: decimal;
+}
+
+.chat-markdown ol ol {
+  list-style-type: lower-alpha;
+}
+
+.chat-markdown ol ol ol {
+  list-style-type: lower-roman;
+}
+
 .chat-markdown li + li {
   margin-top: 0.32em;
 }
