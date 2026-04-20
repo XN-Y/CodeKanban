@@ -562,6 +562,246 @@ describe('webSession loading behavior', () => {
     expect(store.getPendingInputs(session.id)[0]?.id).toBe(optimistic[0]?.id);
   });
 
+  it('hydrates first sends from command-channel snapshots before falling back to HTTP snapshots', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-command-hydration',
+      status: 'idle',
+      assistantState: null,
+      itemCount: 0,
+      turnCount: 0,
+      updatedAt: '2026-04-09T10:00:00.000Z',
+      lastMessageAt: null,
+    });
+    const runningSession = makeSession({
+      ...session,
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 1,
+      turnCount: 1,
+      updatedAt: '2026-04-09T10:00:02.000Z',
+      lastMessageAt: '2026-04-09T10:00:02.000Z',
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+
+    const sendPromise = store.sendMessage(session.id, 'hello', []);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket).not.toBeNull();
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+    });
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'snap',
+      sid: session.id,
+      ts: Date.now(),
+      s: toWireSession(runningSession),
+      h: {
+        its: [
+          {
+            id: 'history-live-send',
+            oi: 1,
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'hello',
+            ts2: Date.parse('2026-04-09T10:00:01.000Z'),
+          },
+        ],
+        hm: false,
+        tot: 1,
+      },
+      pi: [],
+    });
+
+    await sendPromise;
+
+    expect(snapshotMock).not.toHaveBeenCalled();
+    expect(store.getBlocks(session.id)).toHaveLength(1);
+    expect(store.getBlocks(session.id)[0]?.text).toBe('hello');
+    expect(store.getLiveState(session.id)).toMatchObject({
+      phase: 'starting',
+      running: true,
+    });
+  });
+
+  it('falls back to HTTP snapshots when a send only receives an ack', async () => {
+    vi.useFakeTimers();
+    window.setTimeout = setTimeout;
+    window.clearTimeout = clearTimeout;
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-ack-only',
+      status: 'idle',
+      assistantState: null,
+      itemCount: 0,
+      turnCount: 0,
+      updatedAt: '2026-04-09T10:00:00.000Z',
+      lastMessageAt: null,
+    });
+    const hydratedSession = makeSession({
+      ...session,
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 1,
+      turnCount: 1,
+      updatedAt: '2026-04-09T10:00:03.000Z',
+      lastMessageAt: '2026-04-09T10:00:03.000Z',
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session: hydratedSession,
+      history: {
+        items: [
+          {
+            id: 'history-snapshot-send',
+            oi: 1,
+            kd: 'user',
+            tp: 'user_message',
+            txt: 'hello from snapshot',
+            ts2: Date.parse('2026-04-09T10:00:02.000Z'),
+          },
+        ],
+        hasMore: false,
+        total: 1,
+      },
+      pendingInputs: [],
+    });
+
+    await store.loadSessions(session.projectId);
+
+    const sendPromise = store.sendMessage(session.id, 'hello from snapshot', []);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket).not.toBeNull();
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'send',
+      ok: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+    await sendPromise;
+
+    expect(snapshotMock).toHaveBeenCalledWith(session.projectId, session.id);
+    expect(store.getBlocks(session.id)).toHaveLength(1);
+    expect(store.getBlocks(session.id)[0]?.text).toBe('hello from snapshot');
+  });
+
+  it('keeps abort pending until snapshot hydration observes the session stop', async () => {
+    vi.useFakeTimers();
+    window.setTimeout = setTimeout;
+    window.clearTimeout = clearTimeout;
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+
+    const store = useWebSessionStore();
+    const runningSession = makeSession({
+      id: 'session-abort-hydration',
+      status: 'running',
+      assistantState: 'working',
+      itemCount: 1,
+      turnCount: 1,
+      updatedAt: '2026-04-09T10:00:00.000Z',
+    });
+    const stoppedSession = makeSession({
+      ...runningSession,
+      status: 'idle',
+      assistantState: null,
+      updatedAt: '2026-04-09T10:00:03.000Z',
+    });
+
+    listMock.mockResolvedValue([runningSession]);
+    snapshotMock
+      .mockResolvedValueOnce({
+        session: runningSession,
+        history: {
+          items: [],
+          hasMore: false,
+          total: 0,
+        },
+        pendingInputs: [],
+      })
+      .mockResolvedValueOnce({
+        session: stoppedSession,
+        history: {
+          items: [],
+          hasMore: false,
+          total: 0,
+        },
+        pendingInputs: [],
+      });
+
+    await store.loadSessions(runningSession.projectId);
+
+    const abortPromise = store.abortSession(runningSession.id);
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket).not.toBeNull();
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: runningSession.id,
+      ts: Date.now(),
+      op: 'abort',
+      ok: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(900);
+    await abortPromise;
+
+    expect(snapshotMock).toHaveBeenCalledTimes(2);
+    expect(store.getLiveState(runningSession.id)).toMatchObject({
+      running: false,
+      phase: 'idle',
+    });
+  });
+
   it('keeps completion notifications driven by the dedicated event stream websocket', async () => {
     const store = useWebSessionStore();
     const runningSession = makeSession({

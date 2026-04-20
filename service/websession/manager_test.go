@@ -512,6 +512,58 @@ func TestManagerHandleHeartbeatPayloadRepliesToPing(t *testing.T) {
 	}
 }
 
+func TestHandleSendCommandRepliesWithAckAndSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "basic"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_send","sid":%q,"op":"send","p":{"txt":"first","atts":[]}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 2 {
+		t.Fatalf("expected ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "send" {
+		t.Fatalf("expected first frame to be send ack, got %#v", conn.frames[0])
+	}
+	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
+		t.Fatalf("expected second frame to be session snapshot, got %#v", conn.frames[1])
+	}
+	if conn.frames[1].History == nil || conn.frames[1].History.Total < 1 {
+		t.Fatalf("expected snapshot history to contain the new message, got %#v", conn.frames[1].History)
+	}
+	if conn.frames[1].Session == nil || conn.frames[1].Session.Status == "" {
+		t.Fatalf("expected snapshot to include session summary, got %#v", conn.frames[1].Session)
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
+}
+
 func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -571,6 +623,63 @@ func TestManagerBroadcastFiltersHistoryFramesByFocusedSession(t *testing.T) {
 	if otherConn.frames[0].Operation != "session" {
 		t.Fatalf("expected unfocused client frame to be session summary, got op=%q", otherConn.frames[0].Operation)
 	}
+}
+
+func TestHandleApprovalCommandRepliesWithAckAndSnapshot(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: writeFakeCodexAppServerCLI(t, "approval"),
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "make the edit", nil); err != nil {
+		t.Fatalf("SendMessage returned error: %v", err)
+	}
+	request := waitForPendingServerRequest(t, manager, created.ID, pendingServerRequestFileChangeApproval)
+	if request == nil {
+		t.Fatal("expected pending approval request")
+	}
+
+	conn := &captureWSConn{}
+	client := manager.RegisterCommandClient(conn)
+	defer manager.UnregisterClient(client)
+
+	if err := manager.HandleCommand(
+		context.Background(),
+		client,
+		[]byte(fmt.Sprintf(`{"v":1,"k":"cmd","rid":"req_approve","sid":%q,"op":"approve","p":{}}`, created.ID)),
+	); err != nil {
+		t.Fatalf("HandleCommand returned error: %v", err)
+	}
+
+	if len(conn.frames) != 2 {
+		t.Fatalf("expected approve ack and snapshot frames, got %#v", conn.frames)
+	}
+	if conn.frames[0].Kind != "ack" || conn.frames[0].Operation != "approve" {
+		t.Fatalf("expected first frame to be approve ack, got %#v", conn.frames[0])
+	}
+	if conn.frames[1].Kind != "snap" || conn.frames[1].SessionID != created.ID {
+		t.Fatalf("expected second frame to be approval snapshot, got %#v", conn.frames[1])
+	}
+	if conn.frames[1].Session == nil {
+		t.Fatalf("expected snapshot summary after approval, got %#v", conn.frames[1])
+	}
+
+	waitForSessionToSettle(t, manager, created.ID)
 }
 
 func TestShouldMarkSessionUnreadForEvent(t *testing.T) {

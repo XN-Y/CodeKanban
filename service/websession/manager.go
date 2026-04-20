@@ -2044,6 +2044,28 @@ func (m *Manager) handleConnectCommand(ctx context.Context, client *client, fram
 	return client.send(newSnapshotFrame(frame.SessionID, snap))
 }
 
+func (m *Manager) sendAckWithSnapshot(
+	ctx context.Context,
+	client *client,
+	frame wireCommandFrame,
+) error {
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	snap, err := m.Snapshot(ctx, frame.SessionID, DefaultHistoryWindow)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Debug("failed to build command hydration snapshot",
+				zap.String("sessionId", frame.SessionID),
+				zap.String("operation", frame.Operation),
+				zap.Error(err),
+			)
+		}
+		return nil
+	}
+	return client.send(newSnapshotFrame(frame.SessionID, snap))
+}
+
 func (m *Manager) handleHistoryCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
 	var payload struct {
 		Limit int `json:"lim"`
@@ -2076,7 +2098,7 @@ func (m *Manager) handleApprovalCommand(client *client, frame wireCommandFrame, 
 	if err := m.respondToApproval(frame.SessionID, action); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
 }
 
 func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame) error {
@@ -2090,7 +2112,7 @@ func (m *Manager) handleUserInputCommand(client *client, frame wireCommandFrame)
 	if err := m.respondToUserInput(frame.SessionID, payload.ItemID, payload.Answers); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
 }
 
 func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFrame) error {
@@ -2106,7 +2128,7 @@ func (m *Manager) handlePendingDeleteCommand(client *client, frame wireCommandFr
 	if !m.removePendingInput(frame.SessionID, payload.PendingID) {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "not_found", "pending input not found", false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+	return m.sendAckWithSnapshot(context.Background(), client, frame)
 }
 
 func (m *Manager) handleRenameCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
@@ -2337,7 +2359,7 @@ func (m *Manager) handleSendCommand(ctx context.Context, client *client, frame w
 	); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "invalid_state", err.Error(), false))
 	}
-	return client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil))
+	return m.sendAckWithSnapshot(ctx, client, frame)
 }
 
 func (m *Manager) SendMessage(ctx context.Context, sessionID, text string, attachmentIDs []string) error {

@@ -308,6 +308,25 @@ export interface WebSessionPendingInput {
   createdAt: number;
 }
 
+type RuntimeMutationStateSnapshot = {
+  blockCount: number;
+  historyTotal: number;
+  pendingInputCount: number;
+  livePhase: WebSessionLiveState['phase'];
+  liveRunning: boolean;
+  liveUpdatedAt: number;
+  approvalId: string;
+  userInputId: string;
+};
+
+type RuntimeMutationHydrationOptions = {
+  label: string;
+  timeoutMs?: number;
+  passiveWaitMs?: number;
+  snapshotPollMs?: number;
+  predicate: () => boolean;
+};
+
 export interface WebSessionDraftState {
   text: string;
   attachments: WebSessionAttachment[];
@@ -398,6 +417,11 @@ const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
 const WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS = WEB_SESSION_HEARTBEAT_INTERVAL_MS * 2 + 5000;
 const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
 const WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS = 5000;
+const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 120;
+const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
+const WEB_SESSION_RUNTIME_MUTATION_SNAPSHOT_POLL_MS = 180;
+const WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS = 2500;
+const WEB_SESSION_RUNTIME_ABORT_TIMEOUT_MS = 5000;
 const PROCESS_RESTART_REASON = 'process_restart';
 const DEFAULT_RECOVERY_MESSAGE =
   'The previous run was interrupted because the app restarted. Send a new message to continue.';
@@ -2315,6 +2339,113 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
+  function snapshotRuntimeMutationState(sessionId: string): RuntimeMutationStateSnapshot {
+    const liveState = getLiveState(sessionId);
+    return {
+      blockCount: buildBlocks(sessionId).length,
+      historyTotal: getHistoryMeta(sessionId).total,
+      pendingInputCount: getPendingInputs(sessionId).length,
+      livePhase: liveState.phase,
+      liveRunning: liveState.running,
+      liveUpdatedAt: liveState.updatedAt,
+      approvalId: getPendingApproval(sessionId)?.id ?? '',
+      userInputId: getPendingUserInput(sessionId)?.itemId ?? '',
+    };
+  }
+
+  function delayRuntimeMutation(ms: number) {
+    const timeoutMs = Math.max(0, Math.trunc(ms));
+    return new Promise<void>(resolve => {
+      globalThis.setTimeout(resolve, timeoutMs);
+    });
+  }
+
+  async function waitForRuntimeMutationPredicate(
+    predicate: () => boolean,
+    timeoutMs: number,
+    pollMs: number
+  ) {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    while (Date.now() < deadline) {
+      if (predicate()) {
+        return true;
+      }
+      await delayRuntimeMutation(Math.min(Math.max(1, pollMs), Math.max(1, deadline - Date.now())));
+    }
+    return predicate();
+  }
+
+  async function hydrateRuntimeMutation(
+    sessionId: string,
+    options: RuntimeMutationHydrationOptions
+  ) {
+    if (options.predicate()) {
+      return true;
+    }
+
+    const passiveWaitMs = Math.max(
+      0,
+      options.passiveWaitMs ?? WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS
+    );
+    if (passiveWaitMs > 0) {
+      const settledPassively = await waitForRuntimeMutationPredicate(
+        options.predicate,
+        passiveWaitMs,
+        WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS
+      );
+      if (settledPassively) {
+        return true;
+      }
+    }
+
+    const session = findSessionById(sessionId);
+    if (!session?.projectId || session.archivedAt) {
+      return options.predicate();
+    }
+
+    const deadline =
+      Date.now() + Math.max(0, options.timeoutMs ?? WEB_SESSION_RUNTIME_MUTATION_TIMEOUT_MS);
+    const snapshotPollMs = Math.max(
+      1,
+      options.snapshotPollMs ?? WEB_SESSION_RUNTIME_MUTATION_SNAPSHOT_POLL_MS
+    );
+    let lastSnapshotError: unknown = null;
+
+    while (Date.now() < deadline) {
+      if (options.predicate()) {
+        return true;
+      }
+
+      try {
+        await loadSessionSnapshot(session.projectId, sessionId, {
+          rememberActive: false,
+        });
+        lastSnapshotError = null;
+      } catch (error) {
+        lastSnapshotError = error;
+      }
+
+      if (options.predicate()) {
+        return true;
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        break;
+      }
+      await delayRuntimeMutation(Math.min(snapshotPollMs, remainingMs));
+    }
+
+    if (lastSnapshotError) {
+      console.warn('[Web Session] Runtime mutation hydration did not settle cleanly', {
+        sessionId,
+        label: options.label,
+        error: lastSnapshotError,
+      });
+    }
+    return options.predicate();
+  }
+
   function updateSessionStatus(
     sessionId: string,
     updater: (current: WebSessionSummary) => WebSessionSummary
@@ -2823,6 +2954,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return promise;
   }
 
+  async function runRuntimeMutationCommand(
+    sessionId: string,
+    op: string,
+    payload: Record<string, unknown>,
+    hydration: RuntimeMutationHydrationOptions
+  ) {
+    await sendCommand(op, sessionId, payload);
+    await hydrateRuntimeMutation(sessionId, hydration);
+  }
+
   async function loadSessions(projectId: string, force = false) {
     if (!projectId) {
       return [];
@@ -3120,6 +3261,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (session?.archivedAt) {
       throw new Error('session is archived');
     }
+    const beforeState = snapshotRuntimeMutationState(sessionId);
     let optimisticPendingId = '';
     if (session?.status === 'running' && mode) {
       optimisticPendingId = `pending_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -3136,11 +3278,46 @@ export const useWebSessionStore = defineStore('web-session', () => {
     }
 
     try {
-      await sendCommand('send', sessionId, {
-        txt: text,
-        atts: attachmentIds,
-        ...(mode ? { mode, pid: optimisticPendingId } : {}),
-      });
+      await runRuntimeMutationCommand(
+        sessionId,
+        'send',
+        {
+          txt: text,
+          atts: attachmentIds,
+          ...(mode ? { mode, pid: optimisticPendingId } : {}),
+        },
+        {
+          label: 'send',
+          predicate: () => {
+            if (
+              optimisticPendingId &&
+              getPendingInputs(sessionId).some(item => item.id === optimisticPendingId)
+            ) {
+              return true;
+            }
+            const liveState = getLiveState(sessionId);
+            if (buildBlocks(sessionId).length > beforeState.blockCount) {
+              return true;
+            }
+            if (getHistoryMeta(sessionId).total > beforeState.historyTotal) {
+              return true;
+            }
+            if (getPendingInputs(sessionId).length > beforeState.pendingInputCount) {
+              return true;
+            }
+            if (!beforeState.liveRunning && liveState.running) {
+              return true;
+            }
+            if (
+              liveState.phase !== beforeState.livePhase &&
+              liveState.updatedAt > beforeState.liveUpdatedAt
+            ) {
+              return true;
+            }
+            return liveState.updatedAt > beforeState.liveUpdatedAt && liveState.phase !== 'idle';
+          },
+        }
+      );
     } catch (error) {
       if (optimisticPendingId) {
         setPendingInputs(
@@ -3153,19 +3330,78 @@ export const useWebSessionStore = defineStore('web-session', () => {
   }
 
   async function removePendingInput(sessionId: string, pendingId: string) {
-    await sendCommand('pending_del', sessionId, { id: pendingId });
+    await runRuntimeMutationCommand(
+      sessionId,
+      'pending_del',
+      { id: pendingId },
+      {
+        label: 'pending_del',
+        predicate: () => !getPendingInputs(sessionId).some(item => item.id === pendingId),
+      }
+    );
   }
 
   async function abortSession(sessionId: string) {
-    await sendCommand('abort', sessionId, {});
+    await runRuntimeMutationCommand(
+      sessionId,
+      'abort',
+      {},
+      {
+        label: 'abort',
+        timeoutMs: WEB_SESSION_RUNTIME_ABORT_TIMEOUT_MS,
+        predicate: () => !getLiveState(sessionId).running,
+      }
+    );
   }
 
   async function approveSession(sessionId: string) {
-    await sendCommand('approve', sessionId, {});
+    const beforeState = snapshotRuntimeMutationState(sessionId);
+    await runRuntimeMutationCommand(
+      sessionId,
+      'approve',
+      {},
+      {
+        label: 'approve',
+        predicate: () => {
+          const liveState = getLiveState(sessionId);
+          if (beforeState.approvalId && !getPendingApproval(sessionId)) {
+            return true;
+          }
+          if (
+            liveState.phase !== beforeState.livePhase &&
+            liveState.updatedAt > beforeState.liveUpdatedAt
+          ) {
+            return true;
+          }
+          return liveState.running && liveState.phase !== 'waiting_approval';
+        },
+      }
+    );
   }
 
   async function rejectSession(sessionId: string) {
-    await sendCommand('reject', sessionId, {});
+    const beforeState = snapshotRuntimeMutationState(sessionId);
+    await runRuntimeMutationCommand(
+      sessionId,
+      'reject',
+      {},
+      {
+        label: 'reject',
+        predicate: () => {
+          const liveState = getLiveState(sessionId);
+          if (beforeState.approvalId && !getPendingApproval(sessionId)) {
+            return true;
+          }
+          if (
+            liveState.phase !== beforeState.livePhase &&
+            liveState.updatedAt > beforeState.liveUpdatedAt
+          ) {
+            return true;
+          }
+          return !liveState.running && liveState.phase !== 'waiting_approval';
+        },
+      }
+    );
   }
 
   async function answerUserInput(
@@ -3173,7 +3409,32 @@ export const useWebSessionStore = defineStore('web-session', () => {
     itemId: string,
     answers: Record<string, string[]>
   ) {
-    await sendCommand('user_input', sessionId, { iid: itemId, ans: answers });
+    const beforeState = snapshotRuntimeMutationState(sessionId);
+    await runRuntimeMutationCommand(
+      sessionId,
+      'user_input',
+      { iid: itemId, ans: answers },
+      {
+        label: 'user_input',
+        predicate: () => {
+          const liveState = getLiveState(sessionId);
+          const pendingUserInput = getPendingUserInput(sessionId);
+          if (
+            beforeState.userInputId &&
+            (!pendingUserInput || pendingUserInput.itemId !== beforeState.userInputId)
+          ) {
+            return true;
+          }
+          if (
+            liveState.phase !== beforeState.livePhase &&
+            liveState.updatedAt > beforeState.liveUpdatedAt
+          ) {
+            return true;
+          }
+          return liveState.running && liveState.phase !== 'waiting_input';
+        },
+      }
+    );
   }
 
   async function loadMoreHistory(sessionId: string, limit = 80) {
