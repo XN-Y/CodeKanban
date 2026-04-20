@@ -10,6 +10,20 @@ describe('renderMarkdown', () => {
     expect(html).toContain('data-language="go"');
   });
 
+  it('highlights haxe fenced code blocks', () => {
+    const html = renderMarkdown('```haxe\nclass Main {}\n```');
+
+    expect(html).toContain('class="hljs language-haxe"');
+    expect(html).toContain('data-language="haxe"');
+  });
+
+  it('supports the hx alias for haxe fenced code blocks', () => {
+    const html = renderMarkdown('```hx\nclass Main {}\n```');
+
+    expect(html).toContain('class="hljs language-haxe"');
+    expect(html).toContain('data-language="hx"');
+  });
+
   it('can skip code highlighting for streaming renders', () => {
     const html = renderMarkdown('```html\n<div class="box">\n```', {
       disableCodeHighlight: true,

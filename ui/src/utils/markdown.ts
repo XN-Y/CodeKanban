@@ -6,6 +6,7 @@ import css from 'highlight.js/lib/languages/css';
 import diff from 'highlight.js/lib/languages/diff';
 import dockerfile from 'highlight.js/lib/languages/dockerfile';
 import go from 'highlight.js/lib/languages/go';
+import haxe from 'highlight.js/lib/languages/haxe';
 import ini from 'highlight.js/lib/languages/ini';
 import java from 'highlight.js/lib/languages/java';
 import javascript from 'highlight.js/lib/languages/javascript';
@@ -45,6 +46,7 @@ registerLanguage('css', css);
 registerLanguage('diff', diff);
 registerLanguage('dockerfile', dockerfile);
 registerLanguage('go', go);
+registerLanguage('haxe', haxe);
 registerLanguage('ini', ini);
 registerLanguage('java', java);
 registerLanguage('javascript', javascript);
@@ -67,6 +69,7 @@ const languageAliases: Record<string, string> = {
   docker: 'dockerfile',
   env: 'ini',
   h: 'c',
+  hx: 'haxe',
   hpp: 'cpp',
   htm: 'xml',
   html: 'xml',
