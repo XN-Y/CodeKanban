@@ -78,7 +78,39 @@ func (c *fileManagerController) handleListScopes(ctx *fiber.Ctx) error {
 func (c *fileManagerController) handleListChanges(ctx *fiber.Ctx) error {
 	projectID := strings.TrimSpace(ctx.Params("projectId"))
 	scopeID := ctx.Query("scopeId")
-	item, err := c.service.ListChanges(ctx.UserContext(), projectID, scopeID)
+	includeUntracked, err := parseBoolQueryWithDefault(ctx.Query("includeUntracked"), true)
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid includeUntracked")
+	}
+	withStats, err := parseBoolQueryWithDefault(ctx.Query("withStats"), true)
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid withStats")
+	}
+
+	var timeout time.Duration
+	if raw := strings.TrimSpace(ctx.Query("timeoutMs")); raw != "" {
+		timeoutMs, err := strconv.Atoi(raw)
+		if err != nil || timeoutMs < 0 {
+			return fiber.NewError(http.StatusBadRequest, "invalid timeoutMs")
+		}
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+
+	maxEntries := 0
+	if raw := strings.TrimSpace(ctx.Query("maxEntries")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return fiber.NewError(http.StatusBadRequest, "invalid maxEntries")
+		}
+		maxEntries = parsed
+	}
+
+	item, err := c.service.ListChanges(ctx.UserContext(), projectID, scopeID, filemanager.ListChangesOptions{
+		IncludeUntracked: &includeUntracked,
+		WithStats:        &withStats,
+		Timeout:          timeout,
+		MaxEntries:       maxEntries,
+	})
 	if err != nil {
 		return c.writeError(ctx, err)
 	}
@@ -144,6 +176,14 @@ func parseBoolQuery(value string) (bool, error) {
 		return false, err
 	}
 	return parsed, nil
+}
+
+func parseBoolQueryWithDefault(value string, defaultValue bool) (bool, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return defaultValue, nil
+	}
+	return strconv.ParseBool(trimmed)
 }
 
 func (c *fileManagerController) handlePreview(ctx *fiber.Ctx) error {

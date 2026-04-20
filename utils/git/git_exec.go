@@ -2,13 +2,13 @@ package git
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
 )
 
 var (
-	gitCommandEnv     = buildGitCommandEnv()
 	testEnvOverride   []string
 	testEnvOverrideMu sync.RWMutex
 )
@@ -42,7 +42,7 @@ func newGitCommandContext(ctx context.Context, dir string, args ...string) *exec
 	}
 
 	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = append([]string(nil), gitCommandEnv...)
+	cmd.Env = buildGitCommandEnv()
 
 	testEnvOverrideMu.RLock()
 	if len(testEnvOverride) > 0 {
@@ -54,4 +54,21 @@ func newGitCommandContext(ctx context.Context, dir string, args ...string) *exec
 		cmd.Dir = dir
 	}
 	return cmd
+}
+
+func startGitCommandStdoutPipe(
+	ctx context.Context,
+	dir string,
+	args ...string,
+) (*exec.Cmd, io.ReadCloser, error) {
+	cmd := newGitCommandContext(ctx, dir, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		_ = stdout.Close()
+		return nil, nil, err
+	}
+	return cmd, stdout, nil
 }

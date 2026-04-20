@@ -331,7 +331,7 @@ func TestListChangesReturnsDeletedAndModifiedEntries(t *testing.T) {
 		t.Fatalf("remove docs/guide.md: %v", err)
 	}
 
-	result, err := service.ListChanges(context.Background(), projectID, "")
+	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{})
 	if err != nil {
 		t.Fatalf("ListChanges returned error: %v", err)
 	}
@@ -361,6 +361,142 @@ func TestListChangesReturnsDeletedAndModifiedEntries(t *testing.T) {
 	}
 	if additionsByPath["docs/guide.md"] != 0 || deletionsByPath["docs/guide.md"] != 1 {
 		t.Fatalf("unexpected docs/guide.md diff stat: +%d -%d", additionsByPath["docs/guide.md"], deletionsByPath["docs/guide.md"])
+	}
+}
+
+func TestListChangesCanSkipUntracked(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+
+	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
+		IncludeUntracked: boolRef(false),
+		WithStats:        boolRef(false),
+	})
+	if err != nil {
+		t.Fatalf("ListChanges returned error: %v", err)
+	}
+	if result.UntrackedIncluded {
+		t.Fatalf("expected untrackedIncluded=false: %#v", result)
+	}
+	for _, entry := range result.Entries {
+		if entry.Status.Kind == GitStatusKindUntracked {
+			t.Fatalf("untracked entry should be excluded: %#v", entry)
+		}
+	}
+}
+
+func TestListChangesMarksTruncatedWhenEntryLimitExceeded(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+
+	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
+		WithStats:  boolRef(false),
+		MaxEntries: 1,
+	})
+	if err != nil {
+		t.Fatalf("ListChanges returned error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated result: %#v", result)
+	}
+	if result.WarningReason != changesWarningReasonEntryLimitExceeded {
+		t.Fatalf("unexpected warning reason: %#v", result.WarningReason)
+	}
+	if len(result.Entries) != 1 {
+		t.Fatalf("expected a single retained entry, got %d", len(result.Entries))
+	}
+}
+
+func TestListChangesReturnsPartialStatsWhenTimedOut(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	installSlowGitDiffWrapper(t)
+
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "docs", "guide.md"), []byte("guide\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite docs/guide.md: %v", err)
+	}
+
+	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
+		IncludeUntracked: boolRef(false),
+		WithStats:        boolRef(true),
+		Timeout:          150 * time.Millisecond,
+		MaxEntries:       1000,
+	})
+	if err != nil {
+		t.Fatalf("ListChanges returned error: %v", err)
+	}
+	if result.StatsComplete {
+		t.Fatalf("expected incomplete stats result: %#v", result)
+	}
+	if !result.StatsTimedOut {
+		t.Fatalf("expected statsTimedOut=true: %#v", result)
+	}
+
+	availableCount := 0
+	missingCount := 0
+	for _, entry := range result.Entries {
+		if entry.StatsAvailable {
+			availableCount++
+			continue
+		}
+		missingCount++
+		if entry.Additions != 0 || entry.Deletions != 0 {
+			t.Fatalf("missing stats should keep zero counts: %#v", entry)
+		}
+	}
+	if availableCount == 0 {
+		t.Fatalf("expected at least one completed stat before timeout: %#v", result.Entries)
+	}
+	if missingCount == 0 {
+		t.Fatalf("expected at least one skipped stat after timeout: %#v", result.Entries)
 	}
 }
 
@@ -461,4 +597,35 @@ func runFileManagerGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
+}
+
+func boolRef(value bool) *bool {
+	return &value
+}
+
+func installSlowGitDiffWrapper(t *testing.T) {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath git: %v", err)
+	}
+
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ]; then",
+		"  sleep \"${CODEKANBAN_TEST_GIT_DIFF_SLEEP:-0}\"",
+		"fi",
+		"exec \"$REAL_GIT\" \"$@\"",
+		"",
+	}, "\n")
+	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("CODEKANBAN_TEST_GIT_DIFF_SLEEP", "0.09")
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

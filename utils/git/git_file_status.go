@@ -1,10 +1,12 @@
 package git
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +37,12 @@ type DiffStat struct {
 	Deletions int64
 }
 
+type FileStatusResult struct {
+	Statuses   map[string]FileStatus
+	Truncated  bool
+	TotalCount int
+}
+
 func ListFileStatuses(path string) (map[string]FileStatus, error) {
 	return ListFileStatusesContext(context.Background(), path, true)
 }
@@ -44,17 +52,52 @@ func ListFileStatusesContext(
 	path string,
 	includeUntracked bool,
 ) (map[string]FileStatus, error) {
+	result, err := ListFileStatusesLimitedContext(ctx, path, includeUntracked, 0)
+	return result.Statuses, err
+}
+
+func ListFileStatusesLimitedContext(
+	ctx context.Context,
+	path string,
+	includeUntracked bool,
+	maxEntries int,
+) (FileStatusResult, error) {
 	untrackedMode := "--untracked-files=no"
 	if includeUntracked {
 		untrackedMode = "--untracked-files=all"
 	}
 
-	cmd := newGitCommandContext(ctx, path, "status", "--porcelain=2", "-z", untrackedMode)
-	output, err := cmd.Output()
+	cmd, stdout, err := startGitCommandStdoutPipe(
+		ctx,
+		path,
+		"status",
+		"--porcelain=2",
+		"-z",
+		untrackedMode,
+	)
 	if err != nil {
-		return nil, err
+		return FileStatusResult{}, err
 	}
-	return parseGitFileStatusesPorcelainV2(output), nil
+	defer stdout.Close()
+
+	parser := newGitPorcelainStatusStreamParser(maxEntries)
+	readErr := parser.consume(stdout)
+	waitErr := cmd.Wait()
+	result := parser.result()
+
+	if readErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, ctxErr
+		}
+		return result, readErr
+	}
+	if waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return result, ctxErr
+		}
+		return result, waitErr
+	}
+	return result, nil
 }
 
 func GenerateUnifiedDiffAgainstHEAD(path, relativePath, previousPath string) (string, error) {
@@ -172,75 +215,145 @@ func repositoryHasHeadContext(ctx context.Context, path string) bool {
 }
 
 func parseGitFileStatusesPorcelainV2(raw []byte) map[string]FileStatus {
-	result := make(map[string]FileStatus)
-	records := bytes.Split(raw, []byte{0})
-	for index := 0; index < len(records); index++ {
-		recordBytes := records[index]
-		if len(recordBytes) == 0 {
-			continue
+	parser := newGitPorcelainStatusStreamParser(0)
+	if err := parser.consume(bytes.NewReader(raw)); err != nil {
+		return map[string]FileStatus{}
+	}
+	return parser.result().Statuses
+}
+
+type gitPorcelainStatusStreamParser struct {
+	maxEntries    int
+	statuses      map[string]FileStatus
+	truncated     bool
+	totalCount    int
+	pendingRename *FileStatus
+}
+
+func newGitPorcelainStatusStreamParser(maxEntries int) *gitPorcelainStatusStreamParser {
+	return &gitPorcelainStatusStreamParser{
+		maxEntries: maxEntries,
+		statuses:   make(map[string]FileStatus),
+	}
+}
+
+func (p *gitPorcelainStatusStreamParser) result() FileStatusResult {
+	return FileStatusResult{
+		Statuses:   p.statuses,
+		Truncated:  p.truncated,
+		TotalCount: p.totalCount,
+	}
+}
+
+func (p *gitPorcelainStatusStreamParser) consume(reader io.Reader) error {
+	buffered := bufio.NewReader(reader)
+	for {
+		recordBytes, err := buffered.ReadBytes(0)
+		if len(recordBytes) > 0 {
+			if recordBytes[len(recordBytes)-1] == 0 {
+				recordBytes = recordBytes[:len(recordBytes)-1]
+			}
+			p.consumeRecord(string(recordBytes))
 		}
 
-		record := string(recordBytes)
-		switch record[0] {
-		case '#':
+		if err == nil {
 			continue
-		case '?':
-			path := normalizeGitRelativePath(strings.TrimPrefix(record, "? "))
-			if path == "" {
-				continue
-			}
-			result[path] = FileStatus{
-				Path: path,
-				Kind: FileChangeKindUntracked,
-			}
-		case '1':
-			fields, path, ok := splitGitPorcelainRecord(record, 8)
-			if !ok {
-				continue
-			}
-			normalizedPath := normalizeGitRelativePath(path)
-			if normalizedPath == "" {
-				continue
-			}
-			result[normalizedPath] = FileStatus{
-				Path: normalizedPath,
-				Kind: classifyGitFileChange(fields[1], false),
-			}
-		case '2':
-			fields, path, ok := splitGitPorcelainRecord(record, 9)
-			if !ok {
-				continue
-			}
-			normalizedPath := normalizeGitRelativePath(path)
-			if normalizedPath == "" {
-				continue
-			}
-			previousPath := ""
-			if index+1 < len(records) {
-				previousPath = normalizeGitRelativePath(string(records[index+1]))
-				index++
-			}
-			result[normalizedPath] = FileStatus{
-				Path:         normalizedPath,
-				Kind:         classifyGitFileChange(fields[1], true),
-				PreviousPath: previousPath,
-			}
-		case 'u':
-			_, path, ok := splitGitPorcelainRecord(record, 10)
-			if !ok {
-				continue
-			}
-			normalizedPath := normalizeGitRelativePath(path)
-			if normalizedPath == "" {
-				continue
-			}
-			result[normalizedPath] = FileStatus{
-				Path: normalizedPath,
-				Kind: FileChangeKindConflicted,
-			}
 		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		return err
 	}
-	return result
+
+	if p.pendingRename != nil {
+		p.storeStatus(*p.pendingRename)
+		p.pendingRename = nil
+	}
+	return nil
+}
+
+func (p *gitPorcelainStatusStreamParser) consumeRecord(record string) {
+	if p.pendingRename != nil {
+		p.pendingRename.PreviousPath = normalizeGitRelativePath(record)
+		p.storeStatus(*p.pendingRename)
+		p.pendingRename = nil
+		return
+	}
+	if record == "" {
+		return
+	}
+
+	switch record[0] {
+	case '#':
+		return
+	case '?':
+		path := normalizeGitRelativePath(strings.TrimPrefix(record, "? "))
+		if path == "" {
+			return
+		}
+		p.storeStatus(FileStatus{
+			Path: path,
+			Kind: FileChangeKindUntracked,
+		})
+	case '1':
+		fields, path, ok := splitGitPorcelainRecord(record, 8)
+		if !ok {
+			return
+		}
+		normalizedPath := normalizeGitRelativePath(path)
+		if normalizedPath == "" {
+			return
+		}
+		p.storeStatus(FileStatus{
+			Path: normalizedPath,
+			Kind: classifyGitFileChange(fields[1], false),
+		})
+	case '2':
+		fields, path, ok := splitGitPorcelainRecord(record, 9)
+		if !ok {
+			return
+		}
+		normalizedPath := normalizeGitRelativePath(path)
+		if normalizedPath == "" {
+			return
+		}
+		status := FileStatus{
+			Path: normalizedPath,
+			Kind: classifyGitFileChange(fields[1], true),
+		}
+		p.pendingRename = &status
+	case 'u':
+		_, path, ok := splitGitPorcelainRecord(record, 10)
+		if !ok {
+			return
+		}
+		normalizedPath := normalizeGitRelativePath(path)
+		if normalizedPath == "" {
+			return
+		}
+		p.storeStatus(FileStatus{
+			Path: normalizedPath,
+			Kind: FileChangeKindConflicted,
+		})
+	}
+}
+
+func (p *gitPorcelainStatusStreamParser) storeStatus(status FileStatus) {
+	if status.Path == "" {
+		return
+	}
+
+	if _, exists := p.statuses[status.Path]; exists {
+		p.statuses[status.Path] = status
+		return
+	}
+
+	p.totalCount++
+	if p.maxEntries > 0 && len(p.statuses) >= p.maxEntries {
+		p.truncated = true
+		return
+	}
+	p.statuses[status.Path] = status
 }
 
 func splitGitPorcelainRecord(record string, fieldsBeforePath int) ([]string, string, bool) {
@@ -314,6 +427,11 @@ func runGitOutputAllowDiffExitContext(
 	output, err := cmd.Output()
 	if err == nil {
 		return output, nil
+	}
+	if ctx != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 	}
 
 	var exitErr *exec.ExitError

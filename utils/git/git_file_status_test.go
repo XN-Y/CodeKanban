@@ -91,6 +91,31 @@ func TestListFileStatusesContextCanSkipUntracked(t *testing.T) {
 	}
 }
 
+func TestListFileStatusesLimitedContextTruncatesResults(t *testing.T) {
+	repoDir := initTestRepoWithTrackedFile(t, "notes.txt", "hello\n")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test Repo\nupdated\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+
+	result, err := ListFileStatusesLimitedContext(context.Background(), repoDir, true, 1)
+	if err != nil {
+		t.Fatalf("ListFileStatusesLimitedContext returned error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated result: %#v", result)
+	}
+	if len(result.Statuses) != 1 {
+		t.Fatalf("expected exactly one retained status, got %d", len(result.Statuses))
+	}
+	if result.TotalCount < 2 {
+		t.Fatalf("expected total count to include dropped records, got %d", result.TotalCount)
+	}
+}
+
 func TestGenerateUnifiedDiffAgainstHEAD(t *testing.T) {
 	repoDir := initTestRepo(t)
 	readmePath := filepath.Join(repoDir, "README.md")

@@ -71,11 +71,28 @@ function createAbortError(message: string) {
 }
 
 export const fileManagerApi = {
-  async listScopes(projectId: string): Promise<FileManagerScope[]> {
-    const payload =
-      (await http
-        .Get<ItemsResponse<FileManagerScope>>(`/projects/${projectId}/files/scopes`)
-        .send(true)) ?? {};
+  async listScopes(
+    projectId: string,
+    options?: {
+      signal?: AbortSignal;
+    }
+  ): Promise<FileManagerScope[]> {
+    const method = http.Get<ItemsResponse<FileManagerScope>>(`/projects/${projectId}/files/scopes`);
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError('git changes scope load aborted');
+    }
+
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let payload: ItemsResponse<FileManagerScope> = {};
+    try {
+      payload = (await method.send(true)) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
     return extractItems<FileManagerScope>(payload);
   },
 
@@ -96,20 +113,64 @@ export const fileManagerApi = {
     return item;
   },
 
-  async listChanges(projectId: string, scopeId: string): Promise<FileManagerChangesResult> {
+  async listChanges(
+    projectId: string,
+    scopeId: string,
+    options?: {
+      includeUntracked?: boolean;
+      withStats?: boolean;
+      timeoutMs?: number;
+      maxEntries?: number;
+      signal?: AbortSignal;
+    }
+  ): Promise<FileManagerChangesResult> {
     const params = new URLSearchParams();
     params.set('scopeId', scopeId);
-    const payload =
-      (await http
-        .Get<
-          ItemResponse<FileManagerChangesResult>
-        >(`/projects/${projectId}/files/changes?${params.toString()}`)
-        .send(true)) ?? {};
+    params.set('includeUntracked', String(options?.includeUntracked ?? true));
+    params.set('withStats', String(options?.withStats ?? true));
+    if (typeof options?.timeoutMs === 'number' && Number.isFinite(options.timeoutMs)) {
+      params.set('timeoutMs', String(Math.max(0, Math.trunc(options.timeoutMs))));
+    }
+    if (typeof options?.maxEntries === 'number' && Number.isFinite(options.maxEntries)) {
+      params.set('maxEntries', String(Math.max(1, Math.trunc(options.maxEntries))));
+    }
+
+    const method = http.Get<ItemResponse<FileManagerChangesResult>>(
+      `/projects/${projectId}/files/changes?${params.toString()}`
+    );
+    const abortHandler = () => {
+      method.abort();
+    };
+
+    if (options?.signal?.aborted) {
+      throw createAbortError('git changes load aborted');
+    }
+
+    options?.signal?.addEventListener('abort', abortHandler, { once: true });
+    let payload: ItemResponse<FileManagerChangesResult> = {};
+    try {
+      payload = (await method.send(true)) ?? {};
+    } finally {
+      options?.signal?.removeEventListener('abort', abortHandler);
+    }
     const item = extractItem<FileManagerChangesResult>(payload);
     if (!item) {
       throw new Error('failed to load git changes');
     }
-    return item;
+    return {
+      ...item,
+      entries: (item.entries ?? []).map(entry => ({
+        ...entry,
+        additions: Math.max(0, Math.trunc(entry.additions ?? 0)),
+        deletions: Math.max(0, Math.trunc(entry.deletions ?? 0)),
+        statsAvailable: entry.statsAvailable === true,
+      })),
+      truncated: item.truncated === true,
+      statsComplete: item.statsComplete === true,
+      statsTimedOut: item.statsTimedOut === true,
+      untrackedIncluded: item.untrackedIncluded !== false,
+      warningReason: item.warningReason ?? '',
+    };
   },
 
   async changesSummary(

@@ -172,6 +172,10 @@ export default {
     previewEmpty: '选择一个变更文件以查看 diff',
     notGitRepoShort: '当前项目不是 Git 仓库',
     notGitRepoDetails: 'Git 变更视图仅适用于 Git 项目。',
+    partialEntryLimit: '为保证页面可用性，当前仅展示前 {limit} 条变更。',
+    partialResults: '仓库扫描触发安全限制，当前返回的是部分变更结果。',
+    statsTimedOut: 'Diff 统计已超时，部分文件只显示状态，不显示 +/- 计数。',
+    statsPartial: 'Diff 统计不完整，部分文件只显示状态，不显示 +/- 计数。',
   },
   project: {
     title: '项目列表',

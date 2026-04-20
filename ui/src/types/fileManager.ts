@@ -74,11 +74,17 @@ export interface FileManagerChangeEntry {
   status: FileManagerGitStatus;
   additions: number;
   deletions: number;
+  statsAvailable: boolean;
 }
 
 export interface FileManagerChangesResult {
   scope: FileManagerScope;
   entries: FileManagerChangeEntry[];
+  truncated: boolean;
+  statsComplete: boolean;
+  statsTimedOut: boolean;
+  untrackedIncluded: boolean;
+  warningReason?: string;
 }
 
 export interface FileManagerChangesSummaryResult {

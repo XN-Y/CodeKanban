@@ -88,19 +88,32 @@ type PreviewResult struct {
 }
 
 type ChangeEntry struct {
-	Name        string      `json:"name"`
-	Path        string      `json:"path"`
-	PreviewKind PreviewKind `json:"previewKind"`
-	Hidden      bool        `json:"hidden"`
-	Exists      bool        `json:"exists"`
-	Status      GitStatus   `json:"status"`
-	Additions   int64       `json:"additions"`
-	Deletions   int64       `json:"deletions"`
+	Name           string      `json:"name"`
+	Path           string      `json:"path"`
+	PreviewKind    PreviewKind `json:"previewKind"`
+	Hidden         bool        `json:"hidden"`
+	Exists         bool        `json:"exists"`
+	Status         GitStatus   `json:"status"`
+	Additions      int64       `json:"additions"`
+	Deletions      int64       `json:"deletions"`
+	StatsAvailable bool        `json:"statsAvailable"`
 }
 
 type ChangesResult struct {
-	Scope   Scope         `json:"scope"`
-	Entries []ChangeEntry `json:"entries"`
+	Scope             Scope         `json:"scope"`
+	Entries           []ChangeEntry `json:"entries"`
+	Truncated         bool          `json:"truncated"`
+	StatsComplete     bool          `json:"statsComplete"`
+	StatsTimedOut     bool          `json:"statsTimedOut"`
+	UntrackedIncluded bool          `json:"untrackedIncluded"`
+	WarningReason     string        `json:"warningReason,omitempty"`
+}
+
+type ListChangesOptions struct {
+	IncludeUntracked *bool
+	WithStats        *bool
+	Timeout          time.Duration
+	MaxEntries       int
 }
 
 type ChangesSummaryOptions struct {

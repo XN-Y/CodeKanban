@@ -46,6 +46,15 @@
         </n-popover>
       </n-space>
     </n-alert>
+    <n-alert
+      v-for="warning in panelWarnings"
+      :key="warning.key"
+      :type="warning.type"
+      class="git-changes-warning"
+      :show-icon="false"
+    >
+      {{ t(warning.i18nKey, warning.params ?? {}) }}
+    </n-alert>
 
     <div class="git-changes-body">
       <aside class="git-changes-sidebar">
@@ -187,12 +196,19 @@ import { useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 
 import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
+import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import {
   chooseGitChangesScope,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
   summarizeGitChangesEntries,
 } from '@/components/changes/gitChangesSummary';
+import {
+  buildGitChangesRequestOptions,
+  formatGitChangeCount,
+  formatGitChangeStat,
+  getGitChangesWarnings,
+} from '@/components/changes/gitChangesSupport';
 import {
   resolveDiffUnavailableReasonKey,
   resolveGitStatusLetter,
@@ -252,6 +268,7 @@ const diffLoading = ref(false);
 const diffError = ref('');
 const diffResult = ref<FileManagerDiffResult | null>(null);
 let previewRequestToken = 0;
+const changesLoadController = createGitChangesLoadController();
 
 const gitFeaturesAvailable = computed(() =>
   projectSupportsGit(projectStore.currentProject, projectStore.worktrees)
@@ -267,9 +284,7 @@ const scopeOptions = computed(() =>
 );
 const normalizedSearch = computed(() => searchKeyword.value.trim().toLowerCase());
 const useMobilePreview = computed(() => windowWidth.value <= MOBILE_PREVIEW_MAX_WIDTH);
-const visibleEntries = computed(() => {
-  return orderGitChangesEntries(changesResult.value?.entries ?? [], ignoreUntracked.value);
-});
+const visibleEntries = computed(() => orderGitChangesEntries(changesResult.value?.entries ?? []));
 const filteredEntries = computed(() => {
   const keyword = normalizedSearch.value;
   if (!keyword) {
@@ -298,11 +313,14 @@ const previewMetaText = computed(() => buildPreviewMeta(selectedChange.value));
 const emptyDescription = computed(() =>
   normalizedSearch.value ? t('gitChanges.emptySearch') : t('gitChanges.empty')
 );
-const visibleSummary = computed(() =>
-  summarizeGitChangesEntries(changesResult.value?.entries ?? [], ignoreUntracked.value)
+const panelWarnings = computed(() => getGitChangesWarnings(changesResult.value));
+const visibleSummary = computed(() => summarizeGitChangesEntries(changesResult.value?.entries ?? []));
+const totalAdditions = computed(() =>
+  !changesResult.value ? 0 : changesResult.value.statsComplete ? visibleSummary.value.additions : null
 );
-const totalAdditions = computed(() => visibleSummary.value.additions);
-const totalDeletions = computed(() => visibleSummary.value.deletions);
+const totalDeletions = computed(() =>
+  !changesResult.value ? 0 : changesResult.value.statsComplete ? visibleSummary.value.deletions : null
+);
 let refreshTimer: number | null = null;
 
 function chooseScope(
@@ -319,29 +337,60 @@ function chooseScope(
 
 async function ensureLoaded(options?: { scopeId?: string }) {
   if (!props.projectId || !props.isActive) {
+    changesLoadController.cancel();
+    panelLoading.value = false;
     return;
   }
 
+  const loadHandle = changesLoadController.begin();
   panelLoading.value = true;
   panelError.value = '';
   try {
-    const nextScopes = await fileManagerApi.listScopes(props.projectId);
+    const nextScopes = await fileManagerApi.listScopes(props.projectId, {
+      signal: loadHandle.signal,
+    });
+    if (!changesLoadController.isCurrent(loadHandle)) {
+      return;
+    }
     scopes.value = nextScopes;
     const scope = chooseScope(nextScopes, selectedWorktreeId.value, options?.scopeId);
     if (!scope) {
+      if (!changesLoadController.isCurrent(loadHandle)) {
+        return;
+      }
       changesResult.value = null;
       selectedChangePath.value = '';
       clearPreviewState();
       return;
     }
-    const result = await fileManagerApi.listChanges(props.projectId, scope.id);
+
+    const result = await fileManagerApi.listChanges(
+      props.projectId,
+      scope.id,
+      {
+        ...buildGitChangesRequestOptions(ignoreUntracked.value),
+        signal: loadHandle.signal,
+      }
+    );
+    if (!changesLoadController.isCurrent(loadHandle)) {
+      return;
+    }
     activeScopeId.value = result.scope.id;
     changesResult.value = result;
     syncSelection();
   } catch (error) {
+    if (!changesLoadController.isCurrent(loadHandle)) {
+      return;
+    }
+    if (error instanceof Error && error.name === 'AbortError') {
+      return;
+    }
     panelError.value = error instanceof Error ? error.message : t('common.error');
   } finally {
-    panelLoading.value = false;
+    if (changesLoadController.isCurrent(loadHandle)) {
+      panelLoading.value = false;
+      changesLoadController.release(loadHandle);
+    }
   }
 }
 
@@ -547,12 +596,14 @@ function formatStatusLabel(status: FileManagerChangeEntry['status']) {
   return t(`fileManager.gitStatus.${status.kind}`);
 }
 
-function formatSignedCount(prefix: '+' | '-', value: number) {
-  return `${prefix}${Math.max(0, Math.trunc(value ?? 0))}`;
+function formatSignedCount(prefix: '+' | '-', value: number | null) {
+  return formatGitChangeCount(prefix, value);
 }
 
-function formatChangeStat(entry: Pick<FileManagerChangeEntry, 'additions' | 'deletions'>) {
-  return `${formatSignedCount('+', entry.additions)} ${formatSignedCount('-', entry.deletions)}`;
+function formatChangeStat(
+  entry: Pick<FileManagerChangeEntry, 'additions' | 'deletions' | 'statsAvailable'>
+) {
+  return formatGitChangeStat(entry);
 }
 
 function buildPreviewMeta(entry: FileManagerChangeEntry | null) {
@@ -602,6 +653,8 @@ watch(
   async ([projectId, isActive]) => {
     if (!projectId || !isActive) {
       stopRefreshTimer();
+      changesLoadController.cancel();
+      panelLoading.value = false;
       return;
     }
     selectedChangePath.value = '';
@@ -622,7 +675,9 @@ watch(
 watch(
   () => ignoreUntracked.value,
   () => {
-    syncSelection();
+    void ensureLoaded({
+      scopeId: activeScopeId.value,
+    });
   }
 );
 
@@ -676,6 +731,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   stopRefreshTimer();
+  changesLoadController.cancel();
   if (typeof window !== 'undefined') {
     window.removeEventListener('popstate', handleMobilePreviewPopState);
   }
@@ -725,6 +781,10 @@ onBeforeUnmount(() => {
 
 .git-changes-warning {
   margin: 12px 16px 0;
+}
+
+.git-changes-warning + .git-changes-warning {
+  margin-top: 8px;
 }
 
 .git-changes-body {

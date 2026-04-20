@@ -37,6 +37,7 @@ function makeChangeEntry(
     status: { kind },
     additions,
     deletions,
+    statsAvailable: true,
   };
 }
 

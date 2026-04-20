@@ -32,6 +32,8 @@ const (
 	defaultUploadSessionTTL      = 24 * time.Hour
 	defaultArchiveTTL            = 30 * time.Minute
 	defaultTextPreviewBytes      = 256 * 1024
+	defaultListChangesTimeout    = 5 * time.Second
+	defaultListChangesMaxEntries = 1000
 	defaultChangesSummaryTimeout = 5 * time.Second
 )
 
@@ -43,6 +45,11 @@ var (
 	errTargetExists     = errors.New("target already exists")
 	errProtectedPath    = errors.New("path is protected")
 	errUnsupportedEntry = errors.New("unsupported file entry")
+)
+
+const (
+	changesWarningReasonEntryLimitExceeded = "entry_limit_exceeded"
+	changesWarningReasonTimeout            = "timeout"
 )
 
 type Config struct {
@@ -95,6 +102,13 @@ type uploadMeta struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	UpdatedAt  time.Time `json:"updatedAt"`
 	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+type resolvedListChangesOptions struct {
+	includeUntracked bool
+	withStats        bool
+	timeout          time.Duration
+	maxEntries       int
 }
 
 func NewService(cfg Config, logger *zap.Logger) (*Service, error) {
@@ -350,33 +364,127 @@ func (s *Service) Preview(ctx context.Context, projectID, scopeID, path string) 
 	return result, nil
 }
 
-func (s *Service) ListChanges(ctx context.Context, projectID, scopeID string) (*ChangesResult, error) {
+func (s *Service) ListChanges(
+	ctx context.Context,
+	projectID,
+	scopeID string,
+	options ListChangesOptions,
+) (*ChangesResult, error) {
 	scope, err := s.scopeByID(ctx, projectID, scopeID)
 	if err != nil {
 		return nil, err
 	}
 
+	resolved := normalizeListChangesOptions(options)
 	result := &ChangesResult{
-		Scope:   scope,
-		Entries: []ChangeEntry{},
+		Scope:             scope,
+		Entries:           []ChangeEntry{},
+		UntrackedIncluded: resolved.includeUntracked,
 	}
 	if !git.IsRepositoryPath(scope.RootPath) {
+		if resolved.withStats {
+			result.StatsComplete = true
+		}
 		return result, nil
 	}
 
-	statuses, err := git.ListFileStatuses(scope.RootPath)
-	if err != nil {
-		return nil, err
+	requestCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
+	defer cancel()
+
+	statusResult, err := git.ListFileStatusesLimitedContext(
+		requestCtx,
+		scope.RootPath,
+		resolved.includeUntracked,
+		resolved.maxEntries,
+	)
+	if statusResult.Truncated {
+		result.Truncated = true
+		result.WarningReason = changesWarningReasonEntryLimitExceeded
 	}
+
+	statuses := make([]git.FileStatus, 0, len(statusResult.Statuses))
+	for _, status := range statusResult.Statuses {
+		statuses = append(statuses, status)
+	}
+	sort.Slice(statuses, func(i, j int) bool {
+		return strings.ToLower(statuses[i].Path) < strings.ToLower(statuses[j].Path)
+	})
 
 	entries := make([]ChangeEntry, 0, len(statuses))
 	for _, status := range statuses {
-		entries = append(entries, s.buildChangeEntry(scope.RootPath, status))
+		entries = append(entries, s.buildChangeEntry(status))
 	}
-	sort.Slice(entries, func(i, j int) bool {
-		return strings.ToLower(entries[i].Path) < strings.ToLower(entries[j].Path)
-	})
 	result.Entries = entries
+
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			result.Truncated = true
+			if result.WarningReason == "" {
+				result.WarningReason = changesWarningReasonTimeout
+			}
+			if resolved.withStats {
+				result.StatsTimedOut = true
+			}
+			return result, nil
+		}
+		return nil, err
+	}
+
+	if !resolved.withStats {
+		return result, nil
+	}
+	if len(entries) == 0 {
+		result.StatsComplete = true
+		return result, nil
+	}
+
+	statsComplete := true
+	for index, status := range statuses {
+		if err := requestCtx.Err(); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				result.StatsTimedOut = true
+				statsComplete = false
+				if result.WarningReason == "" {
+					result.WarningReason = changesWarningReasonTimeout
+				}
+				break
+			}
+			return nil, err
+		}
+
+		diffStat, err := git.GenerateDiffStatAgainstHEADContext(requestCtx, scope.RootPath, status)
+		if err != nil {
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				result.StatsTimedOut = true
+				statsComplete = false
+				if result.WarningReason == "" {
+					result.WarningReason = changesWarningReasonTimeout
+				}
+				break
+			}
+			statsComplete = false
+			s.logger.Debug("failed to load git diff stat",
+				zap.String("scopeRoot", scope.RootPath),
+				zap.String("path", status.Path),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		entries[index].Additions = max(0, diffStat.Additions)
+		entries[index].Deletions = max(0, diffStat.Deletions)
+		entries[index].StatsAvailable = true
+	}
+
+	if statsComplete {
+		for _, entry := range entries {
+			if !entry.StatsAvailable {
+				statsComplete = false
+				break
+			}
+		}
+	}
+	result.StatsComplete = statsComplete
 	return result, nil
 }
 
@@ -1219,29 +1327,44 @@ func toFileManagerGitStatus(status git.FileStatus, forceDirty bool) *GitStatus {
 	}
 }
 
-func (s *Service) buildChangeEntry(scopeRoot string, status git.FileStatus) ChangeEntry {
+func normalizeListChangesOptions(options ListChangesOptions) resolvedListChangesOptions {
+	result := resolvedListChangesOptions{
+		includeUntracked: true,
+		withStats:        true,
+		timeout:          options.Timeout,
+		maxEntries:       options.MaxEntries,
+	}
+	if options.IncludeUntracked != nil {
+		result.includeUntracked = *options.IncludeUntracked
+	}
+	if options.WithStats != nil {
+		result.withStats = *options.WithStats
+	}
+	if result.timeout <= 0 {
+		result.timeout = defaultListChangesTimeout
+	}
+	if result.maxEntries <= 0 {
+		result.maxEntries = defaultListChangesMaxEntries
+	}
+	return result
+}
+
+func (s *Service) buildChangeEntry(status git.FileStatus) ChangeEntry {
 	name := filepath.Base(status.Path)
 	mimeType := detectMimeFromName(name)
-	diffStat, err := git.GenerateDiffStatAgainstHEAD(scopeRoot, status)
-	if err != nil {
-		s.logger.Debug("failed to load git diff stat",
-			zap.String("scopeRoot", scopeRoot),
-			zap.String("path", status.Path),
-			zap.Error(err),
-		)
-	}
 	return ChangeEntry{
-		Name:        name,
-		Path:        status.Path,
-		PreviewKind: detectPreviewKind(name, mimeType),
-		Hidden:      strings.HasPrefix(name, "."),
-		Exists:      status.Kind != git.FileChangeKindDeleted,
+		Name:           name,
+		Path:           status.Path,
+		PreviewKind:    detectPreviewKind(name, mimeType),
+		Hidden:         strings.HasPrefix(name, "."),
+		Exists:         status.Kind != git.FileChangeKindDeleted,
+		StatsAvailable: false,
 		Status: GitStatus{
 			Kind:         toFileManagerGitStatus(status, false).Kind,
 			PreviousPath: status.PreviousPath,
 		},
-		Additions: diffStat.Additions,
-		Deletions: diffStat.Deletions,
+		Additions: 0,
+		Deletions: 0,
 	}
 }
 

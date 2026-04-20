@@ -172,6 +172,10 @@ export default {
     previewEmpty: 'Select a changed file to inspect',
     notGitRepoShort: 'Current project is not a Git repository',
     notGitRepoDetails: 'The changes view is available only for Git projects.',
+    partialEntryLimit: 'Showing only the first {limit} changed entries to keep the page responsive.',
+    partialResults: 'The change list is partial because the repository scan hit a safety limit.',
+    statsTimedOut: 'Diff statistics timed out. Some files only show status without +/- counts.',
+    statsPartial: 'Diff statistics are incomplete. Some files only show status without +/- counts.',
   },
   project: {
     title: 'Projects',
