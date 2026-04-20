@@ -1396,12 +1396,12 @@
                       aria-hidden="true"
                     ></span>
                     <span
-                      v-if="item.projectIndex"
+                      v-if="item.projectBadge"
                       class="project-index-badge session-project-badge"
                       :class="{ 'is-single-project': isSingleSidebarProject }"
-                      :style="{ '--badge-color': item.projectIndex.color }"
+                      :style="{ '--badge-color': item.projectBadge.color }"
                     >
-                      {{ item.projectIndex.index }}
+                      {{ item.projectBadge.label }}
                     </span>
                     <span
                       class="session-current-indicator"
@@ -1479,12 +1479,12 @@
 
                   <div class="session-sidebar-actions">
                     <span
-                      v-if="item.projectIndex"
+                      v-if="item.projectBadge"
                       class="project-index-badge session-project-badge"
                       :class="{ 'is-single-project': isSingleSidebarProject }"
-                      :style="{ '--badge-color': item.projectIndex.color }"
+                      :style="{ '--badge-color': item.projectBadge.color }"
                     >
-                      {{ item.projectIndex.index }}
+                      {{ item.projectBadge.label }}
                     </span>
                     <span class="session-archived-pill">{{ t('webSession.archivedBadge') }}</span>
                   </div>
@@ -1769,6 +1769,7 @@ import {
 } from '@/components/web-session/webSessionSidebarScope';
 import { normalizeWebSessionSyncState } from '@/utils/webSessionSyncState';
 import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapshotLoadController';
+import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
 import {
   buildWebSessionRouteQuery,
@@ -1801,16 +1802,6 @@ const MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS = 220;
 const STREAMING_MARKDOWN_RENDER_OPTIONS = Object.freeze({
   disableCodeHighlight: true,
 });
-const PROJECT_INDEX_COLORS = [
-  '#10b981',
-  '#3b82f6',
-  '#f59e0b',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
-  '#ef4444',
-  '#6366f1',
-];
 
 const props = withDefaults(
   defineProps<{
@@ -3547,15 +3538,7 @@ const mobileProjectBadgeById = computed(() => {
       ordered.push(projectId);
     }
   });
-  return new Map(
-    ordered.map((projectId, index) => [
-      projectId,
-      {
-        index: index + 1,
-        color: PROJECT_INDEX_COLORS[index % PROJECT_INDEX_COLORS.length],
-      },
-    ])
-  );
+  return buildProjectBadgeMap(ordered, getProjectName);
 });
 const mobileNavigationSessions = computed<SessionTab[]>(() =>
   isArchivedPreviewSession(currentSession.value)
@@ -3906,7 +3889,7 @@ function renderMobileTabOptionLabel(option: DropdownOption) {
             },
             title: getProjectName(mobileOption.session.projectId || props.projectId),
           },
-          String(projectBadge.index)
+          projectBadge.label
         )
       : null,
   ]);
@@ -5115,7 +5098,7 @@ type CrossProjectSessionItem = {
   projectId: string;
   projectName: string;
   isCurrent: boolean;
-  projectIndex?: { index: number; color: string };
+  projectBadge?: ProjectBadge;
 };
 
 function buildSidebarProjectOrder(items: Array<Pick<CrossProjectSessionItem, 'projectId'>>) {
@@ -5134,21 +5117,15 @@ function buildSidebarProjectOrder(items: Array<Pick<CrossProjectSessionItem, 'pr
   return projectIds;
 }
 
-function withProjectIndexes(
+function withProjectBadges(
   items: CrossProjectSessionItem[],
   projectIds = buildSidebarProjectOrder(items)
 ) {
-  const projectIndex = new Map<string, { index: number; color: string }>();
-  projectIds.forEach((projectId, idx) => {
-    projectIndex.set(projectId, {
-      index: idx + 1,
-      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
-    });
-  });
+  const projectBadge = buildProjectBadgeMap(projectIds, getProjectName);
 
   return items.map(item => ({
     ...item,
-    projectIndex: projectIndex.get(item.projectId),
+    projectBadge: projectBadge.get(item.projectId),
   }));
 }
 
@@ -5177,7 +5154,7 @@ const crossProjectSessions = computed<CrossProjectSessionItem[]>(() => {
     return left.session.id.localeCompare(right.session.id);
   });
 
-  return withProjectIndexes(sorted, projectIds);
+  return withProjectBadges(sorted, projectIds);
 });
 
 const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
@@ -5189,7 +5166,7 @@ const crossProjectArchivedSessions = computed<CrossProjectSessionItem[]>(() => {
       projectName: getProjectName(session.projectId),
       isCurrent: activeArchivedPreviewId.value === session.id,
     }));
-  return withProjectIndexes(items);
+  return withProjectBadges(items);
 });
 
 const archivedSidebarMeta = computed(() =>

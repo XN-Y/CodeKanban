@@ -14,6 +14,7 @@ import { useTerminalSessionSnapshotStore } from '@/stores/terminalSessionSnapsho
 import { useProjectStore } from '@/stores/project';
 import { getAssistantIconByType, getAssistantColorByType } from '@/utils/assistantIcon';
 import type { TerminalSession } from '@/types/models';
+import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 
 // Props
@@ -70,18 +71,6 @@ const compactModeEnabled = computed({
 });
 const canToggleCompactMode = computed(() => props.compactMode === 'auto');
 const currentProjectOnly = ref(false);
-
-// 项目序号颜色表
-const PROJECT_INDEX_COLORS = [
-  '#10b981', // 绿色
-  '#3b82f6', // 蓝色
-  '#f59e0b', // 橙色
-  '#8b5cf6', // 紫色
-  '#ec4899', // 粉色
-  '#14b8a6', // 青色
-  '#ef4444', // 红色
-  '#6366f1', // 靛蓝色
-];
 
 const sessionSnapshotScopeId = `terminal-notification-bar-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -435,32 +424,24 @@ const notificationModeOptions = computed<DropdownOption[]>(() => [
 
 const currentDisplayModeLabel = computed(() => getDisplayModeLabel(notificationDisplayMode.value));
 
-// 计算项目序号映射（基于 projectId 分配序号和颜色）
-const projectIndexMap = computed(() => {
-  const map = new Map<string, { index: number; color: string }>();
+// 计算项目标识映射（基于 projectId 分配颜色和项目首字）
+const projectBadgeMap = computed(() => {
   const seenProjects: string[] = [];
 
-  // 按时间顺序遍历通知，收集唯一的 projectId
   for (const notification of notifications.value) {
     if (notification.projectId && !seenProjects.includes(notification.projectId)) {
       seenProjects.push(notification.projectId);
     }
   }
 
-  // 为每个项目分配序号和颜色
-  seenProjects.forEach((projectId, idx) => {
-    map.set(projectId, {
-      index: idx + 1,
-      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
-    });
-  });
-
-  return map;
+  return buildProjectBadgeMap(
+    seenProjects,
+    projectId => getProjectNameById(projectId, projectId) || projectId
+  );
 });
 
-// 获取通知的项目序号信息
-function getProjectIndex(notification: NotificationItem) {
-  return projectIndexMap.value.get(notification.projectId);
+function getProjectBadge(notification: NotificationItem) {
+  return projectBadgeMap.value.get(notification.projectId);
 }
 
 const currentProjectId = computed(() => {
@@ -483,7 +464,7 @@ type DockedSessionItem = {
   processStatus?: 'idle' | 'busy' | 'unknown';
   activityTs: number;
   isCurrentSession: boolean;
-  projectIndex?: { index: number; color: string };
+  projectBadge?: ProjectBadge;
 };
 
 function isAgentTerminalSession(session: TerminalSession) {
@@ -583,7 +564,7 @@ const dockedSessionItems = computed<DockedSessionItem[]>(() => {
     ? terminalStore.getActiveTabId(dockedCurrentProjectId) || ''
     : '';
 
-  const items: Omit<DockedSessionItem, 'projectIndex'>[] = [];
+  const items: Omit<DockedSessionItem, 'projectBadge'>[] = [];
   dockedProjectIdsToLoad.value.forEach(projectId => {
     const sessions = sessionsByProject.value.get(projectId) ?? [];
     sessions.forEach(session => {
@@ -634,17 +615,14 @@ const dockedSessionItems = computed<DockedSessionItem[]>(() => {
     }
   });
 
-  const projectIndex = new Map<string, { index: number; color: string }>();
-  projectIds.forEach((projectId, idx) => {
-    projectIndex.set(projectId, {
-      index: idx + 1,
-      color: PROJECT_INDEX_COLORS[idx % PROJECT_INDEX_COLORS.length],
-    });
-  });
+  const projectBadge = buildProjectBadgeMap(
+    projectIds,
+    projectId => getProjectNameById(projectId, projectId) || projectId
+  );
 
   return sorted.map(item => ({
     ...item,
-    projectIndex: projectIndex.get(item.projectId),
+    projectBadge: projectBadge.get(item.projectId),
   }));
 });
 
@@ -1367,14 +1345,14 @@ watch(
         :class="{ 'is-current-session': notification.sessionId === currentActiveSessionId }"
       >
         <span
-          v-if="getProjectIndex(notification)"
+          v-if="getProjectBadge(notification)"
           class="mobile-project-badge"
           :class="{
-            'is-single-project': projectIndexMap.size <= 1,
+            'is-single-project': projectBadgeMap.size <= 1,
           }"
-          :style="{ '--badge-color': getProjectIndex(notification)?.color }"
+          :style="{ '--badge-color': getProjectBadge(notification)?.color }"
         >
-          {{ getProjectIndex(notification)?.index }}
+          {{ getProjectBadge(notification)?.label }}
         </span>
         <div
           :class="[
@@ -1591,14 +1569,14 @@ watch(
 
           <div class="docked-session-actions">
             <span
-              v-if="item.projectIndex"
+              v-if="item.projectBadge"
               class="project-index-badge docked-project-badge"
               :class="{
                 'is-single-project': isSingleDockedProject,
               }"
-              :style="{ '--badge-color': item.projectIndex.color }"
+              :style="{ '--badge-color': item.projectBadge.color }"
             >
-              {{ item.projectIndex.index }}
+              {{ item.projectBadge.label }}
             </span>
             <span
               class="docked-current-indicator"
@@ -1657,18 +1635,18 @@ watch(
             <circle cx="12" cy="12" r="3"></circle>
           </svg>
         </span>
-        <!-- 项目序号标签（在卡片外面，始终占位） -->
+        <!-- 项目标识标签（在卡片外面，始终占位） -->
         <span
-          v-if="getProjectIndex(notification)"
+          v-if="getProjectBadge(notification)"
           class="project-index-badge"
           :class="{
-            'is-single-project': projectIndexMap.size <= 1,
+            'is-single-project': projectBadgeMap.size <= 1,
           }"
           :style="{
-            '--badge-color': getProjectIndex(notification)?.color,
+            '--badge-color': getProjectBadge(notification)?.color,
           }"
         >
-          {{ getProjectIndex(notification)?.index }}
+          {{ getProjectBadge(notification)?.label }}
         </span>
         <div
           :class="[
