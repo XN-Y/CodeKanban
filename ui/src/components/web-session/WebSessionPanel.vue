@@ -1728,6 +1728,7 @@ import {
   toggleExclusiveTimelineRawBlock,
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
+import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
   getWebSessionSidebarTone,
@@ -2668,7 +2669,7 @@ function shouldRenderToolBlockInTimeline(block: WebSessionBlock, index: number) 
   return true;
 }
 
-const visibleBlocks = computed(() =>
+const filteredTimelineBlocks = computed(() =>
   blocks.value.filter((block, index) => {
     if (
       !showWebSessionReasoning.value &&
@@ -2685,6 +2686,9 @@ const visibleBlocks = computed(() =>
     }
     return true;
   })
+);
+const visibleBlocks = computed(() =>
+  projectWebSessionCompactTimelineBlocks(filteredTimelineBlocks.value)
 );
 const visibleRawTimelineBlockKeys = computed(() => {
   const keys: string[] = [];
@@ -4283,8 +4287,12 @@ const tabTitleStyle = computed(() => ({
 const timelineContentVersion = computed(() =>
   visibleBlocks.value
     .map(block => {
+      const toolGroupCount = block.tool?.commandGroup?.count ?? 0;
+      const groupItemsLength = Array.isArray(block.payload?.groupItems)
+        ? block.payload.groupItems.length
+        : 0;
       const toolVersion = block.tool
-        ? `${block.tool.id}:${block.tool.status}:${String(block.tool.output ?? '').length}`
+        ? `${block.tool.id}:${block.tool.status}:${String(block.tool.output ?? '').length}:${toolGroupCount}:${groupItemsLength}`
         : '';
       return `${block.key}:${block.kind}:${block.text.length}:${block.attachments.length}:${toolVersion}:${block.done ? 1 : 0}`;
     })
