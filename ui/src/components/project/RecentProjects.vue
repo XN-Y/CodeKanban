@@ -81,151 +81,161 @@
     <n-scrollbar v-else class="projects-scrollbar">
       <div class="projects-list" :class="{ 'is-compact': isCompact }">
         <TransitionGroup name="project-list" tag="div">
-          <n-popover
+          <div
             v-for="project in recentProjects"
             :key="project.id"
-            trigger="hover"
-            placement="right-start"
-            :disabled="
-              isMobile === true || (!isCompact && !isProjectSummaryPopoverEnabled(project.id))
-            "
-            :content-style="compactPopoverContentStyle"
+            class="project-list-row"
           >
-            <template #trigger>
-              <div class="project-item-popover-trigger">
-                <div
-                  class="project-item"
-                  :class="{ active: project.id === currentProjectId, 'is-compact': isCompact }"
-                  :title="isCompact ? project.name : undefined"
-                  @click="handleSelectProject(project.id)"
-                  @contextmenu="handleContextMenu($event, project.id)"
-                >
-                  <n-icon
-                    v-if="projectStore.getProjectPriority(project.id)"
-                    size="12"
-                    :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
-                    class="pin-icon-corner"
-                    :class="{ 'is-compact': isCompact }"
-                    :title="t('project.unpinProject')"
-                    @click.stop="handleUnpinProject(project.id)"
+            <n-popover
+              trigger="hover"
+              placement="right-start"
+              :disabled="
+                isMobile === true || (!isCompact && !isProjectSummaryPopoverEnabled(project.id))
+              "
+              :content-style="compactPopoverContentStyle"
+            >
+              <template #trigger>
+                <div class="project-item-popover-trigger">
+                  <div
+                    class="project-item"
+                    :class="{ active: project.id === currentProjectId, 'is-compact': isCompact }"
+                    :title="isCompact ? project.name : undefined"
+                    :aria-current="project.id === currentProjectId ? 'page' : undefined"
+                    @click="handleSelectProject(project.id)"
+                    @contextmenu="handleContextMenu($event, project.id)"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                      <path
-                        fill="currentColor"
-                        d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
-                      />
-                    </svg>
-                  </n-icon>
-
-                  <template v-if="isCompact">
-                    <div class="project-compact-avatar">
-                      {{ getProjectMonogram(project.name) }}
-                    </div>
-                    <div
-                      v-if="getProjectSessionBadge(project.id)"
-                      class="project-compact-counts"
-                      :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
+                    <n-icon
+                      v-if="projectStore.getProjectPriority(project.id)"
+                      size="12"
+                      :color="getPriorityColor(projectStore.getProjectPriority(project.id)!)"
+                      class="pin-icon-corner"
+                      :class="{ 'is-compact': isCompact }"
+                      :title="t('project.unpinProject')"
+                      @click.stop="handleUnpinProject(project.id)"
                     >
-                      <template v-if="isCombinedProjectSessionBadge(project.id)">
-                        <span class="project-compact-count is-terminal">{{
-                          getCombinedTerminalCount(project.id)
-                        }}</span>
-                        <span class="project-compact-count is-web-session">{{
-                          getCombinedWebSessionCount(project.id)
-                        }}</span>
-                      </template>
-                      <template v-else>
-                        <span
-                          class="project-compact-count"
-                          :class="getCompactSingleCountClass(project.id)"
-                          >{{ getSingleProjectSessionCount(project.id) }}</span
-                        >
-                      </template>
-                    </div>
-                  </template>
-
-                  <template v-else>
-                    <div class="project-info">
-                      <div class="project-name-row">
-                        <n-tag
-                          v-if="getProjectSessionBadge(project.id)"
-                          size="small"
-                          :type="getProjectSessionBadgeType(project.id)"
-                          :bordered="false"
-                          class="terminal-tag"
-                          :class="{
-                            'terminal-tag--combined': isCombinedProjectSessionBadge(project.id),
-                            clickable:
-                              getProjectSessionBadge(project.id)?.kind === 'terminal' &&
-                              project.id === currentProjectId,
-                          }"
-                          :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
-                          @click.stop="
-                            handleProjectBadgeClick(project.id, getProjectSessionBadge(project.id))
-                          "
-                        >
-                          <template #icon>
-                            <n-icon
-                              v-if="isCombinedProjectSessionBadge(project.id)"
-                              size="14"
-                              class="terminal-tag-combined-icon"
-                              :class="getCombinedProjectSessionActiveIconClass()"
-                            >
-                              <component :is="getCombinedProjectSessionActiveIcon()" />
-                            </n-icon>
-                            <n-icon v-else size="14">
-                              <component
-                                :is="
-                                  getProjectSessionBadge(project.id)?.kind === 'terminal'
-                                    ? TerminalOutline
-                                    : ChatbubblesOutline
-                                "
-                              />
-                            </n-icon>
-                          </template>
-                          <span
-                            v-if="isCombinedProjectSessionBadge(project.id)"
-                            class="terminal-tag-combined-counts"
-                          >
-                            <span
-                              class="terminal-tag-combined-count terminal-tag-combined-count--terminal"
-                            >
-                              {{ getCombinedTerminalCount(project.id) }}
-                            </span>
-                            <span class="terminal-tag-combined-separator" aria-hidden="true"
-                              >·</span
-                            >
-                            <span
-                              class="terminal-tag-combined-count terminal-tag-combined-count--web"
-                            >
-                              {{ getCombinedWebSessionCount(project.id) }}
-                            </span>
-                          </span>
-                          <template v-else>
-                            {{ getSingleProjectSessionCount(project.id) }}
-                          </template>
-                        </n-tag>
-                        <n-text class="project-name" strong>{{ project.name }}</n-text>
-                      </div>
-                      <n-text v-if="!project.hidePath" class="project-path" depth="3">
-                        {{ project.path }}
-                      </n-text>
-                    </div>
-                    <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <path
                           fill="currentColor"
-                          d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+                          d="M16,12V4H17V2H7V4H8V12L6,14V16H11.2V22H12.8V16H18V14L16,12Z"
                         />
                       </svg>
                     </n-icon>
-                  </template>
-                </div>
-              </div>
-            </template>
 
-            <ProjectAiStatusSummaryCard :project-id="project.id" compact />
-          </n-popover>
+                    <template v-if="isCompact">
+                      <div class="project-compact-avatar">
+                        {{ getProjectMonogram(project.name) }}
+                      </div>
+                      <div
+                        v-if="getProjectSessionBadge(project.id)"
+                        class="project-compact-counts"
+                        :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
+                      >
+                        <template v-if="isCombinedProjectSessionBadge(project.id)">
+                          <span class="project-compact-count is-terminal">{{
+                            getCombinedTerminalCount(project.id)
+                          }}</span>
+                          <span class="project-compact-count is-web-session">{{
+                            getCombinedWebSessionCount(project.id)
+                          }}</span>
+                        </template>
+                        <template v-else>
+                          <span
+                            class="project-compact-count"
+                            :class="getCompactSingleCountClass(project.id)"
+                            >{{ getSingleProjectSessionCount(project.id) }}</span
+                          >
+                        </template>
+                      </div>
+                    </template>
+
+                    <template v-else>
+                      <div class="project-info">
+                        <div class="project-name-row">
+                          <n-tag
+                            v-if="getProjectSessionBadge(project.id)"
+                            size="small"
+                            :type="getProjectSessionBadgeType(project.id)"
+                            :bordered="false"
+                            class="terminal-tag"
+                            :class="{
+                              'terminal-tag--combined': isCombinedProjectSessionBadge(project.id),
+                              clickable:
+                                getProjectSessionBadge(project.id)?.kind === 'terminal' &&
+                                project.id === currentProjectId,
+                            }"
+                            :title="formatProjectBadgeLabel(getProjectSessionBadge(project.id))"
+                            @click.stop="
+                              handleProjectBadgeClick(
+                                project.id,
+                                getProjectSessionBadge(project.id)
+                              )
+                            "
+                          >
+                            <template #icon>
+                              <n-icon
+                                v-if="isCombinedProjectSessionBadge(project.id)"
+                                size="14"
+                                class="terminal-tag-combined-icon"
+                                :class="getCombinedProjectSessionActiveIconClass()"
+                              >
+                                <component :is="getCombinedProjectSessionActiveIcon()" />
+                              </n-icon>
+                              <n-icon v-else size="14">
+                                <component
+                                  :is="
+                                    getProjectSessionBadge(project.id)?.kind === 'terminal'
+                                      ? TerminalOutline
+                                      : ChatbubblesOutline
+                                  "
+                                />
+                              </n-icon>
+                            </template>
+                            <span
+                              v-if="isCombinedProjectSessionBadge(project.id)"
+                              class="terminal-tag-combined-counts"
+                            >
+                              <span
+                                class="terminal-tag-combined-count terminal-tag-combined-count--terminal"
+                              >
+                                {{ getCombinedTerminalCount(project.id) }}
+                              </span>
+                              <span class="terminal-tag-combined-separator" aria-hidden="true"
+                                >·</span
+                              >
+                              <span
+                                class="terminal-tag-combined-count terminal-tag-combined-count--web"
+                              >
+                                {{ getCombinedWebSessionCount(project.id) }}
+                              </span>
+                            </span>
+                            <template v-else>
+                              {{ getSingleProjectSessionCount(project.id) }}
+                            </template>
+                          </n-tag>
+                          <n-text class="project-name" strong>{{ project.name }}</n-text>
+                        </div>
+                        <n-text v-if="!project.hidePath" class="project-path" depth="3">
+                          {{ project.path }}
+                        </n-text>
+                      </div>
+                      <Transition name="project-check">
+                        <n-icon v-if="project.id === currentProjectId" size="18" color="#18a058">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path
+                              fill="currentColor"
+                              d="M9 16.17L4.83 12l-1.42 1.41L9 19L21 7l-1.41-1.41L9 16.17z"
+                            />
+                          </svg>
+                        </n-icon>
+                      </Transition>
+                    </template>
+                  </div>
+                </div>
+              </template>
+
+              <ProjectAiStatusSummaryCard :project-id="project.id" compact />
+            </n-popover>
+          </div>
         </TransitionGroup>
       </div>
     </n-scrollbar>
@@ -860,6 +870,7 @@ onMounted(() => {
   box-sizing: border-box;
   padding: 10px 0 14px;
   overflow-x: hidden;
+  position: relative;
   scrollbar-gutter: stable;
 }
 
@@ -872,6 +883,10 @@ onMounted(() => {
   justify-content: center;
   width: 100%;
   box-sizing: border-box;
+}
+
+.project-list-row {
+  display: block;
 }
 
 .project-item-popover-trigger {
