@@ -416,6 +416,8 @@ const EVENTS_WS_PATH = '/api/v1/web-sessions/events';
 const WEB_SESSION_HEARTBEAT_INTERVAL_MS = 15000;
 const WEB_SESSION_SOCKET_IDLE_TIMEOUT_MS = WEB_SESSION_HEARTBEAT_INTERVAL_MS * 2 + 5000;
 const WEB_SESSION_SOCKET_WATCHDOG_INTERVAL_MS = 5000;
+const WEB_SESSION_EVENT_RECONNECT_BASE_DELAY_MS = 1200;
+const WEB_SESSION_EVENT_RECONNECT_MAX_DELAY_MS = 15000;
 const WEB_SESSION_AUTO_RETRY_OPTIMISTIC_TTL_MS = 5000;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_WAIT_MS = 120;
 const WEB_SESSION_RUNTIME_MUTATION_PASSIVE_POLL_MS = 16;
@@ -898,6 +900,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   let eventConnectPromise: Promise<void> | null = null;
   let eventReconnectTimer: number | null = null;
   let eventWatchdogTimer: number | null = null;
+  let eventReconnectAttempt = 0;
   let eventHasConnectedOnce = false;
   let eventFocusedSessionId = '';
   let commandSocket: WebSocket | null = null;
@@ -2808,6 +2811,33 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return true;
   }
 
+  function clearEventReconnectTimer() {
+    if (eventReconnectTimer != null) {
+      window.clearTimeout(eventReconnectTimer);
+      eventReconnectTimer = null;
+    }
+  }
+
+  function scheduleEventReconnect() {
+    if (allSessionIds.value.size === 0) {
+      clearEventReconnectTimer();
+      return;
+    }
+    clearEventReconnectTimer();
+    const delayMs = Math.min(
+      WEB_SESSION_EVENT_RECONNECT_BASE_DELAY_MS * 2 ** eventReconnectAttempt,
+      WEB_SESSION_EVENT_RECONNECT_MAX_DELAY_MS
+    );
+    eventReconnectAttempt += 1;
+    eventReconnectTimer = window.setTimeout(() => {
+      eventReconnectTimer = null;
+      if (allSessionIds.value.size === 0) {
+        return;
+      }
+      void openEventStream().catch(() => undefined);
+    }, delayMs);
+  }
+
   function openEventStream(): Promise<void> {
     if (eventSocket && eventSocket.readyState === WebSocket.OPEN) {
       connectionState.value = 'open';
@@ -2816,15 +2846,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
     if (eventConnectPromise) {
       return eventConnectPromise;
     }
+    clearEventReconnectTimer();
     connectionState.value = 'connecting';
     eventConnectPromise = new Promise((resolve, reject) => {
       let settled = false;
-      const ws = new WebSocket(resolveWsUrl(EVENTS_WS_PATH));
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(resolveWsUrl(EVENTS_WS_PATH));
+      } catch (error) {
+        scheduleEventReconnect();
+        reject(error);
+        return;
+      }
       ws.onopen = () => {
         settled = true;
         eventSocket = ws;
         connectionState.value = 'open';
         eventLastDisconnectReason.value = null;
+        eventReconnectAttempt = 0;
         startSocketWatchdog('event', ws);
         eventConnectPromise = null;
         if (eventFocusedSessionId) {
@@ -2862,19 +2901,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
         }
         clearSocketWatchdog('event');
         eventConnectPromise = null;
+        scheduleEventReconnect();
         if (!settled) {
           reject(new Error('websocket event stream closed before opening'));
           return;
         }
-        if (eventReconnectTimer != null) {
-          window.clearTimeout(eventReconnectTimer);
-        }
-        eventReconnectTimer = window.setTimeout(() => {
-          eventReconnectTimer = null;
-          if (allSessionIds.value.size > 0) {
-            void openEventStream();
-          }
-        }, 1200);
       };
     });
     return eventConnectPromise.catch(error => {

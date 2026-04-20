@@ -199,6 +199,11 @@ function findSocket(url: string) {
   return FakeWebSocket.instances.find(instance => instance.url === url) ?? null;
 }
 
+async function flushMicrotasks() {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 describe('webSession loading behavior', () => {
   beforeEach(() => {
     setActivePinia(createPinia());
@@ -1079,9 +1084,111 @@ describe('webSession loading behavior', () => {
     expect(store.connectionState).toBe('closed');
 
     await vi.advanceTimersByTimeAsync(1200);
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(store.connectionState).toBe('open');
+    expect(store.eventRecoveryVersion).toBe(1);
+    expect(store.eventLastDisconnectReason).toBeNull();
+  });
+
+  it('keeps retrying the event stream until a reconnect attempt succeeds', async () => {
+    vi.useFakeTimers();
+    window.setTimeout = setTimeout;
+    window.clearTimeout = clearTimeout;
+    window.setInterval = setInterval;
+    window.clearInterval = clearInterval;
+
+    let eventConnectAttempt = 0;
+
+    class FlakyEventWebSocket {
+      static OPEN = 1;
+      static instances: FlakyEventWebSocket[] = [];
+
+      url: string;
+      readyState = 0;
+      sent: unknown[] = [];
+      onopen: ((event: unknown) => void) | null = null;
+      onmessage: ((event: { data: string }) => void) | null = null;
+      onerror: ((event: unknown) => void) | null = null;
+      onclose: (() => void) | null = null;
+
+      constructor(url: string) {
+        this.url = url;
+        FlakyEventWebSocket.instances.push(this);
+        const isEventStream = url === '/api/v1/web-sessions/events';
+        if (isEventStream) {
+          eventConnectAttempt += 1;
+        }
+        const attempt = eventConnectAttempt;
+        queueMicrotask(() => {
+          if (!isEventStream || attempt === 1 || attempt >= 4) {
+            this.readyState = FlakyEventWebSocket.OPEN;
+            this.onopen?.({});
+            return;
+          }
+          this.readyState = 3;
+          this.onclose?.();
+        });
+      }
+
+      send(payload: string) {
+        this.sent.push(JSON.parse(payload));
+      }
+
+      dispatch(frame: unknown) {
+        this.onmessage?.({
+          data: JSON.stringify(frame),
+        });
+      }
+
+      close() {
+        this.readyState = 3;
+        this.onclose?.();
+      }
+    }
+
+    vi.stubGlobal('WebSocket', FlakyEventWebSocket);
+
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-persistent-retry',
+      status: 'running',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    expect(FlakyEventWebSocket.instances).toHaveLength(1);
+    expect(store.connectionState).toBe('open');
+
+    FlakyEventWebSocket.instances[0]?.close();
+    expect(store.connectionState).toBe('closed');
+
+    await vi.advanceTimersByTimeAsync(1199);
+    expect(FlakyEventWebSocket.instances).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+    expect(FlakyEventWebSocket.instances).toHaveLength(2);
+    expect(store.connectionState).toBe('closed');
+
+    await vi.advanceTimersByTimeAsync(2399);
+    expect(FlakyEventWebSocket.instances).toHaveLength(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+    expect(FlakyEventWebSocket.instances).toHaveLength(3);
+    expect(store.connectionState).toBe('closed');
+
+    await vi.advanceTimersByTimeAsync(4799);
+    expect(FlakyEventWebSocket.instances).toHaveLength(3);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await flushMicrotasks();
+    expect(FlakyEventWebSocket.instances).toHaveLength(4);
     expect(store.connectionState).toBe('open');
     expect(store.eventRecoveryVersion).toBe(1);
     expect(store.eventLastDisconnectReason).toBeNull();
