@@ -35,6 +35,22 @@ type CodexRuntimeConfig struct {
 	Source              ContextWindowSource `json:"source"`
 }
 
+type CodexSkillSource string
+
+const (
+	CodexSkillSourceUser    CodexSkillSource = "user"
+	CodexSkillSourceSystem  CodexSkillSource = "system"
+	CodexSkillSourceBundled CodexSkillSource = "bundled"
+)
+
+type CodexSkillSummary struct {
+	Name          string           `json:"name"`
+	DisplayName   string           `json:"displayName"`
+	Description   string           `json:"description"`
+	DefaultPrompt string           `json:"defaultPrompt"`
+	Source        CodexSkillSource `json:"source"`
+}
+
 func (m *Manager) mapSessionSummary(record tables.WebSessionTable) SessionSummary {
 	summary := mapSessionRecord(record)
 	m.decorateSessionSummary(&summary)

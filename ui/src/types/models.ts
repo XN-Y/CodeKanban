@@ -290,6 +290,16 @@ export interface WebSessionCodexRuntimeConfig {
   source: Exclude<WebSessionContextWindowSource, 'unavailable'>;
 }
 
+export type CodexSkillSource = 'user' | 'system' | 'bundled';
+
+export interface CodexSkillSummary {
+  name: string;
+  displayName: string;
+  description: string;
+  defaultPrompt: string;
+  source: CodexSkillSource;
+}
+
 export interface WebSessionSummary {
   id: string;
   projectId: string;

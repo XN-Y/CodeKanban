@@ -232,6 +232,28 @@ func registerSystemRoutes(
 		op.Tags = []string{systemTag}
 	})
 
+	huma.Get(group, "/system/codex-skills", func(
+		ctx context.Context,
+		_ *struct{},
+	) (*h.ItemsResponse[websession.CodexSkillSummary], error) {
+		items := []websession.CodexSkillSummary{}
+		if webSessionManager != nil {
+			var err error
+			items, err = webSessionManager.ListCodexSkills()
+			if err != nil {
+				return nil, huma.Error500InternalServerError("failed to load codex skills", err)
+			}
+		}
+		resp := h.NewItemsResponse(items)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-codex-skills"
+		op.Summary = "获取本机可用 Codex skill 列表"
+		op.Description = "扫描已安装和仓库内置的 Codex skill 元数据，返回用于前端展示和插入的摘要信息"
+		op.Tags = []string{systemTag}
+	})
+
 	huma.Get(group, "/system/web-session-quick-input", func(ctx context.Context, input *struct{}) (*h.ItemResponse[utils.WebSessionQuickInputConfig], error) {
 		resp := h.NewItemResponse(cfg.UI.WebSessionQuickInput)
 		resp.Status = http.StatusOK

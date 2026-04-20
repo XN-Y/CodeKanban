@@ -1,4 +1,4 @@
-import type { Project, Worktree } from '@/types/models';
+import type { CodexSkillSummary, Project, Worktree } from '@/types/models';
 import { http } from './http';
 
 type ListProjectsResponse = {
@@ -90,7 +90,7 @@ export const worktreeApi = {
       createBranch?: boolean;
       location?: 'project' | 'global';
       globalBaseDirOverride?: string;
-    },
+    }
   ): Promise<Worktree> {
     const payload = {
       branchName: data.branchName,
@@ -119,6 +119,11 @@ export const worktreeApi = {
 };
 
 export const systemApi = {
+  async listCodexSkills(): Promise<CodexSkillSummary[]> {
+    const body =
+      (await http.Get<{ items?: CodexSkillSummary[] }>('/system/codex-skills').send()) ?? {};
+    return body.items ?? [];
+  },
   async openExplorer(path: string): Promise<void> {
     await http.Post('/system/open-explorer', { path }).send();
   },

@@ -1080,18 +1080,17 @@
             </div>
 
             <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
-              <n-input
+              <WebSessionComposerEditor
                 ref="composerInputRef"
-                v-model:value="composerText"
-                type="textarea"
+                v-model="composerText"
                 class="composer-input"
-                :autosize="composerAutosize"
                 :placeholder="composerPlaceholder"
-                @mousedown.stop
-                @touchstart.stop
+                :min-rows="composerMinRows"
+                :max-rows="composerMaxRows"
+                :skills="codexSkills"
                 @focus="handleComposerFocus"
                 @blur="handleComposerBlur"
-                @keydown.enter.exact="handleComposerEnter"
+                @submit="handleComposerSubmitShortcut"
               />
             </div>
 
@@ -1152,6 +1151,18 @@
                 <button
                   type="button"
                   class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                  :title="t('webSession.skills')"
+                  :aria-label="t('webSession.skills')"
+                  @pointerdown.stop.prevent="handleMobileSkillTrigger"
+                  @click.stop.prevent
+                  @keydown.enter.stop.prevent="handleMobileSkillTrigger"
+                  @keydown.space.stop.prevent="handleMobileSkillTrigger"
+                >
+                  <n-icon size="18"><SparklesOutline /></n-icon>
+                </button>
+                <button
+                  type="button"
+                  class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
                   :title="t('webSession.attachImage')"
                   :aria-label="t('webSession.attachImage')"
                   @pointerdown.stop.prevent="handleMobileAttachmentTrigger"
@@ -1209,6 +1220,30 @@
                       </div>
                     </div>
                   </div>
+                </n-popover>
+                <n-popover
+                  v-model:show="showSkillBrowser"
+                  trigger="click"
+                  placement="top-start"
+                  content-style="padding: 0;"
+                  @update:show="handleSkillBrowserVisibilityChange"
+                >
+                  <template #trigger>
+                    <button
+                      type="button"
+                      class="composer-icon-btn"
+                      :title="t('webSession.skills')"
+                      :aria-label="t('webSession.skills')"
+                    >
+                      <n-icon size="14"><SparklesOutline /></n-icon>
+                    </button>
+                  </template>
+                  <WebSessionSkillCatalogPanel
+                    :skills="codexSkills"
+                    :loading="codexSkillsLoading"
+                    @select-token="handleSkillTokenInsert"
+                    @select-template="handleSkillTemplateInsert"
+                  />
                 </n-popover>
                 <button type="button" class="composer-icon-btn" @click="openFilePicker">
                   <n-icon size="14"><ImageOutline /></n-icon>
@@ -1623,6 +1658,26 @@
         {{ t('webSession.compactToolEmpty') }}
       </div>
     </n-modal>
+
+    <n-modal
+      :show="isMobile && showSkillBrowser"
+      preset="card"
+      class="skill-browser-modal"
+      :title="t('webSession.skills')"
+      :bordered="false"
+      :segmented="{ content: false, footer: false }"
+      :mask-closable="true"
+      closable
+      style="width: min(92vw, 520px)"
+      @update:show="handleSkillBrowserVisibilityChange"
+    >
+      <WebSessionSkillCatalogPanel
+        :skills="codexSkills"
+        :loading="codexSkillsLoading"
+        @select-token="handleSkillTokenInsert"
+        @select-template="handleSkillTemplateInsert"
+      />
+    </n-modal>
   </div>
 </template>
 
@@ -1664,6 +1719,7 @@ import {
   ImageOutline,
   RefreshCircleOutline,
   RefreshOutline,
+  SparklesOutline,
   TimeOutline,
   TrashOutline,
 } from '@vicons/ionicons5';
@@ -1672,6 +1728,7 @@ import { getPresetById } from '@/constants/themes';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
+import { systemApi } from '@/api/project';
 import { useProjectStore } from '@/stores/project';
 import { useSettingsStore } from '@/stores/settings';
 import {
@@ -1684,6 +1741,7 @@ import {
   type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
 import type {
+  CodexSkillSummary,
   WebSessionCodexRuntimeConfig,
   WebSessionContextWindowSource,
   WebSessionSummary,
@@ -1717,8 +1775,15 @@ import { webSessionApi } from '@/api/webSession';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
+import WebSessionComposerEditor from '@/components/web-session/WebSessionComposerEditor.vue';
 import WebSessionCompletionNotifier from '@/components/web-session/WebSessionCompletionNotifier.vue';
 import WebSessionImportDialog from '@/components/web-session/WebSessionImportDialog.vue';
+import WebSessionSkillCatalogPanel from '@/components/web-session/WebSessionSkillCatalogPanel.vue';
+import type { WebSessionComposerEditorExposed } from '@/components/web-session/webSessionComposerEditor';
+import {
+  insertCodexSkillTokenAtCursor,
+  replaceTextSelection,
+} from '@/components/web-session/webSessionCodexSkills';
 import {
   buildTimelineRawModeKey,
   pruneActiveTimelineRawBlockKey,
@@ -1968,9 +2033,9 @@ function isArchivedPreviewSession(
 function isAbortLikeError(error: unknown) {
   return Boolean(
     error &&
-    typeof error === 'object' &&
-    'name' in error &&
-    String((error as { name?: unknown }).name || '') === 'AbortError'
+      typeof error === 'object' &&
+      'name' in error &&
+      String((error as { name?: unknown }).name || '') === 'AbortError'
   );
 }
 
@@ -2027,7 +2092,7 @@ const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
-const composerInputRef = ref<InstanceType<typeof NInput> | null>(null);
+const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
@@ -2037,6 +2102,7 @@ const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>
 const showMobileTabSelector = ref(false);
 const mobileTabSelectorAnchor = shallowRef<MobileTabSelectorAnchor | null>(null);
 const showQuickInputPopover = ref(false);
+const showSkillBrowser = ref(false);
 const showImportDialog = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
@@ -2055,6 +2121,9 @@ const activeAttachmentPreview = ref<{
 } | null>(null);
 const codexRuntimeConfig = ref<WebSessionCodexRuntimeConfig | null>(null);
 const codexRuntimeConfigReady = ref(false);
+const codexSkills = ref<CodexSkillSummary[]>([]);
+const codexSkillsLoading = ref(false);
+const codexSkillsLoaded = ref(false);
 const showCommandExecutionDetail = ref(false);
 const loadingCommandExecutionDetail = ref(false);
 const activeCommandExecutionDetail = ref<CommandExecutionDetail | null>(null);
@@ -2957,7 +3026,7 @@ const isSendConflictConfirmationArmed = computed(
     sendConflictSessions.value.length > 0 &&
     Boolean(
       sendConfirmationState.value &&
-      sendConfirmationState.value.signature === sendConfirmationSignature.value
+        sendConfirmationState.value.signature === sendConfirmationSignature.value
     )
 );
 const isSubmittingMessage = computed(() =>
@@ -2977,9 +3046,8 @@ const canSend = computed(
 const canStageDuringRun = computed(
   () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
 );
-const composerAutosize = computed(() =>
-  isMobile.value ? { minRows: 1, maxRows: 5 } : { minRows: 2, maxRows: 7 }
-);
+const composerMinRows = computed(() => (isMobile.value ? 2 : 3));
+const composerMaxRows = computed(() => (isMobile.value ? 8 : 10));
 const composerPlaceholder = computed(() =>
   isMobile.value
     ? locale.value === 'zh-CN'
@@ -3240,6 +3308,40 @@ function handleMobileAttachmentTrigger() {
     return;
   }
   openFilePicker();
+}
+
+function handleMobileSkillTrigger() {
+  if (!isMobile.value) {
+    return;
+  }
+  handleSkillBrowserVisibilityChange(!showSkillBrowser.value);
+}
+
+async function ensureCodexSkillsLoaded(force = false) {
+  if (codexSkillsLoading.value) {
+    return;
+  }
+  if (!force && codexSkillsLoaded.value) {
+    return;
+  }
+
+  codexSkillsLoading.value = true;
+  try {
+    codexSkills.value = await systemApi.listCodexSkills();
+  } catch (error) {
+    console.warn('[Web Session] Failed to load Codex skills', error);
+  } finally {
+    codexSkillsLoading.value = false;
+    codexSkillsLoaded.value = true;
+  }
+}
+
+function handleSkillBrowserVisibilityChange(nextShow: boolean) {
+  showSkillBrowser.value = nextShow;
+  if (nextShow) {
+    showQuickInputPopover.value = false;
+    void ensureCodexSkillsLoaded();
+  }
 }
 
 function clearComposerTransferError() {
@@ -6248,10 +6350,10 @@ function toggleToolExpanded(tool: NonNullable<WebSessionBlock['tool']>) {
 function showPlanActions(toolId: string) {
   return Boolean(
     currentRealSession.value &&
-    latestPlanToolId.value === toolId &&
-    (!liveState.value.running || inlinePlanChoice.value) &&
-    !dismissedPlanActions.value[toolId] &&
-    !hasUserMessageAfterLatestPlan.value
+      latestPlanToolId.value === toolId &&
+      (!liveState.value.running || inlinePlanChoice.value) &&
+      !dismissedPlanActions.value[toolId] &&
+      !hasUserMessageAfterLatestPlan.value
   );
 }
 
@@ -6983,6 +7085,7 @@ async function performDeleteSession(sessionId: string): Promise<boolean> {
 
 function openFilePicker() {
   showQuickInputPopover.value = false;
+  showSkillBrowser.value = false;
   fileInputRef.value?.click();
 }
 
@@ -7170,35 +7273,27 @@ function focusComposer() {
   });
 }
 
-function isComposerTextareaElement(value: unknown): value is HTMLTextAreaElement {
+function getComposerSelectionRange() {
   return (
-    typeof value === 'object' &&
-    value !== null &&
-    'setSelectionRange' in value &&
-    typeof (value as HTMLTextAreaElement).setSelectionRange === 'function'
+    composerInputRef.value?.getSelectionRange() ?? {
+      start: composerText.value.length,
+      end: composerText.value.length,
+    }
   );
 }
 
-function getComposerTextarea() {
-  const rawTextarea = composerInputRef.value?.textareaElRef as
-    | unknown
-    | { value?: unknown }
-    | null
-    | undefined;
-
-  if (isComposerTextareaElement(rawTextarea)) {
-    return rawTextarea as HTMLTextAreaElement;
+function setComposerTextAndSelection(text: string, cursor: number) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return false;
   }
 
-  const nestedTextarea =
-    rawTextarea && typeof rawTextarea === 'object' && 'value' in rawTextarea
-      ? rawTextarea.value
-      : null;
-  if (isComposerTextareaElement(nestedTextarea)) {
-    return nestedTextarea;
-  }
-
-  return null;
+  webSessionStore.setDraftText(props.projectId, sessionId, text);
+  nextTick(() => {
+    composerInputRef.value?.focus();
+    composerInputRef.value?.setSelectionRange(cursor, cursor);
+  });
+  return true;
 }
 
 async function applyQuickInputText(text: string) {
@@ -7207,15 +7302,7 @@ async function applyQuickInputText(text: string) {
     return false;
   }
 
-  webSessionStore.setDraftText(props.projectId, sessionId, text);
-
-  await nextTick();
-  composerInputRef.value?.focus();
-  const textarea = getComposerTextarea();
-  if (textarea) {
-    textarea.setSelectionRange(text.length, text.length);
-  }
-  return true;
+  return setComposerTextAndSelection(text, text.length);
 }
 
 function insertUploadedImagePlaceholders(uploadedCount: number) {
@@ -7233,23 +7320,49 @@ function insertUploadedImagePlaceholders(uploadedCount: number) {
   const placeholders = Array.from({ length: uploadedCount }, (_, index) =>
     buildImagePlaceholder(firstIndex + index)
   );
-  const textarea = getComposerTextarea();
+  const selection = getComposerSelectionRange();
   const nextComposer = insertImagePlaceholdersAtCursor(
     composerText.value,
-    textarea?.selectionStart ?? composerText.value.length,
-    textarea?.selectionEnd ?? textarea?.selectionStart ?? composerText.value.length,
+    selection.start,
+    selection.end,
     placeholders
   );
 
-  webSessionStore.setDraftText(props.projectId, sessionId, nextComposer.text);
+  setComposerTextAndSelection(nextComposer.text, nextComposer.cursor);
+}
 
-  nextTick(() => {
-    composerInputRef.value?.focus();
-    const nextTextarea = getComposerTextarea();
-    if (nextTextarea) {
-      nextTextarea.setSelectionRange(nextComposer.cursor, nextComposer.cursor);
-    }
-  });
+function handleSkillTokenInsert(skill: CodexSkillSummary) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId) {
+    return;
+  }
+
+  const selection = getComposerSelectionRange();
+  const nextComposer = insertCodexSkillTokenAtCursor(
+    composerText.value,
+    selection.start,
+    selection.end,
+    skill.name
+  );
+  setComposerTextAndSelection(nextComposer.text, nextComposer.cursor);
+  showSkillBrowser.value = false;
+}
+
+function handleSkillTemplateInsert(skill: CodexSkillSummary) {
+  const sessionId = currentDraftSessionId.value;
+  if (!sessionId || !skill.defaultPrompt) {
+    return;
+  }
+
+  const selection = getComposerSelectionRange();
+  const nextComposer = replaceTextSelection(
+    composerText.value,
+    selection.start,
+    selection.end,
+    skill.defaultPrompt
+  );
+  setComposerTextAndSelection(nextComposer.text, nextComposer.cursor);
+  showSkillBrowser.value = false;
 }
 
 async function prepareSessionForSend(session: WebSessionSummary) {
@@ -7403,17 +7516,10 @@ function handleComposerBlur() {
   emitMobileComposerFocusChange(false);
 }
 
-function handleComposerEnter(event: KeyboardEvent) {
-  if (isDraftAttachmentUploading.value) {
-    if (hasDraftContent.value) {
-      event.preventDefault();
-    }
+function handleComposerSubmitShortcut() {
+  if (isDraftAttachmentUploading.value || !hasDraftContent.value) {
     return;
   }
-  if (!hasDraftContent.value) {
-    return;
-  }
-  event.preventDefault();
   void triggerPrimaryComposerAction();
 }
 
@@ -8920,6 +9026,7 @@ onMounted(() => {
   }, LIVE_TIME_TICK_MS);
   void settingsStore.loadWebSessionQuickInput();
   void loadCodexRuntimeConfig();
+  void ensureCodexSkillsLoaded();
   if (projectStore.projects.length === 0) {
     void projectStore.fetchProjects().catch(error => {
       console.error('[Web Session] Failed to preload projects', error);
@@ -12151,34 +12258,12 @@ defineExpose({
 }
 
 .composer-input-shell.is-mobile {
-  min-height: 96px;
-}
-
-.composer-input-shell.is-mobile .composer-input :deep(.n-input__textarea-el) {
-  min-height: 96px !important;
-  padding-bottom: 34px !important;
+  min-height: 124px;
 }
 
 .composer-input {
   flex: 1;
-}
-
-.composer-input :deep(.n-input-wrapper) {
-  background: transparent !important;
-  box-shadow: none !important;
-  padding-left: 0 !important;
-  padding-right: 0 !important;
-}
-
-.composer-input :deep(.n-input__border),
-.composer-input :deep(.n-input__state-border) {
-  display: none !important;
-}
-
-.composer-input :deep(.n-input__textarea-el) {
-  min-height: 42px !important;
-  font-size: 14px;
-  line-height: 1.55;
+  min-width: 0;
 }
 
 .composer-footer {
@@ -12302,6 +12387,10 @@ defineExpose({
 
 .composer-icon-btn-mobile-secondary {
   margin-left: 0;
+}
+
+.skill-browser-modal :deep(.n-card__content) {
+  padding: 0;
 }
 
 .composer-icon-btn-mobile:hover,
