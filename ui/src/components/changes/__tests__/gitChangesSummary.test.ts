@@ -1,9 +1,13 @@
+import { useStorage } from '@vueuse/core';
+import { effectScope } from 'vue';
 import { describe, expect, it } from 'vitest';
 
 import {
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
   formatGitChangesSummary,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
   shouldShowGitChangesBadge,
   summarizeGitChangesEntries,
@@ -41,7 +45,51 @@ function makeChangeEntry(
   };
 }
 
+function createStorageMock(initial: Record<string, string> = {}) {
+  const store = new Map<string, string>(Object.entries(initial));
+  return {
+    getItem(key: string) {
+      return store.has(key) ? store.get(key)! : null;
+    },
+    setItem(key: string, value: string) {
+      store.set(key, String(value));
+    },
+    removeItem(key: string) {
+      store.delete(key);
+    },
+  };
+}
+
+function readStoredIgnoreUntrackedPreference(initial: Record<string, string> = {}) {
+  const scope = effectScope();
+  try {
+    return scope.run(
+      () =>
+        useStorage<boolean>(
+          GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+          GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
+          createStorageMock(initial) as Storage
+        ).value
+    );
+  } finally {
+    scope.stop();
+  }
+}
+
 describe('gitChangesSummary', () => {
+  it('defaults the ignore-untracked preference to true when nothing is stored', () => {
+    expect(GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT).toBe(true);
+    expect(readStoredIgnoreUntrackedPreference()).toBe(true);
+  });
+
+  it('keeps an existing stored false ignore-untracked preference', () => {
+    expect(
+      readStoredIgnoreUntrackedPreference({
+        [GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY]: 'false',
+      })
+    ).toBe(false);
+  });
+
   it('prefers requested, active, then worktree scope', () => {
     const scopes = [
       makeScope({ id: 'project-1' }),

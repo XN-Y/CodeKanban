@@ -1,6 +1,7 @@
 import type { FileManagerChangeEntry, FileManagerScope } from '@/types/fileManager';
 
 export const GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY = 'git-changes-ignore-untracked';
+export const GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT = true;
 
 export interface GitChangesSummary {
   count: number;

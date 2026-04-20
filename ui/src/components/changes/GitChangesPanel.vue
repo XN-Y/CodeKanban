@@ -199,6 +199,7 @@ import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import {
   chooseGitChangesScope,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
   summarizeGitChangesEntries,
@@ -254,7 +255,10 @@ const changesResult = ref<FileManagerChangesResult | null>(null);
 const panelLoading = ref(false);
 const panelError = ref('');
 const searchKeyword = ref('');
-const ignoreUntracked = useStorage<boolean>(GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY, false);
+const ignoreUntracked = useStorage<boolean>(
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT
+);
 const selectedChangePath = ref('');
 const previewMode = ref<FilePreviewMode>('file');
 const previewResult = ref<FileManagerPreviewResult | null>(null);
@@ -284,7 +288,9 @@ const scopeOptions = computed(() =>
 );
 const normalizedSearch = computed(() => searchKeyword.value.trim().toLowerCase());
 const useMobilePreview = computed(() => windowWidth.value <= MOBILE_PREVIEW_MAX_WIDTH);
-const visibleEntries = computed(() => orderGitChangesEntries(changesResult.value?.entries ?? []));
+const visibleEntries = computed(() =>
+  orderGitChangesEntries(changesResult.value?.entries ?? [], ignoreUntracked.value)
+);
 const filteredEntries = computed(() => {
   const keyword = normalizedSearch.value;
   if (!keyword) {
@@ -314,7 +320,9 @@ const emptyDescription = computed(() =>
   normalizedSearch.value ? t('gitChanges.emptySearch') : t('gitChanges.empty')
 );
 const panelWarnings = computed(() => getGitChangesWarnings(changesResult.value));
-const visibleSummary = computed(() => summarizeGitChangesEntries(changesResult.value?.entries ?? []));
+const visibleSummary = computed(() =>
+  summarizeGitChangesEntries(changesResult.value?.entries ?? [], ignoreUntracked.value)
+);
 const totalAdditions = computed(() =>
   !changesResult.value ? 0 : changesResult.value.statsComplete ? visibleSummary.value.additions : null
 );

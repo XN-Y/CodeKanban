@@ -209,6 +209,8 @@ import { useWebSessionStore } from '@/stores/webSession';
 import {
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   shouldShowGitChangesBadge,
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
@@ -270,6 +272,10 @@ const activeTab = ref<WorkspaceTab>(
 );
 const previousTab = ref<WorkspaceTab | null>(null);
 const isRightSidebarVisible = useStorage('workspace-right-sidebar-visible', true);
+const ignoreUntracked = useStorage<boolean>(
+  GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
+  GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT
+);
 const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
 let changesSummaryTimer: number | null = null;
 let changesSummaryRequestToken = 0;
@@ -320,6 +326,17 @@ watch(
       await loadChangesSummary();
     }
     startChangesSummaryTimer();
+  }
+);
+
+watch(
+  () => ignoreUntracked.value,
+  async () => {
+    if (!props.projectId || changesTabDisabled.value) {
+      clearChangesBadgeSummary();
+      return;
+    }
+    await loadChangesSummary({ resetBeforeLoad: true });
   }
 );
 
@@ -486,7 +503,7 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
     }
 
     const fastSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
-      includeUntracked: false,
+      includeUntracked: !ignoreUntracked.value,
       withStats: false,
     });
     if (requestToken !== changesSummaryRequestToken) {
@@ -511,7 +528,7 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
     };
 
     const statsSummary = await fileManagerApi.changesSummary(props.projectId, scope.id, {
-      includeUntracked: false,
+      includeUntracked: !ignoreUntracked.value,
       withStats: true,
       timeoutMs: CHANGES_SUMMARY_STATS_TIMEOUT_MS,
     });
