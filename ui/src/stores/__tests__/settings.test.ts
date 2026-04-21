@@ -216,12 +216,13 @@ describe('settings theme storage', () => {
     expect(webSessionStreamingMarkdownThrottleMs.value).toBe(100);
   });
 
-  it('defaults daily tip to enabled when older settings are migrated', () => {
+  it('drops the legacy local daily tip setting during settings migration', () => {
     localStorageMock.setItem(
       SETTINGS_STORAGE_KEY,
       JSON.stringify({
         version: 3,
         currentPresetId: 'light',
+        dailyTipEnabled: false,
       })
     );
 
@@ -236,7 +237,7 @@ describe('settings theme storage', () => {
     };
 
     expect(persisted.version).toBe(4);
-    expect(persisted.dailyTipEnabled).toBe(true);
+    expect(persisted.dailyTipEnabled).toBeUndefined();
   });
 
   it('preserves custom web session streaming markdown cadence from storage', () => {

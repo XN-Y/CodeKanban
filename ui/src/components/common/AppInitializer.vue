@@ -59,7 +59,10 @@ async function ensureSettingsLoaded() {
     return;
   }
 
-  await settingsStore.loadWebSessionQuickInput();
+  await Promise.all([
+    settingsStore.loadWebSessionQuickInput(),
+    settingsStore.loadDailyTipSettings(),
+  ]);
 }
 
 useInit(async () => {

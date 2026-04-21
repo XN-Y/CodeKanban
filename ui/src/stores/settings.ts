@@ -164,6 +164,10 @@ export interface WebSessionQuickInputSettings {
   recent: string[];
 }
 
+export interface DailyTipSettings {
+  enabled: boolean;
+}
+
 type ItemResponse<T> = {
   item?: T;
 };
@@ -206,7 +210,6 @@ interface GeneralSettings {
   customTheme: ThemeSettings | null;
   recentProjectsLimit: number;
   maxTerminalsPerProject: number;
-  dailyTipEnabled: boolean;
   panelShortcuts: ShortcutSettings;
   webSessionQuickInput: WebSessionQuickInputSettings;
   webSessionQuickInputDirectSend: boolean;
@@ -280,6 +283,9 @@ const DEFAULT_WEB_SESSION_QUICK_INPUT: WebSessionQuickInputSettings = {
   recent: [],
 };
 const DEFAULT_WEB_SESSION_QUICK_INPUT_DIRECT_SEND = false;
+const DEFAULT_DAILY_TIP_SETTINGS: DailyTipSettings = {
+  enabled: true,
+};
 
 export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
   {
@@ -307,7 +313,6 @@ const defaultSettings: GeneralSettings = {
   customTheme: null,
   recentProjectsLimit: DEFAULT_RECENT_PROJECTS_LIMIT,
   maxTerminalsPerProject: DEFAULT_TERMINALS_PER_PROJECT_LIMIT,
-  dailyTipEnabled: true,
   panelShortcuts: { ...DEFAULT_SHORTCUTS },
   webSessionQuickInput: {
     pinned: [...DEFAULT_WEB_SESSION_QUICK_INPUT.pinned],
@@ -335,6 +340,13 @@ const defaultSettings: GeneralSettings = {
 export const useSettingsStore = defineStore('settings', () => {
   const loadedSettings = loadSettings();
   const settings = ref<GeneralSettings>(loadedSettings.settings);
+  const dailyTipEnabled = ref(DEFAULT_DAILY_TIP_SETTINGS.enabled);
+  const dailyTipSettingsLoaded = ref(false);
+  const dailyTipSettingsSaving = ref(false);
+  let dailyTipSettingsLoadTask: Promise<void> | null = null;
+  let dailyTipSettingsSyncTask: Promise<DailyTipSettings> = Promise.resolve({
+    ...DEFAULT_DAILY_TIP_SETTINGS,
+  });
   const webSessionQuickInputLoaded = ref(false);
   let webSessionQuickInputLoadTask: Promise<void> | null = null;
   let webSessionQuickInputSyncTask: Promise<void> = Promise.resolve();
@@ -352,7 +364,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const customTheme = computed(() => settings.value.customTheme);
   const recentProjectsLimit = computed(() => settings.value.recentProjectsLimit);
   const maxTerminalsPerProject = computed(() => settings.value.maxTerminalsPerProject);
-  const dailyTipEnabled = computed(() => settings.value.dailyTipEnabled);
   const panelShortcuts = computed(() => settings.value.panelShortcuts);
   const terminalShortcut = computed(() => panelShortcuts.value.terminal);
   const notepadShortcut = computed(() => panelShortcuts.value.notepad);
@@ -469,8 +480,77 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.maxTerminalsPerProject = sanitizeTerminalLimit(limit);
   }
 
-  function updateDailyTipEnabled(value: boolean) {
-    settings.value.dailyTipEnabled = sanitizeDailyTipEnabled(value);
+  function queueDailyTipSettingsSync(payload: DailyTipSettings) {
+    const pendingLoadTask = dailyTipSettingsLoadTask;
+
+    const task = dailyTipSettingsSyncTask.then(async () => {
+      if (pendingLoadTask) {
+        await pendingLoadTask;
+      }
+
+      dailyTipSettingsSaving.value = true;
+      try {
+        const response = await http
+          .Post<ItemResponse<DailyTipSettings>>('/system/daily-tip-settings/update', payload)
+          .send();
+        const next = sanitizeDailyTipSettings(response?.item ?? payload);
+        dailyTipEnabled.value = next.enabled;
+        dailyTipSettingsLoaded.value = true;
+        return next;
+      } finally {
+        dailyTipSettingsSaving.value = false;
+      }
+    });
+
+    dailyTipSettingsSyncTask = task.catch(error => {
+      console.warn('Failed to sync daily tip settings.', error);
+      return sanitizeDailyTipSettings({
+        enabled: dailyTipEnabled.value,
+      });
+    });
+
+    return task;
+  }
+
+  async function loadDailyTipSettings(force = false) {
+    if (!force && dailyTipSettingsLoaded.value) {
+      return;
+    }
+    if (!force && dailyTipSettingsLoadTask) {
+      return dailyTipSettingsLoadTask;
+    }
+
+    const task = http
+      .Get<ItemResponse<DailyTipSettings>>('/system/daily-tip-settings')
+      .send()
+      .then(response => {
+        const next = sanitizeDailyTipSettings(response?.item);
+        dailyTipEnabled.value = next.enabled;
+        dailyTipSettingsLoaded.value = true;
+      })
+      .catch(error => {
+        console.warn('Failed to load daily tip settings.', error);
+      })
+      .finally(() => {
+        dailyTipSettingsLoadTask = null;
+      });
+
+    dailyTipSettingsLoadTask = task;
+    return task;
+  }
+
+  async function updateDailyTipEnabled(value: boolean) {
+    if (dailyTipSettingsLoadTask) {
+      await dailyTipSettingsLoadTask;
+    } else if (!dailyTipSettingsLoaded.value) {
+      await loadDailyTipSettings();
+    }
+
+    return queueDailyTipSettingsSync(
+      sanitizeDailyTipSettings({
+        enabled: value,
+      })
+    );
   }
 
   function updatePanelShortcuts(partial: Partial<ShortcutSettings>) {
@@ -751,6 +831,8 @@ export const useSettingsStore = defineStore('settings', () => {
     recentProjectsLimit,
     maxTerminalsPerProject,
     dailyTipEnabled,
+    dailyTipSettingsLoaded,
+    dailyTipSettingsSaving,
     panelShortcuts,
     terminalShortcut,
     notepadShortcut,
@@ -779,6 +861,7 @@ export const useSettingsStore = defineStore('settings', () => {
     resetTheme,
     updateRecentProjectsLimit,
     updateMaxTerminalsPerProject,
+    loadDailyTipSettings,
     updateDailyTipEnabled,
     updatePanelShortcuts,
     updateTerminalShortcut,
@@ -873,7 +956,6 @@ function loadSettings(): LoadSettingsResult {
           customTheme: sanitizeOptionalThemeSettings(parsed.customTheme),
           recentProjectsLimit: sanitizeRecentProjectsLimit(parsed.recentProjectsLimit),
           maxTerminalsPerProject: sanitizeTerminalLimit(parsed.maxTerminalsPerProject),
-          dailyTipEnabled: sanitizeDailyTipEnabled(parsed.dailyTipEnabled),
           panelShortcuts: sanitizePanelShortcuts(parsed.panelShortcuts ?? parsed.panelShortcut),
           webSessionQuickInput: sanitizeWebSessionQuickInput(parsed.webSessionQuickInput),
           webSessionQuickInputDirectSend: sanitizeWebSessionQuickInputDirectSend(
@@ -951,7 +1033,6 @@ function cloneDefaultSettings(): GeneralSettings {
     customTheme: defaultSettings.customTheme,
     recentProjectsLimit: defaultSettings.recentProjectsLimit,
     maxTerminalsPerProject: defaultSettings.maxTerminalsPerProject,
-    dailyTipEnabled: defaultSettings.dailyTipEnabled,
     panelShortcuts: {
       terminal: { ...defaultSettings.panelShortcuts.terminal },
       notepad: { ...defaultSettings.panelShortcuts.notepad },
@@ -1029,8 +1110,10 @@ function sanitizeTerminalLimit(value: number | undefined) {
   return Math.min(Math.max(Math.round(parsed), 1), 24);
 }
 
-function sanitizeDailyTipEnabled(value: unknown) {
-  return value !== false;
+function sanitizeDailyTipSettings(value?: Partial<DailyTipSettings> | null): DailyTipSettings {
+  return {
+    enabled: value?.enabled !== false,
+  };
 }
 
 function sanitizeShowWebSessionReasoning(value: unknown, fallback = false) {

@@ -104,6 +104,7 @@ type WebSessionQuickInputConfig struct {
 }
 
 type UIConfig struct {
+	DailyTipEnabled      bool                       `json:"dailyTipEnabled" yaml:"dailyTipEnabled"`
 	WebSessionQuickInput WebSessionQuickInputConfig `json:"webSessionQuickInput" yaml:"webSessionQuickInput"`
 }
 
@@ -317,6 +318,7 @@ func ReadConfig() *AppConfig {
 			WebSessionActiveCallTimeout:    NormalizeWebSessionActiveCallTimeoutConfig(defaultWebSessionActiveCallTimeoutConfig),
 		},
 		UI: UIConfig{
+			DailyTipEnabled:      true,
 			WebSessionQuickInput: NormalizeWebSessionQuickInputConfig(defaultWebSessionQuickInputConfig),
 		},
 		Worktree: WorktreeConfig{

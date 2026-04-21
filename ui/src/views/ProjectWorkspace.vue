@@ -522,7 +522,7 @@ const loadProject = (id: string) => {
   }
   projectStore.fetchProject(id);
   projectStore.addRecentProject(id);
-  maybeShowDailyTip(id);
+  void maybeShowDailyTip(id);
 };
 
 onMounted(() => {
@@ -690,7 +690,12 @@ function handleGoToSettings() {
   void router.push('/settings');
 }
 
-function maybeShowDailyTip(projectId: string) {
+async function maybeShowDailyTip(projectId: string) {
+  await settingsStore.loadDailyTipSettings();
+  if (!settingsStore.dailyTipSettingsLoaded || currentProjectId.value !== projectId) {
+    return;
+  }
+
   const tips = getDailyTips(locale.value);
   const todayDateKey = formatLocalDateKey();
   const state = loadDailyTipState();
@@ -734,9 +739,15 @@ function handleDailyTipDisable() {
     content: t('dailyTip.disableConfirmContent'),
     positiveText: t('dailyTip.disableForever'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => {
-      settingsStore.updateDailyTipEnabled(false);
+    onPositiveClick: async () => {
+      try {
+        await settingsStore.updateDailyTipEnabled(false);
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+        return false;
+      }
       showDailyTipDialog.value = false;
+      return true;
     },
   });
 }

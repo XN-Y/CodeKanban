@@ -58,6 +58,10 @@ type openEditorInput struct {
 	} `json:"body"`
 }
 
+type dailyTipSettings struct {
+	Enabled bool `json:"enabled" doc:"是否启用每日小技巧"`
+}
+
 func registerSystemRoutes(
 	group *huma.Group,
 	cfg *utils.AppConfig,
@@ -251,6 +255,41 @@ func registerSystemRoutes(
 		op.OperationID = "system-codex-skills"
 		op.Summary = "获取本机可用 Codex skill 列表"
 		op.Description = "扫描已安装和仓库内置的 Codex skill 元数据，返回用于前端展示和插入的摘要信息"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Get(group, "/system/daily-tip-settings", func(ctx context.Context, input *struct{}) (*h.ItemResponse[dailyTipSettings], error) {
+		resp := h.NewItemResponse(dailyTipSettings{
+			Enabled: cfg.UI.DailyTipEnabled,
+		})
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-daily-tip-settings-get"
+		op.Summary = "获取每日小技巧设置"
+		op.Description = "返回每日小技巧的服务端全局启用状态"
+		op.Tags = []string{systemTag}
+	})
+
+	huma.Post(group, "/system/daily-tip-settings/update", func(ctx context.Context, input *struct {
+		Body dailyTipSettings `json:"body"`
+	}) (*h.ItemResponse[dailyTipSettings], error) {
+		next := dailyTipSettings{
+			Enabled: input.Body.Enabled,
+		}
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			c.UI.DailyTipEnabled = next.Enabled
+		}); err != nil {
+			return nil, huma.Error500InternalServerError("failed to save configuration")
+		}
+
+		resp := h.NewItemResponse(next)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "system-daily-tip-settings-update"
+		op.Summary = "更新每日小技巧设置"
+		op.Description = "更新每日小技巧的服务端全局启用状态，并持久化到配置文件"
 		op.Tags = []string{systemTag}
 	})
 

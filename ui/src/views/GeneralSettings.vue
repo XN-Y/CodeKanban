@@ -91,7 +91,12 @@
                   data-search-key="dailyTipEnabled"
                 >
                   <n-space vertical size="small">
-                    <n-switch v-model:value="dailyTipEnabledValue" />
+                    <n-switch
+                      :value="dailyTipEnabledValue"
+                      :loading="dailyTipSettingsSaving"
+                      :disabled="!dailyTipSettingsLoaded || dailyTipSettingsSaving"
+                      @update:value="handleDailyTipEnabledChange"
+                    />
                     <n-button size="small" @click="handleShowRandomDailyTip">
                       {{ t('settings.dailyTipShowRandom') }}
                     </n-button>
@@ -1530,6 +1535,8 @@ const {
   recentProjectsLimit,
   maxTerminalsPerProject,
   dailyTipEnabled,
+  dailyTipSettingsLoaded,
+  dailyTipSettingsSaving,
   terminalShortcut,
   notepadShortcut,
   webSessionQuickInput,
@@ -2078,6 +2085,7 @@ useInit(() => {
   loadDeveloperConfig();
   loadWorktreeSettings();
   loadShellsConfig();
+  void settingsStore.loadDailyTipSettings();
   void settingsStore.loadWebSessionQuickInput();
 });
 
@@ -2437,10 +2445,16 @@ const terminalLimitValue = computed({
   },
 });
 
-const dailyTipEnabledValue = computed({
-  get: () => dailyTipEnabled.value,
-  set: value => settingsStore.updateDailyTipEnabled(value),
-});
+const dailyTipEnabledValue = computed(() => dailyTipEnabled.value);
+
+async function handleDailyTipEnabledChange(value: boolean) {
+  try {
+    await settingsStore.updateDailyTipEnabled(value);
+  } catch (error) {
+    console.error('Failed to save daily tip settings:', error);
+    message.error(t('common.saveFailed'));
+  }
+}
 
 function handleShowRandomDailyTip() {
   if (dailyTips.value.length === 0) {
@@ -2468,9 +2482,16 @@ function handleDailyTipDisable() {
     content: t('dailyTip.disableConfirmContent'),
     positiveText: t('dailyTip.disableForever'),
     negativeText: t('common.cancel'),
-    onPositiveClick: () => {
-      settingsStore.updateDailyTipEnabled(false);
+    onPositiveClick: async () => {
+      try {
+        await settingsStore.updateDailyTipEnabled(false);
+      } catch (error) {
+        console.error('Failed to save daily tip settings:', error);
+        message.error(t('common.saveFailed'));
+        return false;
+      }
       showDailyTipDialog.value = false;
+      return true;
     },
   });
 }

@@ -229,6 +229,42 @@ developer:
 	}
 }
 
+func TestReadConfigDefaultsDailyTipEnabledWhenMissing(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("ui: {}\n"), 0o644); err != nil {
+		t.Fatalf("write config failed: %v", err)
+	}
+
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd failed: %v", err)
+	}
+	if err := os.Chdir(tempDir); err != nil {
+		t.Fatalf("Chdir failed: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(oldWD)
+	})
+
+	oldStore := configStore
+	oldActivePath := activeConfigPath
+	oldUseHomeData := useHomeData
+	configStore = koanf.New(".")
+	activeConfigPath = ""
+	useHomeData = false
+	t.Cleanup(func() {
+		configStore = oldStore
+		activeConfigPath = oldActivePath
+		useHomeData = oldUseHomeData
+	})
+
+	config := ReadConfig()
+	if !config.UI.DailyTipEnabled {
+		t.Fatal("expected ui.dailyTipEnabled to default to true when config key is missing")
+	}
+}
+
 func TestUpdateConfigDropsLegacyAutoCreateTaskOnStartWorkField(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.yaml")
