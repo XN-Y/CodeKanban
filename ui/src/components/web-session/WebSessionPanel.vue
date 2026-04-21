@@ -642,7 +642,7 @@
                         class="attachment-pill"
                       >
                         <n-popover
-                          v-if="canPreviewAttachment(attachment)"
+                          v-if="shouldUseAttachmentHoverPreview(attachment)"
                           trigger="hover"
                           placement="bottom-start"
                           :delay="120"
@@ -668,6 +668,15 @@
                             />
                           </div>
                         </n-popover>
+                        <button
+                          v-else-if="shouldUseAttachmentModalPreview(attachment)"
+                          type="button"
+                          class="attachment-preview-trigger"
+                          :title="attachment.name"
+                          @click="openAttachmentPreview(attachment)"
+                        >
+                          <span class="attachment-preview-trigger-text">{{ attachment.name }}</span>
+                        </button>
                         <button
                           v-else
                           type="button"
@@ -1017,7 +1026,7 @@
                 class="draft-attachment-pill"
               >
                 <n-popover
-                  v-if="canPreviewAttachment(attachment)"
+                  v-if="shouldUseAttachmentHoverPreview(attachment)"
                   trigger="hover"
                   placement="bottom-start"
                   :delay="120"
@@ -1043,6 +1052,17 @@
                     />
                   </div>
                 </n-popover>
+                <button
+                  v-else-if="shouldUseAttachmentModalPreview(attachment)"
+                  type="button"
+                  class="attachment-preview-trigger"
+                  :title="draftAttachmentDisplayName(attachment, index)"
+                  @click="openDraftAttachmentPreview(attachment, index)"
+                >
+                  <span class="attachment-preview-trigger-text">{{
+                    draftAttachmentDisplayName(attachment, index)
+                  }}</span>
+                </button>
                 <button
                   v-else
                   type="button"
@@ -1793,6 +1813,7 @@ import {
   toggleExclusiveTimelineRawBlock,
   type TimelineRawSurface,
 } from '@/components/web-session/webSessionRawToggle';
+import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session/webSessionAttachmentPreview';
 import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
@@ -6136,6 +6157,21 @@ function canPreviewAttachment(attachment: { name: string; mime?: string }) {
     return normalizedMime.startsWith('image/');
   }
   return IMAGE_ATTACHMENT_NAME_PATTERN.test(attachment.name);
+}
+
+function attachmentPreviewMode(attachment: { name: string; mime?: string }) {
+  return resolveWebSessionAttachmentPreviewMode({
+    previewable: canPreviewAttachment(attachment),
+    isMobile: isMobile.value,
+  });
+}
+
+function shouldUseAttachmentHoverPreview(attachment: { name: string; mime?: string }) {
+  return attachmentPreviewMode(attachment) === 'popover';
+}
+
+function shouldUseAttachmentModalPreview(attachment: { name: string; mime?: string }) {
+  return attachmentPreviewMode(attachment) === 'modal';
 }
 
 function getAttachmentPreviewUrl(attachmentID: string) {
