@@ -1187,7 +1187,7 @@ const mobileKeyboard = useMobileKeyboard({
 });
 
 function shouldFreezeTerminalResize() {
-  return Boolean(props.isMobile) && mobileKeyboard.shouldFreezeResizeNow();
+  return Boolean(props.isMobile) && mobileKeyboard.sync().isResizeFrozen;
 }
 
 function performLocalViewportRefresh(

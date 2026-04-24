@@ -5,15 +5,33 @@ export type MobileViewportMetrics = {
   height: number;
 };
 
-type MobileKeyboardTrackerOptions = {
+export type MobileKeyboardTrackerState = {
+  isKeyboardOpen: boolean;
+  isResizeFrozen: boolean;
+};
+
+export type MobileKeyboardTrackerOptions = {
   enabled?: () => boolean;
   isTouchDevice?: () => boolean;
   measureViewport?: () => MobileViewportMetrics;
   onDismissed?: () => void;
+  onStateChange?: (state: MobileKeyboardTrackerState) => void;
   dismissSettleMs?: number;
-  setTimeoutFn?: (handler: () => void, timeout: number) => number;
-  clearTimeoutFn?: (timerId: number) => void;
 };
+
+export type MobileKeyboardTracker = {
+  start: () => void;
+  stop: () => void;
+  reset: () => void;
+  setFocused: (nextFocused: boolean) => void;
+  sync: (snapshot?: MobileViewportMetrics) => MobileKeyboardTrackerState;
+};
+
+export type MobileKeyboardHandle = Pick<MobileKeyboardTracker, 'reset' | 'setFocused' | 'sync'>;
+
+type MobileKeyboardPhase = 'idle' | 'open' | 'settling';
+
+type TimerHandle = ReturnType<typeof setTimeout>;
 
 const KEYBOARD_OPEN_MIN_HEIGHT_PX = 120;
 const KEYBOARD_OPEN_MIN_HEIGHT_RATIO = 0.18;
@@ -48,20 +66,69 @@ function readViewportMetrics(): MobileViewportMetrics {
   };
 }
 
-export function createMobileKeyboardTracker(options: MobileKeyboardTrackerOptions = {}) {
+function buildTrackerState(phase: MobileKeyboardPhase): MobileKeyboardTrackerState {
+  return {
+    isKeyboardOpen: phase === 'open',
+    isResizeFrozen: phase !== 'idle',
+  };
+}
+
+function sameTrackerState(a: MobileKeyboardTrackerState | null, b: MobileKeyboardTrackerState) {
+  return Boolean(
+    a && a.isKeyboardOpen === b.isKeyboardOpen && a.isResizeFrozen === b.isResizeFrozen
+  );
+}
+
+function getHeightThresholds(anchorHeight: number) {
+  return {
+    open: Math.max(
+      KEYBOARD_OPEN_MIN_HEIGHT_PX,
+      Math.round(anchorHeight * KEYBOARD_OPEN_MIN_HEIGHT_RATIO)
+    ),
+    dismiss: Math.max(
+      KEYBOARD_DISMISS_MAX_HEIGHT_PX,
+      Math.round(anchorHeight * KEYBOARD_DISMISS_MAX_HEIGHT_RATIO)
+    ),
+  };
+}
+
+export function createMobileKeyboardTracker(
+  options: MobileKeyboardTrackerOptions = {}
+): MobileKeyboardTracker {
   let started = false;
   let focused = false;
-  let keyboardOpen = false;
-  let dismissSettling = false;
+  let phase: MobileKeyboardPhase = 'idle';
   let focusAnchor: MobileViewportMetrics | null = null;
-  let dismissTimerId: number | null = null;
+  let dismissTimerId: TimerHandle | null = null;
+  let lastEmittedState: MobileKeyboardTrackerState | null = null;
 
   const measureViewport = options.measureViewport ?? readViewportMetrics;
-  const setTimeoutFn =
-    options.setTimeoutFn ?? ((handler, timeout) => window.setTimeout(handler, timeout));
-  const clearTimeoutFn = options.clearTimeoutFn ?? (timerId => window.clearTimeout(timerId));
+  const dismissSettleMs = options.dismissSettleMs ?? DISMISS_SETTLE_MS;
 
-  function isEnabled() {
+  function getState() {
+    return buildTrackerState(phase);
+  }
+
+  function emitStateChange(force = false) {
+    if (!options.onStateChange) {
+      return;
+    }
+
+    const nextState = getState();
+    if (!force && sameTrackerState(lastEmittedState, nextState)) {
+      return;
+    }
+
+    lastEmittedState = nextState;
+    options.onStateChange(nextState);
+  }
+
+  function setPhase(nextPhase: MobileKeyboardPhase, forceEmit = false) {
+    phase = nextPhase;
+    emitStateChange(forceEmit);
+  }
+
+  function isTrackingEnabled() {
     return (options.enabled?.() ?? true) && (options.isTouchDevice?.() ?? isBrowserTouchDevice());
   }
 
@@ -69,144 +136,137 @@ export function createMobileKeyboardTracker(options: MobileKeyboardTrackerOption
     if (dismissTimerId == null) {
       return;
     }
-    clearTimeoutFn(dismissTimerId);
+    clearTimeout(dismissTimerId);
     dismissTimerId = null;
-  }
-
-  function clearKeyboardState() {
-    clearDismissTimer();
-    keyboardOpen = false;
-    dismissSettling = false;
   }
 
   function resetAnchor(snapshot: MobileViewportMetrics | null) {
     focusAnchor = snapshot;
   }
 
-  function scheduleDismissRecovery() {
-    clearDismissTimer();
-    dismissSettling = true;
-    dismissTimerId = setTimeoutFn(() => {
-      dismissTimerId = null;
-      if (!dismissSettling) {
-        return;
-      }
-      dismissSettling = false;
-      focusAnchor = focused ? measureViewport() : null;
-      options.onDismissed?.();
-    }, options.dismissSettleMs ?? DISMISS_SETTLE_MS);
+  function captureAnchor(snapshot = measureViewport()) {
+    resetAnchor(snapshot);
   }
 
-  function syncViewportState(snapshot = measureViewport()) {
-    if (!isEnabled()) {
-      clearKeyboardState();
+  function clearState(forceEmit = false) {
+    clearDismissTimer();
+    setPhase('idle', forceEmit);
+  }
+
+  function scheduleDismissRecovery() {
+    clearDismissTimer();
+    setPhase('settling');
+    dismissTimerId = setTimeout(() => {
+      dismissTimerId = null;
+      if (phase !== 'settling') {
+        return;
+      }
+      resetAnchor(focused ? measureViewport() : null);
+      setPhase('idle');
+      options.onDismissed?.();
+    }, dismissSettleMs);
+  }
+
+  function sync(snapshot = measureViewport()) {
+    if (!isTrackingEnabled()) {
+      clearState();
       if (!focused) {
         resetAnchor(null);
       }
-      return;
+      return getState();
     }
 
     if (snapshot.width <= 0 || snapshot.height <= 0) {
-      return;
+      return getState();
     }
 
     if (!focusAnchor) {
       if (focused) {
-        resetAnchor(snapshot);
+        captureAnchor(snapshot);
       }
-      return;
+      return getState();
     }
 
     const widthDelta = Math.abs(snapshot.width - focusAnchor.width);
     if (widthDelta > VIEWPORT_WIDTH_RESET_PX) {
-      clearKeyboardState();
+      clearState();
       resetAnchor(focused ? snapshot : null);
-      return;
+      return getState();
     }
 
-    if (!keyboardOpen && !dismissSettling && snapshot.height > focusAnchor.height) {
-      resetAnchor(snapshot);
+    if (phase === 'idle' && snapshot.height > focusAnchor.height) {
+      captureAnchor(snapshot);
     }
 
     const anchor = focusAnchor;
     if (!anchor) {
-      return;
+      return getState();
     }
 
     const heightDelta = Math.max(anchor.height - snapshot.height, 0);
-    const openThreshold = Math.max(
-      KEYBOARD_OPEN_MIN_HEIGHT_PX,
-      Math.round(anchor.height * KEYBOARD_OPEN_MIN_HEIGHT_RATIO)
-    );
-    const dismissThreshold = Math.max(
-      KEYBOARD_DISMISS_MAX_HEIGHT_PX,
-      Math.round(anchor.height * KEYBOARD_DISMISS_MAX_HEIGHT_RATIO)
-    );
+    const thresholds = getHeightThresholds(anchor.height);
 
-    if (!keyboardOpen && !dismissSettling) {
-      if (focused && heightDelta >= openThreshold) {
-        keyboardOpen = true;
+    if (phase === 'idle') {
+      if (focused && heightDelta >= thresholds.open) {
+        setPhase('open');
       }
-      return;
+      return getState();
     }
 
-    if (heightDelta > dismissThreshold) {
+    if (heightDelta > thresholds.dismiss) {
       clearDismissTimer();
-      dismissSettling = false;
-      keyboardOpen = true;
-      return;
+      setPhase('open');
+      return getState();
     }
 
-    if (keyboardOpen || !dismissSettling) {
-      keyboardOpen = false;
-      scheduleDismissRecovery();
-    }
+    scheduleDismissRecovery();
+    return getState();
   }
 
   function setFocused(nextFocused: boolean) {
     focused = nextFocused;
 
-    if (!isEnabled()) {
+    if (!isTrackingEnabled()) {
       if (!focused) {
-        clearKeyboardState();
+        clearState();
         resetAnchor(null);
       }
       return;
     }
 
     if (focused) {
-      if (!keyboardOpen && !dismissSettling) {
-        resetAnchor(measureViewport());
-      } else if (!focusAnchor) {
-        resetAnchor(measureViewport());
+      if (!focusAnchor || phase === 'idle') {
+        captureAnchor();
       }
       return;
     }
 
-    if (!keyboardOpen && !dismissSettling) {
+    if (phase === 'idle') {
       clearDismissTimer();
       resetAnchor(null);
     }
   }
 
-  function shouldFreezeResizeNow() {
-    syncViewportState();
-    return isEnabled() && (keyboardOpen || dismissSettling);
-  }
-
   function handleViewportChange() {
-    syncViewportState();
+    sync();
   }
 
   function start() {
     if (started || typeof window === 'undefined') {
       return;
     }
+
     started = true;
     window.addEventListener('resize', handleViewportChange);
     window.visualViewport?.addEventListener('resize', handleViewportChange);
     window.visualViewport?.addEventListener('scroll', handleViewportChange);
-    syncViewportState();
+    sync();
+  }
+
+  function reset() {
+    clearState(true);
+    resetAnchor(null);
+    focused = false;
   }
 
   function stop() {
@@ -215,29 +275,23 @@ export function createMobileKeyboardTracker(options: MobileKeyboardTrackerOption
       window.visualViewport?.removeEventListener('resize', handleViewportChange);
       window.visualViewport?.removeEventListener('scroll', handleViewportChange);
     }
+
     started = false;
-    clearKeyboardState();
-    resetAnchor(null);
-    focused = false;
+    reset();
   }
 
   return {
     start,
     stop,
-    dispose: stop,
+    reset,
     setFocused,
-    syncViewportState,
-    shouldFreezeResizeNow,
-    get isKeyboardOpen() {
-      return keyboardOpen;
-    },
-    get isResizeFrozen() {
-      return keyboardOpen || dismissSettling;
-    },
+    sync,
   };
 }
 
-export function useMobileKeyboard(options: MobileKeyboardTrackerOptions = {}) {
+export function useMobileKeyboard(
+  options: MobileKeyboardTrackerOptions = {}
+): MobileKeyboardHandle {
   const tracker = createMobileKeyboardTracker(options);
 
   onMounted(() => {
@@ -245,8 +299,12 @@ export function useMobileKeyboard(options: MobileKeyboardTrackerOptions = {}) {
   });
 
   onBeforeUnmount(() => {
-    tracker.dispose();
+    tracker.stop();
   });
 
-  return tracker;
+  return {
+    reset: tracker.reset,
+    setFocused: tracker.setFocused,
+    sync: tracker.sync,
+  };
 }

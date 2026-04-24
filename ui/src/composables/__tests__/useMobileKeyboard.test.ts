@@ -4,6 +4,7 @@ import { createMobileKeyboardTracker } from '@/composables/useMobileKeyboard';
 
 describe('createMobileKeyboardTracker', () => {
   afterEach(() => {
+    vi.useRealTimers();
     delete (globalThis as { window?: Window }).window;
   });
 
@@ -17,51 +18,49 @@ describe('createMobileKeyboardTracker', () => {
 
     tracker.setFocused(true);
 
-    expect(tracker.shouldFreezeResizeNow()).toBe(false);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: false,
+      isResizeFrozen: false,
+    });
 
     viewport = { width: 390, height: 560 };
 
-    expect(tracker.shouldFreezeResizeNow()).toBe(true);
-    expect(tracker.isKeyboardOpen).toBe(true);
-    expect(tracker.isResizeFrozen).toBe(true);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: true,
+      isResizeFrozen: true,
+    });
   });
 
   it('keeps resize frozen until dismissal settles, then runs recovery once', () => {
-    let viewport = { width: 390, height: 844 };
-    let nextTimerId = 0;
-    const pendingTimers = new Map<number, () => void>();
-    const onDismissed = vi.fn();
+    vi.useFakeTimers();
 
+    let viewport = { width: 390, height: 844 };
+    const onDismissed = vi.fn();
     const tracker = createMobileKeyboardTracker({
       enabled: () => true,
       isTouchDevice: () => true,
       measureViewport: () => viewport,
       onDismissed,
-      setTimeoutFn: handler => {
-        nextTimerId += 1;
-        pendingTimers.set(nextTimerId, handler);
-        return nextTimerId;
-      },
-      clearTimeoutFn: timerId => {
-        pendingTimers.delete(timerId);
-      },
     });
 
     tracker.setFocused(true);
     viewport = { width: 390, height: 560 };
-    expect(tracker.shouldFreezeResizeNow()).toBe(true);
+    expect(tracker.sync().isResizeFrozen).toBe(true);
 
     viewport = { width: 390, height: 820 };
-    expect(tracker.shouldFreezeResizeNow()).toBe(true);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: false,
+      isResizeFrozen: true,
+    });
     expect(onDismissed).not.toHaveBeenCalled();
-    expect(pendingTimers.size).toBe(1);
 
-    const settle = Array.from(pendingTimers.values())[0];
-    settle?.();
+    vi.advanceTimersByTime(160);
 
     expect(onDismissed).toHaveBeenCalledTimes(1);
-    expect(tracker.shouldFreezeResizeNow()).toBe(false);
-    expect(tracker.isResizeFrozen).toBe(false);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: false,
+      isResizeFrozen: false,
+    });
   });
 
   it('treats meaningful width changes as a real viewport resize instead of a keyboard event', () => {
@@ -75,8 +74,10 @@ describe('createMobileKeyboardTracker', () => {
     tracker.setFocused(true);
     viewport = { width: 470, height: 560 };
 
-    expect(tracker.shouldFreezeResizeNow()).toBe(false);
-    expect(tracker.isKeyboardOpen).toBe(false);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: false,
+      isResizeFrozen: false,
+    });
   });
 
   it('falls back to window.innerHeight when visualViewport is unavailable', () => {
@@ -85,8 +86,6 @@ describe('createMobileKeyboardTracker', () => {
       innerHeight: 844,
       addEventListener: vi.fn(),
       removeEventListener: vi.fn(),
-      setTimeout: vi.fn((_handler: () => void, _timeout: number) => 1),
-      clearTimeout: vi.fn(),
     } as unknown as Window;
 
     globalThis.window = fakeWindow;
@@ -99,6 +98,39 @@ describe('createMobileKeyboardTracker', () => {
     tracker.setFocused(true);
     fakeWindow.innerHeight = 560;
 
-    expect(tracker.shouldFreezeResizeNow()).toBe(true);
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: true,
+      isResizeFrozen: true,
+    });
+  });
+
+  it('emits state changes for keyboard transitions and reset', () => {
+    let viewport = { width: 390, height: 844 };
+    const onStateChange = vi.fn();
+    const tracker = createMobileKeyboardTracker({
+      enabled: () => true,
+      isTouchDevice: () => true,
+      measureViewport: () => viewport,
+      onStateChange,
+    });
+
+    tracker.setFocused(true);
+    viewport = { width: 390, height: 560 };
+
+    expect(tracker.sync()).toEqual({
+      isKeyboardOpen: true,
+      isResizeFrozen: true,
+    });
+    expect(onStateChange).toHaveBeenLastCalledWith({
+      isKeyboardOpen: true,
+      isResizeFrozen: true,
+    });
+
+    tracker.reset();
+
+    expect(onStateChange).toHaveBeenLastCalledWith({
+      isKeyboardOpen: false,
+      isResizeFrozen: false,
+    });
   });
 });
