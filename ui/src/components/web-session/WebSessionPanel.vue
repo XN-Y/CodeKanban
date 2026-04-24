@@ -1868,6 +1868,10 @@ import {
   type MobileSessionCategory,
 } from '@/components/web-session/webSessionMobileTabOptions';
 import {
+  resolveWebSessionMobileSelectionAction,
+  type WebSessionMobileSelectionAction,
+} from '@/components/web-session/webSessionMobileSelection';
+import {
   collapseProjectDraftTabs,
   pickPreferredDraftTab,
   resolveStartDraftSessionDecision,
@@ -8411,6 +8415,47 @@ async function handleSyncSession(
   }
 }
 
+async function performMobileSessionSelection(
+  session: SessionTab,
+  action: WebSessionMobileSelectionAction = resolveWebSessionMobileSelectionAction({
+    currentProjectId: props.projectId,
+    activeArchivedPreviewId: activeArchivedPreviewId.value,
+    target: session,
+  })
+) {
+  if (action.type === 'none') {
+    return;
+  }
+  if (action.type === 'select-local') {
+    await handleSessionSelect(action.sessionId);
+    return;
+  }
+  if (action.type === 'focus-archived-preview') {
+    activeArchivedPreviewId.value = action.sessionId;
+    scrollToBottom(true);
+    return;
+  }
+  try {
+    if (action.type === 'open-archived-preview') {
+      await openArchivedPreviewSession(session);
+      scrollToBottom(true);
+      return;
+    }
+    if (action.type === 'navigate-project') {
+      if (!session.archivedAt) {
+        webSessionStore.setActiveSession(action.projectId, action.sessionId);
+      }
+      projectStore.addRecentProject(action.projectId);
+      await router.push(buildProjectRouteLocation(action.projectId, action.sessionId));
+    }
+  } catch (error) {
+    if (action.type === 'open-archived-preview') {
+      clearArchivedPreviewSession();
+    }
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
 function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   const mobileOption = option as MobileTabDropdownOption;
   requestMobileViewForBottomNavSelector();
@@ -8422,25 +8467,8 @@ function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   if (!isMobileTabSessionOption(mobileOption)) {
     return;
   }
-  if (mobileOption.section === 'archived') {
-    closeMobileSessionSelector();
-    if (archivedPreviewSession.value?.id === mobileOption.session.id) {
-      activeArchivedPreviewId.value = mobileOption.session.id;
-      scrollToBottom(true);
-      return;
-    }
-    void openArchivedPreviewSession(mobileOption.session).then(
-      () => {
-        scrollToBottom(true);
-      },
-      error => {
-        clearArchivedPreviewSession();
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      }
-    );
-    return;
-  }
-  void handleSessionSelect(String(mobileOption.session.id));
+  closeMobileSessionSelector();
+  void performMobileSessionSelection(mobileOption.session);
 }
 
 function goToPrevSession() {
@@ -8449,19 +8477,7 @@ function goToPrevSession() {
   }
   const session = mobileNavigationSessions.value[currentSessionIndex.value - 1];
   if (session) {
-    if (session.archivedAt) {
-      void openArchivedPreviewSession(session).then(
-        () => {
-          scrollToBottom(true);
-        },
-        error => {
-          clearArchivedPreviewSession();
-          message.error(error instanceof Error ? error.message : t('common.error'));
-        }
-      );
-      return;
-    }
-    void handleSessionSelect(session.id);
+    void performMobileSessionSelection(session);
   }
 }
 
@@ -8471,19 +8487,7 @@ function goToNextSession() {
   }
   const session = mobileNavigationSessions.value[currentSessionIndex.value + 1];
   if (session) {
-    if (session.archivedAt) {
-      void openArchivedPreviewSession(session).then(
-        () => {
-          scrollToBottom(true);
-        },
-        error => {
-          clearArchivedPreviewSession();
-          message.error(error instanceof Error ? error.message : t('common.error'));
-        }
-      );
-      return;
-    }
-    void handleSessionSelect(session.id);
+    void performMobileSessionSelection(session);
   }
 }
 
