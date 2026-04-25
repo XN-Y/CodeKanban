@@ -203,6 +203,97 @@ func TestGenerateDiffStatAgainstHEADForUntracked(t *testing.T) {
 	}
 }
 
+func TestGenerateDiffStatAgainstHEADForUntrackedWithoutTrailingNewline(t *testing.T) {
+	repoDir := initTestRepo(t)
+	filePath := filepath.Join(repoDir, "draft.txt")
+	if err := os.WriteFile(filePath, []byte("one\ntwo"), 0o644); err != nil {
+		t.Fatalf("write draft file: %v", err)
+	}
+
+	stat, err := GenerateDiffStatAgainstHEAD(repoDir, FileStatus{
+		Path: "draft.txt",
+		Kind: FileChangeKindUntracked,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDiffStatAgainstHEAD returned error: %v", err)
+	}
+	if stat.Additions != 2 || stat.Deletions != 0 {
+		t.Fatalf("unexpected untracked diff stat: %#v", stat)
+	}
+}
+
+func TestGenerateDiffStatAgainstHEADForBinaryUntrackedReturnsZero(t *testing.T) {
+	repoDir := initTestRepo(t)
+	filePath := filepath.Join(repoDir, "draft.bin")
+	if err := os.WriteFile(filePath, []byte{0x00, 0x01, 0x02}, 0o644); err != nil {
+		t.Fatalf("write draft file: %v", err)
+	}
+
+	stat, err := GenerateDiffStatAgainstHEAD(repoDir, FileStatus{
+		Path: "draft.bin",
+		Kind: FileChangeKindUntracked,
+	})
+	if err != nil {
+		t.Fatalf("GenerateDiffStatAgainstHEAD returned error: %v", err)
+	}
+	if stat.Additions != 0 || stat.Deletions != 0 {
+		t.Fatalf("unexpected binary untracked diff stat: %#v", stat)
+	}
+}
+
+func TestGenerateDiffStatsAgainstHEADContextBatchesTrackedAndUntrackedChanges(t *testing.T) {
+	repoDir := initTestRepoWithTrackedFile(t, "notes.txt", "hello\n")
+
+	readmePath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# Test Repo\nextra line\n"), 0o644); err != nil {
+		t.Fatalf("rewrite README: %v", err)
+	}
+	if err := os.Rename(filepath.Join(repoDir, "notes.txt"), filepath.Join(repoDir, "docs.txt")); err != nil {
+		t.Fatalf("rename tracked file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch.txt"), []byte("draft\n"), 0o644); err != nil {
+		t.Fatalf("write scratch.txt: %v", err)
+	}
+	runGit(t, repoDir, "add", "docs.txt", "notes.txt")
+
+	statusMap, err := ListFileStatuses(repoDir)
+	if err != nil {
+		t.Fatalf("ListFileStatuses returned error: %v", err)
+	}
+
+	statuses := make([]FileStatus, 0, len(statusMap))
+	for _, status := range statusMap {
+		statuses = append(statuses, status)
+	}
+
+	stats, err := GenerateDiffStatsAgainstHEADContext(context.Background(), repoDir, statuses)
+	if err != nil {
+		t.Fatalf("GenerateDiffStatsAgainstHEADContext returned error: %v", err)
+	}
+
+	if stat := stats["README.md"]; stat.Additions != 1 || stat.Deletions != 0 {
+		t.Fatalf("unexpected README.md diff stat: %#v", stat)
+	}
+	if stat := stats["docs.txt"]; stat.Additions != 0 || stat.Deletions != 0 {
+		t.Fatalf("unexpected docs.txt diff stat: %#v", stat)
+	}
+	if stat := stats["scratch.txt"]; stat.Additions != 1 || stat.Deletions != 0 {
+		t.Fatalf("unexpected scratch.txt diff stat: %#v", stat)
+	}
+}
+
+func TestParseGitDiffStatsZOutputHandlesRenames(t *testing.T) {
+	output := []byte("1\t0\tREADME.md\x000\t0\t\x00notes.txt\x00docs.txt\x00")
+
+	stats := parseGitDiffStatsZOutput(output)
+	if stat := stats["README.md"]; stat.Additions != 1 || stat.Deletions != 0 {
+		t.Fatalf("unexpected README.md diff stat: %#v", stat)
+	}
+	if stat := stats["docs.txt"]; stat.Additions != 0 || stat.Deletions != 0 {
+		t.Fatalf("unexpected docs.txt diff stat: %#v", stat)
+	}
+}
+
 func initTestRepoWithTrackedFile(t *testing.T, name, content string) string {
 	t.Helper()
 

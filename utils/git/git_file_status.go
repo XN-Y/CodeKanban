@@ -37,6 +37,8 @@ type DiffStat struct {
 	Deletions int64
 }
 
+const emptyTreeObjectID = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
 type FileStatusResult struct {
 	Statuses   map[string]FileStatus
 	Truncated  bool
@@ -147,6 +149,75 @@ func GenerateDiffStatAgainstHEAD(path string, status FileStatus) (DiffStat, erro
 	return GenerateDiffStatAgainstHEADContext(context.Background(), path, status)
 }
 
+func GenerateDiffStatsAgainstHEAD(
+	path string,
+	statuses []FileStatus,
+) (map[string]DiffStat, error) {
+	return GenerateDiffStatsAgainstHEADContext(context.Background(), path, statuses)
+}
+
+func GenerateDiffStatsAgainstHEADContext(
+	ctx context.Context,
+	path string,
+	statuses []FileStatus,
+) (map[string]DiffStat, error) {
+	stats := make(map[string]DiffStat, len(statuses))
+	if len(statuses) == 0 {
+		return stats, nil
+	}
+
+	trackedStatuses := make([]FileStatus, 0, len(statuses))
+	for _, status := range statuses {
+		if normalizeGitRelativePath(status.Path) == "" {
+			continue
+		}
+		if status.Kind == FileChangeKindUntracked {
+			continue
+		}
+		trackedStatuses = append(trackedStatuses, status)
+	}
+
+	if len(trackedStatuses) > 0 {
+		reference := emptyTreeObjectID
+		if repositoryHasHeadContext(ctx, path) {
+			reference = "HEAD"
+		}
+
+		args := []string{
+			"diff",
+			"--numstat",
+			"-z",
+			"--no-ext-diff",
+			"--no-color",
+			"-M",
+			reference,
+			"--",
+		}
+		args = append(args, collectGitDiffPathspecs(trackedStatuses)...)
+
+		output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
+		if err != nil {
+			return nil, err
+		}
+		for changedPath, stat := range parseGitDiffStatsZOutput(output) {
+			stats[changedPath] = stat
+		}
+	}
+
+	for _, status := range statuses {
+		if status.Kind != FileChangeKindUntracked {
+			continue
+		}
+		stat, err := generateLocalUntrackedDiffStat(path, status)
+		if err != nil {
+			return nil, err
+		}
+		stats[normalizeGitRelativePath(status.Path)] = stat
+	}
+
+	return stats, nil
+}
+
 func GenerateDiffStatAgainstHEADContext(
 	ctx context.Context,
 	path string,
@@ -177,32 +248,11 @@ func GenerateDiffStatAgainstHEADContext(
 		}
 		return parseGitDiffStatOutput(output), nil
 	}
+	if status.Kind == FileChangeKindUntracked {
+		return generateLocalUntrackedDiffStat(path, status)
+	}
 
-	args := []string{
-		"diff",
-		"--numstat",
-		"--no-index",
-		"--no-color",
-		"--",
-		os.DevNull,
-		filepath.FromSlash(normalizedPath),
-	}
-	if status.Kind == FileChangeKindDeleted {
-		args = []string{
-			"diff",
-			"--numstat",
-			"--no-index",
-			"--no-color",
-			"--",
-			filepath.FromSlash(normalizedPath),
-			os.DevNull,
-		}
-	}
-	output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
-	if err != nil {
-		return DiffStat{}, err
-	}
-	return parseGitDiffStatOutput(output), nil
+	return generateUntrackedDiffStatContext(ctx, path, status)
 }
 
 func repositoryHasHead(path string) bool {
@@ -441,6 +491,119 @@ func runGitOutputAllowDiffExitContext(
 	return nil, err
 }
 
+func collectGitDiffPathspecs(statuses []FileStatus) []string {
+	pathspecs := make([]string, 0, len(statuses)*2)
+	seen := make(map[string]struct{}, len(statuses)*2)
+	for _, status := range statuses {
+		if normalizedPath := normalizeGitRelativePath(status.Path); normalizedPath != "" {
+			if _, ok := seen[normalizedPath]; !ok {
+				seen[normalizedPath] = struct{}{}
+				pathspecs = append(pathspecs, normalizedPath)
+			}
+		}
+		if normalizedPreviousPath := normalizeGitRelativePath(status.PreviousPath); normalizedPreviousPath != "" {
+			if _, ok := seen[normalizedPreviousPath]; !ok {
+				seen[normalizedPreviousPath] = struct{}{}
+				pathspecs = append(pathspecs, normalizedPreviousPath)
+			}
+		}
+	}
+	return pathspecs
+}
+
+func generateUntrackedDiffStatContext(
+	ctx context.Context,
+	path string,
+	status FileStatus,
+) (DiffStat, error) {
+	normalizedPath := normalizeGitRelativePath(status.Path)
+	if normalizedPath == "" {
+		return DiffStat{}, fmt.Errorf("path is required")
+	}
+
+	args := []string{
+		"diff",
+		"--numstat",
+		"--no-index",
+		"--no-color",
+		"--",
+		os.DevNull,
+		filepath.FromSlash(normalizedPath),
+	}
+	if status.Kind == FileChangeKindDeleted {
+		args = []string{
+			"diff",
+			"--numstat",
+			"--no-index",
+			"--no-color",
+			"--",
+			filepath.FromSlash(normalizedPath),
+			os.DevNull,
+		}
+	}
+
+	output, err := runGitOutputAllowDiffExitContext(ctx, path, args...)
+	if err != nil {
+		return DiffStat{}, err
+	}
+	return parseGitDiffStatOutput(output), nil
+}
+
+func generateLocalUntrackedDiffStat(path string, status FileStatus) (DiffStat, error) {
+	normalizedPath := normalizeGitRelativePath(status.Path)
+	if normalizedPath == "" {
+		return DiffStat{}, fmt.Errorf("path is required")
+	}
+
+	filePath := filepath.Join(path, filepath.FromSlash(normalizedPath))
+	info, err := os.Lstat(filePath)
+	if err != nil {
+		return DiffStat{}, err
+	}
+	if info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return DiffStat{}, nil
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		return DiffStat{}, err
+	}
+	defer file.Close()
+
+	buffer := make([]byte, 32*1024)
+	var additions int64
+	var sawContent bool
+	endsWithNewline := true
+
+	for {
+		n, err := file.Read(buffer)
+		if n > 0 {
+			chunk := buffer[:n]
+			if bytes.IndexByte(chunk, 0) >= 0 {
+				return DiffStat{}, nil
+			}
+			sawContent = true
+			additions += int64(bytes.Count(chunk, []byte{'\n'}))
+			endsWithNewline = chunk[n-1] == '\n'
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return DiffStat{}, err
+		}
+	}
+
+	if sawContent && !endsWithNewline {
+		additions++
+	}
+
+	return DiffStat{
+		Additions: additions,
+		Deletions: 0,
+	}, nil
+}
+
 func parseGitDiffStatOutput(output []byte) DiffStat {
 	line := strings.TrimSpace(string(output))
 	if line == "" {
@@ -457,6 +620,59 @@ func parseGitDiffStatOutput(output []byte) DiffStat {
 		Additions: parseGitNumstatField(fields[0]),
 		Deletions: parseGitNumstatField(fields[1]),
 	}
+}
+
+func parseGitDiffStatsZOutput(output []byte) map[string]DiffStat {
+	stats := make(map[string]DiffStat)
+	for len(output) > 0 {
+		additionsField, rest, ok := splitGitDiffStatField(output, '\t')
+		if !ok {
+			break
+		}
+		deletionsField, rest, ok := splitGitDiffStatField(rest, '\t')
+		if !ok {
+			break
+		}
+		pathField, rest, ok := splitGitDiffStatField(rest, 0)
+		if !ok {
+			break
+		}
+
+		stat := DiffStat{
+			Additions: parseGitNumstatField(string(additionsField)),
+			Deletions: parseGitNumstatField(string(deletionsField)),
+		}
+
+		if len(pathField) > 0 {
+			if normalizedPath := normalizeGitRelativePath(string(pathField)); normalizedPath != "" {
+				stats[normalizedPath] = stat
+			}
+			output = rest
+			continue
+		}
+
+		_, rest, ok = splitGitDiffStatField(rest, 0)
+		if !ok {
+			break
+		}
+		renamedPath, rest, ok := splitGitDiffStatField(rest, 0)
+		if !ok {
+			break
+		}
+		if normalizedPath := normalizeGitRelativePath(string(renamedPath)); normalizedPath != "" {
+			stats[normalizedPath] = stat
+		}
+		output = rest
+	}
+	return stats
+}
+
+func splitGitDiffStatField(input []byte, separator byte) ([]byte, []byte, bool) {
+	index := bytes.IndexByte(input, separator)
+	if index < 0 {
+		return nil, nil, false
+	}
+	return input[:index], input[index+1:], true
 }
 
 func parseGitNumstatField(value string) int64 {

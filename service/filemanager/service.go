@@ -438,51 +438,32 @@ func (s *Service) ListChanges(
 		return result, nil
 	}
 
+	diffStats, err := git.GenerateDiffStatsAgainstHEADContext(requestCtx, scope.RootPath, statuses)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			result.StatsTimedOut = true
+			if result.WarningReason == "" {
+				result.WarningReason = changesWarningReasonTimeout
+			}
+			return result, nil
+		}
+		s.logger.Debug("failed to load git diff stats",
+			zap.String("scopeRoot", scope.RootPath),
+			zap.Error(err),
+		)
+		return result, nil
+	}
+
 	statsComplete := true
 	for index, status := range statuses {
-		if err := requestCtx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				result.StatsTimedOut = true
-				statsComplete = false
-				if result.WarningReason == "" {
-					result.WarningReason = changesWarningReasonTimeout
-				}
-				break
-			}
-			return nil, err
-		}
-
-		diffStat, err := git.GenerateDiffStatAgainstHEADContext(requestCtx, scope.RootPath, status)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-				result.StatsTimedOut = true
-				statsComplete = false
-				if result.WarningReason == "" {
-					result.WarningReason = changesWarningReasonTimeout
-				}
-				break
-			}
+		diffStat, ok := diffStats[status.Path]
+		if !ok {
 			statsComplete = false
-			s.logger.Debug("failed to load git diff stat",
-				zap.String("scopeRoot", scope.RootPath),
-				zap.String("path", status.Path),
-				zap.Error(err),
-			)
 			continue
 		}
-
 		entries[index].Additions = max(0, diffStat.Additions)
 		entries[index].Deletions = max(0, diffStat.Deletions)
 		entries[index].StatsAvailable = true
-	}
-
-	if statsComplete {
-		for _, entry := range entries {
-			if !entry.StatsAvailable {
-				statsComplete = false
-				break
-			}
-		}
 	}
 	result.StatsComplete = statsComplete
 	return result, nil
@@ -541,24 +522,26 @@ func (s *Service) ChangesSummary(
 		return result, nil
 	}
 
+	statusList := make([]git.FileStatus, 0, len(statuses))
+	for _, status := range statuses {
+		statusList = append(statusList, status)
+	}
+
+	diffStats, err := git.GenerateDiffStatsAgainstHEADContext(statusCtx, scope.RootPath, statusList)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			result.StatsTimedOut = true
+			return result, nil
+		}
+		return nil, err
+	}
+
 	var additions int64
 	var deletions int64
-	for _, status := range statuses {
-		if err := statusCtx.Err(); err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				result.StatsTimedOut = true
-				return result, nil
-			}
-			return nil, err
-		}
-
-		diffStat, err := git.GenerateDiffStatAgainstHEADContext(statusCtx, scope.RootPath, status)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				result.StatsTimedOut = true
-				return result, nil
-			}
-			return nil, err
+	for _, status := range statusList {
+		diffStat, ok := diffStats[status.Path]
+		if !ok {
+			return result, nil
 		}
 		additions += max(0, diffStat.Additions)
 		deletions += max(0, diffStat.Deletions)

@@ -480,23 +480,71 @@ func TestListChangesReturnsPartialStatsWhenTimedOut(t *testing.T) {
 		t.Fatalf("expected statsTimedOut=true: %#v", result)
 	}
 
-	availableCount := 0
-	missingCount := 0
 	for _, entry := range result.Entries {
 		if entry.StatsAvailable {
-			availableCount++
-			continue
+			t.Fatalf("timed out batch stats should not mark any entry complete: %#v", entry)
 		}
-		missingCount++
 		if entry.Additions != 0 || entry.Deletions != 0 {
-			t.Fatalf("missing stats should keep zero counts: %#v", entry)
+			t.Fatalf("timed out stats should keep zero counts: %#v", entry)
 		}
 	}
-	if availableCount == 0 {
-		t.Fatalf("expected at least one completed stat before timeout: %#v", result.Entries)
+}
+
+func TestListChangesUntrackedStatsDoNotShellOutPerFile(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	installFailingNoIndexNumstatGitWrapper(t)
+
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
 	}
-	if missingCount == 0 {
-		t.Fatalf("expected at least one skipped stat after timeout: %#v", result.Entries)
+
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch-a.txt"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatalf("write scratch-a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "scratch-b.txt"), []byte("gamma"), 0o644); err != nil {
+		t.Fatalf("write scratch-b.txt: %v", err)
+	}
+
+	result, err := service.ListChanges(context.Background(), projectID, "", ListChangesOptions{
+		IncludeUntracked: boolRef(true),
+		WithStats:        boolRef(true),
+	})
+	if err != nil {
+		t.Fatalf("ListChanges returned error: %v", err)
+	}
+	if !result.StatsComplete || result.StatsTimedOut {
+		t.Fatalf("expected complete stats result: %#v", result)
+	}
+
+	statsByPath := make(map[string]struct {
+		additions int64
+		deletions int64
+	}, len(result.Entries))
+	for _, entry := range result.Entries {
+		if !entry.StatsAvailable {
+			t.Fatalf("expected stats for entry: %#v", entry)
+		}
+		statsByPath[entry.Path] = struct {
+			additions int64
+			deletions int64
+		}{
+			additions: entry.Additions,
+			deletions: entry.Deletions,
+		}
+	}
+	if stat := statsByPath["scratch-a.txt"]; stat.additions != 2 || stat.deletions != 0 {
+		t.Fatalf("unexpected scratch-a.txt diff stat: %#v", stat)
+	}
+	if stat := statsByPath["scratch-b.txt"]; stat.additions != 1 || stat.deletions != 0 {
+		t.Fatalf("unexpected scratch-b.txt diff stat: %#v", stat)
 	}
 }
 
@@ -626,6 +674,33 @@ func installSlowGitDiffWrapper(t *testing.T) {
 	}
 
 	t.Setenv("REAL_GIT", realGit)
-	t.Setenv("CODEKANBAN_TEST_GIT_DIFF_SLEEP", "0.09")
+	t.Setenv("CODEKANBAN_TEST_GIT_DIFF_SLEEP", "0.2")
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installFailingNoIndexNumstatGitWrapper(t *testing.T) {
+	t.Helper()
+
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatalf("LookPath git: %v", err)
+	}
+
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"if [ \"$1\" = \"diff\" ] && [ \"$2\" = \"--numstat\" ] && [ \"$3\" = \"--no-index\" ]; then",
+		"  echo 'unexpected no-index numstat invocation' >&2",
+		"  exit 9",
+		"fi",
+		"exec \"$REAL_GIT\" \"$@\"",
+		"",
+	}, "\n")
+	if err := os.WriteFile(wrapperPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write wrapper: %v", err)
+	}
+
+	t.Setenv("REAL_GIT", realGit)
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
