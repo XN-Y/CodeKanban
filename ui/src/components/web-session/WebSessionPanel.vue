@@ -1747,6 +1747,7 @@ import Sortable, { type SortableEvent } from 'sortablejs';
 import { getPresetById } from '@/constants/themes';
 import { useAppClipboard } from '@/composables/useAppClipboard';
 import { useLocale } from '@/composables/useLocale';
+import { useMobileKeyboard } from '@/composables/useMobileKeyboard';
 import { useResponsive } from '@/composables/useResponsive';
 import { systemApi } from '@/api/project';
 import { useProjectStore } from '@/stores/project';
@@ -2138,6 +2139,7 @@ const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
 const isComposerDragOver = ref(false);
 const isMobileComposerExpanded = ref(false);
 const isMobileComposerFocused = ref(false);
+const isMobileKeyboardResizeFrozen = ref(false);
 const showAttachmentPreview = ref(false);
 const activeAttachmentPreview = ref<{
   id: string;
@@ -2171,6 +2173,20 @@ const webSessionCatchUpActive = ref(false);
 const isProjectSessionInitializing = ref(false);
 const pendingRouteActivationSessionId = ref('');
 const frozenBlocks = ref<WebSessionBlock[] | null>(null);
+
+const mobileKeyboard = useMobileKeyboard({
+  enabled: () => Boolean(isMobile.value),
+  onDismissed: () => {
+    if (!props.isActive || !currentSession.value) {
+      return;
+    }
+    scheduleScrollToBottom();
+  },
+  onStateChange: state => {
+    isMobileKeyboardResizeFrozen.value = state.isResizeFrozen;
+    emitMobileComposerChromeHidden(Boolean(isMobile.value && props.isActive && state.isResizeFrozen));
+  },
+});
 const pendingHistoryAnchor = ref<{
   sessionId: string;
   previousHeight: number;
@@ -2181,6 +2197,7 @@ let composerDragDepth = 0;
 let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
 let sendConfirmationTimer: number | null = null;
+let lastEmittedMobileComposerChromeHidden = false;
 const loadedSidebarProjectIds = new Set<string>();
 const streamingMarkdownController = createWebSessionStreamingMarkdownController({
   delayMs: webSessionStreamingMarkdownThrottleMs.value,
@@ -3295,12 +3312,19 @@ const contextUsageIndicator = computed(() => {
   };
 });
 
-function emitMobileComposerFocusChange(focused: boolean) {
+function setMobileComposerFocusState(focused: boolean) {
   if (isMobileComposerFocused.value === focused) {
     return;
   }
   isMobileComposerFocused.value = focused;
-  emit('mobile-composer-focus-change', focused);
+}
+
+function emitMobileComposerChromeHidden(hidden: boolean) {
+  if (lastEmittedMobileComposerChromeHidden === hidden) {
+    return;
+  }
+  lastEmittedMobileComposerChromeHidden = hidden;
+  emit('mobile-composer-focus-change', hidden);
 }
 
 function toggleMobileComposerExpanded() {
@@ -4392,6 +4416,10 @@ const planApprovalColors = computed(() => {
 const webSessionStyleVars = computed(
   () =>
     ({
+      '--web-session-mobile-composer-inset':
+        isMobile.value && isMobileKeyboardResizeFrozen.value
+          ? '0px'
+          : 'var(--workspace-mobile-websession-inset, 0px)',
       '--web-session-approval-bg': approvalColors.value.bg,
       '--web-session-approval-border': approvalColors.value.border,
       '--web-session-approval-accent': approvalColors.value.accent,
@@ -7546,14 +7574,16 @@ function handleComposerFocus() {
     return;
   }
   isMobileComposerExpanded.value = false;
-  emitMobileComposerFocusChange(true);
+  mobileKeyboard.setFocused(true);
+  setMobileComposerFocusState(true);
 }
 
 function handleComposerBlur() {
   if (!isMobile.value) {
     return;
   }
-  emitMobileComposerFocusChange(false);
+  mobileKeyboard.setFocused(false);
+  setMobileComposerFocusState(false);
 }
 
 function handleComposerSubmitShortcut() {
@@ -8987,7 +9017,8 @@ watch(
   mobile => {
     isMobileComposerExpanded.value = false;
     if (!mobile) {
-      emitMobileComposerFocusChange(false);
+      mobileKeyboard.reset();
+      setMobileComposerFocusState(false);
     }
   },
   { immediate: true }
@@ -8997,7 +9028,8 @@ watch(
   () => props.isActive,
   active => {
     if (!active) {
-      emitMobileComposerFocusChange(false);
+      mobileKeyboard.reset();
+      setMobileComposerFocusState(false);
       return;
     }
     if (!isDocumentVisible() || !currentRealSession.value?.id) {
@@ -9098,7 +9130,9 @@ onBeforeUnmount(() => {
   clearUserInputSlowHintTimer();
   userInputSubmitStateByOwnerId.value = {};
   userInputSlowStateByOwnerId.value = {};
-  emitMobileComposerFocusChange(false);
+  mobileKeyboard.reset();
+  setMobileComposerFocusState(false);
+  emitMobileComposerChromeHidden(false);
   clearComposerTransferError();
   clearSendConflictConfirmation();
   stopWebSessionCatchUp('unmount');
@@ -9128,7 +9162,10 @@ defineExpose({
   --web-session-plan-approval-border: rgba(6, 182, 212, 0.3);
   box-sizing: border-box;
   height: 100%;
-  padding-bottom: var(--workspace-mobile-websession-inset, 0px);
+  padding-bottom: var(
+    --web-session-mobile-composer-inset,
+    var(--workspace-mobile-websession-inset, 0px)
+  );
   overflow: hidden;
 }
 
