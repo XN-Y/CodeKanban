@@ -1045,6 +1045,49 @@ export default {
     securityEnableSuccess: 'Password protection enabled',
     securityChangeSuccess: 'Password updated',
     securityDisableSuccess: 'Password protection disabled',
+    securityAdminLoginAction: 'Admin Sign In',
+    securityAdminLoginHint:
+      'This source is currently bypassed. Sign in as an administrator before editing security settings.',
+    securityAdminLoginDialogTitle: 'Administrator Sign In',
+    securityAdminLoginDialogDescription:
+      'Enter the current password to start an administrator session. You must be authenticated before changing password protection or source rules.',
+    securityAdminLoginPasswordPlaceholder: 'Enter the current access password',
+    securityAdminLoginSuccess: 'Administrator session activated',
+    securityAccessRulesTitle: 'Source Rules',
+    securityAccessRulesHint:
+      'These rules decide whether password protection applies based on request source. Direct requests use only the socket peer IP. X-Forwarded-For and X-Forwarded-Host are used only when the request comes from a trusted proxy. Force-auth rules override bypass rules.',
+    securityAccessRulesBypassIPs: 'Bypass IP / CIDR',
+    securityAccessRulesBypassIPsPlaceholder:
+      'One per line, for example: 127.0.0.1 or 192.168.1.0/24',
+    securityAccessRulesBypassIPsTip:
+      'Requests from these client IPs or networks bypass the login prompt.',
+    securityAccessRulesBypassDomains: 'Bypass Domain / Host',
+    securityAccessRulesBypassDomainsPlaceholder:
+      'One per line, for example: localhost, example.com, *.trusted.example.com',
+    securityAccessRulesBypassDomainsTip:
+      'Matches only trusted-proxy X-Forwarded-Host values. Supports exact values and *.example.com wildcards. Wildcards do not match the root domain itself.',
+    securityAccessRulesForceAuthIPs: 'Force-auth IP / CIDR',
+    securityAccessRulesForceAuthIPsPlaceholder:
+      'One per line, for example: 203.0.113.9 or 10.0.0.0/24',
+    securityAccessRulesForceAuthIPsTip:
+      'Requests matching these IPs must log in even if they also match bypass rules.',
+    securityAccessRulesForceAuthDomains: 'Force-auth Domain / Host',
+    securityAccessRulesForceAuthDomainsPlaceholder:
+      'One per line, for example: admin.example.com, secure.example.com',
+    securityAccessRulesForceAuthDomainsTip:
+      'Requests matching these Hosts always require login and take priority over bypass rules.',
+    securityTrustedProxies: 'Trusted Proxies',
+    securityTrustedProxiesPlaceholder:
+      'One per line, for example: 127.0.0.1, 10.0.0.0/24, 192.168.1.10',
+    securityTrustedProxiesTip:
+      'X-Forwarded-For and X-Forwarded-Host are used only when the request comes from one of these proxy IPs or CIDR ranges.',
+    securityProxyHeader: 'Client IP Header',
+    securityProxyHeaderPlaceholder: 'Default: X-Forwarded-For',
+    securityProxyHeaderTip:
+      'Header used to read the real client IP from a trusted proxy. Usually this should stay as X-Forwarded-For.',
+    securityAccessRulesSaveTip:
+      'Source rules can be prepared before password protection is enabled. Once protection is on, only an authenticated administrator session can modify them. Saved changes apply to new requests immediately.',
+    securityAccessRulesSaveSuccess: 'Source rules saved',
     worktreeSettings: 'Worktree Settings',
     worktreeGlobalBaseDir: 'Global Worktree Directory',
     worktreeGlobalBaseDirPlaceholder:

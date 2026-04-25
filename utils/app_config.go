@@ -25,10 +25,13 @@ type AttachmentConfig struct {
 }
 
 type AuthConfig struct {
-	FrontendSalt string `json:"frontendSalt" yaml:"frontendSalt"`
-	PasswordHash string `json:"passwordHash" yaml:"passwordHash"`
-	TokenSecret  string `json:"tokenSecret" yaml:"tokenSecret"`
-	SessionTTL   string `json:"sessionTTL" yaml:"sessionTTL"`
+	FrontendSalt   string                `json:"frontendSalt" yaml:"frontendSalt"`
+	PasswordHash   string                `json:"passwordHash" yaml:"passwordHash"`
+	TokenSecret    string                `json:"tokenSecret" yaml:"tokenSecret"`
+	SessionTTL     string                `json:"sessionTTL" yaml:"sessionTTL"`
+	AccessRules    AuthAccessRulesConfig `json:"accessRules" yaml:"accessRules"`
+	ProxyHeader    string                `json:"proxyHeader" yaml:"proxyHeader"`
+	TrustedProxies []string              `json:"trustedProxies" yaml:"trustedProxies"`
 
 	sessionDuration time.Duration
 }
@@ -288,7 +291,10 @@ func ReadConfig() *AppConfig {
 		PrintConfig:            false,
 		DisableAutoOpenBrowser: false,
 		Auth: AuthConfig{
-			SessionTTL: "720h",
+			SessionTTL:     "720h",
+			AccessRules:    DefaultAuthAccessConfig().AccessRules,
+			ProxyHeader:    DefaultAuthProxyHeader,
+			TrustedProxies: []string{},
 		},
 		Terminal: TerminalConfig{
 			Shell: TerminalShellConfig{
@@ -354,6 +360,7 @@ func ReadConfig() *AppConfig {
 	}
 
 	// 规范化派生值，避免重复计算
+	config.Auth = SanitizeAuthConfig(config.Auth)
 	_ = config.Auth.SessionDuration()
 	_ = config.Terminal.IdleDuration()
 	config.UI.WebSessionQuickInput = NormalizeWebSessionQuickInputConfig(config.UI.WebSessionQuickInput)

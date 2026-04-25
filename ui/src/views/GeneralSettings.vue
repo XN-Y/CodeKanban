@@ -805,6 +805,25 @@
                   }}
                 </n-alert>
 
+                <n-alert
+                  v-if="showSecurityAdminLoginPrompt"
+                  type="info"
+                  :bordered="false"
+                  :show-icon="false"
+                >
+                  <n-space justify="space-between" align="center" :wrap="false" style="width: 100%">
+                    <span>{{ t('settings.securityAdminLoginHint') }}</span>
+                    <n-button
+                      size="small"
+                      type="primary"
+                      secondary
+                      @click="openSecurityAdminLoginDialog"
+                    >
+                      {{ t('settings.securityAdminLoginAction') }}
+                    </n-button>
+                  </n-space>
+                </n-alert>
+
                 <template v-if="!authStore.enabled">
                   <n-form
                     :label-placement="standardFormLabelPlacement"
@@ -832,7 +851,10 @@
                         :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
                       />
                     </n-form-item>
-                    <n-form-item data-search-key="securityEnablePassword">
+                    <n-form-item
+                      :label="actionFormItemLabel"
+                      data-search-key="securityEnablePassword"
+                    >
                       <n-space vertical size="small" style="width: 100%">
                         <n-button
                           type="primary"
@@ -862,6 +884,7 @@
                         type="password"
                         show-password-on="click"
                         :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                        :disabled="securityManagementLocked || authSaving"
                       />
                     </n-form-item>
                     <n-form-item
@@ -873,6 +896,7 @@
                         type="password"
                         show-password-on="click"
                         :placeholder="t('settings.securityPasswordPlaceholder')"
+                        :disabled="securityManagementLocked || authSaving"
                       />
                     </n-form-item>
                     <n-form-item
@@ -884,14 +908,19 @@
                         type="password"
                         show-password-on="click"
                         :placeholder="t('settings.securityConfirmPasswordPlaceholder')"
+                        :disabled="securityManagementLocked || authSaving"
                       />
                     </n-form-item>
-                    <n-form-item data-search-key="securityChangePasswordButton">
+                    <n-form-item
+                      :label="actionFormItemLabel"
+                      data-search-key="securityChangePasswordButton"
+                    >
                       <n-space vertical size="small" style="width: 100%">
                         <n-button
                           type="primary"
                           :loading="authSaving"
                           :disabled="
+                            securityManagementLocked ||
                             !currentPassword.trim() ||
                             !newPassword.trim() ||
                             !newPasswordConfirm.trim()
@@ -920,15 +949,19 @@
                         type="password"
                         show-password-on="click"
                         :placeholder="t('settings.securityCurrentPasswordPlaceholder')"
+                        :disabled="securityManagementLocked || authSaving"
                       />
                     </n-form-item>
-                    <n-form-item data-search-key="securityDisablePasswordButton">
+                    <n-form-item
+                      :label="actionFormItemLabel"
+                      data-search-key="securityDisablePasswordButton"
+                    >
                       <n-space vertical size="small" style="width: 100%">
                         <n-button
                           type="error"
                           ghost
                           :loading="authSaving"
-                          :disabled="!disablePassword.trim()"
+                          :disabled="securityManagementLocked || !disablePassword.trim()"
                           @click="handleDisablePasswordProtection"
                         >
                           {{ t('settings.securityDisableAction') }}
@@ -938,6 +971,133 @@
                     </n-form-item>
                   </n-form>
                 </template>
+
+                <n-divider style="margin: 0">{{
+                  t('settings.securityAccessRulesTitle')
+                }}</n-divider>
+                <n-alert type="info" :bordered="false" :show-icon="false">
+                  {{ t('settings.securityAccessRulesHint') }}
+                </n-alert>
+                <n-spin :show="authAccessLoading">
+                  <n-form
+                    :label-placement="standardFormLabelPlacement"
+                    :label-width="standardFormLabelWidth"
+                  >
+                    <n-form-item
+                      :label="t('settings.securityAccessRulesBypassIPs')"
+                      data-search-key="securityAccessRulesBypassIPs"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-input
+                          v-model:value="authAccessForm.bypassIPs"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          :placeholder="t('settings.securityAccessRulesBypassIPsPlaceholder')"
+                          :disabled="authAccessLoading || securityManagementLocked"
+                        />
+                        <span class="form-tip">{{
+                          t('settings.securityAccessRulesBypassIPsTip')
+                        }}</span>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityAccessRulesBypassDomains')"
+                      data-search-key="securityAccessRulesBypassDomains"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-input
+                          v-model:value="authAccessForm.bypassDomains"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          :placeholder="t('settings.securityAccessRulesBypassDomainsPlaceholder')"
+                          :disabled="authAccessLoading || securityManagementLocked"
+                        />
+                        <span class="form-tip">{{
+                          t('settings.securityAccessRulesBypassDomainsTip')
+                        }}</span>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityAccessRulesForceAuthIPs')"
+                      data-search-key="securityAccessRulesForceAuthIPs"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-input
+                          v-model:value="authAccessForm.forceAuthIPs"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          :placeholder="t('settings.securityAccessRulesForceAuthIPsPlaceholder')"
+                          :disabled="authAccessLoading || securityManagementLocked"
+                        />
+                        <span class="form-tip">{{
+                          t('settings.securityAccessRulesForceAuthIPsTip')
+                        }}</span>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityAccessRulesForceAuthDomains')"
+                      data-search-key="securityAccessRulesForceAuthDomains"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-input
+                          v-model:value="authAccessForm.forceAuthDomains"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          :placeholder="
+                            t('settings.securityAccessRulesForceAuthDomainsPlaceholder')
+                          "
+                          :disabled="authAccessLoading || securityManagementLocked"
+                        />
+                        <span class="form-tip">{{
+                          t('settings.securityAccessRulesForceAuthDomainsTip')
+                        }}</span>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item
+                      :label="t('settings.securityTrustedProxies')"
+                      data-search-key="securityTrustedProxies"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-input
+                          v-model:value="authAccessForm.trustedProxies"
+                          type="textarea"
+                          :autosize="{ minRows: 2, maxRows: 6 }"
+                          :placeholder="t('settings.securityTrustedProxiesPlaceholder')"
+                          :disabled="authAccessLoading || securityManagementLocked"
+                        />
+                        <span class="form-tip">{{ t('settings.securityTrustedProxiesTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+                    <n-form-item
+                      :label="actionFormItemLabel"
+                      data-search-key="securityAccessRulesSave"
+                    >
+                      <n-space vertical size="small" style="width: 100%">
+                        <n-space>
+                          <n-button
+                            type="primary"
+                            :loading="authAccessSaving"
+                            :disabled="
+                              authAccessLoading || securityManagementLocked || !authAccessDirty
+                            "
+                            @click="handleSaveAuthAccessConfig"
+                          >
+                            {{ t('common.save') }}
+                          </n-button>
+                          <n-button
+                            :disabled="
+                              authAccessLoading || securityManagementLocked || !authAccessDirty
+                            "
+                            @click="handleResetAuthAccessConfig"
+                          >
+                            {{ t('common.reset') }}
+                          </n-button>
+                        </n-space>
+                        <span class="form-tip">{{ t('settings.securityAccessRulesSaveTip') }}</span>
+                      </n-space>
+                    </n-form-item>
+                  </n-form>
+                </n-spin>
               </n-space>
             </n-card>
           </section>
@@ -1391,6 +1551,41 @@
         </div>
       </main>
     </div>
+    <n-modal
+      v-model:show="showSecurityAdminLoginDialog"
+      preset="card"
+      style="width: min(92vw, 420px)"
+      :title="t('settings.securityAdminLoginDialogTitle')"
+      :mask-closable="!securityAdminLoginLoading"
+    >
+      <n-space vertical size="large">
+        <span class="form-tip">{{ t('settings.securityAdminLoginDialogDescription') }}</span>
+        <n-input
+          v-model:value="securityAdminLoginPassword"
+          type="password"
+          show-password-on="click"
+          :placeholder="t('settings.securityAdminLoginPasswordPlaceholder')"
+          :disabled="securityAdminLoginLoading"
+          @keyup.enter="handleSecurityAdminLogin"
+        />
+        <n-space justify="end">
+          <n-button
+            :disabled="securityAdminLoginLoading"
+            @click="handleCloseSecurityAdminLoginDialog"
+          >
+            {{ t('common.cancel') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :loading="securityAdminLoginLoading"
+            :disabled="!securityAdminLoginPassword.trim()"
+            @click="handleSecurityAdminLogin"
+          >
+            {{ t('settings.securityAdminLoginAction') }}
+          </n-button>
+        </n-space>
+      </n-space>
+    </n-modal>
     <DailyTipDialog
       v-if="activeDailyTip"
       v-model:show="showDailyTipDialog"
@@ -1427,7 +1622,7 @@ import {
 } from '@vicons/ionicons5';
 import { useLocale } from '@/composables/useLocale';
 import { useResponsive } from '@/composables/useResponsive';
-import { useAuthStore } from '@/stores/auth';
+import { useAuthStore, type AuthAccessConfig } from '@/stores/auth';
 import { sanitizeSettingsSectionId, type SettingsSectionId } from '@/stores/settingsUi';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import {
@@ -1494,6 +1689,7 @@ type ShortcutTarget = 'terminal' | 'notepad';
 
 const SHELL_AUTO_VALUE = '__auto__';
 const SHELL_CUSTOM_VALUE = '__custom__';
+const DEFAULT_AUTH_PROXY_HEADER = 'X-Forwarded-For';
 const DEFAULT_ACTIVE_CALL_TIMEOUT_CUSTOM_SECONDS = 120;
 const DEFAULT_ACTIVE_CALL_TIMEOUT_CALL_KINDS = {
   useDefault: true,
@@ -1581,12 +1777,25 @@ const themeSelectionController = createThemeSelectionController({
   confirmFollowSystemEnable: themeWarningController.confirmFollowSystemEnable,
 });
 const authSaving = ref(false);
+const authAccessLoading = ref(false);
+const authAccessSaving = ref(false);
 const enablePassword = ref('');
 const enablePasswordConfirm = ref('');
 const currentPassword = ref('');
 const newPassword = ref('');
 const newPasswordConfirm = ref('');
 const disablePassword = ref('');
+const authAccessForm = reactive({
+  bypassIPs: '',
+  bypassDomains: '',
+  forceAuthIPs: '',
+  forceAuthDomains: '',
+  trustedProxies: '',
+});
+const authAccessOriginal = ref<AuthAccessConfig | null>(null);
+const showSecurityAdminLoginDialog = ref(false);
+const securityAdminLoginPassword = ref('');
+const securityAdminLoginLoading = ref(false);
 const showDailyTipDialog = ref(false);
 const activeDailyTipIndex = ref(0);
 
@@ -1616,6 +1825,9 @@ const standardFormLabelPlacement = computed<'left' | 'top'>(() =>
 );
 const standardFormLabelWidth = computed<number | string>(() => (isMobile.value ? 'auto' : 160));
 const themeFormLabelWidth = computed<number | string>(() => (isMobile.value ? 'auto' : 140));
+const actionFormItemLabel = computed(() => (isMobile.value ? undefined : '\u00a0'));
+const securityManagementLocked = computed(() => !authStore.canManageSecurity);
+const showSecurityAdminLoginPrompt = computed(() => authStore.enabled && !authStore.authenticated);
 
 const activeSettingsSection = computed<SettingsSectionId>({
   get: () => localSettingsSection.value,
@@ -2080,11 +2292,69 @@ function stringArraysEqual(left: string[], right: string[]) {
   return left.every((item, index) => item === right[index]);
 }
 
+function normalizeMultilineEntries(value: string) {
+  const seen = new Set<string>();
+  const entries: string[] = [];
+  for (const raw of value.split(/\r?\n/)) {
+    const trimmed = raw.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    entries.push(trimmed);
+  }
+  return entries;
+}
+
+function joinAuthAccessEntries(items?: string[]) {
+  return (items ?? []).join('\n');
+}
+
+function buildAuthAccessConfigFromForm(): AuthAccessConfig {
+  return {
+    accessRules: {
+      bypassIPs: normalizeMultilineEntries(authAccessForm.bypassIPs),
+      bypassDomains: normalizeMultilineEntries(authAccessForm.bypassDomains),
+      forceAuthIPs: normalizeMultilineEntries(authAccessForm.forceAuthIPs),
+      forceAuthDomains: normalizeMultilineEntries(authAccessForm.forceAuthDomains),
+    },
+    proxyHeader: DEFAULT_AUTH_PROXY_HEADER,
+    trustedProxies: normalizeMultilineEntries(authAccessForm.trustedProxies),
+  };
+}
+
+function applyAuthAccessConfig(config: AuthAccessConfig) {
+  authAccessForm.bypassIPs = joinAuthAccessEntries(config.accessRules.bypassIPs);
+  authAccessForm.bypassDomains = joinAuthAccessEntries(config.accessRules.bypassDomains);
+  authAccessForm.forceAuthIPs = joinAuthAccessEntries(config.accessRules.forceAuthIPs);
+  authAccessForm.forceAuthDomains = joinAuthAccessEntries(config.accessRules.forceAuthDomains);
+  authAccessForm.trustedProxies = joinAuthAccessEntries(config.trustedProxies);
+}
+
+function authAccessConfigsEqual(left: AuthAccessConfig, right: AuthAccessConfig) {
+  return (
+    left.proxyHeader === right.proxyHeader &&
+    stringArraysEqual(left.trustedProxies, right.trustedProxies) &&
+    stringArraysEqual(left.accessRules.bypassIPs, right.accessRules.bypassIPs) &&
+    stringArraysEqual(left.accessRules.bypassDomains, right.accessRules.bypassDomains) &&
+    stringArraysEqual(left.accessRules.forceAuthIPs, right.accessRules.forceAuthIPs) &&
+    stringArraysEqual(left.accessRules.forceAuthDomains, right.accessRules.forceAuthDomains)
+  );
+}
+
+const authAccessDirty = computed(() => {
+  if (!authAccessOriginal.value) {
+    return false;
+  }
+  return !authAccessConfigsEqual(buildAuthAccessConfigFromForm(), authAccessOriginal.value);
+});
+
 useInit(() => {
   loadAIStatus();
   loadDeveloperConfig();
   loadWorktreeSettings();
   loadShellsConfig();
+  loadAuthAccessConfig();
   void settingsStore.loadDailyTipSettings();
   void settingsStore.loadWebSessionQuickInput();
 });
@@ -2203,6 +2473,49 @@ async function saveShellConfig(shell: string) {
   }
 }
 
+async function loadAuthAccessConfig() {
+  authAccessLoading.value = true;
+  try {
+    const config = await authStore.fetchAccessConfig();
+    authAccessOriginal.value = config;
+    applyAuthAccessConfig(config);
+  } catch (error) {
+    console.error('Failed to load auth access config:', error);
+    message.error(error instanceof Error ? error.message : t('common.loadFailed'));
+  } finally {
+    authAccessLoading.value = false;
+  }
+}
+
+function handleResetAuthAccessConfig() {
+  if (!authAccessOriginal.value) {
+    return;
+  }
+  applyAuthAccessConfig(authAccessOriginal.value);
+}
+
+function openSecurityAdminLoginDialog() {
+  securityAdminLoginPassword.value = '';
+  showSecurityAdminLoginDialog.value = true;
+}
+
+function handleCloseSecurityAdminLoginDialog() {
+  if (securityAdminLoginLoading.value) {
+    return;
+  }
+  securityAdminLoginPassword.value = '';
+  showSecurityAdminLoginDialog.value = false;
+}
+
+function ensureSecurityManagementAccess() {
+  if (authStore.canManageSecurity) {
+    return true;
+  }
+  message.warning(t('settings.securityAdminLoginHint'));
+  openSecurityAdminLoginDialog();
+  return false;
+}
+
 function resetAuthFormFields() {
   enablePassword.value = '';
   enablePasswordConfirm.value = '';
@@ -2210,6 +2523,26 @@ function resetAuthFormFields() {
   newPassword.value = '';
   newPasswordConfirm.value = '';
   disablePassword.value = '';
+}
+
+async function handleSecurityAdminLogin() {
+  if (!securityAdminLoginPassword.value.trim()) {
+    message.error(t('auth.passwordRequired'));
+    return;
+  }
+
+  securityAdminLoginLoading.value = true;
+  try {
+    await authStore.loginWithPassword(securityAdminLoginPassword.value);
+    securityAdminLoginPassword.value = '';
+    showSecurityAdminLoginDialog.value = false;
+    message.success(t('settings.securityAdminLoginSuccess'));
+  } catch (error) {
+    console.error('Failed to authenticate administrator session:', error);
+    message.error(error instanceof Error ? error.message : t('auth.loginFailed'));
+  } finally {
+    securityAdminLoginLoading.value = false;
+  }
 }
 
 async function handleEnablePasswordProtection() {
@@ -2236,6 +2569,9 @@ async function handleEnablePasswordProtection() {
 }
 
 async function handleChangePasswordProtection() {
+  if (!ensureSecurityManagementAccess()) {
+    return;
+  }
   if (
     !currentPassword.value.trim() ||
     !newPassword.value.trim() ||
@@ -2263,6 +2599,9 @@ async function handleChangePasswordProtection() {
 }
 
 async function handleDisablePasswordProtection() {
+  if (!ensureSecurityManagementAccess()) {
+    return;
+  }
   if (!disablePassword.value.trim()) {
     message.error(t('auth.passwordRequired'));
     return;
@@ -2278,6 +2617,34 @@ async function handleDisablePasswordProtection() {
     message.error(error instanceof Error ? error.message : t('common.saveFailed'));
   } finally {
     authSaving.value = false;
+  }
+}
+
+async function handleSaveAuthAccessConfig() {
+  if (!ensureSecurityManagementAccess()) {
+    return;
+  }
+  authAccessSaving.value = true;
+  try {
+    const saved = await authStore.updateAccessConfig(buildAuthAccessConfigFromForm());
+    authAccessOriginal.value = saved;
+    applyAuthAccessConfig(saved);
+    await authStore.refreshStatus();
+    if (authStore.enabled && !authStore.canAccessProtectedContent) {
+      await router.replace({
+        name: 'login',
+        query: {
+          redirect: route.fullPath || '/settings?section=security',
+        },
+      });
+      return;
+    }
+    message.success(t('settings.securityAccessRulesSaveSuccess'));
+  } catch (error) {
+    console.error('Failed to save auth access config:', error);
+    message.error(error instanceof Error ? error.message : t('common.saveFailed'));
+  } finally {
+    authAccessSaving.value = false;
   }
 }
 
@@ -2916,12 +3283,20 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       id: 'security',
       title: t('settings.securityTitle'),
       description: t('settings.securityNewPassword'),
+      dirty: authAccessDirty.value,
       searchTerms: [
         t('settings.securityCurrentPassword'),
         t('settings.securityNewPassword'),
         t('settings.securityConfirmPassword'),
         t('settings.securityEnableAction'),
         t('settings.securityDisableAction'),
+        t('settings.securityAccessRulesTitle'),
+        t('settings.securityAccessRulesBypassIPs'),
+        t('settings.securityAccessRulesBypassDomains'),
+        t('settings.securityAccessRulesForceAuthIPs'),
+        t('settings.securityAccessRulesForceAuthDomains'),
+        t('settings.securityTrustedProxies'),
+        t('settings.securityAdminLoginAction'),
       ],
     },
     {

@@ -7,9 +7,23 @@ import { deriveClientHash } from '@/utils/auth';
 type AuthStatus = {
   enabled: boolean;
   authenticated: boolean;
+  bypassed: boolean;
   frontendSalt: string;
   frontendPBKDF2Rounds: number;
   sessionTtlSeconds: number;
+};
+
+export type AuthAccessRulesConfig = {
+  bypassIPs: string[];
+  bypassDomains: string[];
+  forceAuthIPs: string[];
+  forceAuthDomains: string[];
+};
+
+export type AuthAccessConfig = {
+  accessRules: AuthAccessRulesConfig;
+  proxyHeader: string;
+  trustedProxies: string[];
 };
 
 type ItemResponse<T> = {
@@ -25,16 +39,21 @@ export const useAuthStore = defineStore('auth', () => {
   const loading = ref(false);
   const enabled = ref(false);
   const authenticated = ref(false);
+  const bypassed = ref(false);
   const frontendSalt = ref('');
   const frontendPBKDF2Rounds = ref(20000);
   const sessionTtlSeconds = ref(30 * 24 * 60 * 60);
   const pendingLoad = ref<Promise<void> | null>(null);
 
-  const canAccessProtectedContent = computed(() => !enabled.value || authenticated.value);
+  const canAccessProtectedContent = computed(
+    () => !enabled.value || authenticated.value || bypassed.value
+  );
+  const canManageSecurity = computed(() => !enabled.value || authenticated.value);
 
   function applyStatus(status?: AuthStatus) {
     enabled.value = status?.enabled ?? false;
     authenticated.value = status?.authenticated ?? false;
+    bypassed.value = status?.bypassed ?? false;
     frontendSalt.value = status?.frontendSalt ?? '';
     frontendPBKDF2Rounds.value = status?.frontendPBKDF2Rounds ?? 20000;
     sessionTtlSeconds.value = status?.sessionTtlSeconds ?? 30 * 24 * 60 * 60;
@@ -76,6 +95,31 @@ export const useAuthStore = defineStore('auth', () => {
     );
     await http.Post<MessageResponse>('/auth/login', { clientHash }).send();
     await refreshStatus();
+  }
+
+  async function fetchAccessConfig() {
+    const response = await http
+      .Get<ItemResponse<AuthAccessConfig>>('/auth/access-config')
+      .send(true);
+    return (
+      extractItem<AuthAccessConfig>(response) ?? {
+        accessRules: {
+          bypassIPs: [],
+          bypassDomains: [],
+          forceAuthIPs: [],
+          forceAuthDomains: [],
+        },
+        proxyHeader: 'X-Forwarded-For',
+        trustedProxies: [],
+      }
+    );
+  }
+
+  async function updateAccessConfig(config: AuthAccessConfig) {
+    const response = await http
+      .Post<ItemResponse<AuthAccessConfig>>('/auth/access-config', config)
+      .send();
+    return extractItem<AuthAccessConfig>(response) ?? config;
   }
 
   async function enablePasswordProtection(passwordText: string) {
@@ -123,6 +167,7 @@ export const useAuthStore = defineStore('auth', () => {
       return;
     }
     authenticated.value = false;
+    bypassed.value = false;
     ready.value = true;
   }
 
@@ -135,14 +180,18 @@ export const useAuthStore = defineStore('auth', () => {
     loading,
     enabled,
     authenticated,
+    bypassed,
     frontendSalt,
     frontendPBKDF2Rounds,
     sessionTtlSeconds,
     canAccessProtectedContent,
+    canManageSecurity,
     applyStatus,
     ensureLoaded,
     refreshStatus,
     loginWithPassword,
+    fetchAccessConfig,
+    updateAccessConfig,
     enablePasswordProtection,
     changePasswordProtection,
     disablePasswordProtection,

@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type authStatusItem struct {
 	Enabled              bool   `json:"enabled"`
 	Authenticated        bool   `json:"authenticated"`
+	Bypassed             bool   `json:"bypassed"`
 	FrontendSalt         string `json:"frontendSalt"`
 	FrontendPBKDF2Rounds int    `json:"frontendPBKDF2Rounds"`
 	SessionTTLSeconds    int64  `json:"sessionTtlSeconds"`
@@ -26,6 +28,26 @@ type authClientHashInput struct {
 type authChangePasswordInput struct {
 	CurrentClientHash string `json:"currentClientHash"`
 	NewClientHash     string `json:"newClientHash"`
+}
+
+type authRequestAccessState struct {
+	Authenticated bool
+	Bypassed      bool
+	ForceAuth     bool
+	TokenErr      error
+	SourceIP      string
+	Host          string
+}
+
+type authRequestSourceInput struct {
+	RemoteIP      string
+	ForwardedFor  string
+	ForwardedHost string
+}
+
+type authResolvedRequestSource struct {
+	SourceIP string
+	Host     string
 }
 
 func registerAuthMiddleware(app *fiber.App, cfg *utils.AppConfig) {
@@ -42,29 +64,67 @@ func registerAuthMiddleware(app *fiber.App, cfg *utils.AppConfig) {
 			return ctx.Next()
 		}
 
-		if ok, _ := isRequestAuthenticated(ctx, cfg); ok {
+		state := resolveRequestAccessState(ctx, cfg)
+		if state.TokenErr != nil {
+			clearAuthCookie(ctx)
+		}
+		if requestHasProtectedAccess(state) {
 			return ctx.Next()
 		}
 
-		clearAuthCookie(ctx)
 		return sendAPIError(ctx, http.StatusUnauthorized, "authentication required")
 	})
 }
 
 func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 	app.Get("/api/v1/auth/status", func(ctx *fiber.Ctx) error {
-		authenticated, err := isRequestAuthenticated(ctx, cfg)
-		if err != nil {
+		state := resolveRequestAccessState(ctx, cfg)
+		if state.TokenErr != nil {
 			clearAuthCookie(ctx)
 		}
 
 		resp := h.NewItemResponse(authStatusItem{
 			Enabled:              utils.AuthEnabled(cfg),
-			Authenticated:        authenticated,
+			Authenticated:        state.Authenticated,
+			Bypassed:             state.Bypassed,
 			FrontendSalt:         cfg.Auth.FrontendSalt,
 			FrontendPBKDF2Rounds: utils.FrontendPBKDF2Iterations,
 			SessionTTLSeconds:    int64(cfg.Auth.SessionDuration().Seconds()),
 		})
+		resp.Status = http.StatusOK
+		return ctx.Status(http.StatusOK).JSON(resp)
+	})
+
+	app.Get("/api/v1/auth/access-config", func(ctx *fiber.Ctx) error {
+		resp := h.NewItemResponse(currentAuthAccessConfig(cfg))
+		resp.Status = http.StatusOK
+		return ctx.Status(http.StatusOK).JSON(resp)
+	})
+
+	app.Post("/api/v1/auth/access-config", func(ctx *fiber.Ctx) error {
+		if utils.AuthEnabled(cfg) {
+			if !requireAuthenticatedAuthAccess(ctx, cfg) {
+				return nil
+			}
+		}
+
+		var input utils.AuthAccessConfig
+		if err := ctx.BodyParser(&input); err != nil {
+			return sendAPIError(ctx, http.StatusBadRequest, "invalid request body")
+		}
+
+		normalized, err := utils.NormalizeAuthAccessConfig(input)
+		if err != nil {
+			return sendAPIError(ctx, http.StatusBadRequest, err.Error())
+		}
+
+		if err := utils.UpdateConfig(cfg, func(c *utils.AppConfig) {
+			utils.ApplyAuthAccessConfigToAuthConfig(&c.Auth, normalized)
+		}); err != nil {
+			return sendAPIError(ctx, http.StatusInternalServerError, "failed to save access configuration")
+		}
+
+		resp := h.NewItemResponse(normalized)
 		resp.Status = http.StatusOK
 		return ctx.Status(http.StatusOK).JSON(resp)
 	})
@@ -139,9 +199,8 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 		if !utils.AuthEnabled(cfg) {
 			return sendAPIError(ctx, http.StatusConflict, "password protection is disabled")
 		}
-		if ok, _ := isRequestAuthenticated(ctx, cfg); !ok {
-			clearAuthCookie(ctx)
-			return sendAPIError(ctx, http.StatusUnauthorized, "authentication required")
+		if !requireAuthenticatedAuthAccess(ctx, cfg) {
+			return nil
 		}
 
 		var input authChangePasswordInput
@@ -183,9 +242,8 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 		if !utils.AuthEnabled(cfg) {
 			return sendAPIError(ctx, http.StatusConflict, "password protection is disabled")
 		}
-		if ok, _ := isRequestAuthenticated(ctx, cfg); !ok {
-			clearAuthCookie(ctx)
-			return sendAPIError(ctx, http.StatusUnauthorized, "authentication required")
+		if !requireAuthenticatedAuthAccess(ctx, cfg) {
+			return nil
 		}
 
 		var input authClientHashInput
@@ -217,6 +275,101 @@ func registerAuthRoutes(app *fiber.App, cfg *utils.AppConfig) {
 	})
 }
 
+func currentAuthAccessConfig(cfg *utils.AppConfig) utils.AuthAccessConfig {
+	if cfg == nil {
+		return utils.DefaultAuthAccessConfig()
+	}
+	return utils.SanitizeAuthAccessConfig(utils.AuthAccessConfigFromAuthConfig(cfg.Auth))
+}
+
+func requireAuthenticatedAuthAccess(ctx *fiber.Ctx, cfg *utils.AppConfig) bool {
+	state := resolveRequestAccessState(ctx, cfg)
+	if state.TokenErr != nil {
+		clearAuthCookie(ctx)
+	}
+	if state.Authenticated {
+		return true
+	}
+	_ = sendAPIError(ctx, http.StatusUnauthorized, "administrator authentication required")
+	return false
+}
+
+func requestHasProtectedAccess(state authRequestAccessState) bool {
+	return state.Authenticated || state.Bypassed
+}
+
+func resolveRequestAccessState(ctx *fiber.Ctx, cfg *utils.AppConfig) authRequestAccessState {
+	state := authRequestAccessState{}
+	state.SourceIP, state.Host = resolveRequestSource(ctx, cfg)
+	if !utils.AuthEnabled(cfg) {
+		return state
+	}
+
+	authenticated, err := isRequestAuthenticated(ctx, cfg)
+	state.Authenticated = authenticated
+	state.TokenErr = err
+	if authenticated {
+		return state
+	}
+
+	match := utils.MatchAuthAccessRules(cfg.Auth.AccessRules, state.SourceIP, state.Host)
+	state.ForceAuth = match.ForceAuth
+	state.Bypassed = match.Bypassed
+	return state
+}
+
+func resolveRequestSource(ctx *fiber.Ctx, cfg *utils.AppConfig) (string, string) {
+	if ctx == nil {
+		return "", ""
+	}
+
+	resolved := resolveAuthRequestSource(
+		authRequestSourceInput{
+			RemoteIP:      strings.TrimSpace(ctx.Context().RemoteIP().String()),
+			ForwardedFor:  ctx.Get(utils.DefaultAuthProxyHeader),
+			ForwardedHost: ctx.Get(fiber.HeaderXForwardedHost),
+		},
+		currentAuthAccessConfig(cfg),
+	)
+	return resolved.SourceIP, resolved.Host
+}
+
+func resolveAuthRequestSource(
+	input authRequestSourceInput,
+	accessConfig utils.AuthAccessConfig,
+) authResolvedRequestSource {
+	resolved := authResolvedRequestSource{
+		SourceIP: strings.TrimSpace(input.RemoteIP),
+	}
+	if !utils.IsTrustedProxy(resolved.SourceIP, accessConfig.TrustedProxies) {
+		return resolved
+	}
+
+	if forwardedIP := firstValidForwardedIP(input.ForwardedFor); forwardedIP != "" {
+		resolved.SourceIP = forwardedIP
+	}
+	resolved.Host = firstHeaderValue(input.ForwardedHost)
+	return resolved
+}
+
+func firstValidForwardedIP(value string) string {
+	for _, part := range strings.Split(value, ",") {
+		ip := strings.TrimSpace(part)
+		addr, err := netip.ParseAddr(ip)
+		if err == nil {
+			return addr.Unmap().String()
+		}
+	}
+	return ""
+}
+
+func firstHeaderValue(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.Split(value, ",")[0])
+}
+
 func requiresAuth(path string, cfg *utils.AppConfig) bool {
 	if strings.HasPrefix(path, "/api/v1/") {
 		return true
@@ -236,13 +389,16 @@ func requiresAuth(path string, cfg *utils.AppConfig) bool {
 }
 
 func isAnonymousPath(path string, cfg *utils.AppConfig) bool {
-	if path == "/api/v1/health" {
+	switch path {
+	case "/api/v1/health",
+		"/api/v1/auth/status",
+		"/api/v1/auth/login",
+		"/api/v1/auth/logout",
+		"/api/v1/auth/password/enable":
 		return true
+	default:
+		return false
 	}
-	if strings.HasPrefix(path, "/api/v1/auth/") {
-		return true
-	}
-	return false
 }
 
 func isRequestAuthenticated(ctx *fiber.Ctx, cfg *utils.AppConfig) (bool, error) {

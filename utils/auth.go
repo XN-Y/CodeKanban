@@ -51,6 +51,7 @@ func EnsureAuthConfig(cfg *AppConfig) error {
 	if cfg == nil {
 		return nil
 	}
+	cfg.Auth = SanitizeAuthConfig(cfg.Auth)
 
 	changed := false
 	if strings.TrimSpace(cfg.Auth.FrontendSalt) == "" {

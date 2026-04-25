@@ -1011,6 +1011,41 @@ export default {
     securityEnableSuccess: '已启用密码保护',
     securityChangeSuccess: '密码已更新',
     securityDisableSuccess: '已关闭密码保护',
+    securityAdminLoginAction: '管理员登录',
+    securityAdminLoginHint: '当前来源已被放行；如需修改安全设置，请先以管理员身份登录。',
+    securityAdminLoginDialogTitle: '管理员登录',
+    securityAdminLoginDialogDescription:
+      '输入当前密码以获取管理员会话。登录成功后，才能修改密码保护和来源规则。',
+    securityAdminLoginPasswordPlaceholder: '请输入当前访问密码',
+    securityAdminLoginSuccess: '已切换为管理员会话',
+    securityAccessRulesTitle: '来源规则',
+    securityAccessRulesHint:
+      '这些规则按请求来源决定是否触发密码保护。直连请求只按对端 IP 判断；只有请求来自受信代理时，才会使用 X-Forwarded-For / X-Forwarded-Host。强制鉴权规则优先于放行规则。',
+    securityAccessRulesBypassIPs: '放行 IP / CIDR',
+    securityAccessRulesBypassIPsPlaceholder: '每行一条，例如：127.0.0.1 或 192.168.1.0/24',
+    securityAccessRulesBypassIPsTip: '命中这些客户端 IP 或网段时，直接放行，不触发登录。',
+    securityAccessRulesBypassDomains: '放行域名 / Host',
+    securityAccessRulesBypassDomainsPlaceholder:
+      '每行一条，例如：localhost、example.com、*.trusted.example.com',
+    securityAccessRulesBypassDomainsTip:
+      '仅对受信代理转发的 X-Forwarded-Host 生效，支持精确值和 *.example.com 通配。通配不会匹配根域名本身。',
+    securityAccessRulesForceAuthIPs: '强制鉴权 IP / CIDR',
+    securityAccessRulesForceAuthIPsPlaceholder: '每行一条，例如：203.0.113.9 或 10.0.0.0/24',
+    securityAccessRulesForceAuthIPsTip: '命中后即使也在放行列表里，仍然必须先登录。',
+    securityAccessRulesForceAuthDomains: '强制鉴权域名 / Host',
+    securityAccessRulesForceAuthDomainsPlaceholder:
+      '每行一条，例如：admin.example.com、secure.example.com',
+    securityAccessRulesForceAuthDomainsTip: '命中这些 Host 时，总是要求登录，优先级高于放行规则。',
+    securityTrustedProxies: '受信代理',
+    securityTrustedProxiesPlaceholder: '每行一条，例如：127.0.0.1、10.0.0.0/24、192.168.1.10',
+    securityTrustedProxiesTip:
+      '只有请求来自这些代理 IP / CIDR 时，才会读取 X-Forwarded-For 与 X-Forwarded-Host。',
+    securityProxyHeader: '真实 IP 请求头',
+    securityProxyHeaderPlaceholder: '默认：X-Forwarded-For',
+    securityProxyHeaderTip: '用于从受信代理读取客户端真实 IP，通常保持 X-Forwarded-For 即可。',
+    securityAccessRulesSaveTip:
+      '支持提前配置来源规则。密码保护开启后，只有管理员登录会话才能修改；保存后会立即应用到新请求。',
+    securityAccessRulesSaveSuccess: '来源规则已保存',
     worktreeSettings: 'Worktree 设置',
     worktreeGlobalBaseDir: '全局 Worktree 目录',
     worktreeGlobalBaseDirPlaceholder: '例如：D:/worktrees 或 /Users/you/worktrees（留空禁用）',

@@ -52,11 +52,17 @@ func Init(ctx context.Context, cfg *utils.AppConfig, assets embed.FS, info *AppI
 	if bodyLimit < 1*1024*1024 {
 		bodyLimit = 1 * 1024 * 1024
 	}
+	authAccessConfig := utils.SanitizeAuthAccessConfig(utils.AuthAccessConfigFromAuthConfig(cfg.Auth))
+	utils.ApplyAuthAccessConfigToAuthConfig(&cfg.Auth, authAccessConfig)
 
 	app := fiber.New(fiber.Config{
-		BodyLimit:             bodyLimit,
-		DisableStartupMessage: true,
-		Immutable:             true, // 防止字符串内存被重用覆盖
+		BodyLimit:               bodyLimit,
+		DisableStartupMessage:   true,
+		Immutable:               true, // 防止字符串内存被重用覆盖
+		EnableIPValidation:      true,
+		EnableTrustedProxyCheck: true,
+		ProxyHeader:             utils.DefaultAuthProxyHeader,
+		TrustedProxies:          authAccessConfig.TrustedProxies,
 	})
 
 	app.Use(cors.New(cors.Config{
