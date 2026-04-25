@@ -196,6 +196,10 @@ import { useStorage } from '@vueuse/core';
 import { storeToRefs } from 'pinia';
 
 import FilePreviewSurface from '@/components/files/FilePreviewSurface.vue';
+import {
+  resolveGitChangeSelectionAfterLoad,
+  resolveRetainedGitChangeEntry,
+} from '@/components/changes/gitChangesBehavior';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import {
   chooseGitChangesScope,
@@ -385,7 +389,7 @@ async function ensureLoaded(options?: { scopeId?: string }) {
     }
     activeScopeId.value = result.scope.id;
     changesResult.value = result;
-    syncSelection();
+    await syncSelectionAfterLoad();
   } catch (error) {
     if (!changesLoadController.isCurrent(loadHandle)) {
       return;
@@ -402,28 +406,38 @@ async function ensureLoaded(options?: { scopeId?: string }) {
   }
 }
 
-function syncSelection() {
-  const entries = filteredEntries.value;
-  if (entries.length === 0) {
-    selectedChangePath.value = '';
+async function syncSelectionAfterLoad() {
+  const selection = resolveGitChangeSelectionAfterLoad(
+    filteredEntries.value,
+    selectedChangePath.value
+  );
+  if (!selection.shouldLoadEntry || !selection.entry) {
+    if (selectedChangePath.value !== selection.selectedPath) {
+      selectedChangePath.value = selection.selectedPath;
+    }
     clearPreviewState();
     return;
   }
-  if (useMobilePreview.value && !selectedChangePath.value) {
-    clearPreviewState();
+
+  selectedChangePath.value = selection.selectedPath;
+  await selectChange(selection.entry, {
+    openMobilePreview: !useMobilePreview.value || mobilePreviewVisible.value,
+  });
+}
+
+function syncSelectionWithFilter() {
+  const retainedEntry = resolveRetainedGitChangeEntry(
+    filteredEntries.value,
+    selectedChangePath.value
+  );
+  if (retainedEntry) {
     return;
   }
-  const nextEntry =
-    entries.find(entry => entry.path === selectedChangePath.value) ?? entries[0] ?? null;
-  if (!nextEntry) {
-    selectedChangePath.value = '';
-    clearPreviewState();
+  if (!selectedChangePath.value) {
     return;
   }
-  if (selectedChangePath.value === nextEntry.path && (previewResult.value || diffResult.value)) {
-    return;
-  }
-  void selectChange(nextEntry);
+  selectedChangePath.value = '';
+  clearPreviewState();
 }
 
 function clearPreviewState() {
@@ -501,11 +515,17 @@ async function handleScopeChange(scopeId: string | null) {
   await ensureLoaded({ scopeId });
 }
 
-async function selectChange(entry: FileManagerChangeEntry) {
+async function selectChange(
+  entry: FileManagerChangeEntry,
+  options?: {
+    openMobilePreview?: boolean;
+  }
+) {
   selectedChangePath.value = entry.path;
   const requestToken = ++previewRequestToken;
   previewMode.value = resolveInitialChangePreviewMode(entry);
-  if (useMobilePreview.value) {
+  const shouldOpenMobilePreview = options?.openMobilePreview ?? true;
+  if (useMobilePreview.value && shouldOpenMobilePreview) {
     mobilePreviewVisible.value = true;
   }
   previewResult.value = null;
@@ -657,7 +677,21 @@ function downloadSelectedFile() {
 }
 
 watch(
-  () => [props.projectId, props.isActive, selectedWorktreeId.value] as const,
+  () => [props.projectId, selectedWorktreeId.value] as const,
+  (current, previous) => {
+    if (!previous) {
+      return;
+    }
+    if (current[0] === previous[0] && current[1] === previous[1]) {
+      return;
+    }
+    selectedChangePath.value = '';
+    clearPreviewState();
+  }
+);
+
+watch(
+  () => [props.projectId, props.isActive] as const,
   async ([projectId, isActive]) => {
     if (!projectId || !isActive) {
       stopRefreshTimer();
@@ -665,8 +699,6 @@ watch(
       panelLoading.value = false;
       return;
     }
-    selectedChangePath.value = '';
-    clearPreviewState();
     await ensureLoaded();
     startRefreshTimer();
   },
@@ -676,7 +708,7 @@ watch(
 watch(
   () => normalizedSearch.value,
   () => {
-    syncSelection();
+    syncSelectionWithFilter();
   }
 );
 

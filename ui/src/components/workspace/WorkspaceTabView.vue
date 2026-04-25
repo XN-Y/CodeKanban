@@ -214,6 +214,7 @@ import {
   shouldShowGitChangesBadge,
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
+import { shouldLoadWorkspaceChangesSummary } from '@/components/changes/gitChangesBehavior';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
@@ -279,6 +280,9 @@ const ignoreUntracked = useStorage<boolean>(
 const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
 let changesSummaryTimer: number | null = null;
 let changesSummaryRequestToken = 0;
+const shouldTrackChangesSummary = computed(() =>
+  shouldLoadWorkspaceChangesSummary(props.projectId, changesTabDisabled.value, activeTab.value)
+);
 
 function syncWorkspaceRouteTab(tab: WorkspaceTab) {
   if (isWorkspaceRouteTabQuerySynced(route.query, tab)) {
@@ -306,10 +310,11 @@ watch(
 );
 
 watch(
-  () => [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value] as const,
-  async ([projectId, , disabled]) => {
+  () =>
+    [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value, activeTab.value] as const,
+  async () => {
     stopChangesSummaryTimer();
-    if (!projectId || disabled) {
+    if (!shouldTrackChangesSummary.value) {
       clearChangesBadgeSummary();
       return;
     }
@@ -320,19 +325,9 @@ watch(
 );
 
 watch(
-  () => activeTab.value,
-  async value => {
-    if (value === 'changes' && !changesTabDisabled.value && props.projectId) {
-      await loadChangesSummary();
-    }
-    startChangesSummaryTimer();
-  }
-);
-
-watch(
   () => ignoreUntracked.value,
   async () => {
-    if (!props.projectId || changesTabDisabled.value) {
+    if (!shouldTrackChangesSummary.value) {
       clearChangesBadgeSummary();
       return;
     }
@@ -395,7 +390,7 @@ const changesSummaryDisplay = computed(() => {
   };
 });
 const showChangesSummaryBadge = computed(
-  () => !changesTabDisabled.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
+  () => shouldTrackChangesSummary.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
 );
 
 const rightSidebarToggleLabel = computed(() =>
@@ -481,7 +476,7 @@ function setChangesBadgeLoading(resetBeforeLoad: boolean) {
 }
 
 async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
-  if (!props.projectId || changesTabDisabled.value) {
+  if (!shouldTrackChangesSummary.value) {
     clearChangesBadgeSummary();
     return;
   }
@@ -557,12 +552,7 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
 
 function startChangesSummaryTimer() {
   stopChangesSummaryTimer();
-  if (
-    typeof window === 'undefined' ||
-    changesTabDisabled.value ||
-    activeTab.value !== 'changes' ||
-    !props.projectId
-  ) {
+  if (typeof window === 'undefined' || !shouldTrackChangesSummary.value) {
     return;
   }
   changesSummaryTimer = window.setInterval(() => {
