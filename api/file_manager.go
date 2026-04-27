@@ -45,6 +45,7 @@ func registerFileManagerRoutes(app *fiber.App, cfg *utils.AppConfig, logger *zap
 	app.Get(base+"/changes", ctrl.handleListChanges)
 	app.Get(base+"/changes-summary", ctrl.handleChangesSummary)
 	app.Get(base+"/list", ctrl.handleList)
+	app.Get(base+"/search", ctrl.handleSearch)
 	app.Get(base+"/preview", ctrl.handlePreview)
 	app.Get(base+"/diff", ctrl.handleDiff)
 	app.Get(base+"/content", ctrl.handleContent)
@@ -158,6 +159,24 @@ func (c *fileManagerController) handleList(ctx *fiber.Ctx) error {
 	scopeID := ctx.Query("scopeId")
 	path := ctx.Query("path")
 	item, err := c.service.List(ctx.UserContext(), projectID, scopeID, path)
+	if err != nil {
+		return c.writeError(ctx, err)
+	}
+	resp := h.NewItemResponse(item)
+	resp.Status = http.StatusOK
+	return ctx.Status(http.StatusOK).JSON(resp)
+}
+
+func (c *fileManagerController) handleSearch(ctx *fiber.Ctx) error {
+	projectID := strings.TrimSpace(ctx.Params("projectId"))
+	scopeID := ctx.Query("scopeId")
+	path := ctx.Query("path")
+	query := ctx.Query("query")
+	useRegex, err := parseBoolQuery(ctx.Query("regex"))
+	if err != nil {
+		return fiber.NewError(http.StatusBadRequest, "invalid regex")
+	}
+	item, err := c.service.Search(ctx.UserContext(), projectID, scopeID, path, query, useRegex)
 	if err != nil {
 		return c.writeError(ctx, err)
 	}
@@ -462,7 +481,8 @@ func (c *fileManagerController) writeError(ctx *fiber.Ctx, err error) error {
 	case errors.Is(err, filemanager.ErrProtectedPath()),
 		errors.Is(err, filemanager.ErrUnsupportedEntry()),
 		errors.Is(err, filemanager.ErrTargetExists()),
-		errors.Is(err, filemanager.ErrOffsetMismatch()):
+		errors.Is(err, filemanager.ErrOffsetMismatch()),
+		errors.Is(err, filemanager.ErrInvalidSearchPattern()):
 		status := http.StatusBadRequest
 		if errors.Is(err, filemanager.ErrTargetExists()) {
 			status = http.StatusConflict

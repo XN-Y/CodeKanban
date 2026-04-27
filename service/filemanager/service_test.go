@@ -2,6 +2,8 @@ package filemanager
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +185,154 @@ func TestListIncludesGitStatus(t *testing.T) {
 	}
 	if docsStatus == nil || docsStatus.Kind != GitStatusKindDirty {
 		t.Fatalf("docs git status = %#v", docsStatus)
+	}
+}
+
+func TestSearchFindsEntriesInCurrentDirectorySubtree(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.MkdirAll(filepath.Join(repoDir, "docs", "nested"), 0o755); err != nil {
+		t.Fatalf("mkdir docs/nested: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, "examples"), 0o755); err != nil {
+		t.Fatalf("mkdir examples: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "docs", "nested", "deep-guide.md"), []byte("deep\n"), 0o644); err != nil {
+		t.Fatalf("write deep-guide.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "examples", "outside-guide.md"), []byte("outside\n"), 0o644); err != nil {
+		t.Fatalf("write outside-guide.md: %v", err)
+	}
+
+	result, err := service.Search(context.Background(), projectID, "", "docs", "guide", false)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+
+	paths := searchResultPaths(result.Entries)
+	if !containsString(paths, "docs/guide.md") {
+		t.Fatalf("expected docs/guide.md in results, got %#v", paths)
+	}
+	if !containsString(paths, "docs/nested/deep-guide.md") {
+		t.Fatalf("expected nested match in results, got %#v", paths)
+	}
+	if containsString(paths, "examples/outside-guide.md") {
+		t.Fatalf("search should stay under current subtree, got %#v", paths)
+	}
+}
+
+func TestSearchSupportsWildcardAndRegex(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	if err := os.MkdirAll(filepath.Join(repoDir, "docs", "api"), 0o755); err != nil {
+		t.Fatalf("mkdir docs/api: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "docs", "api", "index.ts"), []byte("export {}\n"), 0o644); err != nil {
+		t.Fatalf("write index.ts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "docs", "api", "index.test.ts"), []byte("test\n"), 0o644); err != nil {
+		t.Fatalf("write index.test.ts: %v", err)
+	}
+
+	wildcardResult, err := service.Search(context.Background(), projectID, "", "", "docs/*/index.?s", false)
+	if err != nil {
+		t.Fatalf("wildcard Search returned error: %v", err)
+	}
+	wildcardPaths := searchResultPaths(wildcardResult.Entries)
+	if !containsString(wildcardPaths, "docs/api/index.ts") {
+		t.Fatalf("expected wildcard match, got %#v", wildcardPaths)
+	}
+	if containsString(wildcardPaths, "docs/api/index.test.ts") {
+		t.Fatalf("wildcard should not match extra segment, got %#v", wildcardPaths)
+	}
+
+	regexResult, err := service.Search(context.Background(), projectID, "", "", `^docs/api/index\.test\.ts$`, true)
+	if err != nil {
+		t.Fatalf("regex Search returned error: %v", err)
+	}
+	regexPaths := searchResultPaths(regexResult.Entries)
+	if len(regexPaths) != 1 || regexPaths[0] != "docs/api/index.test.ts" {
+		t.Fatalf("unexpected regex results: %#v", regexPaths)
+	}
+
+	if _, err := service.Search(context.Background(), projectID, "", "", "[", true); err == nil {
+		t.Fatal("expected invalid regex error")
+	} else if !errors.Is(err, ErrInvalidSearchPattern()) {
+		t.Fatalf("invalid regex error = %v", err)
+	}
+}
+
+func TestSearchSkipsIgnoredDirectoriesAndTruncates(t *testing.T) {
+	cleanup := initFileManagerTestDB(t)
+	defer cleanup()
+
+	repoDir := initFileManagerGitRepo(t)
+	service, err := NewService(Config{
+		DataDir: t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewService returned error: %v", err)
+	}
+	projectID := seedFileManagerProjectScope(t, repoDir)
+
+	for index := 0; index < defaultSearchMaxEntries+1; index++ {
+		fileName := filepath.Join(repoDir, fmt.Sprintf("match-%03d.txt", index))
+		if err := os.WriteFile(fileName, []byte("match\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", fileName, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".git", "match-hidden.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatalf("write .git match: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, "node_modules", "match-package"), 0o755); err != nil {
+		t.Fatalf("mkdir node_modules match: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "node_modules", "match-package", "match-file.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatalf("write node_modules match: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoDir, ".venv", "match-env"), 0o755); err != nil {
+		t.Fatalf("mkdir .venv match: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, ".venv", "match-env", "match-file.txt"), []byte("hidden\n"), 0o644); err != nil {
+		t.Fatalf("write .venv match: %v", err)
+	}
+
+	result, err := service.Search(context.Background(), projectID, "", "", "match", false)
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if !result.Truncated {
+		t.Fatalf("expected truncated result")
+	}
+	if len(result.Entries) != defaultSearchMaxEntries {
+		t.Fatalf("len(entries) = %d, want %d", len(result.Entries), defaultSearchMaxEntries)
+	}
+	for _, entry := range result.Entries {
+		if strings.HasPrefix(entry.Path, ".git/") ||
+			strings.HasPrefix(entry.Path, "node_modules/") ||
+			strings.HasPrefix(entry.Path, ".venv/") {
+			t.Fatalf("search should skip ignored directories: %#v", entry)
+		}
 	}
 }
 
@@ -645,6 +795,23 @@ func runFileManagerGit(t *testing.T, dir string, args ...string) {
 	if err != nil {
 		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, output)
 	}
+}
+
+func searchResultPaths(entries []Entry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.Path)
+	}
+	return paths
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func boolRef(value bool) *bool {

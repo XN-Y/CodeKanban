@@ -29,6 +29,35 @@ vi.mock('@/api/http', () => ({
 
 import { fileManagerApi } from '@/api/fileManager';
 
+describe('fileManagerApi.search', () => {
+  beforeEach(() => {
+    getMethodMock.mockClear();
+    getSendMock.mockReset();
+    getAbortMock.mockReset();
+    getSendMock.mockResolvedValue({
+      item: {
+        scope: {
+          id: 'scope-1',
+          kind: 'project',
+          label: 'Project',
+          rootPath: '/tmp/project',
+        },
+        currentPath: 'docs',
+        entries: [],
+        truncated: false,
+      },
+    });
+  });
+
+  it('passes recursive search params to the backend', async () => {
+    await fileManagerApi.search('project-1', 'scope-1', 'docs/api', 'foo*bar', true);
+
+    expect(getMethodMock).toHaveBeenCalledWith(
+      '/projects/project-1/files/search?scopeId=scope-1&path=docs%2Fapi&query=foo*bar&regex=true'
+    );
+  });
+});
+
 describe('fileManagerApi.listChanges', () => {
   beforeEach(() => {
     getMethodMock.mockClear();

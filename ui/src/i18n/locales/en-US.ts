@@ -100,6 +100,8 @@ export default {
     renamePlaceholder: 'Enter a new name',
     destinationPlaceholder: 'Enter a target folder relative to the scope root',
     searchPlaceholder: 'Search files and folders',
+    regexSearch: 'Regex',
+    searchResultTruncated: 'Many results matched. Showing the first 500 only.',
     displayFields: 'Visible Fields',
     moreActions: 'More',
     clearSelection: 'Clear Selection',
@@ -872,8 +874,10 @@ export default {
     permissionDefault: 'Default Access',
     permissionElevated: 'Elevated Access',
     permissionYolo: 'Fully Automatic',
-    runtimeSwitchNoticeNextMessage: 'Changed; current turn stays the same. Applies to the next message.',
-    runtimeSwitchNoticeApproval: 'Changed; this approval continues the current turn. Applies to the next message.',
+    runtimeSwitchNoticeNextMessage:
+      'Changed; current turn stays the same. Applies to the next message.',
+    runtimeSwitchNoticeApproval:
+      'Changed; this approval continues the current turn. Applies to the next message.',
     customModel: 'Custom...',
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.4',

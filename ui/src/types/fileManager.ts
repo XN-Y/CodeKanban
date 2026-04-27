@@ -56,6 +56,13 @@ export interface FileManagerListResult {
   entries: FileManagerEntry[];
 }
 
+export interface FileManagerSearchResult {
+  scope: FileManagerScope;
+  currentPath: string;
+  entries: FileManagerEntry[];
+  truncated: boolean;
+}
+
 export interface FileManagerPreviewResult {
   entry: FileManagerEntry;
   previewKind: FileManagerPreviewKind;

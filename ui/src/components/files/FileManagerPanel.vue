@@ -63,12 +63,17 @@
     </div>
 
     <div class="file-manager-action-bar">
-      <n-input
-        v-model:value="searchKeyword"
-        clearable
-        class="file-search-input"
-        :placeholder="t('fileManager.searchPlaceholder')"
-      />
+      <div class="file-search-controls">
+        <n-input
+          v-model:value="searchKeyword"
+          clearable
+          class="file-search-input"
+          :placeholder="t('fileManager.searchPlaceholder')"
+        />
+        <n-checkbox v-model:checked="searchUseRegex" size="small">
+          {{ t('fileManager.regexSearch') }}
+        </n-checkbox>
+      </div>
       <div class="file-manager-action-controls">
         <span class="selection-count">{{
           t('fileManager.selectedCount', { count: selectedEntries.length })
@@ -116,17 +121,25 @@
         @dragleave.prevent="handleDragLeave"
         @drop.prevent="handleDrop"
       >
-        <n-spin :show="loading" class="file-list-spin">
+        <n-spin :show="loading || searchLoading" class="file-list-spin">
           <div class="file-list-scroll">
-            <div v-if="errorMessage" class="file-manager-error">
-              <n-alert type="error" :show-icon="false">{{ errorMessage }}</n-alert>
+            <div v-if="displayErrorMessage" class="file-manager-error">
+              <n-alert type="error" :show-icon="false">{{ displayErrorMessage }}</n-alert>
             </div>
-            <div v-else-if="visibleTreeNodes.length === 0" class="file-manager-empty">
+            <div v-else-if="displayTreeNodes.length === 0" class="file-manager-empty">
               <n-empty :description="t('fileManager.empty')" />
             </div>
             <div v-else class="file-tree">
+              <n-alert
+                v-if="isSearchActive && searchResult?.truncated"
+                class="file-search-warning"
+                type="warning"
+                :show-icon="false"
+              >
+                {{ t('fileManager.searchResultTruncated') }}
+              </n-alert>
               <button
-                v-for="node in visibleTreeNodes"
+                v-for="node in displayTreeNodes"
                 :key="node.path"
                 type="button"
                 class="file-tree-row"
@@ -150,7 +163,9 @@
                       :class="{ 'is-placeholder': !node.isDirectory }"
                       @click.stop="toggleTreeNode(node)"
                     >
-                      <span v-if="node.isDirectory">{{ node.expanded ? '▾' : '▸' }}</span>
+                      <span v-if="node.isDirectory && !isSearchActive">{{
+                        node.expanded ? '▾' : '▸'
+                      }}</span>
                     </span>
                     <n-icon size="18" class="file-kind-icon">
                       <component :is="entryIcon(node.entry)" />
@@ -160,8 +175,8 @@
                       {{ t('fileManager.hidden') }}
                     </n-tag>
                   </span>
-                  <span v-if="buildTreeMeta(node.entry)" class="file-row-meta">{{
-                    buildTreeMeta(node.entry)
+                  <span v-if="buildTreeMeta(node.entry, node.path)" class="file-row-meta">{{
+                    buildTreeMeta(node.entry, node.path)
                   }}</span>
                 </span>
               </button>
@@ -361,11 +376,13 @@ import type {
   FileManagerEntry,
   FileManagerListResult,
   FileManagerPreviewResult,
+  FileManagerSearchResult,
   FileTransferTask,
 } from '@/types/fileManager';
 
 const MOBILE_PREVIEW_MAX_WIDTH = 900;
 const MOBILE_PREVIEW_HISTORY_STATE_KEY = '__codekanbanFilePreview';
+const SEARCH_DEBOUNCE_MS = 300;
 
 const props = withDefaults(
   defineProps<{
@@ -397,9 +414,15 @@ const mobilePreviewHistoryActive = ref(false);
 const mobilePreviewClosingFromHistory = ref(false);
 const imagePreviewVisible = ref(false);
 const searchKeyword = ref('');
+const searchUseRegex = ref(false);
+const searchResult = ref<FileManagerSearchResult | null>(null);
+const searchLoading = ref(false);
+const searchErrorMessage = ref('');
 const isDragOver = ref(false);
 let dragDepth = 0;
 let previewRequestToken = 0;
+let searchRequestToken = 0;
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 const treeMetaFieldOrder = ['type', 'size', 'modifiedAt'] as const;
 
@@ -451,9 +474,14 @@ const scopeOptions = computed(() =>
   }))
 );
 
+const normalizedSearch = computed(() => searchKeyword.value.trim().toLowerCase());
 const selectedEntries = computed(() =>
   selectedPaths.value
-    .map(path => treeNodeMap.value[path]?.entry)
+    .map(
+      path =>
+        treeNodeMap.value[path]?.entry ??
+        searchResult.value?.entries.find(entry => entry.path === path)
+    )
     .filter((entry): entry is FileManagerEntry => Boolean(entry))
 );
 const visibleTreeMetaFields = ref<TreeMetaField[]>([...treeMetaFieldOrder]);
@@ -466,6 +494,8 @@ const treeMetaFieldOptions = computed(() =>
 const browserWidthClass = computed(
   () => `file-browser--meta-${visibleTreeMetaFields.value.length}`
 );
+const isSearchActive = computed(() => normalizedSearch.value.length > 0);
+const displayErrorMessage = computed(() => searchErrorMessage.value || errorMessage.value);
 const bulkActionOptions = computed(() => [
   {
     label: t('fileManager.zipDownload'),
@@ -494,7 +524,6 @@ const renderedMarkdown = computed(() =>
 const previewMetaText = computed(() =>
   previewResult.value ? buildPreviewMeta(previewResult.value.entry) : ''
 );
-const normalizedSearch = computed(() => searchKeyword.value.trim().toLowerCase());
 const useMobilePreview = computed(() => windowWidth.value <= MOBILE_PREVIEW_MAX_WIDTH);
 
 const visibleTreeNodes = computed<VisibleTreeNode[]>(() => {
@@ -541,6 +570,20 @@ const visibleTreeNodes = computed<VisibleTreeNode[]>(() => {
   }
   return output;
 });
+
+const searchTreeNodes = computed<VisibleTreeNode[]>(() =>
+  (searchResult.value?.entries ?? []).map(entry => ({
+    path: entry.path,
+    depth: 0,
+    entry,
+    isDirectory: entry.kind === 'directory',
+    expanded: false,
+  }))
+);
+
+const displayTreeNodes = computed<VisibleTreeNode[]>(() =>
+  isSearchActive.value ? searchTreeNodes.value : visibleTreeNodes.value
+);
 
 function upsertTreeNodes(entriesToSync: FileManagerEntry[], parentPath = '') {
   const parentKey = parentPath;
@@ -610,6 +653,67 @@ function clearPreviewState() {
   imagePreviewVisible.value = false;
 }
 
+function clearSearchState() {
+  searchRequestToken += 1;
+  searchResult.value = null;
+  searchErrorMessage.value = '';
+  searchLoading.value = false;
+  selectedPaths.value = selectedPaths.value.filter(path => Boolean(treeNodeMap.value[path]));
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+}
+
+async function runSearch() {
+  const keyword = searchKeyword.value.trim();
+  if (!keyword || !activeScope.value) {
+    clearSearchState();
+    return;
+  }
+
+  const requestToken = ++searchRequestToken;
+  searchLoading.value = true;
+  searchErrorMessage.value = '';
+  try {
+    const result = await fileManagerApi.search(
+      props.projectId,
+      activeScope.value.id,
+      currentPath.value,
+      keyword,
+      searchUseRegex.value
+    );
+    if (requestToken !== searchRequestToken) {
+      return;
+    }
+    searchResult.value = result;
+  } catch (error) {
+    if (requestToken !== searchRequestToken) {
+      return;
+    }
+    searchResult.value = null;
+    searchErrorMessage.value = error instanceof Error ? error.message : t('common.error');
+  } finally {
+    if (requestToken === searchRequestToken) {
+      searchLoading.value = false;
+    }
+  }
+}
+
+function scheduleSearch() {
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+  }
+  if (!searchKeyword.value.trim()) {
+    clearSearchState();
+    return;
+  }
+  searchDebounceTimer = setTimeout(() => {
+    searchDebounceTimer = null;
+    void runSearch();
+  }, SEARCH_DEBOUNCE_MS);
+}
+
 async function ensureLoaded() {
   if (!props.projectId || !props.isActive) {
     return;
@@ -624,6 +728,9 @@ async function handleRefresh() {
   try {
     const result = await fileManagerStore.refreshProject(props.projectId);
     syncTreeFromList(result);
+    if (isSearchActive.value) {
+      void runSearch();
+    }
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -660,6 +767,7 @@ async function handleScopeChange(scopeId: string | null) {
     syncTreeFromList(result);
     selectedPaths.value = [];
     clearPreviewState();
+    clearSearchState();
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -769,7 +877,7 @@ async function handleRowClick(entry: FileManagerEntry) {
 }
 
 async function toggleTreeNode(node: VisibleTreeNode) {
-  if (!node.isDirectory) {
+  if (!node.isDirectory || isSearchActive.value) {
     return;
   }
   const state = treeNodeMap.value[node.path];
@@ -791,6 +899,10 @@ async function toggleTreeNode(node: VisibleTreeNode) {
 
 async function handleTreeNodeClick(node: VisibleTreeNode) {
   if (node.isDirectory) {
+    if (isSearchActive.value) {
+      await handleNavigate(node.path);
+      return;
+    }
     if (currentPath.value === node.path) {
       const state = treeNodeMap.value[node.path];
       if (state) {
@@ -939,11 +1051,14 @@ function resolveTreeMetaValue(entry: FileManagerEntry, field: TreeMetaField) {
   }
 }
 
-function buildTreeMeta(entry: FileManagerEntry) {
-  return visibleTreeMetaFields.value
+function buildTreeMeta(entry: FileManagerEntry, path = '') {
+  const parts = visibleTreeMetaFields.value
     .map(field => resolveTreeMetaValue(entry, field))
-    .filter(Boolean)
-    .join(' · ');
+    .filter(Boolean);
+  if (isSearchActive.value && path) {
+    parts.unshift(path);
+  }
+  return parts.join(' · ');
 }
 
 function buildPreviewMeta(entry: FileManagerEntry) {
@@ -1132,6 +1247,9 @@ function openCreateDirectoryDialog() {
         currentPath.value,
         value
       );
+      if (isSearchActive.value) {
+        void runSearch();
+      }
     }
   );
 }
@@ -1148,6 +1266,9 @@ function openRenameDialog() {
     async value => {
       await fileManagerStore.renameEntry(props.projectId, activeScope.value!.id, entry.path, value);
       selectedPaths.value = [];
+      if (isSearchActive.value) {
+        void runSearch();
+      }
     }
   );
 }
@@ -1171,6 +1292,9 @@ function openCopyDialog() {
         message.warning(result.failed[0]?.message || t('common.warning'));
       } else {
         message.success(t('fileManager.copySuccess'));
+      }
+      if (isSearchActive.value) {
+        void runSearch();
       }
     }
   );
@@ -1197,6 +1321,9 @@ function openMoveDialog() {
         selectedPaths.value = [];
         message.success(t('fileManager.moveSuccess'));
       }
+      if (isSearchActive.value) {
+        void runSearch();
+      }
     }
   );
 }
@@ -1221,6 +1348,9 @@ function confirmDeleteSelected() {
         message.warning(result.failed[0]?.message || t('common.warning'));
       } else {
         message.success(t('fileManager.deleteSuccess'));
+      }
+      if (isSearchActive.value) {
+        void runSearch();
       }
     },
   });
@@ -1296,10 +1426,46 @@ watch(
 watch(
   () => Object.keys(treeNodeMap.value).join('|'),
   () => {
-    selectedPaths.value = selectedPaths.value.filter(path => Boolean(treeNodeMap.value[path]));
+    const searchablePaths = new Set((searchResult.value?.entries ?? []).map(entry => entry.path));
+    selectedPaths.value = selectedPaths.value.filter(
+      path => Boolean(treeNodeMap.value[path]) || searchablePaths.has(path)
+    );
     if (previewPath.value && !treeNodeMap.value[previewPath.value]) {
       clearPreviewState();
     }
+  }
+);
+
+watch(
+  () => (searchResult.value?.entries ?? []).map(entry => entry.path).join('|'),
+  () => {
+    if (!isSearchActive.value) {
+      return;
+    }
+    const searchablePaths = new Set((searchResult.value?.entries ?? []).map(entry => entry.path));
+    selectedPaths.value = selectedPaths.value.filter(
+      path => Boolean(treeNodeMap.value[path]) || searchablePaths.has(path)
+    );
+    if (
+      previewPath.value &&
+      !treeNodeMap.value[previewPath.value] &&
+      !searchablePaths.has(previewPath.value)
+    ) {
+      clearPreviewState();
+    }
+  }
+);
+
+watch(
+  () =>
+    [
+      normalizedSearch.value,
+      searchUseRegex.value,
+      activeScope.value?.id ?? '',
+      currentPath.value,
+    ] as const,
+  () => {
+    scheduleSearch();
   }
 );
 
@@ -1353,6 +1519,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearSearchState();
   if (typeof window !== 'undefined') {
     window.removeEventListener('popstate', handleMobilePreviewPopState);
   }
@@ -1420,8 +1587,30 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
 }
 
+.file-search-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.file-search-controls :deep(.n-checkbox) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.file-search-controls :deep(.n-checkbox__label) {
+  white-space: nowrap;
+}
+
 .file-search-input {
   width: min(320px, 100%);
+  flex: 1 1 260px;
+  min-width: 0;
+}
+
+.file-search-warning {
+  margin-bottom: 6px;
 }
 
 .file-upload-input {
@@ -1902,6 +2091,7 @@ onBeforeUnmount(() => {
     justify-content: flex-start;
   }
 
+  .file-search-controls,
   .file-search-input {
     width: 100%;
   }

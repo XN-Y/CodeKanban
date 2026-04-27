@@ -100,6 +100,8 @@ export default {
     renamePlaceholder: '输入新的名称',
     destinationPlaceholder: '输入目标目录，相对根目录例如 docs/archive',
     searchPlaceholder: '搜索文件或目录名称',
+    regexSearch: '正则',
+    searchResultTruncated: '搜索结果较多，仅显示前 500 项',
     displayFields: '显示项',
     moreActions: '更多',
     clearSelection: '清空已选',

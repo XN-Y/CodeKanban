@@ -10,6 +10,7 @@ import type {
   FileManagerEntry,
   FileManagerListResult,
   FileManagerPreviewResult,
+  FileManagerSearchResult,
   FileManagerScope,
   FileManagerUploadSession,
 } from '@/types/fileManager';
@@ -109,6 +110,31 @@ export const fileManagerApi = {
     const item = extractItem<FileManagerListResult>(payload);
     if (!item) {
       throw new Error('failed to load files');
+    }
+    return item;
+  },
+
+  async search(
+    projectId: string,
+    scopeId: string,
+    path: string,
+    query: string,
+    useRegex: boolean
+  ): Promise<FileManagerSearchResult> {
+    const params = new URLSearchParams();
+    params.set('scopeId', scopeId);
+    params.set('path', path);
+    params.set('query', query);
+    params.set('regex', String(useRegex));
+    const payload =
+      (await http
+        .Get<
+          ItemResponse<FileManagerSearchResult>
+        >(`/projects/${projectId}/files/search?${params.toString()}`)
+        .send(true)) ?? {};
+    const item = extractItem<FileManagerSearchResult>(payload);
+    if (!item) {
+      throw new Error('failed to search files');
     }
     return item;
   },

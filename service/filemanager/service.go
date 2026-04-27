@@ -13,6 +13,7 @@ import (
 	"os"
 	pathpkg "path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -35,16 +36,19 @@ const (
 	defaultListChangesTimeout    = 5 * time.Second
 	defaultListChangesMaxEntries = 1000
 	defaultChangesSummaryTimeout = 5 * time.Second
+	defaultSearchMaxEntries      = 500
 )
 
 var (
-	errScopeNotFound    = errors.New("file scope not found")
-	errArchiveNotFound  = errors.New("archive not found")
-	errUploadNotFound   = errors.New("upload session not found")
-	errOffsetMismatch   = errors.New("upload offset mismatch")
-	errTargetExists     = errors.New("target already exists")
-	errProtectedPath    = errors.New("path is protected")
-	errUnsupportedEntry = errors.New("unsupported file entry")
+	errScopeNotFound        = errors.New("file scope not found")
+	errArchiveNotFound      = errors.New("archive not found")
+	errUploadNotFound       = errors.New("upload session not found")
+	errOffsetMismatch       = errors.New("upload offset mismatch")
+	errTargetExists         = errors.New("target already exists")
+	errProtectedPath        = errors.New("path is protected")
+	errUnsupportedEntry     = errors.New("unsupported file entry")
+	errInvalidSearchPattern = errors.New("invalid search pattern")
+	errSearchResultLimitHit = errors.New("search result limit hit")
 )
 
 const (
@@ -249,38 +253,10 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 			continue
 		}
 
-		item := Entry{
-			Name:       name,
-			Path:       toSlashPath(relativePath),
-			ModifiedAt: lstat.ModTime(),
-			Extension:  strings.ToLower(filepath.Ext(name)),
-			Hidden:     strings.HasPrefix(name, "."),
-		}
-
-		switch {
-		case lstat.Mode()&os.ModeSymlink != 0:
-			item.Kind = EntryKindSymlink
-			item.PreviewKind = PreviewKindBinary
-		case lstat.IsDir():
-			item.Kind = EntryKindDirectory
-			item.PreviewKind = PreviewKindBinary
-		default:
-			item.Kind = EntryKindFile
-			item.Size = lstat.Size()
-			item.Mime = detectMimeFromName(name)
-			item.PreviewKind = detectPreviewKind(name, item.Mime)
-		}
-		item.GitStatus = buildEntryGitStatus(item, gitStatuses)
-
-		items = append(items, item)
+		items = append(items, buildFileManagerEntry(relativePath, lstat, gitStatuses))
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		if items[i].Kind != items[j].Kind {
-			return items[i].Kind == EntryKindDirectory
-		}
-		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
-	})
+	sortEntriesByName(items)
 
 	return &ListResult{
 		Scope:       scope,
@@ -289,6 +265,94 @@ func (s *Service) List(ctx context.Context, projectID, scopeID, currentPath stri
 		Breadcrumbs: buildBreadcrumbs(normalizedPath),
 		Entries:     items,
 	}, nil
+}
+
+func (s *Service) Search(ctx context.Context, projectID, scopeID, currentPath, query string, useRegex bool) (*SearchResult, error) {
+	scope, err := s.scopeByID(ctx, projectID, scopeID)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedPath, absPath, info, err := s.resolveExisting(scope, currentPath)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("target path is not a directory")
+	}
+
+	matcher, err := buildSearchMatcher(query, useRegex)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &SearchResult{
+		Scope:       scope,
+		CurrentPath: toSlashPath(normalizedPath),
+		Entries:     []Entry{},
+	}
+	if matcher == nil {
+		return result, nil
+	}
+
+	gitStatuses := s.loadGitStatuses(scope.RootPath)
+	walkErr := filepath.WalkDir(absPath, func(path string, entry fs.DirEntry, walkErr error) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if walkErr != nil {
+			if entry != nil && entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if path == absPath {
+			return nil
+		}
+
+		name := strings.TrimSpace(entry.Name())
+		if name == "" {
+			return nil
+		}
+		if entry.IsDir() && shouldSkipSearchDirectory(name) {
+			return filepath.SkipDir
+		}
+		if name == ".git" {
+			return nil
+		}
+
+		searchRelativePath, err := filepath.Rel(absPath, path)
+		if err != nil {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		relativePath := joinRelativePath(normalizedPath, filepath.ToSlash(searchRelativePath))
+		if !matcher(name, toSlashPath(relativePath)) {
+			return nil
+		}
+		if len(result.Entries) >= defaultSearchMaxEntries {
+			result.Truncated = true
+			return errSearchResultLimitHit
+		}
+
+		lstat, err := os.Lstat(path)
+		if err != nil {
+			return nil
+		}
+		result.Entries = append(result.Entries, buildFileManagerEntry(relativePath, lstat, gitStatuses))
+		return nil
+	})
+	if walkErr != nil && !errors.Is(walkErr, errSearchResultLimitHit) {
+		return nil, walkErr
+	}
+
+	sortEntriesByPath(result.Entries)
+	return result, nil
 }
 
 func (s *Service) Preview(ctx context.Context, projectID, scopeID, path string) (*PreviewResult, error) {
@@ -1248,6 +1312,51 @@ func (s *Service) buildFileEntry(relativePath string, info os.FileInfo) (Entry, 
 	return entry, nil
 }
 
+func buildFileManagerEntry(relativePath string, info os.FileInfo, gitStatuses map[string]git.FileStatus) Entry {
+	entry := Entry{
+		Name:        info.Name(),
+		Path:        toSlashPath(relativePath),
+		ModifiedAt:  info.ModTime(),
+		Extension:   strings.ToLower(filepath.Ext(info.Name())),
+		Hidden:      strings.HasPrefix(info.Name(), "."),
+		PreviewKind: PreviewKindBinary,
+	}
+
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		entry.Kind = EntryKindSymlink
+	case info.IsDir():
+		entry.Kind = EntryKindDirectory
+	default:
+		entry.Kind = EntryKindFile
+		entry.Size = info.Size()
+		entry.Mime = detectMimeFromName(info.Name())
+		entry.PreviewKind = detectPreviewKind(info.Name(), entry.Mime)
+	}
+	entry.GitStatus = buildEntryGitStatus(entry, gitStatuses)
+	return entry
+}
+
+func sortEntriesByName(items []Entry) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Kind != items[j].Kind {
+			return items[i].Kind == EntryKindDirectory
+		}
+		return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+	})
+}
+
+func sortEntriesByPath(items []Entry) {
+	sort.Slice(items, func(i, j int) bool {
+		left := strings.ToLower(items[i].Path)
+		right := strings.ToLower(items[j].Path)
+		if left == right {
+			return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+		}
+		return left < right
+	})
+}
+
 func (s *Service) loadGitStatuses(scopeRoot string) map[string]git.FileStatus {
 	if !git.IsRepositoryPath(scopeRoot) {
 		return nil
@@ -1686,6 +1795,102 @@ func buildBreadcrumbs(value string) []Breadcrumb {
 	return breadcrumbs
 }
 
+type searchMatcher func(name, relativePath string) bool
+
+func buildSearchMatcher(query string, useRegex bool) (searchMatcher, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil, nil
+	}
+	if useRegex {
+		pattern, err := regexp.Compile(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", errInvalidSearchPattern, err)
+		}
+		return func(name, relativePath string) bool {
+			return pattern.MatchString(name) || pattern.MatchString(relativePath)
+		}, nil
+	}
+
+	lowerQuery := strings.ToLower(trimmed)
+	if !strings.ContainsAny(trimmed, "*?") {
+		return func(name, relativePath string) bool {
+			return strings.Contains(strings.ToLower(name), lowerQuery) ||
+				strings.Contains(strings.ToLower(relativePath), lowerQuery)
+		}, nil
+	}
+
+	lowerPattern := strings.ToLower(toSlashPath(trimmed))
+	return func(name, relativePath string) bool {
+		return wildcardMatch(lowerPattern, strings.ToLower(name)) ||
+			wildcardMatch(lowerPattern, strings.ToLower(relativePath))
+	}, nil
+}
+
+func wildcardMatch(pattern, value string) bool {
+	patternRunes := []rune(pattern)
+	valueRunes := []rune(value)
+	matchIndex := 0
+	starIndex := -1
+	starMatchIndex := 0
+
+	for valueIndex := 0; valueIndex < len(valueRunes); {
+		if matchIndex < len(patternRunes) && (patternRunes[matchIndex] == '?' || patternRunes[matchIndex] == valueRunes[valueIndex]) {
+			matchIndex++
+			valueIndex++
+			continue
+		}
+		if matchIndex < len(patternRunes) && patternRunes[matchIndex] == '*' {
+			starIndex = matchIndex
+			starMatchIndex = valueIndex
+			matchIndex++
+			continue
+		}
+		if starIndex != -1 {
+			matchIndex = starIndex + 1
+			starMatchIndex++
+			valueIndex = starMatchIndex
+			continue
+		}
+		return false
+	}
+
+	for matchIndex < len(patternRunes) && patternRunes[matchIndex] == '*' {
+		matchIndex++
+	}
+	return matchIndex == len(patternRunes)
+}
+
+func shouldSkipSearchDirectory(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case ".git",
+		"node_modules",
+		"vendor",
+		".venv",
+		"venv",
+		"env",
+		"__pycache__",
+		".pytest_cache",
+		".mypy_cache",
+		".ruff_cache",
+		".tox",
+		"target",
+		"dist",
+		"build",
+		".next",
+		".nuxt",
+		".svelte-kit",
+		".turbo",
+		".cache",
+		"coverage",
+		".idea",
+		".vscode":
+		return true
+	default:
+		return false
+	}
+}
+
 func toSlashPath(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return ""
@@ -1894,6 +2099,10 @@ func ErrProtectedPath() error {
 
 func ErrUnsupportedEntry() error {
 	return errUnsupportedEntry
+}
+
+func ErrInvalidSearchPattern() error {
+	return errInvalidSearchPattern
 }
 
 func writeZipEntry(zipWriter *zip.Writer, sourcePath, archiveName string) error {

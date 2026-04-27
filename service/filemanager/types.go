@@ -80,6 +80,13 @@ type ListResult struct {
 	Entries     []Entry      `json:"entries"`
 }
 
+type SearchResult struct {
+	Scope       Scope   `json:"scope"`
+	CurrentPath string  `json:"currentPath"`
+	Entries     []Entry `json:"entries"`
+	Truncated   bool    `json:"truncated"`
+}
+
 type PreviewResult struct {
 	Entry       Entry       `json:"entry"`
 	PreviewKind PreviewKind `json:"previewKind"`
