@@ -52,6 +52,47 @@ describe('projectBrowserNavigation', () => {
     });
   });
 
+  it('builds mobile project locations for returning to the source workspace tab', () => {
+    expect(
+      buildProjectBrowserProjectLocation({
+        mode: 'mobile-workspace',
+        projectId: 'project-2',
+        currentProjectId: 'project-1',
+        query: {
+          tab: 'projects',
+        },
+        workspaceTab: 'terminal',
+      })
+    ).toEqual({
+      name: 'project',
+      params: { id: 'project-2' },
+      query: {
+        tab: 'terminal',
+      },
+    });
+  });
+
+  it('clears the previous web session id when returning to another project web tab', () => {
+    expect(
+      buildProjectBrowserProjectLocation({
+        mode: 'mobile-workspace',
+        projectId: 'project-2',
+        currentProjectId: 'project-1',
+        query: {
+          tab: 'projects',
+          webSessionId: 'session-9',
+        },
+        workspaceTab: 'web',
+      })
+    ).toEqual({
+      name: 'project',
+      params: { id: 'project-2' },
+      query: {
+        tab: 'web',
+      },
+    });
+  });
+
   it('keeps page-mode navigation query-free', () => {
     expect(
       buildProjectBrowserProjectLocation({

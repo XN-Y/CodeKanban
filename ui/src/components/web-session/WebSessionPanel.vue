@@ -35,16 +35,6 @@
               class="mobile-tab-selector"
             >
               <button
-                type="button"
-                class="mobile-nav-btn"
-                :disabled="!hasPrevSession"
-                @click="goToPrevSession"
-              >
-                <n-icon size="18">
-                  <ChevronBackOutline />
-                </n-icon>
-              </button>
-              <button
                 ref="mobileTabTriggerRef"
                 type="button"
                 class="mobile-tab-trigger"
@@ -73,16 +63,6 @@
                 </span>
                 <n-icon class="mobile-tab-arrow" :class="{ 'is-open': showMobileTabSelector }">
                   <ChevronDownOutline />
-                </n-icon>
-              </button>
-              <button
-                type="button"
-                class="mobile-nav-btn"
-                :disabled="!hasNextSession"
-                @click="goToNextSession"
-              >
-                <n-icon size="18">
-                  <ChevronForwardOutline />
                 </n-icon>
               </button>
             </div>
@@ -167,11 +147,11 @@
                   secondary
                   size="small"
                   class="new-session-button"
-                  :title="t('common.more')"
-                  :aria-label="t('common.more')"
+                  :title="t('common.moreActions')"
+                  :aria-label="t('common.moreActions')"
                 >
                   <template #icon>
-                    <n-icon><EllipsisHorizontalOutline /></n-icon>
+                    <n-icon><AddOutline /></n-icon>
                   </template>
                 </n-button>
               </n-dropdown>
@@ -913,7 +893,6 @@
             class="composer"
             :class="{
               'is-drag-over': isComposerDragOver,
-              'is-mobile-expanded': isMobile && isMobileComposerExpanded,
               'is-mobile-focused': isMobileComposerFocused,
             }"
             @paste.capture="handleComposerPaste"
@@ -931,12 +910,33 @@
               @change="handleFileChange"
             />
 
+            <div v-if="isMobile" class="composer-mobile-panel-toggle-shell">
+              <button
+                type="button"
+                class="composer-mobile-panel-toggle"
+                :aria-expanded="!isMobileComposerCollapsed"
+                :title="mobileComposerPanelToggleLabel"
+                :aria-label="mobileComposerPanelToggleLabel"
+                @click="toggleMobileComposerCollapsed"
+              >
+                <n-icon
+                  class="composer-mobile-panel-toggle-arrow"
+                  :class="{ 'is-open': !isMobileComposerCollapsed }"
+                >
+                  <ChevronDownOutline />
+                </n-icon>
+              </button>
+            </div>
+
+            <template v-if="!isMobile || !isMobileComposerCollapsed">
             <div v-if="isMobile" class="composer-mobile-summary">
               <button
                 type="button"
                 class="composer-mobile-toggle"
-                :aria-expanded="isMobileComposerExpanded"
-                @click="toggleMobileComposerExpanded"
+                :aria-expanded="isMobileComposerSettingsExpanded"
+                :title="mobileComposerSettingsToggleLabel"
+                :aria-label="mobileComposerSettingsToggleLabel"
+                @click="toggleMobileComposerSettingsExpanded"
               >
                 <span class="composer-mobile-toggle-copy">
                   <span class="composer-mobile-toggle-chips">
@@ -951,7 +951,7 @@
                 </span>
                 <n-icon
                   class="composer-mobile-toggle-arrow"
-                  :class="{ 'is-open': isMobileComposerExpanded }"
+                  :class="{ 'is-open': isMobileComposerSettingsExpanded }"
                 >
                   <ChevronDownOutline />
                 </n-icon>
@@ -959,7 +959,7 @@
             </div>
 
             <div
-              v-if="!isMobile || isMobileComposerExpanded"
+              v-if="!isMobile || isMobileComposerSettingsExpanded"
               class="composer-config"
               :class="{ 'is-mobile': isMobile }"
             >
@@ -1366,6 +1366,7 @@
               :tone="composerTransferCard.tone"
               :card-style="composerTransferDialogStyle"
             />
+            </template>
           </div>
         </div>
 
@@ -1730,11 +1731,8 @@ import {
 import {
   AddOutline,
   ArchiveOutline,
-  ChevronBackOutline,
   ChevronDownOutline,
-  ChevronForwardOutline,
   CreateOutline,
-  EllipsisHorizontalOutline,
   FlashOutline,
   ImageOutline,
   RefreshCircleOutline,
@@ -1911,6 +1909,7 @@ const ACTIVE_DRAFT_SESSION_STORAGE_KEY = 'workspace-web-session-active-draft';
 const TAB_ORDER_STORAGE_KEY = 'workspace-web-session-tab-order';
 const TAB_MRU_STORAGE_KEY = 'workspace-web-session-tab-mru';
 const SIDEBAR_SCOPE_STORAGE_KEY = 'workspace-web-session-sidebar-scope';
+const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-composer-collapsed';
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
@@ -2137,7 +2136,8 @@ const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
 const tabsContainerWidth = ref(0);
 const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
 const isComposerDragOver = ref(false);
-const isMobileComposerExpanded = ref(false);
+const isMobileComposerCollapsed = useStorage(MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY, false);
+const isMobileComposerSettingsExpanded = ref(false);
 const isMobileComposerFocused = ref(false);
 const isMobileKeyboardResizeFrozen = ref(false);
 const showAttachmentPreview = ref(false);
@@ -3158,6 +3158,16 @@ const selectedWorkflowModeLabel = computed(() =>
     ? t('webSession.workflowPlan')
     : t('webSession.workflowDefault')
 );
+const mobileComposerPanelToggleLabel = computed(() =>
+  isMobileComposerCollapsed.value
+    ? t('webSession.composerPanelExpand')
+    : t('webSession.composerPanelCollapse')
+);
+const mobileComposerSettingsToggleLabel = computed(() =>
+  isMobileComposerSettingsExpanded.value
+    ? t('webSession.composerSettingsCollapse')
+    : t('webSession.composerSettingsExpand')
+);
 const selectedPermissionLevelLabel = computed(() => {
   switch (selectedPermissionLevel.value) {
     case 'elevated':
@@ -3327,11 +3337,34 @@ function emitMobileComposerChromeHidden(hidden: boolean) {
   emit('mobile-composer-focus-change', hidden);
 }
 
-function toggleMobileComposerExpanded() {
+function ensureMobileComposerVisible() {
   if (!isMobile.value) {
     return;
   }
-  isMobileComposerExpanded.value = !isMobileComposerExpanded.value;
+  isMobileComposerCollapsed.value = false;
+}
+
+function toggleMobileComposerCollapsed() {
+  if (!isMobile.value) {
+    return;
+  }
+  const nextCollapsed = !isMobileComposerCollapsed.value;
+  isMobileComposerCollapsed.value = nextCollapsed;
+  if (!nextCollapsed) {
+    return;
+  }
+  showQuickInputPopover.value = false;
+  isMobileComposerSettingsExpanded.value = false;
+  mobileKeyboard.setFocused(false);
+  setMobileComposerFocusState(false);
+}
+
+function toggleMobileComposerSettingsExpanded() {
+  if (!isMobile.value) {
+    return;
+  }
+  ensureMobileComposerVisible();
+  isMobileComposerSettingsExpanded.value = !isMobileComposerSettingsExpanded.value;
 }
 
 function handleMobileQuickInputClickOutside() {
@@ -3752,25 +3785,11 @@ const mobileProjectBadgeById = computed(() => {
   });
   return buildProjectBadgeMap(ordered, getProjectName);
 });
-const mobileNavigationSessions = computed<SessionTab[]>(() =>
-  isArchivedPreviewSession(currentSession.value)
-    ? mobileArchivedSessions.value
-    : mobileCurrentSessions.value
-);
 const mobileTabDropdownPlacement = computed(() =>
   mobileTabSelectorAnchor.value?.source === 'bottom-nav' ? 'top' : 'bottom-start'
 );
 const mobileTabDropdownX = computed(() => mobileTabSelectorAnchor.value?.x ?? 0);
 const mobileTabDropdownY = computed(() => mobileTabSelectorAnchor.value?.y ?? 0);
-const currentSessionIndex = computed(() =>
-  mobileNavigationSessions.value.findIndex(session => session.id === activeSessionId.value)
-);
-const hasPrevSession = computed(() => currentSessionIndex.value > 0);
-const hasNextSession = computed(
-  () =>
-    currentSessionIndex.value >= 0 &&
-    currentSessionIndex.value < mobileNavigationSessions.value.length - 1
-);
 
 watch(
   pendingUserInputSyncKey,
@@ -7336,6 +7355,7 @@ function removeAttachment(attachmentId: string) {
 }
 
 function focusComposer() {
+  ensureMobileComposerVisible();
   nextTick(() => {
     composerInputRef.value?.focus();
   });
@@ -7357,6 +7377,7 @@ function setComposerTextAndSelection(text: string, cursor: number) {
   }
 
   webSessionStore.setDraftText(props.projectId, sessionId, text);
+  ensureMobileComposerVisible();
   nextTick(() => {
     composerInputRef.value?.focus();
     composerInputRef.value?.setSelectionRange(cursor, cursor);
@@ -7523,7 +7544,7 @@ async function handleSubmit() {
       await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
     }
     autoFollowBottom.value = true;
-    isMobileComposerExpanded.value = false;
+    isMobileComposerSettingsExpanded.value = false;
     scrollToBottom(true);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
@@ -7548,7 +7569,7 @@ async function handlePreinput(mode: 'redirect' | 'queue') {
     settingsStore.recordWebSessionRecentInput(draftText);
     void settingsStore.syncWebSessionQuickInputToServer();
     webSessionStore.clearDraft(props.projectId, currentRealSession.value.id);
-    isMobileComposerExpanded.value = false;
+    isMobileComposerSettingsExpanded.value = false;
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -7573,7 +7594,8 @@ function handleComposerFocus() {
   if (!isMobile.value) {
     return;
   }
-  isMobileComposerExpanded.value = false;
+  ensureMobileComposerVisible();
+  isMobileComposerSettingsExpanded.value = false;
   mobileKeyboard.setFocused(true);
   setMobileComposerFocusState(true);
 }
@@ -8501,26 +8523,6 @@ function handleMobileTabSelect(_key: string | number, option: DropdownOption) {
   void performMobileSessionSelection(mobileOption.session);
 }
 
-function goToPrevSession() {
-  if (!hasPrevSession.value) {
-    return;
-  }
-  const session = mobileNavigationSessions.value[currentSessionIndex.value - 1];
-  if (session) {
-    void performMobileSessionSelection(session);
-  }
-}
-
-function goToNextSession() {
-  if (!hasNextSession.value) {
-    return;
-  }
-  const session = mobileNavigationSessions.value[currentSessionIndex.value + 1];
-  if (session) {
-    void performMobileSessionSelection(session);
-  }
-}
-
 function setupTabSorting() {
   if (isMobile.value) {
     destroyTabSorting();
@@ -9007,7 +9009,7 @@ watch(
   () => {
     showQuickInputPopover.value = false;
     if (isMobile.value) {
-      isMobileComposerExpanded.value = false;
+      isMobileComposerSettingsExpanded.value = false;
     }
   }
 );
@@ -9015,7 +9017,7 @@ watch(
 watch(
   () => isMobile.value,
   mobile => {
-    isMobileComposerExpanded.value = false;
+    isMobileComposerSettingsExpanded.value = false;
     if (!mobile) {
       mobileKeyboard.reset();
       setMobileComposerFocusState(false);
@@ -9564,13 +9566,11 @@ defineExpose({
 .mobile-tab-selector {
   display: flex;
   align-items: center;
-  gap: 8px;
   flex: 1;
   min-width: 0;
   padding-bottom: 6px;
 }
 
-.mobile-nav-btn,
 .mobile-tab-trigger {
   border: 1px solid var(--n-border-color);
   background: var(--app-surface-color, #fff);
@@ -9587,19 +9587,9 @@ defineExpose({
     transform 0.18s ease;
 }
 
-.mobile-nav-btn {
-  width: 30px;
-  padding: 0;
-}
-
-.mobile-nav-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  transform: none;
-}
-
 .mobile-tab-trigger {
   flex: 1;
+  width: 100%;
   min-width: 0;
   justify-content: space-between;
   gap: 8px;
@@ -12160,6 +12150,64 @@ defineExpose({
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 16%, transparent);
 }
 
+.composer-mobile-panel-toggle-shell {
+  position: absolute;
+  top: -18px;
+  right: 14px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.composer-mobile-panel-toggle {
+  width: 30px;
+  height: 24px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 88%, transparent);
+  color: var(--n-text-color-3);
+  padding: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0.48;
+  box-shadow: 0 2px 8px color-mix(in srgb, #000 8%, transparent);
+  pointer-events: auto;
+  transition:
+    opacity 0.18s ease,
+    color 0.18s ease,
+    background-color 0.18s ease,
+    border-color 0.18s ease,
+    transform 0.18s ease;
+}
+
+.composer-mobile-panel-toggle:hover,
+.composer-mobile-panel-toggle:focus-visible,
+.composer-mobile-panel-toggle:active {
+  opacity: 0.9;
+  color: var(--n-text-color-2);
+  border-color: color-mix(in srgb, var(--n-border-color) 92%, transparent);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, var(--n-primary-color) 4%);
+}
+
+.composer-mobile-panel-toggle:active {
+  transform: translateY(1px);
+}
+
+.composer-mobile-panel-toggle-arrow {
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.composer-mobile-panel-toggle-arrow.is-open {
+  transform: rotate(180deg);
+}
+
 .composer-mobile-summary {
   display: flex;
   flex-direction: column;
@@ -12861,10 +12909,16 @@ defineExpose({
     margin-bottom: 2px;
   }
 
+  .composer-mobile-panel-toggle {
+    padding: 8px 9px;
+  }
+
   .composer-mobile-toggle {
     padding: 8px 9px;
   }
 
+  .composer-mobile-panel-toggle-title,
+  .composer-mobile-panel-toggle-description,
   .composer-mobile-toggle-chip {
     font-size: 10px;
   }

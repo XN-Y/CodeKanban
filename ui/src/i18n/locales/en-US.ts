@@ -234,6 +234,11 @@ export default {
     aiStatusWorking: 'Working',
     aiStatusBlocking: 'Blocking',
     aiStatusUnreadCompleted: 'Unread Completed',
+    mobileReturnPromptTitle: 'Return to the previous view?',
+    mobileReturnPromptContent:
+      'Project selected. Skip the project list and return to the view you came from?',
+    mobileReturnPromptConfirm: 'Return to {view}',
+    mobileReturnPromptStay: 'Stay in Projects',
   },
   branch: {
     title: 'Branch Management',
@@ -795,6 +800,9 @@ export default {
     skillSourceBundled: 'Bundled',
     skillSourceSystem: 'System',
     attachImage: 'Attach image',
+    composerPanel: 'Composer',
+    composerPanelExpand: 'Expand composer',
+    composerPanelCollapse: 'Collapse composer',
     composerSettings: 'Advanced Settings',
     composerSettingsExpand: 'Expand advanced settings',
     composerSettingsCollapse: 'Collapse advanced settings',

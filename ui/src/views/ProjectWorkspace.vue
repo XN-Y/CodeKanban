@@ -93,8 +93,16 @@
         </div>
 
         <!-- 项目视图 -->
-        <div v-show="mobileActiveView === 'projects'" class="mobile-view mobile-projects-view">
-          <ProjectBrowser mode="mobile-workspace" :current-project-id="currentProjectId" />
+        <div
+          ref="mobileProjectsViewRef"
+          v-show="mobileActiveView === 'projects'"
+          class="mobile-view mobile-projects-view"
+        >
+          <ProjectBrowser
+            mode="mobile-workspace"
+            :current-project-id="currentProjectId"
+            @mobile-project-select="handleMobileProjectSelect"
+          />
         </div>
 
         <!-- 提醒视图 -->
@@ -235,7 +243,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useStorage } from '@vueuse/core';
 import { useDialog, useMessage } from 'naive-ui';
@@ -255,14 +263,17 @@ import WebSessionPanel from '@/components/web-session/WebSessionPanel.vue';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import ProjectBrowser from '@/components/project/ProjectBrowser.vue';
+import { buildProjectBrowserProjectLocation } from '@/components/project/projectBrowserNavigation';
 import DailyTipDialog from '@/components/common/DailyTipDialog.vue';
 import type { Worktree } from '@/types/models';
 import {
   DEFAULT_MOBILE_VIEW,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
   restorePersistedMobileView,
+  type MobileProjectSourceView,
   type MobileView,
 } from '@/views/projectWorkspaceMobileView';
 import {
@@ -319,6 +330,9 @@ const isWebSessionNavPressed = ref(false);
 const mobileKanbanEnabled = false;
 const webSessionPanelRef = ref<WebSessionPanelControl | null>(null);
 const webSessionNavButtonRef = ref<HTMLButtonElement | null>(null);
+const mobileProjectsViewRef = ref<HTMLElement | null>(null);
+const mobileProjectSourceView = ref<MobileProjectSourceView | ''>('');
+const mobileRouteSyncPaused = ref(false);
 let mobileWebSessionComposerFocusFrame: number | null = null;
 
 const isMobileLayout = computed(() => windowWidth.value <= WORKSPACE_MOBILE_MAX_WIDTH);
@@ -442,6 +456,10 @@ const mobileWebSessionLongPress = createLongPressTracker({
 });
 
 function syncMobileRouteTab(view: MobileView) {
+  if (mobileRouteSyncPaused.value) {
+    return;
+  }
+
   const routeTab = mobileViewToRouteTab(view);
   if (isWorkspaceRouteTabQuerySynced(route.query, routeTab)) {
     return;
@@ -507,11 +525,25 @@ watch(mobileActiveView, view => {
   }
 });
 
+watch(mobileActiveView, (nextView, previousView) => {
+  if (!isMobileLayout.value) {
+    mobileProjectSourceView.value = '';
+    return;
+  }
+
+  mobileProjectSourceView.value = resolveMobileProjectSourceViewChange({
+    previousView,
+    nextView,
+    currentSource: mobileProjectSourceView.value,
+  });
+});
+
 watch(
   () => isMobileLayout.value,
   mobile => {
     if (!mobile) {
       isMobileWebSessionComposerFocused.value = false;
+      mobileProjectSourceView.value = '';
     }
   }
 );
@@ -624,6 +656,80 @@ function handleMobileWebSessionComposerFocusChange(focused: boolean) {
 
 function handleWebSessionPanelMobileViewRequest(view: 'webSession') {
   setMobileView(view);
+}
+
+function scrollMobileProjectsToTop() {
+  if (!isMobileLayout.value) {
+    return;
+  }
+  mobileProjectsViewRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function navigateToMobileProject(projectId: string, targetView: MobileView) {
+  mobileRouteSyncPaused.value = true;
+  setMobileView(targetView);
+
+  const location = buildProjectBrowserProjectLocation({
+    mode: 'mobile-workspace',
+    projectId,
+    currentProjectId: currentProjectId.value,
+    query: route.query,
+    workspaceTab: mobileViewToRouteTab(targetView),
+  });
+
+  if (!location) {
+    await nextTick();
+    mobileRouteSyncPaused.value = false;
+    syncMobileRouteTab(targetView);
+    return;
+  }
+
+  try {
+    await router.push(location);
+  } finally {
+    await nextTick();
+    mobileRouteSyncPaused.value = false;
+  }
+}
+
+async function handleMobileProjectSelect(payload: { projectId: string }) {
+  if (!isMobileLayout.value) {
+    return;
+  }
+
+  const targetProjectId = payload.projectId.trim();
+  if (!targetProjectId) {
+    return;
+  }
+
+  const sourceView = mobileProjectSourceView.value;
+  await nextTick();
+  scrollMobileProjectsToTop();
+
+  if (!sourceView) {
+    mobileProjectSourceView.value = '';
+    await navigateToMobileProject(targetProjectId, 'projects');
+    return;
+  }
+
+  dialog.info({
+    title: t('project.mobileReturnPromptTitle'),
+    content: t('project.mobileReturnPromptContent'),
+    positiveText: t('project.mobileReturnPromptConfirm', {
+      view: t(`nav.${sourceView}`),
+    }),
+    negativeText: t('project.mobileReturnPromptStay'),
+    closable: false,
+    maskClosable: false,
+    onPositiveClick: () => {
+      mobileProjectSourceView.value = '';
+      void navigateToMobileProject(targetProjectId, sourceView);
+    },
+    onNegativeClick: () => {
+      mobileProjectSourceView.value = '';
+      void navigateToMobileProject(targetProjectId, 'projects');
+    },
+  });
 }
 
 function releaseWebSessionNavPointerCapture(event: PointerEvent) {
@@ -763,14 +869,14 @@ function handleWebSessionNavClick(event: MouseEvent) {
 }
 
 // 移动端视图切换
-function setMobileView(view: MobileView) {
+function setMobileView(view: MobileView, options: { syncRoute?: boolean } = {}) {
   const normalizedView = normalizeMobileView(view);
   if (normalizedView !== 'webSession') {
     isMobileWebSessionComposerFocused.value = false;
     webSessionPanelRef.value?.closeMobileSessionSelector();
   }
   mobileActiveView.value = normalizedView;
-  if (isMobileLayout.value) {
+  if (isMobileLayout.value && options.syncRoute !== false) {
     syncMobileRouteTab(normalizedView);
   }
 }

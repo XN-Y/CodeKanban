@@ -322,7 +322,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRouter, useRoute } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useDialog, useMessage, type DropdownOption } from 'naive-ui';
 import {
   AddOutline,
@@ -382,8 +382,11 @@ const props = withDefaults(
   }
 );
 
+const emit = defineEmits<{
+  (event: 'mobile-project-select', payload: { projectId: string }): void;
+}>();
+
 const router = useRouter();
-const route = useRoute();
 const projectStore = useProjectStore();
 const terminalStore = useTerminalStore();
 const webSessionStore = useWebSessionStore();
@@ -552,10 +555,7 @@ function clearProjectSwitchTimer() {
   }
 }
 
-async function runMobileWorkspaceProjectSwitch(
-  projectId: string,
-  location: Parameters<typeof router.push>[0]
-) {
+async function runMobileWorkspaceProjectSwitch(projectId: string) {
   clearProjectSwitchTimer();
   switchingProjectId.value = projectId;
   projectStore.addRecentProject(projectId);
@@ -563,27 +563,28 @@ async function runMobileWorkspaceProjectSwitch(
 
   projectSwitchTimer = window.setTimeout(() => {
     projectSwitchTimer = null;
-    void router.push(location).finally(() => {
-      switchingProjectId.value = '';
-    });
+    emit('mobile-project-select', { projectId });
+    switchingProjectId.value = '';
   }, MOBILE_PROJECT_SWITCH_DELAY_MS);
 }
 
 async function goToProject(id: string) {
+  if (isMobileWorkspaceMode.value) {
+    const normalizedProjectId = id.trim();
+    if (!normalizedProjectId) {
+      return;
+    }
+    await runMobileWorkspaceProjectSwitch(normalizedProjectId);
+    return;
+  }
+
   const location = buildProjectBrowserProjectLocation({
     mode: props.mode,
     projectId: id,
     currentProjectId: props.currentProjectId,
-    query: route.query,
-    workspaceTab: isMobileWorkspaceMode.value ? 'projects' : '',
   });
 
   if (!location) {
-    return;
-  }
-
-  if (isMobileWorkspaceMode.value) {
-    await runMobileWorkspaceProjectSwitch(id, location);
     return;
   }
 

@@ -4,6 +4,7 @@ import {
   DEFAULT_MOBILE_VIEW,
   mobileViewToRouteTab,
   normalizeMobileView,
+  resolveMobileProjectSourceViewChange,
   routeTabToMobileView,
   restorePersistedMobileView,
 } from '@/views/projectWorkspaceMobileView';
@@ -57,5 +58,55 @@ describe('projectWorkspaceMobileView', () => {
     expect(routeTabToMobileView('notifications')).toBe('notifications');
     expect(routeTabToMobileView('kanban')).toBe(DEFAULT_MOBILE_VIEW);
     expect(routeTabToMobileView('unknown')).toBe(DEFAULT_MOBILE_VIEW);
+  });
+
+  it('records the previous panel when entering the mobile projects view', () => {
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'terminal',
+        nextView: 'projects',
+      })
+    ).toBe('terminal');
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'webSession',
+        nextView: 'projects',
+      })
+    ).toBe('webSession');
+  });
+
+  it('keeps an existing mobile project source while staying in projects', () => {
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'projects',
+        nextView: 'projects',
+        currentSource: 'terminal',
+      })
+    ).toBe('terminal');
+  });
+
+  it('clears the mobile project source when leaving projects', () => {
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'projects',
+        nextView: 'terminal',
+        currentSource: 'webSession',
+      })
+    ).toBe('');
+  });
+
+  it('does not create a mobile project source from invalid or hidden views', () => {
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'projects',
+        nextView: 'projects',
+      })
+    ).toBe('');
+    expect(
+      resolveMobileProjectSourceViewChange({
+        previousView: 'kanban',
+        nextView: 'projects',
+      })
+    ).toBe('');
   });
 });
