@@ -2876,6 +2876,27 @@ const pendingApproval = computed(() =>
 const pendingUserInput = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingUserInput(currentRealSession.value.id) : null
 );
+
+function getRuntimeSwitchNoticeKey() {
+  if (!currentRealSession.value) {
+    return '';
+  }
+  if (pendingApproval.value || liveState.value.phase === 'waiting_approval') {
+    return 'webSession.runtimeSwitchNoticeApproval';
+  }
+  if (pendingUserInput.value || liveState.value.running) {
+    return 'webSession.runtimeSwitchNoticeNextMessage';
+  }
+  return '';
+}
+
+function showRuntimeSwitchNotice(noticeKey: string) {
+  if (!noticeKey) {
+    return;
+  }
+  message.info(t(noticeKey));
+}
+
 const pendingUserInputSyncKey = computed(() =>
   buildWebSessionUserInputDraftSyncKey(currentRealSession.value?.id, pendingUserInput.value)
 );
@@ -5622,9 +5643,13 @@ const selectedModel = computed({
       return;
     }
     if (currentRealSession.value) {
-      void webSessionStore.updateModel(currentRealSession.value.id, next).catch(error => {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      });
+      const noticeKey = getRuntimeSwitchNoticeKey();
+      void webSessionStore
+        .updateModel(currentRealSession.value.id, next)
+        .then(() => showRuntimeSwitchNotice(noticeKey))
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
     }
   },
 });
@@ -5643,9 +5668,13 @@ const selectedReasoningEffort = computed<'default' | 'none' | 'low' | 'medium' |
       return;
     }
     if (currentRealSession.value) {
-      void webSessionStore.updateReasoningEffort(currentRealSession.value.id, next).catch(error => {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      });
+      const noticeKey = getRuntimeSwitchNoticeKey();
+      void webSessionStore
+        .updateReasoningEffort(currentRealSession.value.id, next)
+        .then(() => showRuntimeSwitchNotice(noticeKey))
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
     }
   },
 });
@@ -5672,9 +5701,13 @@ const selectedWorkflowMode = computed<'default' | 'plan'>({
       return;
     }
     if (currentRealSession.value) {
-      void webSessionStore.updateWorkflowMode(currentRealSession.value.id, next).catch(error => {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      });
+      const noticeKey = getRuntimeSwitchNoticeKey();
+      void webSessionStore
+        .updateWorkflowMode(currentRealSession.value.id, next)
+        .then(() => showRuntimeSwitchNotice(noticeKey))
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
     }
   },
 });
@@ -5702,9 +5735,13 @@ const selectedPermissionLevel = computed<'default' | 'elevated' | 'yolo'>({
       return;
     }
     if (currentRealSession.value) {
-      void webSessionStore.updatePermissionLevel(currentRealSession.value.id, next).catch(error => {
-        message.error(error instanceof Error ? error.message : t('common.error'));
-      });
+      const noticeKey = getRuntimeSwitchNoticeKey();
+      void webSessionStore
+        .updatePermissionLevel(currentRealSession.value.id, next)
+        .then(() => showRuntimeSwitchNotice(noticeKey))
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
     }
   },
 });
@@ -5731,9 +5768,13 @@ function setWorkflowMode(mode: 'default' | 'plan') {
     }));
     return;
   }
-  void webSessionStore.updateWorkflowMode(session.id, mode).catch(error => {
-    message.error(error instanceof Error ? error.message : t('common.error'));
-  });
+  const noticeKey = getRuntimeSwitchNoticeKey();
+  void webSessionStore
+    .updateWorkflowMode(session.id, mode)
+    .then(() => showRuntimeSwitchNotice(noticeKey))
+    .catch(error => {
+      message.error(error instanceof Error ? error.message : t('common.error'));
+    });
 }
 
 function openCustomModelDialog() {

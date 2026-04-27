@@ -849,6 +849,8 @@ export default {
     permissionDefault: '默认权限',
     permissionElevated: '较高权限',
     permissionYolo: '完全自动',
+    runtimeSwitchNoticeNextMessage: '已切换；当前轮不变，下一条消息生效。',
+    runtimeSwitchNoticeApproval: '已切换；本次审批继续当前轮，下一条消息生效。',
     customModel: '自定义...',
     customModelTitle: '自定义模型',
     customModelPlaceholder: '输入模型名称，例如 gpt-5.4',

@@ -871,6 +871,8 @@ export default {
     permissionDefault: 'Default Access',
     permissionElevated: 'Elevated Access',
     permissionYolo: 'Fully Automatic',
+    runtimeSwitchNoticeNextMessage: 'Changed; current turn stays the same. Applies to the next message.',
+    runtimeSwitchNoticeApproval: 'Changed; this approval continues the current turn. Applies to the next message.',
     customModel: 'Custom...',
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.4',
