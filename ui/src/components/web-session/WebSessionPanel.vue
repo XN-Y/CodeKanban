@@ -1687,9 +1687,10 @@
       :title="t('webSession.skills')"
       :bordered="false"
       :segmented="{ content: false, footer: false }"
-      :mask-closable="true"
+      :mask-closable="false"
       closable
       style="width: min(92vw, 520px)"
+      @mask-click="handleMobileSkillMaskClick"
       @update:show="handleSkillBrowserVisibilityChange"
     >
       <WebSessionSkillCatalogPanel
@@ -1925,6 +1926,7 @@ const MOBILE_COMPOSER_COLLAPSED_STORAGE_KEY = 'workspace-web-session-mobile-comp
 const LIVE_TIME_TICK_MS = 1000;
 const DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS = 400000;
 const WEB_SESSION_SEND_CONFIRM_TTL_MS = 5000;
+const MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS = 180;
 const MOBILE_TAB_SELECTOR_CLICKOUTSIDE_GUARD_MS = 220;
 const STREAMING_MARKDOWN_RENDER_OPTIONS = Object.freeze({
   disableCodeHighlight: true,
@@ -2232,6 +2234,7 @@ let composerTransferErrorTimer: number | null = null;
 let cancelUserInputSlowHint: (() => void) | null = null;
 let activeUserInputSlowHintOwnerId = '';
 let mobileQuickInputOpenedAt = 0;
+let mobileSkillBrowserOpenedAt = 0;
 let mobileTabSelectorOpenedAt = 0;
 const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController();
 
@@ -3402,7 +3405,7 @@ function toggleMobileComposerSettingsExpanded() {
 }
 
 function handleMobileQuickInputClickOutside() {
-  if (Date.now() - mobileQuickInputOpenedAt < 180) {
+  if (Date.now() - mobileQuickInputOpenedAt < MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS) {
     return;
   }
   showQuickInputPopover.value = false;
@@ -3433,6 +3436,13 @@ function handleMobileSkillTrigger() {
   handleSkillBrowserVisibilityChange(!showSkillBrowser.value);
 }
 
+function handleMobileSkillMaskClick() {
+  if (Date.now() - mobileSkillBrowserOpenedAt < MOBILE_COMPOSER_OVERLAY_OPEN_GUARD_MS) {
+    return;
+  }
+  handleSkillBrowserVisibilityChange(false);
+}
+
 async function ensureCodexSkillsLoaded(force = false) {
   if (codexSkillsLoading.value) {
     return;
@@ -3455,6 +3465,9 @@ async function ensureCodexSkillsLoaded(force = false) {
 function handleSkillBrowserVisibilityChange(nextShow: boolean) {
   showSkillBrowser.value = nextShow;
   if (nextShow) {
+    if (isMobile.value) {
+      mobileSkillBrowserOpenedAt = Date.now();
+    }
     showQuickInputPopover.value = false;
     void ensureCodexSkillsLoaded();
   }
