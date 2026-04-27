@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWebSessionProjectLocation,
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
   isWebSessionRouteQuerySynced,
@@ -44,6 +45,47 @@ describe('webSessionRoute', () => {
       filter: 'archived',
       tab: 'terminal',
     });
+  });
+
+  it('builds a project route location for jumping into a web session', () => {
+    expect(
+      buildWebSessionProjectLocation({
+        projectId: ' project-2 ',
+        sessionId: ' session-9 ',
+        query: {
+          filter: 'active',
+          tab: 'notifications',
+          webSessionId: 'old-session',
+        },
+      })
+    ).toEqual({
+      name: 'project',
+      params: { id: 'project-2' },
+      query: {
+        filter: 'active',
+        tab: 'web',
+        webSessionId: 'session-9',
+      },
+    });
+  });
+
+  it('returns null when the notification route target is incomplete', () => {
+    expect(
+      buildWebSessionProjectLocation({
+        projectId: 'project-1',
+        sessionId: '',
+        query: {
+          tab: 'files',
+        },
+      })
+    ).toBeNull();
+
+    expect(
+      buildWebSessionProjectLocation({
+        projectId: '',
+        sessionId: 'session-1',
+      })
+    ).toBeNull();
   });
 
   it('compares the current query and target session id after normalization', () => {

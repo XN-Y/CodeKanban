@@ -758,6 +758,7 @@ export default {
     syncSuccess: '会话已同步',
     deepSyncSuccess: '已完成深度同步',
     syncFailed: '同步会话失败',
+    openSessionNotificationAction: '查看会话',
     syncConfirmTitle: '确认同步会话',
     syncConfirmContent: '将使用 {mode} 更新当前会话历史。',
     syncConfirmContentClaude: '将从 Claude 会话记录重建当前会话历史。',

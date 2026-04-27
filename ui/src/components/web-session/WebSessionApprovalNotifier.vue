@@ -1,22 +1,27 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue';
-import { useNotification, type NotificationReactive } from 'naive-ui';
+import { h, onMounted, onUnmounted } from 'vue';
+import { NButton, useNotification, type NotificationReactive } from 'naive-ui';
 import { useI18n } from 'vue-i18n';
+import { useRoute, useRouter } from 'vue-router';
 import { useProjectStore } from '@/stores/project';
 import {
   useWebSessionStore,
   type WebSessionAIEvent,
   type WebSessionApprovalEvent,
 } from '@/stores/webSession';
+import { buildWebSessionProjectLocation } from '@/utils/webSessionRoute';
 
 const notification = useNotification();
 const { t } = useI18n();
+const route = useRoute();
+const router = useRouter();
 const projectStore = useProjectStore();
 const webSessionStore = useWebSessionStore();
 
 const notifiedSessions = new Set<string>();
 const activeNotifications = new Map<string, NotificationReactive>();
 const NOTIFICATION_COOLDOWN = 3000;
+const LOG_PREFIX = '[Web Session Approval Notifier]';
 
 function resolveProjectName(projectId?: string) {
   const normalizedProjectId = String(projectId || '').trim();
@@ -46,6 +51,50 @@ function clearNotification(sessionId?: string) {
   activeNotifications.delete(normalizedSessionId);
 }
 
+async function openSessionNotificationTarget(event: WebSessionAIEvent) {
+  const location = buildWebSessionProjectLocation({
+    projectId: event.projectId,
+    sessionId: event.sessionId,
+    query: route.query,
+  });
+  if (!location) {
+    return;
+  }
+
+  webSessionStore.setActiveSession(event.projectId, event.sessionId);
+  projectStore.addRecentProject(event.projectId);
+
+  try {
+    await router.push(location);
+  } catch (error) {
+    console.error(`${LOG_PREFIX} Failed to open session notification target`, error);
+  }
+}
+
+function renderNotificationAction(event: WebSessionAIEvent) {
+  const projectId = String(event.projectId || '').trim();
+  const sessionId = String(event.sessionId || '').trim();
+  if (!projectId || !sessionId) {
+    return undefined;
+  }
+
+  return () =>
+    h(
+      NButton,
+      {
+        text: true,
+        size: 'small',
+        onClick: (clickEvent: MouseEvent) => {
+          clickEvent.stopPropagation();
+          void openSessionNotificationTarget(event);
+        },
+      },
+      {
+        default: () => t('webSession.openSessionNotificationAction'),
+      }
+    );
+}
+
 function handleApproval(event: WebSessionApprovalEvent) {
   const sessionId = String(event?.sessionId || '').trim();
   if (!sessionId || notifiedSessions.has(sessionId)) {
@@ -65,6 +114,7 @@ function handleApproval(event: WebSessionApprovalEvent) {
   const instance = notification.warning({
     title: t('terminal.aiNeedsApproval'),
     content,
+    action: renderNotificationAction(event),
     duration: 6000,
     closable: true,
     onClose: () => {

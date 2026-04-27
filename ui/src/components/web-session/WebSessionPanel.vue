@@ -1891,6 +1891,7 @@ import { createWebSessionSnapshotLoadController } from '@/utils/webSessionSnapsh
 import { buildProjectBadgeMap, type ProjectBadge } from '@/utils/projectBadge';
 import { buildWorkspaceRouteQuery, inferWorkspaceRouteTab } from '@/utils/workspaceRoute';
 import {
+  buildWebSessionProjectLocation,
   buildWebSessionRouteQuery,
   getWebSessionRouteSessionId,
   isWebSessionRouteQuerySynced,
@@ -5112,11 +5113,17 @@ async function activateTabById(
 }
 
 function buildProjectRouteLocation(projectId: string, sessionId = '') {
-  return {
-    name: 'project' as const,
-    params: { id: projectId },
-    query: buildWebSessionRouteQuery(buildWorkspaceRouteQuery(route.query, 'web'), sessionId),
-  };
+  return (
+    buildWebSessionProjectLocation({
+      projectId,
+      sessionId,
+      query: route.query,
+    }) ?? {
+      name: 'project' as const,
+      params: { id: projectId },
+      query: buildWebSessionRouteQuery(buildWorkspaceRouteQuery(route.query, 'web'), sessionId),
+    }
+  );
 }
 
 async function syncWebSessionRouteSessionId(sessionId = '') {

@@ -1,4 +1,6 @@
-import type { LocationQuery, LocationQueryRaw } from 'vue-router';
+import type { LocationQuery, LocationQueryRaw, RouteLocationRaw } from 'vue-router';
+
+import { buildWorkspaceRouteQuery } from '@/utils/workspaceRoute';
 
 export const WEB_SESSION_ID_QUERY_KEY = 'webSessionId';
 
@@ -70,6 +72,28 @@ function normalizeRouteText(value: unknown): string {
     return '';
   }
   return typeof value === 'string' ? value.trim() : '';
+}
+
+export function buildWebSessionProjectLocation(options: {
+  projectId?: unknown;
+  sessionId?: unknown;
+  query?: RouteQueryLike | null;
+}): RouteLocationRaw | null {
+  const projectId = normalizeRouteText(options.projectId);
+  const sessionId = normalizeWebSessionRouteSessionId(options.sessionId);
+
+  if (!projectId || !sessionId) {
+    return null;
+  }
+
+  return {
+    name: 'project' as const,
+    params: { id: projectId },
+    query: buildWebSessionRouteQuery(
+      buildWorkspaceRouteQuery(options.query ?? undefined, 'web'),
+      sessionId
+    ),
+  };
 }
 
 export function shouldPreserveWebSessionRouteSessionId(options: {

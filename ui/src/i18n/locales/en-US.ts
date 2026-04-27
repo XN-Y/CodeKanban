@@ -777,6 +777,7 @@ export default {
     syncSuccess: 'Session synced',
     deepSyncSuccess: 'Deep sync completed',
     syncFailed: 'Failed to sync session',
+    openSessionNotificationAction: 'Open Session',
     syncConfirmTitle: 'Confirm Session Sync',
     syncConfirmContent: 'Update this session history using {mode}.',
     syncConfirmContentClaude: 'Rebuild this session history from the Claude session record.',
