@@ -466,6 +466,7 @@ func (m *Manager) runCodexAppServerSession(
 				_ = client.closeStdin()
 				m.maybeSyncSessionAfterRun(session)
 				run.resetActiveCallTracking()
+				m.releaseActiveRun(session.ID, run)
 			}
 		case waitErr = <-waitCh:
 			processExited = true

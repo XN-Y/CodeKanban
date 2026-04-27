@@ -1619,6 +1619,48 @@ func TestSendMessageCodexAppServerPersistsThreadID(t *testing.T) {
 	}
 }
 
+func TestSendMessageCodexAppServerAllowsNextTurnAfterTurnCompleted(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	codexPath := writeFakeCodexAppServerCLI(t, "turn_complete_linger")
+	manager, err := NewManager(Config{
+		DataDir:   t.TempDir(),
+		CodexPath: codexPath,
+	}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	created, err := manager.CreateSession(context.Background(), CreateParams{
+		ProjectID: project.ID,
+		Agent:     AgentCodex,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if err := manager.SendMessage(context.Background(), created.ID, "first", nil); err != nil {
+		t.Fatalf("first SendMessage returned error: %v", err)
+	}
+	waitForSessionStatus(t, manager, created.ID, StatusDone)
+
+	if err := manager.SendMessage(context.Background(), created.ID, "second", nil); err != nil {
+		t.Fatalf("second SendMessage returned error after turn completed: %v", err)
+	}
+	waitForSessionToSettle(t, manager, created.ID)
+
+	rawEvents, err := manager.store.readEvents(created.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	if got := strings.Join(userMessageTexts(rawEvents), "|"); got != "first|second" {
+		t.Fatalf("expected two user messages, got %q", got)
+	}
+	waitForFakeCodexAppServerExitCount(t, codexPath, 2)
+}
+
 func TestCodexAppServerTransportRetryPersistsAsNoteAndCompletes(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -4557,6 +4599,14 @@ rl.on('line', line => {
       return;
     }
 
+    if (mode === 'turn_complete_linger') {
+      const persistedTurns = readPersistentTurnCount() + 1;
+      writePersistentTurnCount(persistedTurns);
+      finishTurn('done-' + persistedTurns);
+      setTimeout(() => process.exit(0), 200);
+      return;
+    }
+
     if (mode === 'reconnect_then_success') {
       send({
         method: 'error',
@@ -4772,6 +4822,11 @@ rl.on('line', line => {
 });
 
 rl.on('close', () => process.exit(0));
+process.on('exit', () => {
+  if (mode === 'turn_complete_linger') {
+    fs.appendFileSync(stateFile + '.exits', '1\n');
+  }
+});
 `, mode)
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake codex app-server cli failed: %v", err)
@@ -4802,6 +4857,42 @@ func waitForSessionToSettle(t *testing.T, manager *Manager, sessionID string) {
 		t.Fatalf("GetSession returned error while waiting: %v", err)
 	}
 	t.Fatalf("session %s did not settle, status=%s", sessionID, record.Status)
+}
+
+func waitForSessionStatus(t *testing.T, manager *Manager, sessionID string, status Status) {
+	t.Helper()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		record, err := manager.GetSession(context.Background(), sessionID)
+		if err == nil && record.Status == string(status) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	record, err := manager.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("GetSession returned error while waiting for status %s: %v", status, err)
+	}
+	t.Fatalf("session %s did not reach status %s, got %s", sessionID, status, record.Status)
+}
+
+func waitForFakeCodexAppServerExitCount(t *testing.T, codexPath string, count int) {
+	t.Helper()
+
+	exitPath := codexPath + ".state.exits"
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		content, err := os.ReadFile(exitPath)
+		if err == nil && strings.Count(string(content), "\n") >= count {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	content, _ := os.ReadFile(exitPath)
+	t.Fatalf("expected fake codex app-server exit count %d, got %d", count, strings.Count(string(content), "\n"))
 }
 
 func waitForPendingServerRequest(

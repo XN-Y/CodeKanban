@@ -2498,10 +2498,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 		run.clearPendingApproval()
 		run.clearPendingServerRequest()
 		close(run.done)
-		m.mu.Lock()
-		delete(m.runs, session.ID)
-		m.mu.Unlock()
-		m.triggerPendingProcessing(session.ID)
+		m.releaseActiveRun(session.ID, run)
 	}()
 
 	if run.backend == SessionBackendCodexAppServer && normalizeAgent(Agent(session.Agent)) == AgentCodex {
@@ -4151,6 +4148,21 @@ func (m *Manager) hasActiveRun(sessionID string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.runs[sessionID]
 	return ok
+}
+
+func (m *Manager) releaseActiveRun(sessionID string, run *activeRun) bool {
+	m.mu.Lock()
+	current := m.runs[sessionID]
+	if current == run {
+		delete(m.runs, sessionID)
+	}
+	m.mu.Unlock()
+
+	if current != run {
+		return false
+	}
+	m.triggerPendingProcessing(sessionID)
+	return true
 }
 
 func (m *Manager) broadcast(frame wireFrame) {
