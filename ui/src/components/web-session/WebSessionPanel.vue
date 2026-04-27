@@ -1804,6 +1804,12 @@ import {
   replaceTextSelection,
 } from '@/components/web-session/webSessionCodexSkills';
 import {
+  CLAUDE_MODEL_OPTIONS,
+  CODEX_MODEL_OPTIONS,
+  CUSTOM_MODEL_VALUE,
+  defaultModelForAgent,
+} from '@/components/web-session/webSessionModelOptions';
+import {
   buildTimelineRawModeKey,
   pruneActiveTimelineRawBlockKey,
   resolveActivatedTimelineRawBlockKey,
@@ -2232,7 +2238,7 @@ const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
 const draftAgent = ref<'claude' | 'codex'>('codex');
-const draftModel = ref('gpt-5.4');
+const draftModel = ref(defaultModelForAgent('codex'));
 const draftReasoningEffort = ref<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>('xhigh');
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
 const draftPermissionLevel = ref<'default' | 'elevated' | 'yolo'>('elevated');
@@ -5500,23 +5506,6 @@ const agentOptions = [
   { label: 'Claude', value: 'claude' },
 ];
 
-const CLAUDE_MODEL_OPTIONS = [
-  { label: 'Opus', value: 'opus' },
-  { label: 'Sonnet', value: 'sonnet' },
-  { label: 'Haiku', value: 'haiku' },
-];
-
-const CODEX_MODEL_OPTIONS = [
-  { label: 'GPT-5.3 Codex', value: 'gpt-5.3-codex' },
-  { label: 'GPT-5.3 Codex Spark', value: 'gpt-5.3-codex-spark' },
-  { label: 'GPT-5.4', value: 'gpt-5.4' },
-  { label: 'GPT-5.4 mini', value: 'gpt-5.4-mini' },
-  { label: 'GPT-5.4 nano', value: 'gpt-5.4-nano' },
-  { label: 'GPT-5.4 Pro', value: 'gpt-5.4-pro' },
-];
-
-const CUSTOM_MODEL_VALUE = '__custom_model__';
-
 function withCurrentModelOption(
   options: Array<{ label: string; value: string }>,
   currentModel?: string | null
@@ -5596,10 +5585,10 @@ const selectedAgent = computed({
     const next = value as 'claude' | 'codex';
     draftAgent.value = next;
     if (next === 'claude' && draftModel.value.startsWith('gpt-')) {
-      draftModel.value = 'opus';
+      draftModel.value = defaultModelForAgent(next);
     }
     if (next === 'codex' && !draftModel.value.startsWith('gpt-')) {
-      draftModel.value = 'gpt-5.4';
+      draftModel.value = defaultModelForAgent(next);
     }
     draftReasoningEffort.value = defaultReasoningEffortForAgent(next);
     if (next === 'claude' && draftPermissionLevel.value === 'default') {
@@ -5611,9 +5600,9 @@ const selectedAgent = computed({
         agent: next,
         model:
           next === 'claude' && current.model.startsWith('gpt-')
-            ? 'opus'
+            ? defaultModelForAgent(next)
             : next === 'codex' && !current.model.startsWith('gpt-')
-              ? 'gpt-5.4'
+              ? defaultModelForAgent(next)
               : current.model,
         reasoningEffort: defaultReasoningEffortForAgent(next),
         permissionLevel:
@@ -5830,10 +5819,6 @@ function openCustomModelDialog() {
       }
     },
   });
-}
-
-function defaultModelForAgent(agent: 'claude' | 'codex') {
-  return agent === 'claude' ? 'opus' : 'gpt-5.4';
 }
 
 function formatTime(timestamp: number) {
