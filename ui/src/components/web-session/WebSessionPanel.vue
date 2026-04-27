@@ -1816,6 +1816,11 @@ import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session
 import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
+  createWebSessionTimelineFollowState,
+  resolveWebSessionTimelineFollowState,
+  type WebSessionTimelineScrollMetrics,
+} from '@/components/web-session/webSessionTimelineScroll';
+import {
   getWebSessionSidebarTone,
   getWebSessionTabTone,
 } from '@/components/web-session/sessionVisualState';
@@ -2121,6 +2126,7 @@ const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
 const autoFollowBottom = ref(true);
 const showJumpToBottom = ref(false);
+const lastTimelineScrollTop = ref(0);
 const expandedTools = ref<Record<string, boolean>>({});
 const imageViewPreviewSrcByToolId = ref<Record<string, string>>({});
 const imageViewPreviewStateByToolId = ref<Record<string, ImageViewPreviewState>>({});
@@ -7930,6 +7936,7 @@ function syncScrollToBottom() {
   container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
   autoFollowBottom.value = true;
   showJumpToBottom.value = false;
+  lastTimelineScrollTop.value = container.scrollTop;
 }
 
 function scheduleScrollToBottom(force = false) {
@@ -7979,10 +7986,41 @@ async function handleLiveCardClick() {
   scrollToBottom(true);
 }
 
+function readTimelineScrollMetrics(container: HTMLDivElement): WebSessionTimelineScrollMetrics {
+  return {
+    scrollTop: container.scrollTop,
+    scrollHeight: container.scrollHeight,
+    clientHeight: container.clientHeight,
+  };
+}
+
+function applyTimelineFollowState(state: {
+  autoFollowBottom: boolean;
+  showJumpToBottom: boolean;
+  lastScrollTop: number;
+}) {
+  autoFollowBottom.value = state.autoFollowBottom;
+  showJumpToBottom.value = state.showJumpToBottom;
+  lastTimelineScrollTop.value = state.lastScrollTop;
+}
+
 function updateBottomState(container: HTMLDivElement) {
-  const nearBottom = container.scrollHeight - (container.scrollTop + container.clientHeight) < 160;
-  autoFollowBottom.value = nearBottom;
-  showJumpToBottom.value = !nearBottom;
+  applyTimelineFollowState(
+    resolveWebSessionTimelineFollowState(
+      {
+        autoFollowBottom: autoFollowBottom.value,
+        showJumpToBottom: showJumpToBottom.value,
+        lastScrollTop: lastTimelineScrollTop.value,
+      },
+      readTimelineScrollMetrics(container)
+    )
+  );
+}
+
+function resetBottomState(container: HTMLDivElement, autoFollow = autoFollowBottom.value) {
+  applyTimelineFollowState(
+    createWebSessionTimelineFollowState(readTimelineScrollMetrics(container), autoFollow)
+  );
 }
 
 function restoreHistoryAnchor() {
@@ -7993,7 +8031,7 @@ function restoreHistoryAnchor() {
   }
   container.scrollTop = anchor.previousTop + (container.scrollHeight - anchor.previousHeight);
   pendingHistoryAnchor.value = null;
-  updateBottomState(container);
+  resetBottomState(container);
   return true;
 }
 
@@ -11440,6 +11478,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-anchor: none;
 }
 
 .live-card,
