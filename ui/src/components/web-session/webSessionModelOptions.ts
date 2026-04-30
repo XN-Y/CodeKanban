@@ -25,5 +25,5 @@ export const CODEX_MODEL_OPTIONS: WebSessionModelOption[] = [
 ];
 
 export function defaultModelForAgent(agent: WebSessionAgentOption) {
-  return agent === 'claude' ? 'opus' : 'gpt-5.4';
+  return agent === 'claude' ? 'opus' : 'gpt-5.5';
 }

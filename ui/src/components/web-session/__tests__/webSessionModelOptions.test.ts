@@ -28,8 +28,8 @@ describe('webSessionModelOptions', () => {
     expect(CLAUDE_MODEL_OPTIONS.map(option => option.value)).toEqual(['opus', 'sonnet', 'haiku']);
   });
 
-  it('preserves the existing default model selection', () => {
-    expect(defaultModelForAgent('codex')).toBe('gpt-5.4');
+  it('uses the latest codex model by default', () => {
+    expect(defaultModelForAgent('codex')).toBe('gpt-5.5');
     expect(defaultModelForAgent('claude')).toBe('opus');
   });
 });

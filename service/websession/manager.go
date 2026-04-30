@@ -4486,7 +4486,7 @@ func defaultModel(agent Agent, provided string) string {
 		return strings.TrimSpace(provided)
 	}
 	if normalizeAgent(agent) == AgentCodex {
-		return "gpt-5.4"
+		return "gpt-5.5"
 	}
 	return "opus"
 }

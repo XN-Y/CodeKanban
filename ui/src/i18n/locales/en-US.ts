@@ -880,7 +880,7 @@ export default {
       'Changed; this approval continues the current turn. Applies to the next message.',
     customModel: 'Custom...',
     customModelTitle: 'Custom Model',
-    customModelPlaceholder: 'Enter a model name, for example gpt-5.4',
+    customModelPlaceholder: 'Enter a model name, for example gpt-5.5',
     customModelEmpty: 'Model name cannot be empty',
     attachmentUploading: 'Uploading image',
     attachmentUploadingBatch: 'Uploading image {current}/{total}',
