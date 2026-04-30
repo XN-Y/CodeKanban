@@ -3,6 +3,7 @@ import { effectScope } from 'vue';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildGitChangesBadgeSummary,
   chooseGitChangesScope,
   formatGitChangesBadgeDelta,
   formatGitChangesSummary,
@@ -12,7 +13,11 @@ import {
   shouldShowGitChangesBadge,
   summarizeGitChangesEntries,
 } from '@/components/changes/gitChangesSummary';
-import type { FileManagerChangeEntry, FileManagerScope } from '@/types/fileManager';
+import type {
+  FileManagerChangeEntry,
+  FileManagerChangesResult,
+  FileManagerScope,
+} from '@/types/fileManager';
 
 function makeScope(
   input: Partial<FileManagerScope> & Pick<FileManagerScope, 'id'>
@@ -42,6 +47,21 @@ function makeChangeEntry(
     additions,
     deletions,
     statsAvailable: true,
+  };
+}
+
+function makeChangesResult(
+  entries: FileManagerChangeEntry[],
+  input: Partial<FileManagerChangesResult> = {}
+): FileManagerChangesResult {
+  return {
+    scope: input.scope ?? makeScope({ id: 'project-1' }),
+    entries,
+    truncated: input.truncated ?? false,
+    statsComplete: input.statsComplete ?? true,
+    statsTimedOut: input.statsTimedOut ?? false,
+    untrackedIncluded: input.untrackedIncluded ?? true,
+    warningReason: input.warningReason,
   };
 }
 
@@ -147,6 +167,50 @@ describe('gitChangesSummary', () => {
       deletions: 5,
     });
     expect(formatGitChangesSummary(summary)).toBe('2,+3,-5');
+  });
+
+  it('builds badge summaries from complete changes results', () => {
+    expect(
+      buildGitChangesBadgeSummary(
+        makeChangesResult([
+          makeChangeEntry('a.ts', 'modified', 3, 1),
+          makeChangeEntry('b.ts', 'deleted', 0, 4),
+          makeChangeEntry('c.ts', 'untracked', 7, 0),
+        ]),
+        true
+      )
+    ).toEqual({
+      count: 2,
+      additions: 3,
+      deletions: 5,
+      pending: false,
+    });
+  });
+
+  it('keeps badge totals unknown when changes stats are incomplete', () => {
+    expect(
+      buildGitChangesBadgeSummary(
+        makeChangesResult([makeChangeEntry('a.ts', 'modified', 3, 1)], {
+          statsComplete: false,
+          statsTimedOut: true,
+        })
+      )
+    ).toEqual({
+      count: 1,
+      additions: null,
+      deletions: null,
+      pending: false,
+    });
+  });
+
+  it('returns an empty badge summary from empty changes results', () => {
+    expect(buildGitChangesBadgeSummary(makeChangesResult([]))).toEqual({
+      count: 0,
+      additions: 0,
+      deletions: 0,
+      pending: false,
+    });
+    expect(buildGitChangesBadgeSummary(null)).toBeNull();
   });
 
   it('returns an empty badge text when there are no visible changes', () => {

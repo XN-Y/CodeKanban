@@ -175,7 +175,11 @@
         </div>
       </div>
       <div v-show="activeTab === 'changes'" class="tab-pane changes-pane">
-        <GitChangesPanel :project-id="projectId" :is-active="activeTab === 'changes'" />
+        <GitChangesPanel
+          :project-id="projectId"
+          :is-active="activeTab === 'changes'"
+          @summary-change="handleChangesPanelSummaryChange"
+        />
       </div>
       <div v-show="activeTab === 'files'" class="tab-pane files-pane">
         <FileManagerPanel :project-id="projectId" :is-active="activeTab === 'files'" />
@@ -214,7 +218,10 @@ import {
   shouldShowGitChangesBadge,
   type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
-import { shouldLoadWorkspaceChangesSummary } from '@/components/changes/gitChangesBehavior';
+import {
+  canShowWorkspaceChangesSummary,
+  shouldLoadWorkspaceChangesSummary,
+} from '@/components/changes/gitChangesBehavior';
 import GitChangesPanel from '@/components/changes/GitChangesPanel.vue';
 import FileManagerPanel from '@/components/files/FileManagerPanel.vue';
 import KanbanBoard from '@/components/kanban/KanbanBoard.vue';
@@ -280,6 +287,9 @@ const ignoreUntracked = useStorage<boolean>(
 const changesBadgeSummary = ref<GitChangesBadgeSummary | null>(null);
 let changesSummaryTimer: number | null = null;
 let changesSummaryRequestToken = 0;
+const canShowChangesSummaryBadge = computed(
+  () => canShowWorkspaceChangesSummary(props.projectId, changesTabDisabled.value)
+);
 const shouldTrackChangesSummary = computed(() =>
   shouldLoadWorkspaceChangesSummary(props.projectId, changesTabDisabled.value, activeTab.value)
 );
@@ -314,8 +324,11 @@ watch(
     [props.projectId, projectStore.selectedWorktreeId, changesTabDisabled.value, activeTab.value] as const,
   async () => {
     stopChangesSummaryTimer();
-    if (!shouldTrackChangesSummary.value) {
+    if (!canShowChangesSummaryBadge.value) {
       clearChangesBadgeSummary();
+      return;
+    }
+    if (!shouldTrackChangesSummary.value) {
       return;
     }
     await loadChangesSummary({ resetBeforeLoad: true });
@@ -327,8 +340,11 @@ watch(
 watch(
   () => ignoreUntracked.value,
   async () => {
-    if (!shouldTrackChangesSummary.value) {
+    if (!canShowChangesSummaryBadge.value) {
       clearChangesBadgeSummary();
+      return;
+    }
+    if (!shouldTrackChangesSummary.value) {
       return;
     }
     await loadChangesSummary({ resetBeforeLoad: true });
@@ -390,7 +406,7 @@ const changesSummaryDisplay = computed(() => {
   };
 });
 const showChangesSummaryBadge = computed(
-  () => shouldTrackChangesSummary.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
+  () => canShowChangesSummaryBadge.value && shouldShowGitChangesBadge(changesBadgeSummary.value)
 );
 
 const rightSidebarToggleLabel = computed(() =>
@@ -476,8 +492,11 @@ function setChangesBadgeLoading(resetBeforeLoad: boolean) {
 }
 
 async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
-  if (!shouldTrackChangesSummary.value) {
+  if (!canShowChangesSummaryBadge.value) {
     clearChangesBadgeSummary();
+    return;
+  }
+  if (!shouldTrackChangesSummary.value) {
     return;
   }
 
@@ -548,6 +567,17 @@ async function loadChangesSummary(options?: { resetBeforeLoad?: boolean }) {
       pending: false,
     };
   }
+}
+
+function handleChangesPanelSummaryChange(summary: GitChangesBadgeSummary | null) {
+  if (activeTab.value !== 'changes') {
+    return;
+  }
+  if (!canShowChangesSummaryBadge.value) {
+    clearChangesBadgeSummary();
+    return;
+  }
+  changesBadgeSummary.value = summary;
 }
 
 function startChangesSummaryTimer() {

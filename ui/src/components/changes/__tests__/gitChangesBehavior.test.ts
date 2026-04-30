@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canShowWorkspaceChangesSummary,
   resolveGitChangeSelectionAfterLoad,
   resolveRetainedGitChangeEntry,
   shouldLoadWorkspaceChangesSummary,
@@ -67,5 +68,11 @@ describe('gitChangesBehavior', () => {
     expect(shouldLoadWorkspaceChangesSummary('project-1', false, 'files')).toBe(true);
     expect(shouldLoadWorkspaceChangesSummary('', false, 'files')).toBe(false);
     expect(shouldLoadWorkspaceChangesSummary('project-1', true, 'files')).toBe(false);
+  });
+
+  it('keeps workspace badge display eligibility independent from the active tab', () => {
+    expect(canShowWorkspaceChangesSummary('project-1', false)).toBe(true);
+    expect(canShowWorkspaceChangesSummary('', false)).toBe(false);
+    expect(canShowWorkspaceChangesSummary('project-1', true)).toBe(false);
   });
 });

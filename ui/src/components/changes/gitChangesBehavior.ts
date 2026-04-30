@@ -37,3 +37,7 @@ export function shouldLoadWorkspaceChangesSummary(
 ) {
   return Boolean(projectId) && !changesTabDisabled && activeTab !== 'changes';
 }
+
+export function canShowWorkspaceChangesSummary(projectId: string, changesTabDisabled: boolean) {
+  return Boolean(projectId) && !changesTabDisabled;
+}

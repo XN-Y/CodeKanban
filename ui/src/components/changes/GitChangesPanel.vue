@@ -202,11 +202,13 @@ import {
 } from '@/components/changes/gitChangesBehavior';
 import { createGitChangesLoadController } from '@/components/changes/gitChangesLoadController';
 import {
+  buildGitChangesBadgeSummary,
   chooseGitChangesScope,
   GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT,
   GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY,
   orderGitChangesEntries,
   summarizeGitChangesEntries,
+  type GitChangesBadgeSummary,
 } from '@/components/changes/gitChangesSummary';
 import {
   buildGitChangesRequestOptions,
@@ -244,6 +246,9 @@ const props = withDefaults(
     isActive: true,
   }
 );
+const emit = defineEmits<{
+  'summary-change': [summary: GitChangesBadgeSummary | null];
+}>();
 
 const { t } = useLocale();
 const projectStore = useProjectStore();
@@ -373,6 +378,7 @@ async function ensureLoaded(options?: { scopeId?: string }) {
       changesResult.value = null;
       selectedChangePath.value = '';
       clearPreviewState();
+      emitSummaryChange();
       return;
     }
 
@@ -389,6 +395,7 @@ async function ensureLoaded(options?: { scopeId?: string }) {
     }
     activeScopeId.value = result.scope.id;
     changesResult.value = result;
+    emitSummaryChange();
     await syncSelectionAfterLoad();
   } catch (error) {
     if (!changesLoadController.isCurrent(loadHandle)) {
@@ -451,6 +458,10 @@ function clearPreviewState() {
   diffResult.value = null;
   diffLoading.value = false;
   diffError.value = '';
+}
+
+function emitSummaryChange() {
+  emit('summary-change', buildGitChangesBadgeSummary(changesResult.value, ignoreUntracked.value));
 }
 
 function pushMobilePreviewHistoryEntry() {
@@ -715,6 +726,7 @@ watch(
 watch(
   () => ignoreUntracked.value,
   () => {
+    emitSummaryChange();
     void ensureLoaded({
       scopeId: activeScopeId.value,
     });

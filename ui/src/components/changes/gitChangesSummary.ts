@@ -1,4 +1,8 @@
-import type { FileManagerChangeEntry, FileManagerScope } from '@/types/fileManager';
+import type {
+  FileManagerChangeEntry,
+  FileManagerChangesResult,
+  FileManagerScope,
+} from '@/types/fileManager';
 
 export const GIT_CHANGES_IGNORE_UNTRACKED_STORAGE_KEY = 'git-changes-ignore-untracked';
 export const GIT_CHANGES_IGNORE_UNTRACKED_DEFAULT = true;
@@ -85,6 +89,32 @@ export function summarizeGitChangesEntries(
       deletions: 0,
     }
   );
+}
+
+export function buildGitChangesBadgeSummary(
+  result: FileManagerChangesResult | null,
+  ignoreUntracked = false
+): GitChangesBadgeSummary | null {
+  if (!result) {
+    return null;
+  }
+
+  const summary = summarizeGitChangesEntries(result.entries ?? [], ignoreUntracked);
+  if (summary.count === 0) {
+    return {
+      count: 0,
+      additions: 0,
+      deletions: 0,
+      pending: false,
+    };
+  }
+
+  return {
+    count: summary.count,
+    additions: result.statsComplete ? summary.additions : null,
+    deletions: result.statsComplete ? summary.deletions : null,
+    pending: false,
+  };
 }
 
 export function formatGitChangesSummary(summary: GitChangesSummary) {
