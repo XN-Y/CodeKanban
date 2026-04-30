@@ -1,9 +1,5 @@
 <template>
-  <div
-    class="web-session-composer-editor"
-    :style="editorStyleVars"
-    @mousedown="handleRootMouseDown"
-  >
+  <div class="web-session-composer-editor" :style="editorStyleVars">
     <div ref="editorHostRef" class="web-session-composer-editor__host"></div>
   </div>
 </template>
@@ -53,7 +49,6 @@ const codeMirrorRef = shallowRef<CodeMirrorBundle | null>(null);
 const placeholderCompartment = shallowRef<CodeMirrorCompartment | null>(null);
 const skillCompartment = shallowRef<CodeMirrorCompartment | null>(null);
 let applyingExternalValue = false;
-let pendingCursorSyncFrame: number | null = null;
 
 const editorStyleVars = computed(() => ({
   '--composer-editor-min-rows': String(Math.max(1, props.minRows)),
@@ -217,30 +212,28 @@ function createEditorTheme(codeMirror: CodeMirrorBundle) {
       lineHeight: '1.68',
       backgroundColor: 'transparent',
       color: 'var(--n-text-color)',
+      minHeight:
+        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + 28px)',
     },
     '&.cm-focused': {
       outline: 'none',
     },
     '.cm-scroller': {
       overflow: 'auto',
+      minHeight: 'inherit',
       maxHeight:
         'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-max-rows) + 28px)',
       fontFamily: 'inherit',
     },
     '.cm-content': {
       padding: '10px 0 12px',
-      caretColor: 'var(--n-caret-color)',
       fontFamily: 'inherit',
-      minHeight:
-        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + 28px)',
+      minHeight: 'inherit',
       boxSizing: 'border-box',
     },
     '.cm-line': {
       padding: '0',
       minHeight: '1.68em',
-    },
-    '.cm-cursor, .cm-dropCursor': {
-      borderLeftColor: 'var(--n-caret-color)',
     },
     '.cm-tooltip-autocomplete': {
       border: '1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent)',
@@ -363,48 +356,6 @@ function focus() {
   editorRef.value?.focus();
 }
 
-function focusEditorAtMouseEvent(event: MouseEvent) {
-  const editor = editorRef.value;
-  if (!editor) {
-    return;
-  }
-
-  event.preventDefault();
-  const position =
-    editor.posAtCoords({
-      x: event.clientX,
-      y: event.clientY,
-    }) ?? editor.state.doc.length;
-
-  if (pendingCursorSyncFrame != null) {
-    window.cancelAnimationFrame(pendingCursorSyncFrame);
-    pendingCursorSyncFrame = null;
-  }
-
-  editor.focus();
-  editor.dispatch({
-    selection: {
-      anchor: position,
-      head: position,
-    },
-  });
-  pendingCursorSyncFrame = window.requestAnimationFrame(() => {
-    pendingCursorSyncFrame = null;
-    const currentEditor = editorRef.value;
-    if (!currentEditor) {
-      return;
-    }
-    currentEditor.focus();
-    currentEditor.dispatch({
-      selection: {
-        anchor: position,
-        head: position,
-      },
-      scrollIntoView: true,
-    });
-  });
-}
-
 function getSelectionRange(): WebSessionComposerSelection {
   const editor = editorRef.value;
   if (!editor) {
@@ -437,21 +388,6 @@ function setSelectionRange(start: number, end = start) {
     },
   });
   editor.focus();
-}
-
-function handleRootMouseDown(event: MouseEvent) {
-  const target = event.target as HTMLElement | null;
-  if (target?.closest('.cm-tooltip, .cm-completionInfo')) {
-    return;
-  }
-  if (
-    target?.closest(
-      '.cm-content, .cm-line, .cm-cursorLayer, .cm-selectionLayer, .cm-gutters, textarea'
-    )
-  ) {
-    return;
-  }
-  focusEditorAtMouseEvent(event);
 }
 
 watch(
@@ -518,10 +454,6 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
-  if (pendingCursorSyncFrame != null) {
-    window.cancelAnimationFrame(pendingCursorSyncFrame);
-    pendingCursorSyncFrame = null;
-  }
   editorRef.value?.destroy();
   editorRef.value = null;
 });
@@ -537,23 +469,26 @@ defineExpose<WebSessionComposerEditorExposed>({
 .web-session-composer-editor {
   width: 100%;
   min-width: 0;
-  cursor: text;
+  min-height: calc(
+    var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + 28px
+  );
 }
 
 .web-session-composer-editor__host {
   width: 100%;
+  min-height: inherit;
 }
 
 .web-session-composer-editor :deep(.cm-editor) {
   width: 100%;
   min-width: 0;
+  min-height: inherit;
   background: transparent;
   position: relative;
 }
 
 .web-session-composer-editor :deep(.cm-placeholder) {
   color: var(--n-text-color-3, #999);
-  pointer-events: none;
   transition: opacity 0.12s ease;
 }
 
