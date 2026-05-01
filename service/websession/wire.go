@@ -41,6 +41,7 @@ type wireFrame struct {
 	History          *wireHist             `json:"h,omitempty"`
 	Item             *wireHistItem         `json:"i,omitempty"`
 	Pending          []wirePendingInput    `json:"pi,omitempty"`
+	Scheduled        []wireScheduledInput  `json:"si,omitempty"`
 	PendingUserInput *wirePendingUserInput `json:"ui,omitempty"`
 	Code             string                `json:"code,omitempty"`
 	Message          string                `json:"msg,omitempty"`
@@ -176,6 +177,19 @@ type wirePendingInput struct {
 	CreatedAt     int64    `json:"ca"`
 }
 
+type wireScheduledInput struct {
+	ID            string   `json:"id"`
+	Mode          string   `json:"m"`
+	Text          string   `json:"txt,omitempty"`
+	AttachmentIDs []string `json:"atts,omitempty"`
+	ScheduledFor  int64    `json:"sf"`
+	Status        string   `json:"st"`
+	CreatedAt     int64    `json:"ca"`
+	UpdatedAt     int64    `json:"ua"`
+	SentAt        *int64   `json:"sa,omitempty"`
+	CanceledAt    *int64   `json:"xa,omitempty"`
+}
+
 type wirePendingUserInput struct {
 	ItemID      string                `json:"iid"`
 	Prompt      string                `json:"txt,omitempty"`
@@ -237,6 +251,7 @@ func newSnapshotFrame(sessionID string, snap SessionSnapshot) wireFrame {
 			Total:        snap.History.Total,
 		},
 		Pending:          mapWirePendingInputs(snap.PendingInputs),
+		Scheduled:        mapWireScheduledInputs(snap.ScheduledInputs),
 		PendingUserInput: mapWirePendingUserInput(snap.PendingUserInput),
 	}
 }
@@ -295,6 +310,17 @@ func newPendingFrame(sessionID string, items []PendingInput) wireFrame {
 		Timestamp: nowUnixMilli(),
 		Operation: "pending",
 		Pending:   mapWirePendingInputs(items),
+	}
+}
+
+func newScheduledFrame(sessionID string, items []ScheduledInput) wireFrame {
+	return wireFrame{
+		Version:   protocolVersion,
+		Kind:      "evt",
+		SessionID: sessionID,
+		Timestamp: nowUnixMilli(),
+		Operation: "scheduled",
+		Scheduled: mapWireScheduledInputs(items),
 	}
 }
 
@@ -419,6 +445,38 @@ func mapWirePendingInputs(items []PendingInput) []wirePendingInput {
 			Text:          item.Text,
 			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
 			CreatedAt:     item.CreatedAt.UnixMilli(),
+		})
+	}
+	return wireItems
+}
+
+func mapWireScheduledInputs(items []ScheduledInput) []wireScheduledInput {
+	if len(items) == 0 {
+		return []wireScheduledInput{}
+	}
+	wireItems := make([]wireScheduledInput, 0, len(items))
+	for _, item := range items {
+		var sentAt *int64
+		if item.SentAt != nil {
+			value := item.SentAt.UnixMilli()
+			sentAt = &value
+		}
+		var canceledAt *int64
+		if item.CanceledAt != nil {
+			value := item.CanceledAt.UnixMilli()
+			canceledAt = &value
+		}
+		wireItems = append(wireItems, wireScheduledInput{
+			ID:            item.ID,
+			Mode:          string(item.Mode),
+			Text:          item.Text,
+			AttachmentIDs: append([]string(nil), item.AttachmentIDs...),
+			ScheduledFor:  item.ScheduledFor.UnixMilli(),
+			Status:        string(item.Status),
+			CreatedAt:     item.CreatedAt.UnixMilli(),
+			UpdatedAt:     item.UpdatedAt.UnixMilli(),
+			SentAt:        sentAt,
+			CanceledAt:    canceledAt,
 		})
 	}
 	return wireItems

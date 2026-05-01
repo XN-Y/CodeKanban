@@ -62,20 +62,22 @@ type Manager struct {
 	worktreeSvc  *service.WorktreeService
 	aiSessionSvc *service.AISessionService
 
-	mu                     sync.RWMutex
-	runs                   map[string]*activeRun
-	clients                map[*client]struct{}
-	autoRetryTimers        map[string]*time.Timer
-	pendingInputs          map[string][]PendingInput
-	pendingProcessing      map[string]bool
-	pendingDirty           map[string]bool
-	codexContextWindow     codexContextWindowResolver
-	claudeHookOnce         sync.Once
-	claudeHookBaseURL      string
-	claudeHookToken        string
-	claudeHookSettingsPath string
-	claudeHookErr          error
-	claudeHookServer       *http.Server
+	mu                          sync.RWMutex
+	runs                        map[string]*activeRun
+	clients                     map[*client]struct{}
+	autoRetryTimers             map[string]*time.Timer
+	scheduledInputTimers        map[string]*time.Timer
+	scheduledInputTimerSessions map[string]string
+	pendingInputs               map[string][]PendingInput
+	pendingProcessing           map[string]bool
+	pendingDirty                map[string]bool
+	codexContextWindow          codexContextWindowResolver
+	claudeHookOnce              sync.Once
+	claudeHookBaseURL           string
+	claudeHookToken             string
+	claudeHookSettingsPath      string
+	claudeHookErr               error
+	claudeHookServer            *http.Server
 }
 
 type clientKind string
@@ -285,18 +287,20 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	}
 
 	manager := &Manager{
-		cfg:               cfg,
-		logger:            logger.Named("web-session-manager"),
-		store:             eventStore,
-		projectSvc:        model.NewProjectService(),
-		worktreeSvc:       service.NewWorktreeService(),
-		aiSessionSvc:      service.NewAISessionService(),
-		runs:              make(map[string]*activeRun),
-		clients:           make(map[*client]struct{}),
-		autoRetryTimers:   make(map[string]*time.Timer),
-		pendingInputs:     make(map[string][]PendingInput),
-		pendingProcessing: make(map[string]bool),
-		pendingDirty:      make(map[string]bool),
+		cfg:                         cfg,
+		logger:                      logger.Named("web-session-manager"),
+		store:                       eventStore,
+		projectSvc:                  model.NewProjectService(),
+		worktreeSvc:                 service.NewWorktreeService(),
+		aiSessionSvc:                service.NewAISessionService(),
+		runs:                        make(map[string]*activeRun),
+		clients:                     make(map[*client]struct{}),
+		autoRetryTimers:             make(map[string]*time.Timer),
+		scheduledInputTimers:        make(map[string]*time.Timer),
+		scheduledInputTimerSessions: make(map[string]string),
+		pendingInputs:               make(map[string][]PendingInput),
+		pendingProcessing:           make(map[string]bool),
+		pendingDirty:                make(map[string]bool),
 	}
 	if err := manager.migrateLegacySessionModes(context.Background()); err != nil {
 		return nil, err
@@ -308,6 +312,9 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 		return nil, err
 	}
 	if err := manager.recoverPendingAutoRetrySessions(context.Background()); err != nil {
+		return nil, err
+	}
+	if err := manager.recoverPendingScheduledInputs(context.Background()); err != nil {
 		return nil, err
 	}
 	return manager, nil
@@ -1176,12 +1183,13 @@ func (m *Manager) importCodexSessionResolved(
 			return ImportResult{}, err
 		}
 		return ImportResult{
-			Session:       snapshot.Session,
-			History:       snapshot.History,
-			PendingInputs: snapshot.PendingInputs,
-			Created:       false,
-			Reused:        true,
-			Synced:        false,
+			Session:         snapshot.Session,
+			History:         snapshot.History,
+			PendingInputs:   snapshot.PendingInputs,
+			ScheduledInputs: snapshot.ScheduledInputs,
+			Created:         false,
+			Reused:          true,
+			Synced:          false,
 		}, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -1200,12 +1208,13 @@ func (m *Manager) importCodexSessionResolved(
 	}
 
 	return ImportResult{
-		Session:       snapshot.Session,
-		History:       snapshot.History,
-		PendingInputs: snapshot.PendingInputs,
-		Created:       true,
-		Reused:        false,
-		Synced:        true,
+		Session:         snapshot.Session,
+		History:         snapshot.History,
+		PendingInputs:   snapshot.PendingInputs,
+		ScheduledInputs: snapshot.ScheduledInputs,
+		Created:         true,
+		Reused:          false,
+		Synced:          true,
 	}, nil
 }
 
@@ -1336,10 +1345,15 @@ func (m *Manager) loadSnapshotLocal(
 	if clearUnread {
 		summary.HasUnread = false
 	}
+	scheduledInputs, err := m.scheduledInputsSnapshot(ctx, record.ID)
+	if err != nil {
+		return SessionSnapshot{}, err
+	}
 	return SessionSnapshot{
 		Session:          summary,
 		History:          history,
 		PendingInputs:    m.pendingInputsSnapshot(record.ID),
+		ScheduledInputs:  scheduledInputs,
 		PendingUserInput: pendingUserInputFromHistory(history.Items),
 	}, nil
 }
@@ -1592,6 +1606,9 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) (Session
 	}
 	m.cancelAutoRetryTimer(sessionID)
 	m.clearPendingInputs(sessionID)
+	if err := m.cancelActiveScheduledInputs(ctx, sessionID); err != nil {
+		return SessionSummary{}, err
+	}
 	archived, err := m.GetSession(ctx, sessionID)
 	if err != nil {
 		return SessionSummary{}, err
@@ -1633,6 +1650,9 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	_ = m.AbortSession(sessionID)
 	m.cancelAutoRetryTimer(sessionID)
 	m.clearPendingInputs(sessionID)
+	if err := m.deleteScheduledInputsForSession(ctx, sessionID); err != nil {
+		return err
+	}
 	db := model.GetDB()
 	if db == nil {
 		return model.ErrDBNotInitialized
@@ -1859,6 +1879,10 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleUserInputCommand(client, frame)
 	case "pending_del":
 		return m.handlePendingDeleteCommand(client, frame)
+	case "schedule_send":
+		return m.handleScheduleSendCommand(ctx, client, frame)
+	case "scheduled_del":
+		return m.handleScheduledDeleteCommand(ctx, client, frame)
 	case "del":
 		return m.handleDeleteCommand(ctx, client, frame)
 	case "list":

@@ -428,6 +428,56 @@ describe('webSession loading behavior', () => {
     ]);
   });
 
+  it('restores scheduled inputs from snapshot responses', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-scheduled',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    snapshotMock.mockResolvedValue({
+      session,
+      history: {
+        items: [],
+        hasMore: false,
+        total: 0,
+      },
+      pendingInputs: [],
+      scheduledInputs: [
+        {
+          id: 'scheduled-1',
+          mode: 'redirect',
+          status: 'scheduled',
+          text: 'Send later',
+          attachmentIds: ['attachment-7'],
+          scheduledFor: '2026-04-09T10:05:00.000Z',
+          createdAt: '2026-04-09T10:01:00.000Z',
+          updatedAt: '2026-04-09T10:01:00.000Z',
+        },
+      ],
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.loadSessionSnapshot(session.projectId, session.id);
+
+    expect(store.getScheduledInputs(session.id)).toEqual([
+      {
+        id: 'scheduled-1',
+        mode: 'interrupt',
+        status: 'scheduled',
+        text: 'Send later',
+        attachmentIds: ['attachment-7'],
+        scheduledFor: Date.parse('2026-04-09T10:05:00.000Z'),
+        createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
+        updatedAt: Date.parse('2026-04-09T10:01:00.000Z'),
+        sentAt: null,
+        canceledAt: null,
+      },
+    ]);
+  });
+
   it('removes pending inputs via the backend command channel and pending events', async () => {
     const store = useWebSessionStore();
     const session = makeSession({
@@ -565,6 +615,186 @@ describe('webSession loading behavior', () => {
 
     await sendPromise;
     expect(store.getPendingInputs(session.id)[0]?.id).toBe(optimistic[0]?.id);
+  });
+
+  it('stores scheduled inputs from schedule_send acknowledgements', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-schedule-command',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+
+    await store.loadSessions(session.projectId);
+
+    const scheduledAt = Date.parse('2026-04-09T10:08:00.000Z');
+    const schedulePromise = store.scheduleMessage(
+      session.id,
+      'Later message',
+      [],
+      scheduledAt,
+      'interrupt'
+    );
+
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'schedule_send',
+      p: {
+        txt: 'Later message',
+        atts: [],
+        mode: 'interrupt',
+        at: scheduledAt,
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'schedule_send',
+      ok: 1,
+      p: {
+        id: 'scheduled-ack-1',
+        m: 'interrupt',
+        st: 'scheduled',
+        txt: 'Later message',
+        atts: [],
+        sf: scheduledAt,
+        ca: scheduledAt - 60_000,
+        ua: scheduledAt - 60_000,
+      },
+    });
+
+    const created = await schedulePromise;
+    expect(created).toMatchObject({
+      id: 'scheduled-ack-1',
+      mode: 'interrupt',
+      status: 'scheduled',
+    });
+    expect(store.getScheduledInputs(session.id)).toEqual([
+      {
+        id: 'scheduled-ack-1',
+        mode: 'interrupt',
+        status: 'scheduled',
+        text: 'Later message',
+        attachmentIds: [],
+        scheduledFor: scheduledAt,
+        createdAt: scheduledAt - 60_000,
+        updatedAt: scheduledAt - 60_000,
+        sentAt: null,
+        canceledAt: null,
+      },
+    ]);
+  });
+
+  it('updates and removes scheduled inputs through scheduled events and commands', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      id: 'session-scheduled-events',
+      status: 'idle',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    await store.loadSessions(session.projectId);
+    await store.openEventStream();
+
+    const eventSocket = findSocket('/api/v1/web-sessions/events');
+    expect(eventSocket).not.toBeNull();
+
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled',
+      si: [
+        {
+          id: 'scheduled-evt-1',
+          m: 'queue',
+          st: 'failed',
+          txt: 'Retry me later',
+          atts: [],
+          sf: Date.parse('2026-04-09T10:09:00.000Z'),
+          ca: Date.parse('2026-04-09T10:01:00.000Z'),
+          ua: Date.parse('2026-04-09T10:02:00.000Z'),
+        },
+      ],
+    });
+
+    expect(store.getScheduledInputs(session.id)).toEqual([
+      {
+        id: 'scheduled-evt-1',
+        mode: 'queue',
+        status: 'failed',
+        text: 'Retry me later',
+        attachmentIds: [],
+        scheduledFor: Date.parse('2026-04-09T10:09:00.000Z'),
+        createdAt: Date.parse('2026-04-09T10:01:00.000Z'),
+        updatedAt: Date.parse('2026-04-09T10:02:00.000Z'),
+        sentAt: null,
+        canceledAt: null,
+      },
+    ]);
+
+    const removePromise = store.removeScheduledInput(session.id, 'scheduled-evt-1');
+    let commandSocket = findSocket('/api/v1/web-sessions/ws');
+    for (let attempt = 0; attempt < 5 && !commandSocket?.sent.length; attempt += 1) {
+      await Promise.resolve();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      commandSocket = findSocket('/api/v1/web-sessions/ws');
+    }
+
+    expect(commandSocket?.sent.at(-1)).toMatchObject({
+      k: 'cmd',
+      sid: session.id,
+      op: 'scheduled_del',
+      p: {
+        id: 'scheduled-evt-1',
+      },
+    });
+
+    const requestId = String(
+      (commandSocket?.sent.at(-1) as { rid?: string } | undefined)?.rid ?? ''
+    );
+    commandSocket?.dispatch({
+      v: 1,
+      k: 'ack',
+      rid: requestId,
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled_del',
+      ok: 1,
+      p: {
+        id: 'scheduled-evt-1',
+      },
+    });
+    eventSocket?.dispatch({
+      v: 1,
+      k: 'evt',
+      sid: session.id,
+      ts: Date.now(),
+      op: 'scheduled',
+      si: [],
+    });
+
+    await removePromise;
+    expect(store.getScheduledInputs(session.id)).toEqual([]);
   });
 
   it('hydrates first sends from command-channel snapshots before falling back to HTTP snapshots', async () => {

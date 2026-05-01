@@ -19,6 +19,7 @@ func GetAllModels() []any {
 		&tables.NotePadTable{},
 		&tables.AISessionTable{},
 		&tables.WebSessionTable{},
+		&tables.WebSessionScheduledInputTable{},
 		&tables.WebSessionTurnTable{},
 		&tables.WebSessionItemTable{},
 		&tables.TaskAISessionTable{},

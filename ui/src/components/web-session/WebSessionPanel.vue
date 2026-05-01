@@ -929,443 +929,523 @@
             </div>
 
             <template v-if="!isMobile || !isMobileComposerCollapsed">
-            <div v-if="isMobile" class="composer-mobile-summary">
-              <button
-                type="button"
-                class="composer-mobile-toggle"
-                :aria-expanded="isMobileComposerSettingsExpanded"
-                :title="mobileComposerSettingsToggleLabel"
-                :aria-label="mobileComposerSettingsToggleLabel"
-                @click="toggleMobileComposerSettingsExpanded"
-              >
-                <span class="composer-mobile-toggle-copy">
-                  <span class="composer-mobile-toggle-chips">
-                    <span
-                      v-for="token in mobileComposerSummaryTokens"
-                      :key="token.key"
-                      class="composer-mobile-toggle-chip"
-                    >
-                      {{ token.label }}
+              <div v-if="isMobile" class="composer-mobile-summary">
+                <button
+                  type="button"
+                  class="composer-mobile-toggle"
+                  :aria-expanded="isMobileComposerSettingsExpanded"
+                  :title="mobileComposerSettingsToggleLabel"
+                  :aria-label="mobileComposerSettingsToggleLabel"
+                  @click="toggleMobileComposerSettingsExpanded"
+                >
+                  <span class="composer-mobile-toggle-copy">
+                    <span class="composer-mobile-toggle-chips">
+                      <span
+                        v-for="token in mobileComposerSummaryTokens"
+                        :key="token.key"
+                        class="composer-mobile-toggle-chip"
+                      >
+                        {{ token.label }}
+                      </span>
                     </span>
                   </span>
-                </span>
-                <n-icon
-                  class="composer-mobile-toggle-arrow"
-                  :class="{ 'is-open': isMobileComposerSettingsExpanded }"
-                >
-                  <ChevronDownOutline />
-                </n-icon>
-              </button>
-            </div>
-
-            <div
-              v-if="!isMobile || isMobileComposerSettingsExpanded"
-              class="composer-config"
-              :class="{ 'is-mobile': isMobile }"
-            >
-              <div class="composer-config-row">
-                <n-select
-                  v-model:value="selectedAgent"
-                  class="composer-select agent-select"
-                  size="small"
-                  :options="agentOptions"
-                  :disabled="Boolean(currentSession?.nativeSessionId)"
-                />
-                <n-select
-                  v-model:value="selectedModel"
-                  class="composer-select model-select"
-                  size="small"
-                  :options="modelOptions"
-                />
-                <n-select
-                  v-if="selectedAgent === 'codex'"
-                  v-model:value="selectedReasoningEffort"
-                  class="composer-select reasoning-select"
-                  size="small"
-                  :options="reasoningEffortOptions"
-                />
-                <div class="composer-mode-row">
-                  <n-button-group class="composer-mode-switch">
-                    <n-button
-                      size="small"
-                      :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
-                      @click="setWorkflowMode('default')"
-                    >
-                      {{ t('webSession.workflowDefault') }}
-                    </n-button>
-                    <n-button
-                      size="small"
-                      :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
-                      @click="setWorkflowMode('plan')"
-                    >
-                      {{ t('webSession.workflowPlan') }}
-                    </n-button>
-                  </n-button-group>
-                  <n-select
-                    v-model:value="selectedPermissionLevel"
-                    class="composer-select permission-select"
-                    size="small"
-                    :options="permissionLevelOptions"
-                  />
-                </div>
-                <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
-                  {{ currentSession.cwd }}
-                </div>
-                <div class="composer-auto-continue">
-                  <n-checkbox v-model:checked="webSessionAutoContinueEnabledValue" size="small">
-                    {{ t('webSession.infiniteRetry') }}
-                  </n-checkbox>
-                </div>
+                  <n-icon
+                    class="composer-mobile-toggle-arrow"
+                    :class="{ 'is-open': isMobileComposerSettingsExpanded }"
+                  >
+                    <ChevronDownOutline />
+                  </n-icon>
+                </button>
               </div>
-            </div>
 
-            <div v-if="draftAttachments.length > 0" class="draft-attachments">
-              <span
-                v-for="(attachment, index) in draftAttachments"
-                :key="attachment.id"
-                class="draft-attachment-pill"
+              <div
+                v-if="!isMobile || isMobileComposerSettingsExpanded"
+                class="composer-config"
+                :class="{ 'is-mobile': isMobile }"
               >
-                <n-popover
-                  v-if="shouldUseAttachmentHoverPreview(attachment)"
-                  trigger="hover"
-                  placement="bottom-start"
-                  :delay="120"
-                >
-                  <template #trigger>
-                    <button
-                      type="button"
-                      class="attachment-preview-trigger"
-                      :title="draftAttachmentDisplayName(attachment, index)"
-                      @click="openDraftAttachmentPreview(attachment, index)"
-                    >
-                      <span class="attachment-preview-trigger-text">{{
-                        draftAttachmentDisplayName(attachment, index)
-                      }}</span>
-                    </button>
-                  </template>
-                  <div class="attachment-hover-preview">
-                    <img
-                      :src="getAttachmentPreviewUrl(attachment.id)"
-                      :alt="attachment.name"
-                      class="attachment-hover-image"
-                      loading="lazy"
+                <div class="composer-config-row">
+                  <n-select
+                    v-model:value="selectedAgent"
+                    class="composer-select agent-select"
+                    size="small"
+                    :options="agentOptions"
+                    :disabled="Boolean(currentSession?.nativeSessionId)"
+                  />
+                  <n-select
+                    v-model:value="selectedModel"
+                    class="composer-select model-select"
+                    size="small"
+                    :options="modelOptions"
+                  />
+                  <n-select
+                    v-if="selectedAgent === 'codex'"
+                    v-model:value="selectedReasoningEffort"
+                    class="composer-select reasoning-select"
+                    size="small"
+                    :options="reasoningEffortOptions"
+                  />
+                  <div class="composer-mode-row">
+                    <n-button-group class="composer-mode-switch">
+                      <n-button
+                        size="small"
+                        :type="selectedWorkflowMode === 'default' ? 'primary' : 'default'"
+                        @click="setWorkflowMode('default')"
+                      >
+                        {{ t('webSession.workflowDefault') }}
+                      </n-button>
+                      <n-button
+                        size="small"
+                        :type="selectedWorkflowMode === 'plan' ? 'primary' : 'default'"
+                        @click="setWorkflowMode('plan')"
+                      >
+                        {{ t('webSession.workflowPlan') }}
+                      </n-button>
+                    </n-button-group>
+                    <n-select
+                      v-model:value="selectedPermissionLevel"
+                      class="composer-select permission-select"
+                      size="small"
+                      :options="permissionLevelOptions"
                     />
                   </div>
-                </n-popover>
-                <button
-                  v-else-if="shouldUseAttachmentModalPreview(attachment)"
-                  type="button"
-                  class="attachment-preview-trigger"
-                  :title="draftAttachmentDisplayName(attachment, index)"
-                  @click="openDraftAttachmentPreview(attachment, index)"
-                >
-                  <span class="attachment-preview-trigger-text">{{
-                    draftAttachmentDisplayName(attachment, index)
-                  }}</span>
-                </button>
-                <button
-                  v-else
-                  type="button"
-                  class="attachment-preview-trigger is-static"
-                  :title="draftAttachmentDisplayName(attachment, index)"
-                >
-                  <span class="attachment-preview-trigger-text">{{
-                    draftAttachmentDisplayName(attachment, index)
-                  }}</span>
-                </button>
-                <button
-                  type="button"
-                  class="draft-attachment-remove"
-                  @click="removeAttachment(attachment.id)"
-                >
-                  ×
-                </button>
-              </span>
-            </div>
+                  <div v-if="currentSession" class="composer-path" :title="currentSession.cwd">
+                    {{ currentSession.cwd }}
+                  </div>
+                  <div class="composer-auto-continue">
+                    <n-checkbox v-model:checked="webSessionAutoContinueEnabledValue" size="small">
+                      {{ t('webSession.infiniteRetry') }}
+                    </n-checkbox>
+                  </div>
+                </div>
+              </div>
 
-            <div v-if="pendingInputs.length > 0" class="pending-inputs">
-              <div v-for="item in pendingInputs" :key="item.id" class="pending-input-item">
-                <span class="pending-input-badge" :class="`mode-${item.mode}`">
-                  {{ pendingModeLabel(item.mode) }}
+              <div v-if="draftAttachments.length > 0" class="draft-attachments">
+                <span
+                  v-for="(attachment, index) in draftAttachments"
+                  :key="attachment.id"
+                  class="draft-attachment-pill"
+                >
+                  <n-popover
+                    v-if="shouldUseAttachmentHoverPreview(attachment)"
+                    trigger="hover"
+                    placement="bottom-start"
+                    :delay="120"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="attachment-preview-trigger"
+                        :title="draftAttachmentDisplayName(attachment, index)"
+                        @click="openDraftAttachmentPreview(attachment, index)"
+                      >
+                        <span class="attachment-preview-trigger-text">{{
+                          draftAttachmentDisplayName(attachment, index)
+                        }}</span>
+                      </button>
+                    </template>
+                    <div class="attachment-hover-preview">
+                      <img
+                        :src="getAttachmentPreviewUrl(attachment.id)"
+                        :alt="attachment.name"
+                        class="attachment-hover-image"
+                        loading="lazy"
+                      />
+                    </div>
+                  </n-popover>
+                  <button
+                    v-else-if="shouldUseAttachmentModalPreview(attachment)"
+                    type="button"
+                    class="attachment-preview-trigger"
+                    :title="draftAttachmentDisplayName(attachment, index)"
+                    @click="openDraftAttachmentPreview(attachment, index)"
+                  >
+                    <span class="attachment-preview-trigger-text">{{
+                      draftAttachmentDisplayName(attachment, index)
+                    }}</span>
+                  </button>
+                  <button
+                    v-else
+                    type="button"
+                    class="attachment-preview-trigger is-static"
+                    :title="draftAttachmentDisplayName(attachment, index)"
+                  >
+                    <span class="attachment-preview-trigger-text">{{
+                      draftAttachmentDisplayName(attachment, index)
+                    }}</span>
+                  </button>
+                  <button
+                    type="button"
+                    class="draft-attachment-remove"
+                    @click="removeAttachment(attachment.id)"
+                  >
+                    ×
+                  </button>
                 </span>
-                <span class="pending-input-preview">{{ pendingInputPreview(item) }}</span>
-                <button
-                  type="button"
-                  class="pending-input-remove"
-                  @click="handleRemovePendingInput(item.id)"
-                >
-                  ×
-                </button>
               </div>
-            </div>
 
-            <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
-              <WebSessionComposerEditor
-                ref="composerInputRef"
-                v-model="composerText"
-                class="composer-input"
-                :placeholder="composerPlaceholder"
-                :min-rows="composerMinRows"
-                :max-rows="composerMaxRows"
-                :skills="codexSkills"
-                @focus="handleComposerFocus"
-                @blur="handleComposerBlur"
-                @submit="handleComposerSubmitShortcut"
-              />
-            </div>
+              <div v-if="pendingInputs.length > 0" class="pending-inputs">
+                <div v-for="item in pendingInputs" :key="item.id" class="pending-input-item">
+                  <span class="pending-input-badge" :class="`mode-${item.mode}`">
+                    {{ pendingModeLabel(item.mode) }}
+                  </span>
+                  <span class="pending-input-preview">{{ pendingInputPreview(item) }}</span>
+                  <button
+                    type="button"
+                    class="pending-input-remove"
+                    @click="handleRemovePendingInput(item.id)"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
 
-            <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
-              <div v-if="isMobile" class="composer-footer-left composer-footer-left-mobile">
-                <n-popover
-                  v-model:show="showQuickInputPopover"
-                  trigger="manual"
-                  placement="top-start"
-                  content-style="padding: 4px 0;"
-                  @clickoutside="handleMobileQuickInputClickOutside"
+              <div v-if="scheduledInputs.length > 0" class="scheduled-inputs">
+                <div
+                  v-for="item in scheduledInputs"
+                  :key="item.id"
+                  class="scheduled-input-item"
+                  :class="`state-${item.status}`"
                 >
-                  <template #trigger>
-                    <button
-                      type="button"
-                      class="composer-icon-btn composer-icon-btn-mobile"
-                      :title="quickInputButtonTitle"
-                      :aria-label="quickInputButtonTitle"
-                      @pointerdown.stop.prevent="handleMobileQuickInputTrigger"
-                      @click.stop.prevent
-                      @keydown.enter.stop.prevent="handleMobileQuickInputTrigger"
-                      @keydown.space.stop.prevent="handleMobileQuickInputTrigger"
-                    >
-                      <n-icon size="18"><FlashOutline /></n-icon>
-                    </button>
-                  </template>
-                  <div class="quick-input-popover-card">
-                    <div class="quick-input-popover-header">
-                      <n-checkbox
-                        v-model:checked="quickInputDirectSendEnabled"
-                        size="small"
-                        @mousedown.stop
-                        @touchstart.stop
-                        @click.stop
+                  <span class="scheduled-input-badge" :class="`state-${item.status}`">
+                    {{
+                      item.status === 'failed'
+                        ? t('webSession.scheduledFailedBadge')
+                        : t('webSession.scheduledBadge')
+                    }}
+                  </span>
+                  <span class="scheduled-input-mode">
+                    {{ scheduledModeLabel(item.mode) }}
+                  </span>
+                  <span class="scheduled-input-time" :title="formatDateTime(item.scheduledFor)">
+                    {{ formatTime(item.scheduledFor) }}
+                  </span>
+                  <span class="scheduled-input-preview">{{ scheduledInputPreview(item) }}</span>
+                  <button
+                    type="button"
+                    class="scheduled-input-remove"
+                    @click="handleRemoveScheduledInput(item.id)"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <div class="composer-input-shell" :class="{ 'is-mobile': isMobile }">
+                <WebSessionComposerEditor
+                  ref="composerInputRef"
+                  v-model="composerText"
+                  class="composer-input"
+                  :placeholder="composerPlaceholder"
+                  :min-rows="composerMinRows"
+                  :max-rows="composerMaxRows"
+                  :skills="codexSkills"
+                  @focus="handleComposerFocus"
+                  @blur="handleComposerBlur"
+                  @submit="handleComposerSubmitShortcut"
+                />
+              </div>
+
+              <div class="composer-footer" :class="{ 'is-mobile': isMobile }">
+                <div v-if="isMobile" class="composer-footer-left composer-footer-left-mobile">
+                  <n-popover
+                    v-model:show="showQuickInputPopover"
+                    trigger="manual"
+                    placement="top-start"
+                    content-style="padding: 4px 0;"
+                    @clickoutside="handleMobileQuickInputClickOutside"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="composer-icon-btn composer-icon-btn-mobile"
+                        :title="quickInputButtonTitle"
+                        :aria-label="quickInputButtonTitle"
+                        @pointerdown.stop.prevent="handleMobileQuickInputTrigger"
+                        @click.stop.prevent
+                        @keydown.enter.stop.prevent="handleMobileQuickInputTrigger"
+                        @keydown.space.stop.prevent="handleMobileQuickInputTrigger"
                       >
-                        {{ t('webSession.quickInputDirectSend') }}
-                      </n-checkbox>
-                    </div>
-                    <div v-if="quickInputItems.length === 0" class="quick-input-empty">
-                      {{ t('webSession.quickInputEmpty') }}
-                    </div>
-                    <div v-else class="quick-input-scroll">
-                      <div class="quick-input-item-list">
-                        <button
-                          v-for="text in quickInputItems"
-                          :key="text"
-                          type="button"
-                          class="quick-input-item"
-                          :class="{ 'is-selected': isQuickInputSelected(text) }"
-                          @click="handleQuickInputApply(text)"
+                        <n-icon size="18"><FlashOutline /></n-icon>
+                      </button>
+                    </template>
+                    <div class="quick-input-popover-card">
+                      <div class="quick-input-popover-header">
+                        <n-checkbox
+                          v-model:checked="quickInputDirectSendEnabled"
+                          size="small"
+                          @mousedown.stop
+                          @touchstart.stop
+                          @click.stop
                         >
-                          <span class="quick-input-item-text">{{ text }}</span>
-                        </button>
+                          {{ t('webSession.quickInputDirectSend') }}
+                        </n-checkbox>
+                      </div>
+                      <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                        {{ t('webSession.quickInputEmpty') }}
+                      </div>
+                      <div v-else class="quick-input-scroll">
+                        <div class="quick-input-item-list">
+                          <button
+                            v-for="text in quickInputItems"
+                            :key="text"
+                            type="button"
+                            class="quick-input-item"
+                            :class="{ 'is-selected': isQuickInputSelected(text) }"
+                            @click="handleQuickInputApply(text)"
+                          >
+                            <span class="quick-input-item-text">{{ text }}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </n-popover>
-                <button
-                  type="button"
-                  class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
-                  :title="t('webSession.skills')"
-                  :aria-label="t('webSession.skills')"
-                  @pointerdown.stop.prevent="handleMobileSkillTrigger"
-                  @click.stop.prevent
-                  @keydown.enter.stop.prevent="handleMobileSkillTrigger"
-                  @keydown.space.stop.prevent="handleMobileSkillTrigger"
-                >
-                  <n-icon size="18"><SparklesOutline /></n-icon>
-                </button>
-                <button
-                  type="button"
-                  class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
-                  :title="t('webSession.attachImage')"
-                  :aria-label="t('webSession.attachImage')"
-                  @pointerdown.stop.prevent="handleMobileAttachmentTrigger"
-                  @click.stop.prevent
-                  @keydown.enter.stop.prevent="handleMobileAttachmentTrigger"
-                  @keydown.space.stop.prevent="handleMobileAttachmentTrigger"
-                >
-                  <n-icon size="18"><ImageOutline /></n-icon>
-                </button>
-              </div>
-              <div v-if="!isMobile" class="composer-footer-left">
-                <n-popover
-                  v-model:show="showQuickInputPopover"
-                  trigger="click"
-                  placement="top-start"
-                  content-style="padding: 4px 0;"
-                >
-                  <template #trigger>
-                    <button
-                      type="button"
-                      class="composer-icon-btn"
-                      :title="quickInputButtonTitle"
-                      :aria-label="quickInputButtonTitle"
-                    >
-                      <n-icon size="14"><FlashOutline /></n-icon>
-                    </button>
-                  </template>
-                  <div class="quick-input-popover-card">
-                    <div class="quick-input-popover-header">
-                      <n-checkbox
-                        v-model:checked="quickInputDirectSendEnabled"
-                        size="small"
-                        @mousedown.stop
-                        @touchstart.stop
-                        @click.stop
+                  </n-popover>
+                  <button
+                    type="button"
+                    class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                    :title="t('webSession.skills')"
+                    :aria-label="t('webSession.skills')"
+                    @pointerdown.stop.prevent="handleMobileSkillTrigger"
+                    @click.stop.prevent
+                    @keydown.enter.stop.prevent="handleMobileSkillTrigger"
+                    @keydown.space.stop.prevent="handleMobileSkillTrigger"
+                  >
+                    <n-icon size="18"><SparklesOutline /></n-icon>
+                  </button>
+                  <button
+                    type="button"
+                    class="composer-icon-btn composer-icon-btn-mobile composer-icon-btn-mobile-secondary"
+                    :title="t('webSession.attachImage')"
+                    :aria-label="t('webSession.attachImage')"
+                    @pointerdown.stop.prevent="handleMobileAttachmentTrigger"
+                    @click.stop.prevent
+                    @keydown.enter.stop.prevent="handleMobileAttachmentTrigger"
+                    @keydown.space.stop.prevent="handleMobileAttachmentTrigger"
+                  >
+                    <n-icon size="18"><ImageOutline /></n-icon>
+                  </button>
+                </div>
+                <div v-if="!isMobile" class="composer-footer-left">
+                  <n-popover
+                    v-model:show="showQuickInputPopover"
+                    trigger="click"
+                    placement="top-start"
+                    content-style="padding: 4px 0;"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="composer-icon-btn"
+                        :title="quickInputButtonTitle"
+                        :aria-label="quickInputButtonTitle"
                       >
-                        {{ t('webSession.quickInputDirectSend') }}
-                      </n-checkbox>
-                    </div>
-                    <div v-if="quickInputItems.length === 0" class="quick-input-empty">
-                      {{ t('webSession.quickInputEmpty') }}
-                    </div>
-                    <div v-else class="quick-input-scroll">
-                      <div class="quick-input-item-list">
-                        <button
-                          v-for="text in quickInputItems"
-                          :key="text"
-                          type="button"
-                          class="quick-input-item"
-                          :class="{ 'is-selected': isQuickInputSelected(text) }"
-                          @click="handleQuickInputApply(text)"
+                        <n-icon size="14"><FlashOutline /></n-icon>
+                      </button>
+                    </template>
+                    <div class="quick-input-popover-card">
+                      <div class="quick-input-popover-header">
+                        <n-checkbox
+                          v-model:checked="quickInputDirectSendEnabled"
+                          size="small"
+                          @mousedown.stop
+                          @touchstart.stop
+                          @click.stop
                         >
-                          <span class="quick-input-item-text">{{ text }}</span>
-                        </button>
+                          {{ t('webSession.quickInputDirectSend') }}
+                        </n-checkbox>
+                      </div>
+                      <div v-if="quickInputItems.length === 0" class="quick-input-empty">
+                        {{ t('webSession.quickInputEmpty') }}
+                      </div>
+                      <div v-else class="quick-input-scroll">
+                        <div class="quick-input-item-list">
+                          <button
+                            v-for="text in quickInputItems"
+                            :key="text"
+                            type="button"
+                            class="quick-input-item"
+                            :class="{ 'is-selected': isQuickInputSelected(text) }"
+                            @click="handleQuickInputApply(text)"
+                          >
+                            <span class="quick-input-item-text">{{ text }}</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </n-popover>
-                <n-popover
-                  v-model:show="showSkillBrowser"
-                  trigger="click"
-                  placement="top-start"
-                  content-style="padding: 0;"
-                  @update:show="handleSkillBrowserVisibilityChange"
-                >
-                  <template #trigger>
-                    <button
-                      type="button"
-                      class="composer-icon-btn"
-                      :title="t('webSession.skills')"
-                      :aria-label="t('webSession.skills')"
-                    >
-                      <n-icon size="14"><SparklesOutline /></n-icon>
-                    </button>
-                  </template>
-                  <WebSessionSkillCatalogPanel
-                    :skills="codexSkills"
-                    :loading="codexSkillsLoading"
-                    @select-token="handleSkillTokenInsert"
-                    @select-template="handleSkillTemplateInsert"
+                  </n-popover>
+                  <n-popover
+                    v-model:show="showSkillBrowser"
+                    trigger="click"
+                    placement="top-start"
+                    content-style="padding: 0;"
+                    @update:show="handleSkillBrowserVisibilityChange"
+                  >
+                    <template #trigger>
+                      <button
+                        type="button"
+                        class="composer-icon-btn"
+                        :title="t('webSession.skills')"
+                        :aria-label="t('webSession.skills')"
+                      >
+                        <n-icon size="14"><SparklesOutline /></n-icon>
+                      </button>
+                    </template>
+                    <WebSessionSkillCatalogPanel
+                      :skills="codexSkills"
+                      :loading="codexSkillsLoading"
+                      @select-token="handleSkillTokenInsert"
+                      @select-template="handleSkillTemplateInsert"
+                    />
+                  </n-popover>
+                  <button type="button" class="composer-icon-btn" @click="openFilePicker">
+                    <n-icon size="14"><ImageOutline /></n-icon>
+                  </button>
+                  <span class="composer-hint">{{ composerHint }}</span>
+                </div>
+
+                <div class="composer-footer-right">
+                  <n-dropdown
+                    trigger="manual"
+                    placement="top-end"
+                    :show="showSendQuickActions"
+                    :options="sendQuickActionOptions"
+                    :x="sendQuickActionsX"
+                    :y="sendQuickActionsY"
+                    @select="handleSendQuickActionSelect"
+                    @clickoutside="closeSendQuickActions"
                   />
-                </n-popover>
-                <button type="button" class="composer-icon-btn" @click="openFilePicker">
-                  <n-icon size="14"><ImageOutline /></n-icon>
-                </button>
-                <span class="composer-hint">{{ composerHint }}</span>
-              </div>
-
-              <div class="composer-footer-right">
-                <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
-                  <template #trigger>
-                    <span
-                      class="composer-context-pill"
-                      :class="`state-${contextUsageIndicator.state}`"
-                    >
-                      {{ contextUsageIndicator.label }}
-                    </span>
-                  </template>
-                  <div class="composer-context-tooltip">
-                    <div class="composer-context-tooltip-title">
-                      {{ contextUsageIndicator.title }}
+                  <n-tooltip v-if="contextUsageIndicator" trigger="hover" placement="top">
+                    <template #trigger>
+                      <span
+                        class="composer-context-pill"
+                        :class="`state-${contextUsageIndicator.state}`"
+                      >
+                        {{ contextUsageIndicator.label }}
+                      </span>
+                    </template>
+                    <div class="composer-context-tooltip">
+                      <div class="composer-context-tooltip-title">
+                        {{ contextUsageIndicator.title }}
+                      </div>
+                      <div
+                        v-for="line in contextUsageIndicator.lines"
+                        :key="line"
+                        class="composer-context-tooltip-line"
+                      >
+                        {{ line }}
+                      </div>
                     </div>
-                    <div
-                      v-for="line in contextUsageIndicator.lines"
-                      :key="line"
-                      class="composer-context-tooltip-line"
-                    >
-                      {{ line }}
-                    </div>
-                  </div>
-                </n-tooltip>
-                <n-button
-                  v-if="isRunActive"
-                  secondary
-                  type="warning"
-                  class="composer-stop-btn"
-                  @click="handleAbortCurrent"
-                >
-                  {{ t('webSession.stop') }}
-                </n-button>
-                <template v-if="isRunActive">
+                  </n-tooltip>
                   <n-button
+                    v-if="isRunActive"
                     secondary
-                    class="composer-queue-btn"
-                    :disabled="!canStageDuringRun"
-                    @click="handlePreinput('queue')"
+                    type="warning"
+                    class="composer-stop-btn"
+                    @click="handleAbortCurrent"
                   >
-                    {{ t('webSession.preinputQueue') }}
+                    {{ t('webSession.stop') }}
                   </n-button>
-                  <n-button
-                    type="primary"
-                    class="composer-send-btn"
-                    :disabled="!canStageDuringRun"
-                    @click="handlePreinput('redirect')"
-                  >
-                    {{ t('webSession.preinputRedirect') }}
-                  </n-button>
-                </template>
-                <n-popover
-                  v-else
-                  trigger="manual"
-                  placement="top-end"
-                  :show="showSendConflictWarning"
-                  :show-arrow="true"
-                  :disabled="!showSendConflictWarning"
-                >
-                  <template #trigger>
+                  <template v-if="isRunActive">
                     <n-button
-                      type="primary"
-                      :class="[
-                        'composer-send-btn',
-                        { 'is-confirm-armed': isSendConflictConfirmationArmed },
-                      ]"
-                      :loading="isSubmittingMessage && !isSubmittingPlanExecution"
-                      :disabled="!canSend"
-                      @click="handleSubmit"
+                      secondary
+                      class="composer-queue-btn"
+                      :disabled="!canStageDuringRun"
+                      @click="handlePreinput('queue')"
                     >
-                      {{
-                        isSendConflictConfirmationArmed
-                          ? t('webSession.sendEmphatic')
-                          : t('webSession.send')
-                      }}
+                      {{ t('webSession.preinputQueue') }}
                     </n-button>
+                    <div class="composer-send-action-group">
+                      <n-button
+                        type="primary"
+                        class="composer-send-btn"
+                        :disabled="!canStageDuringRun"
+                        @pointerdown="handlePrimarySendPointerDown"
+                        @pointermove="handlePrimarySendPointerMove"
+                        @pointerup="handlePrimarySendPointerUp"
+                        @pointercancel="handlePrimarySendPointerCancel"
+                        @click="handlePrimarySendButtonClick"
+                      >
+                        {{ t('webSession.preinputRedirect') }}
+                      </n-button>
+                      <button
+                        type="button"
+                        class="composer-send-menu-btn"
+                        :title="t('webSession.sendQuickActions')"
+                        :aria-label="t('webSession.sendQuickActions')"
+                        :disabled="!canStageDuringRun"
+                        @click="handleSendQuickActionTriggerClick"
+                      >
+                        <n-icon size="14"><ChevronDownOutline /></n-icon>
+                      </button>
+                    </div>
                   </template>
-                  <div class="composer-send-confirm-popover-card" role="status" aria-live="polite">
-                    <div class="composer-send-confirm-title">
-                      {{ t('webSession.sendConflictWarningTitle') }}
+                  <n-popover
+                    v-else
+                    trigger="manual"
+                    placement="top-end"
+                    :show="showSendConflictWarning"
+                    :show-arrow="true"
+                    :disabled="!showSendConflictWarning"
+                  >
+                    <template #trigger>
+                      <div
+                        class="composer-send-action-group"
+                        :class="{ 'is-confirm-armed': isSendConflictConfirmationArmed }"
+                      >
+                        <n-button
+                          type="primary"
+                          :class="[
+                            'composer-send-btn',
+                            { 'is-confirm-armed': isSendConflictConfirmationArmed },
+                          ]"
+                          :loading="isSubmittingMessage && !isSubmittingPlanExecution"
+                          :disabled="!canSend"
+                          @pointerdown="handlePrimarySendPointerDown"
+                          @pointermove="handlePrimarySendPointerMove"
+                          @pointerup="handlePrimarySendPointerUp"
+                          @pointercancel="handlePrimarySendPointerCancel"
+                          @click="handlePrimarySendButtonClick"
+                        >
+                          {{
+                            isSendConflictConfirmationArmed
+                              ? t('webSession.sendEmphatic')
+                              : t('webSession.send')
+                          }}
+                        </n-button>
+                        <button
+                          type="button"
+                          class="composer-send-menu-btn"
+                          :title="t('webSession.sendQuickActions')"
+                          :aria-label="t('webSession.sendQuickActions')"
+                          :disabled="!canSend"
+                          @click="handleSendQuickActionTriggerClick"
+                        >
+                          <n-icon size="14"><ChevronDownOutline /></n-icon>
+                        </button>
+                      </div>
+                    </template>
+                    <div
+                      class="composer-send-confirm-popover-card"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <div class="composer-send-confirm-title">
+                        {{ t('webSession.sendConflictWarningTitle') }}
+                      </div>
+                      <div class="composer-send-confirm-body">
+                        {{ sendConflictWarningBody }}
+                      </div>
                     </div>
-                    <div class="composer-send-confirm-body">
-                      {{ sendConflictWarningBody }}
-                    </div>
-                  </div>
-                </n-popover>
+                  </n-popover>
+                </div>
               </div>
-            </div>
-            <TransferProgressDialog
-              v-if="composerTransferCard"
-              :message="composerTransferCard.message"
-              :detail="composerTransferCard.detail"
-              :progress="composerTransferCard.progress"
-              :tone="composerTransferCard.tone"
-              :card-style="composerTransferDialogStyle"
-            />
+              <TransferProgressDialog
+                v-if="composerTransferCard"
+                :message="composerTransferCard.message"
+                :detail="composerTransferCard.detail"
+                :progress="composerTransferCard.progress"
+                :tone="composerTransferCard.tone"
+                :card-style="composerTransferDialogStyle"
+              />
             </template>
           </div>
         </div>
@@ -1584,6 +1664,96 @@
     </div>
 
     <n-modal
+      :show="showScheduledSendDialog"
+      preset="card"
+      class="scheduled-send-modal"
+      :title="t('webSession.scheduleSend')"
+      :bordered="false"
+      :segmented="{ content: false, footer: false }"
+      :mask-closable="!scheduledSendSubmitting"
+      closable
+      style="width: min(92vw, 520px)"
+      @update:show="handleScheduledSendDialogVisibilityChange"
+    >
+      <div class="scheduled-send-modal-body">
+        <div class="scheduled-send-section">
+          <div class="scheduled-send-section-label">
+            {{ t('webSession.scheduleSendPresetTitle') }}
+          </div>
+          <div class="scheduled-send-presets">
+            <button
+              v-for="preset in scheduledSendPresetOptions"
+              :key="preset.key"
+              type="button"
+              class="scheduled-send-preset"
+              :class="{ 'is-selected': selectedScheduledSendPresetKey === preset.key }"
+              @click="handleScheduledSendPresetSelect(preset.timestamp)"
+            >
+              {{ preset.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="scheduled-send-section">
+          <div class="scheduled-send-section-label">
+            {{ t('webSession.scheduleSendCustomTime') }}
+          </div>
+          <n-date-picker
+            v-model:value="scheduledSendAt"
+            type="datetime"
+            clearable
+            style="width: 100%"
+          />
+          <div v-if="scheduledSendSelectedTimeLabel" class="scheduled-send-selected">
+            {{ t('webSession.scheduleSendSelectedTime', { time: scheduledSendSelectedTimeLabel }) }}
+          </div>
+        </div>
+
+        <div class="scheduled-send-section">
+          <div class="scheduled-send-section-label">
+            {{ t('webSession.scheduleSendModeTitle') }}
+          </div>
+          <n-radio-group v-model:value="scheduledSendMode" name="scheduled-send-mode">
+            <div class="scheduled-send-mode-grid">
+              <label class="scheduled-send-mode-option">
+                <n-radio value="send" />
+                <span>{{ t('webSession.scheduledModeSend') }}</span>
+              </label>
+              <label class="scheduled-send-mode-option">
+                <n-radio value="queue" />
+                <span>{{ t('webSession.scheduledModeQueue') }}</span>
+              </label>
+              <label class="scheduled-send-mode-option">
+                <n-radio value="interrupt" />
+                <span>{{ t('webSession.scheduledModeInterrupt') }}</span>
+              </label>
+            </div>
+          </n-radio-group>
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="scheduled-send-footer">
+          <n-button
+            secondary
+            :disabled="scheduledSendSubmitting"
+            @click="showScheduledSendDialog = false"
+          >
+            {{ t('common.cancel') }}
+          </n-button>
+          <n-button
+            type="primary"
+            :loading="scheduledSendSubmitting"
+            :disabled="!canConfirmScheduledSend"
+            @click="handleConfirmScheduledSend"
+          >
+            {{ t('webSession.scheduleSendConfirm') }}
+          </n-button>
+        </div>
+      </template>
+    </n-modal>
+
+    <n-modal
       :show="showAttachmentPreview"
       preset="card"
       class="attachment-preview-modal"
@@ -1757,6 +1927,7 @@ import {
   type WebSessionHistoryAnswerEntry,
   type WebSessionLiveState,
   type WebSessionPendingInput,
+  type WebSessionScheduledInput,
   type WebSessionUserInputOption,
   type WebSessionUserInputQuestion,
 } from '@/stores/webSession';
@@ -1792,6 +1963,7 @@ import {
 import { urlBase } from '@/api';
 import { http } from '@/api/http';
 import { webSessionApi } from '@/api/webSession';
+import { createLongPressTracker } from '@/utils/longPress';
 import TransferProgressDialog from '@/components/common/TransferProgressDialog.vue';
 import SplitDropdownControl from '@/components/common/SplitDropdownControl.vue';
 import WebSessionApprovalNotifier from '@/components/web-session/WebSessionApprovalNotifier.vue';
@@ -2059,6 +2231,14 @@ type LiveTimeTooltipItem = {
 
 type ImageViewPreviewState = 'loading' | 'ready' | 'error';
 
+type ScheduledSendMode = 'send' | 'interrupt' | 'queue';
+
+type ScheduledSendPresetOption = {
+  key: string;
+  label: string;
+  timestamp: number;
+};
+
 function isDraftSession(session: SessionTab | null | undefined): session is DraftSessionTab {
   return Boolean(session && 'isDraft' in session && session.isDraft);
 }
@@ -2147,6 +2327,15 @@ const showImportDialog = ref(false);
 const contextMenuSession = ref<SessionTab | null>(null);
 const contextMenuX = ref(0);
 const contextMenuY = ref(0);
+const showSendQuickActions = ref(false);
+const sendQuickActionsX = ref(0);
+const sendQuickActionsY = ref(0);
+const sendQuickActionAnchor = shallowRef<HTMLElement | null>(null);
+const showScheduledSendDialog = ref(false);
+const scheduledSendAt = ref<number | null>(null);
+const scheduledSendMode = ref<ScheduledSendMode>('send');
+const scheduledSendPresetOptions = ref<ScheduledSendPresetOption[]>([]);
+const scheduledSendSubmitting = ref(false);
 const activeTabIndicatorStyle = ref(hiddenCardTabIndicatorStyle());
 const tabsContainerWidth = ref(0);
 const tabTitleMaxWidth = ref(MAX_TAB_TITLE_WIDTH);
@@ -2199,7 +2388,9 @@ const mobileKeyboard = useMobileKeyboard({
   },
   onStateChange: state => {
     isMobileKeyboardResizeFrozen.value = state.isResizeFrozen;
-    emitMobileComposerChromeHidden(Boolean(isMobile.value && props.isActive && state.isResizeFrozen));
+    emitMobileComposerChromeHidden(
+      Boolean(isMobile.value && props.isActive && state.isResizeFrozen)
+    );
   },
 });
 const pendingHistoryAnchor = ref<{
@@ -2213,6 +2404,7 @@ let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
 let sendConfirmationTimer: number | null = null;
 let lastEmittedMobileComposerChromeHidden = false;
+let scheduledSendLongPressAnchor: HTMLElement | null = null;
 const loadedSidebarProjectIds = new Set<string>();
 const streamingMarkdownController = createWebSessionStreamingMarkdownController({
   delayMs: webSessionStreamingMarkdownThrottleMs.value,
@@ -3079,6 +3271,9 @@ function openDraftAttachmentPreview(
 const pendingInputs = computed(() =>
   currentRealSession.value ? webSessionStore.getPendingInputs(currentRealSession.value.id) : []
 );
+const scheduledInputs = computed(() =>
+  currentRealSession.value ? webSessionStore.getScheduledInputs(currentRealSession.value.id) : []
+);
 const currentSessionLatestEventSeq = computed(() =>
   currentRealSession.value ? webSessionStore.getLatestEventSeq(currentRealSession.value.id) : 0
 );
@@ -3124,6 +3319,52 @@ const canSend = computed(
 );
 const canStageDuringRun = computed(
   () => isRunActive.value && hasDraftContent.value && !isDraftAttachmentUploading.value
+);
+const canOpenSendQuickActions = computed(() =>
+  isRunActive.value ? canStageDuringRun.value : canSend.value
+);
+const sendQuickActionOptions = computed<DropdownOption[]>(() => {
+  const options: DropdownOption[] = [];
+  if (isRunActive.value) {
+    options.push(
+      {
+        key: 'redirect',
+        label: t('webSession.preinputRedirect'),
+      },
+      {
+        key: 'queue',
+        label: t('webSession.preinputQueue'),
+      }
+    );
+  } else {
+    options.push({
+      key: 'send',
+      label: isSendConflictConfirmationArmed.value
+        ? t('webSession.sendEmphatic')
+        : t('webSession.send'),
+    });
+  }
+  options.push({
+    key: 'schedule',
+    label: t('webSession.scheduleSend'),
+  });
+  return options;
+});
+const selectedScheduledSendPresetKey = computed(
+  () =>
+    scheduledSendPresetOptions.value.find(option => option.timestamp === scheduledSendAt.value)
+      ?.key ?? ''
+);
+const scheduledSendSelectedTimeLabel = computed(() =>
+  scheduledSendAt.value ? formatWebSessionDateTime(scheduledSendAt.value, locale.value) : ''
+);
+const canConfirmScheduledSend = computed(
+  () =>
+    Number.isFinite(scheduledSendAt.value) &&
+    Number(scheduledSendAt.value) > Date.now() &&
+    hasDraftContent.value &&
+    !isDraftAttachmentUploading.value &&
+    !scheduledSendSubmitting.value
 );
 const composerMinRows = computed(() => (isMobile.value ? 2 : 3));
 const composerMaxRows = computed(() => (isMobile.value ? 8 : 10));
@@ -3581,6 +3822,161 @@ function setSendConflictConfirmationState(nextState: WebSessionSendConfirmationS
 
 function clearSendConflictConfirmation() {
   setSendConflictConfirmationState(null);
+}
+
+function closeSendQuickActions() {
+  showSendQuickActions.value = false;
+  sendQuickActionAnchor.value = null;
+}
+
+function openSendQuickActionsFromElement(anchorEl: HTMLElement) {
+  if (!canOpenSendQuickActions.value) {
+    return;
+  }
+  const rect = anchorEl.getBoundingClientRect();
+  sendQuickActionAnchor.value = anchorEl;
+  sendQuickActionsX.value = Math.round(rect.right);
+  sendQuickActionsY.value = Math.round(rect.top);
+  showSendQuickActions.value = true;
+}
+
+function buildScheduledSendPresetOptions(now = Date.now()): ScheduledSendPresetOption[] {
+  const options: ScheduledSendPresetOption[] = [
+    {
+      key: '10s',
+      label: t('webSession.schedulePreset10Seconds'),
+      timestamp: now + 10_000,
+    },
+    {
+      key: '1m',
+      label: t('webSession.schedulePreset1Minute'),
+      timestamp: now + 60_000,
+    },
+    {
+      key: '10m',
+      label: t('webSession.schedulePreset10Minutes'),
+      timestamp: now + 10 * 60_000,
+    },
+    {
+      key: '1h',
+      label: t('webSession.schedulePreset1Hour'),
+      timestamp: now + 60 * 60_000,
+    },
+  ];
+  const todayAtTwenty = new Date(now);
+  todayAtTwenty.setHours(20, 0, 0, 0);
+  if (todayAtTwenty.getTime() > now) {
+    options.push({
+      key: 'today-20',
+      label: t('webSession.schedulePresetTodayAt20'),
+      timestamp: todayAtTwenty.getTime(),
+    });
+  }
+  return options;
+}
+
+function openScheduledSendDialog() {
+  const presets = buildScheduledSendPresetOptions();
+  scheduledSendPresetOptions.value = presets;
+  scheduledSendAt.value =
+    presets.find(option => option.key === '1m')?.timestamp ??
+    presets[0]?.timestamp ??
+    Date.now() + 60_000;
+  scheduledSendMode.value = 'send';
+  scheduledSendSubmitting.value = false;
+  showScheduledSendDialog.value = true;
+  closeSendQuickActions();
+}
+
+function handleScheduledSendDialogVisibilityChange(show: boolean) {
+  showScheduledSendDialog.value = show;
+  if (!show) {
+    scheduledSendSubmitting.value = false;
+  }
+}
+
+function handleScheduledSendPresetSelect(timestamp: number) {
+  scheduledSendAt.value = timestamp;
+}
+
+const sendQuickActionLongPress = createLongPressTracker({
+  onLongPress: () => {
+    if (!scheduledSendLongPressAnchor) {
+      return;
+    }
+    openSendQuickActionsFromElement(scheduledSendLongPressAnchor);
+  },
+});
+
+function handlePrimarySendPointerDown(event: PointerEvent) {
+  if (event.button !== 0 || !canOpenSendQuickActions.value) {
+    return;
+  }
+  scheduledSendLongPressAnchor = event.currentTarget as HTMLElement | null;
+  sendQuickActionLongPress.pointerDown(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+}
+
+function handlePrimarySendPointerMove(event: PointerEvent) {
+  sendQuickActionLongPress.pointerMove(event.pointerId, {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  });
+}
+
+function handlePrimarySendPointerUp(event: PointerEvent) {
+  sendQuickActionLongPress.pointerUp(event.pointerId);
+}
+
+function handlePrimarySendPointerCancel(event: PointerEvent) {
+  sendQuickActionLongPress.pointerCancel(event.pointerId);
+}
+
+function handleSendQuickActionTriggerClick(event: MouseEvent) {
+  const anchorEl = event.currentTarget as HTMLElement | null;
+  if (!anchorEl || !canOpenSendQuickActions.value) {
+    return;
+  }
+  if (showSendQuickActions.value && sendQuickActionAnchor.value === anchorEl) {
+    closeSendQuickActions();
+    return;
+  }
+  openSendQuickActionsFromElement(anchorEl);
+}
+
+async function handlePrimarySendButtonClick() {
+  if (sendQuickActionLongPress.consumeClick()) {
+    return;
+  }
+  closeSendQuickActions();
+  if (isRunActive.value) {
+    await handlePreinput('redirect');
+    return;
+  }
+  await handleSubmit();
+}
+
+async function handleSendQuickActionSelect(key: string | number) {
+  const action = String(key || '').trim();
+  closeSendQuickActions();
+  switch (action) {
+    case 'send':
+      await handleSubmit();
+      return;
+    case 'redirect':
+      await handlePreinput('redirect');
+      return;
+    case 'queue':
+      await handlePreinput('queue');
+      return;
+    case 'schedule':
+      openScheduledSendDialog();
+      return;
+    default:
+      return;
+  }
 }
 
 function showComposerTransferError(detail?: string) {
@@ -7605,6 +8001,57 @@ async function handleSubmit() {
   }
 }
 
+async function handleConfirmScheduledSend() {
+  const initialSubmitOwnerId = currentDraftSessionId.value;
+  const executeAt = Number(scheduledSendAt.value);
+  if (
+    !initialSubmitOwnerId ||
+    scheduledSendSubmitting.value ||
+    isDraftAttachmentUploading.value ||
+    !hasDraftContent.value ||
+    !Number.isFinite(executeAt) ||
+    executeAt <= Date.now()
+  ) {
+    return;
+  }
+  scheduledSendSubmitting.value = true;
+  try {
+    let session = currentRealSession.value;
+    if (!session || isDraftSession(currentSession.value)) {
+      session = (await handleCreateSession()) ?? webSessionStore.getActiveSession(props.projectId);
+    }
+    if (!session) {
+      return;
+    }
+    const draftSessionId = currentDraftSessionId.value;
+    const draftText = composerText.value;
+    const attachments = [...draftAttachments.value];
+    const prepared = await prepareSessionForSend(session);
+    session = prepared.session;
+    await webSessionStore.scheduleMessage(
+      session.id,
+      draftText,
+      attachments.map(item => item.id),
+      executeAt,
+      scheduledSendMode.value
+    );
+    settingsStore.recordWebSessionRecentInput(draftText);
+    void settingsStore.syncWebSessionQuickInputToServer();
+    webSessionStore.clearDraft(props.projectId, draftSessionId);
+    if (prepared.navigateProjectId) {
+      projectStore.addRecentProject(prepared.navigateProjectId);
+      await router.push(buildProjectRouteLocation(prepared.navigateProjectId, session.id));
+    }
+    isMobileComposerSettingsExpanded.value = false;
+    showScheduledSendDialog.value = false;
+    message.success(t('webSession.scheduleSendCreated'));
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  } finally {
+    scheduledSendSubmitting.value = false;
+  }
+}
+
 async function handlePreinput(mode: 'redirect' | 'queue') {
   if (!currentRealSession.value || isDraftAttachmentUploading.value || !hasDraftContent.value) {
     return;
@@ -7778,12 +8225,42 @@ function pendingInputPreview(item: WebSessionPendingInput) {
   return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
 }
 
+function scheduledModeLabel(mode: WebSessionScheduledInput['mode']) {
+  switch (mode) {
+    case 'interrupt':
+      return t('webSession.scheduledModeInterrupt');
+    case 'queue':
+      return t('webSession.scheduledModeQueue');
+    default:
+      return t('webSession.scheduledModeSend');
+  }
+}
+
+function scheduledInputPreview(item: WebSessionScheduledInput) {
+  const text = item.text.trim();
+  if (text) {
+    return text.length > 72 ? `${text.slice(0, 72)}...` : text;
+  }
+  return t('webSession.pendingAttachments', { count: item.attachmentIds.length });
+}
+
 async function handleRemovePendingInput(pendingId: string) {
   if (!currentRealSession.value) {
     return;
   }
   try {
     await webSessionStore.removePendingInput(currentRealSession.value.id, pendingId);
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : t('common.error'));
+  }
+}
+
+async function handleRemoveScheduledInput(inputId: string) {
+  if (!currentRealSession.value) {
+    return;
+  }
+  try {
+    await webSessionStore.removeScheduledInput(currentRealSession.value.id, inputId);
   } catch (error) {
     message.error(error instanceof Error ? error.message : t('common.error'));
   }
@@ -8762,6 +9239,15 @@ watch([sendConfirmationSignature, planImplementConfirmationSignature], signature
   }
 });
 
+watch([canOpenSendQuickActions, isRunActive, () => currentRealSession.value?.id ?? ''], values => {
+  if (!showSendQuickActions.value) {
+    return;
+  }
+  if (!values[0]) {
+    closeSendQuickActions();
+  }
+});
+
 watch(
   () => sessions.value.map(session => session.id).join('|'),
   () => {
@@ -9221,6 +9707,8 @@ onBeforeUnmount(() => {
   emitMobileComposerChromeHidden(false);
   clearComposerTransferError();
   clearSendConflictConfirmation();
+  closeSendQuickActions();
+  sendQuickActionLongPress.pointerCancel();
   stopWebSessionCatchUp('unmount');
   resetComposerDragState();
   cleanupTabScrollListener();
@@ -12631,14 +13119,64 @@ defineExpose({
   color: color-mix(in srgb, var(--web-session-approval-accent-strong) 72%, #1f2937);
 }
 
-.composer-send-btn,
 .composer-stop-btn,
 .composer-queue-btn {
   min-width: 84px;
 }
 
+.composer-send-btn {
+  min-width: 76px;
+}
+
+.composer-send-action-group {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.composer-send-action-group :deep(.n-button) {
+  border-radius: 6px 0 0 6px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
 .composer-send-btn.is-confirm-armed {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--web-session-approval-border) 78%, transparent);
+}
+
+.composer-send-action-group.is-confirm-armed {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--web-session-approval-border) 78%, transparent);
+}
+
+.composer-send-menu-btn {
+  width: 30px;
+  border: none;
+  border-left: 1px solid color-mix(in srgb, rgba(255, 255, 255, 0.3) 70%, transparent);
+  border-radius: 0 6px 6px 0;
+  background: var(--n-primary-color);
+  color: var(--n-button-text-color, #fff);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.composer-send-menu-btn:hover {
+  background: var(--n-primary-color-hover, var(--n-primary-color));
+}
+
+.composer-send-menu-btn:active {
+  background: var(--n-primary-color-pressed, var(--n-primary-color-hover, var(--n-primary-color)));
+}
+
+.composer-send-menu-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .composer-send-confirm-popover-card {
@@ -12660,6 +13198,13 @@ defineExpose({
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 2px;
+}
+
+.scheduled-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .quick-input-popover-card {
@@ -12797,6 +13342,145 @@ defineExpose({
   font-size: 13px;
   line-height: 1;
   flex-shrink: 0;
+}
+
+.scheduled-input-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 78%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 95%, rgba(245, 158, 11, 0.05));
+}
+
+.scheduled-input-item.state-failed {
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(239, 68, 68, 0.06));
+}
+
+.scheduled-input-badge,
+.scheduled-input-mode {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.scheduled-input-badge.state-scheduled {
+  background: rgba(245, 158, 11, 0.12);
+  color: #b45309;
+}
+
+.scheduled-input-badge.state-failed {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+.scheduled-input-mode {
+  background: color-mix(in srgb, var(--n-border-color) 72%, transparent);
+  color: var(--n-text-color-2);
+}
+
+.scheduled-input-time {
+  font-size: 11px;
+  color: var(--n-text-color-2);
+  white-space: nowrap;
+}
+
+.scheduled-input-preview {
+  min-width: 0;
+  flex: 1 1 140px;
+  font-size: 11px;
+  color: var(--n-text-color-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scheduled-input-remove {
+  border: none;
+  background: transparent;
+  color: var(--n-text-color-3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.scheduled-send-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.scheduled-send-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scheduled-send-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.scheduled-send-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scheduled-send-preset {
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 96%, transparent);
+  color: inherit;
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.scheduled-send-preset.is-selected {
+  border-color: color-mix(in srgb, var(--n-primary-color) 52%, transparent);
+  background: color-mix(in srgb, var(--n-primary-color) 12%, transparent);
+  color: var(--n-primary-color);
+}
+
+.scheduled-send-selected {
+  font-size: 12px;
+  color: var(--n-text-color-2);
+}
+
+.scheduled-send-mode-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.scheduled-send-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--n-border-color) 82%, transparent);
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 97%, transparent);
+}
+
+.scheduled-send-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .draft-attachment-remove {

@@ -133,6 +133,24 @@ const (
 	PendingInputModeQueue    PendingInputMode = "queue"
 )
 
+type ScheduledInputMode string
+
+const (
+	ScheduledInputModeSend      ScheduledInputMode = "send"
+	ScheduledInputModeInterrupt ScheduledInputMode = "interrupt"
+	ScheduledInputModeRedirect  ScheduledInputMode = "redirect"
+	ScheduledInputModeQueue     ScheduledInputMode = "queue"
+)
+
+type ScheduledInputStatus string
+
+const (
+	ScheduledInputStatusScheduled  ScheduledInputStatus = "scheduled"
+	ScheduledInputStatusDispatched ScheduledInputStatus = "dispatched"
+	ScheduledInputStatusCanceled   ScheduledInputStatus = "canceled"
+	ScheduledInputStatusFailed     ScheduledInputStatus = "failed"
+)
+
 type SessionSummary struct {
 	ID                      string              `json:"id"`
 	ProjectID               string              `json:"projectId"`
@@ -272,6 +290,19 @@ type PendingInput struct {
 	CreatedAt     time.Time        `json:"createdAt"`
 }
 
+type ScheduledInput struct {
+	ID            string               `json:"id"`
+	Mode          ScheduledInputMode   `json:"mode"`
+	Text          string               `json:"text"`
+	AttachmentIDs []string             `json:"attachmentIds"`
+	ScheduledFor  time.Time            `json:"scheduledFor"`
+	Status        ScheduledInputStatus `json:"status"`
+	CreatedAt     time.Time            `json:"createdAt"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
+	SentAt        *time.Time           `json:"sentAt,omitempty"`
+	CanceledAt    *time.Time           `json:"canceledAt,omitempty"`
+}
+
 type PendingUserInput struct {
 	ItemID      string                `json:"itemId"`
 	Prompt      string                `json:"prompt,omitempty"`
@@ -283,16 +314,18 @@ type SessionSnapshot struct {
 	Session          SessionSummary    `json:"session"`
 	History          HistoryWindow     `json:"history"`
 	PendingInputs    []PendingInput    `json:"pendingInputs"`
+	ScheduledInputs  []ScheduledInput  `json:"scheduledInputs"`
 	PendingUserInput *PendingUserInput `json:"pendingUserInput,omitempty"`
 }
 
 type ImportResult struct {
-	Session       SessionSummary `json:"session"`
-	History       HistoryWindow  `json:"history"`
-	PendingInputs []PendingInput `json:"pendingInputs"`
-	Created       bool           `json:"created"`
-	Reused        bool           `json:"reused"`
-	Synced        bool           `json:"synced"`
+	Session         SessionSummary   `json:"session"`
+	History         HistoryWindow    `json:"history"`
+	PendingInputs   []PendingInput   `json:"pendingInputs"`
+	ScheduledInputs []ScheduledInput `json:"scheduledInputs"`
+	Created         bool             `json:"created"`
+	Reused          bool             `json:"reused"`
+	Synced          bool             `json:"synced"`
 }
 
 type ImportSourceSummary struct {

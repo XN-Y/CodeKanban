@@ -52,10 +52,24 @@ export type WebSessionPendingInputRecord = {
   createdAt?: string | number | null;
 };
 
+export type WebSessionScheduledInputRecord = {
+  id?: string;
+  mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+  status?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+  text?: string;
+  attachmentIds?: string[];
+  scheduledFor?: string | number | null;
+  createdAt?: string | number | null;
+  updatedAt?: string | number | null;
+  sentAt?: string | number | null;
+  canceledAt?: string | number | null;
+};
+
 export type WebSessionSnapshot = {
   session: WebSessionSummary;
   history: WebSessionHistoryWindow;
   pendingInputs?: WebSessionPendingInputRecord[];
+  scheduledInputs?: WebSessionScheduledInputRecord[];
 };
 
 export type WebSessionImportResult = WebSessionSnapshot & {

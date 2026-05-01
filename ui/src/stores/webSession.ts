@@ -102,6 +102,19 @@ type WirePendingInput = {
   ca?: number | null;
 };
 
+type WireScheduledInput = {
+  id?: string;
+  m?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+  st?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+  txt?: string;
+  atts?: string[];
+  sf?: number | null;
+  ca?: number | null;
+  ua?: number | null;
+  sa?: number | null;
+  xa?: number | null;
+};
+
 type WireHistoryItem = {
   id: string;
   stid?: string | null;
@@ -166,6 +179,7 @@ type WireFrame = {
   };
   i?: WireHistoryItem;
   pi?: WirePendingInput[];
+  si?: WireScheduledInput[];
   code?: string;
   msg?: string;
   retry?: boolean;
@@ -306,6 +320,19 @@ export interface WebSessionPendingInput {
   text: string;
   attachmentIds: string[];
   createdAt: number;
+}
+
+export interface WebSessionScheduledInput {
+  id: string;
+  mode: 'send' | 'interrupt' | 'queue';
+  status: 'scheduled' | 'failed';
+  text: string;
+  attachmentIds: string[];
+  scheduledFor: number;
+  createdAt: number;
+  updatedAt: number;
+  sentAt: number | null;
+  canceledAt: number | null;
 }
 
 type RuntimeMutationStateSnapshot = {
@@ -885,6 +912,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
   >({});
   const pendingInputsBySession = ref<Record<string, WebSessionPendingInput[]>>({});
+  const scheduledInputsBySession = ref<Record<string, WebSessionScheduledInput[]>>({});
   const activeSessionIdByProject = ref<Record<string, string>>(loadStoredActiveSessions());
   const loadedProjects = ref<Record<string, boolean>>({});
   const cachedCounts = reactive(new Map<string, number>());
@@ -1048,6 +1076,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     return pendingInputsBySession.value[sessionId] ?? [];
   }
 
+  function getScheduledInputs(sessionId: string) {
+    return scheduledInputsBySession.value[sessionId] ?? [];
+  }
+
   function getHistoryMeta(sessionId: string): HistoryMeta {
     return (
       historyBySession.value[sessionId] ?? {
@@ -1148,6 +1180,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     summary: WebSessionSummary,
     items: WebSessionBlock[],
     pendingInputs: WebSessionPendingInput[],
+    scheduledInputs: WebSessionScheduledInput[],
     history: {
       hasMore: boolean;
       beforeCursor?: string;
@@ -1160,6 +1193,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     upsertSession(summary, options);
     resetSessionEvents(sessionId, items);
     setPendingInputs(sessionId, pendingInputs);
+    setScheduledInputs(sessionId, scheduledInputs);
     historyBySession.value = {
       ...historyBySession.value,
       [sessionId]: {
@@ -1593,6 +1627,78 @@ export const useWebSessionStore = defineStore('web-session', () => {
     };
   }
 
+  function normalizeScheduledInput(item: {
+    id?: string;
+    mode?: 'send' | 'interrupt' | 'redirect' | 'queue' | string;
+    status?: 'scheduled' | 'failed' | 'dispatched' | 'canceled' | string;
+    text?: string;
+    attachmentIds?: string[];
+    scheduledFor?: string | number | null;
+    createdAt?: string | number | null;
+    updatedAt?: string | number | null;
+    sentAt?: string | number | null;
+    canceledAt?: string | number | null;
+  }): WebSessionScheduledInput | null {
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    if (!id) {
+      return null;
+    }
+    const mode =
+      item.mode === 'send'
+        ? 'send'
+        : item.mode === 'interrupt' || item.mode === 'redirect'
+          ? 'interrupt'
+          : item.mode === 'queue'
+            ? 'queue'
+            : '';
+    const status =
+      item.status === 'failed' ? 'failed' : item.status === 'scheduled' ? 'scheduled' : '';
+    if (!mode || !status) {
+      return null;
+    }
+    const scheduledFor =
+      typeof item.scheduledFor === 'number'
+        ? item.scheduledFor
+        : Date.parse(typeof item.scheduledFor === 'string' ? item.scheduledFor : '');
+    if (!Number.isFinite(scheduledFor)) {
+      return null;
+    }
+    const createdAt =
+      typeof item.createdAt === 'number'
+        ? item.createdAt
+        : Date.parse(typeof item.createdAt === 'string' ? item.createdAt : '');
+    const updatedAt =
+      typeof item.updatedAt === 'number'
+        ? item.updatedAt
+        : Date.parse(typeof item.updatedAt === 'string' ? item.updatedAt : '');
+    const sentAt =
+      typeof item.sentAt === 'number'
+        ? item.sentAt
+        : Date.parse(typeof item.sentAt === 'string' ? item.sentAt : '');
+    const canceledAt =
+      typeof item.canceledAt === 'number'
+        ? item.canceledAt
+        : Date.parse(typeof item.canceledAt === 'string' ? item.canceledAt : '');
+    return {
+      id,
+      mode,
+      status,
+      text: typeof item.text === 'string' ? item.text : '',
+      attachmentIds: Array.isArray(item.attachmentIds)
+        ? item.attachmentIds.filter((value): value is string => typeof value === 'string')
+        : [],
+      scheduledFor,
+      createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+      updatedAt: Number.isFinite(updatedAt)
+        ? updatedAt
+        : Number.isFinite(createdAt)
+          ? createdAt
+          : Date.now(),
+      sentAt: Number.isFinite(sentAt) ? sentAt : null,
+      canceledAt: Number.isFinite(canceledAt) ? canceledAt : null,
+    };
+  }
+
   function insertPendingInput(
     items: WebSessionPendingInput[],
     item: WebSessionPendingInput
@@ -1605,6 +1711,18 @@ export const useWebSessionStore = defineStore('web-session', () => {
       return [...items, item];
     }
     return [...items.slice(0, insertAt), item, ...items.slice(insertAt)];
+  }
+
+  function sortScheduledInputs(items: WebSessionScheduledInput[]) {
+    return [...items].sort((left, right) => {
+      if (left.status !== right.status) {
+        return left.status === 'scheduled' ? -1 : 1;
+      }
+      if (left.scheduledFor !== right.scheduledFor) {
+        return left.scheduledFor - right.scheduledFor;
+      }
+      return left.createdAt - right.createdAt;
+    });
   }
 
   function normalizeHistoryItem(item: WireHistoryItem | Record<string, unknown>): WebSessionBlock {
@@ -1969,6 +2087,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const nextPendingInputs = { ...pendingInputsBySession.value };
     delete nextPendingInputs[sessionId];
     pendingInputsBySession.value = nextPendingInputs;
+    const nextScheduledInputs = { ...scheduledInputsBySession.value };
+    delete nextScheduledInputs[sessionId];
+    scheduledInputsBySession.value = nextScheduledInputs;
     completedTransitionVersionBySession.delete(sessionId);
     if (projectId) {
       clearDraft(projectId, sessionId);
@@ -2039,6 +2160,16 @@ export const useWebSessionStore = defineStore('web-session', () => {
       nextPendingInputs[sessionId] = items;
     }
     pendingInputsBySession.value = nextPendingInputs;
+  }
+
+  function setScheduledInputs(sessionId: string, items: WebSessionScheduledInput[]) {
+    const nextScheduledInputs = { ...scheduledInputsBySession.value };
+    if (items.length === 0) {
+      delete nextScheduledInputs[sessionId];
+    } else {
+      nextScheduledInputs[sessionId] = sortScheduledInputs(items);
+    }
+    scheduledInputsBySession.value = nextScheduledInputs;
   }
 
   function mergeEvents(sessionId: string, incoming: WebSessionBlock[]) {
@@ -2633,6 +2764,24 @@ export const useWebSessionStore = defineStore('web-session', () => {
               )
               .filter((item): item is WebSessionPendingInput => item != null)
           : [],
+        Array.isArray(frame.si)
+          ? frame.si
+              .map(item =>
+                normalizeScheduledInput({
+                  id: item.id,
+                  mode: item.m,
+                  status: item.st,
+                  text: item.txt,
+                  attachmentIds: item.atts,
+                  scheduledFor: item.sf,
+                  createdAt: item.ca,
+                  updatedAt: item.ua,
+                  sentAt: item.sa,
+                  canceledAt: item.xa,
+                })
+              )
+              .filter((item): item is WebSessionScheduledInput => item != null)
+          : [],
         {
           hasMore: frame.h?.hm ?? false,
           beforeCursor: frame.h?.bc ?? '',
@@ -2663,6 +2812,32 @@ export const useWebSessionStore = defineStore('web-session', () => {
                   })
                 )
                 .filter((item): item is WebSessionPendingInput => item != null)
+            : []
+        );
+        emitStateTransition(frame.sid, previousState, previousApproval);
+        return;
+      }
+
+      if (frame.op === 'scheduled') {
+        setScheduledInputs(
+          frame.sid,
+          Array.isArray(frame.si)
+            ? frame.si
+                .map(item =>
+                  normalizeScheduledInput({
+                    id: item.id,
+                    mode: item.m,
+                    status: item.st,
+                    text: item.txt,
+                    attachmentIds: item.atts,
+                    scheduledFor: item.sf,
+                    createdAt: item.ca,
+                    updatedAt: item.ua,
+                    sentAt: item.sa,
+                    canceledAt: item.xa,
+                  })
+                )
+                .filter((item): item is WebSessionScheduledInput => item != null)
             : []
         );
         emitStateTransition(frame.sid, previousState, previousApproval);
@@ -3150,6 +3325,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
                 .map(item => normalizePendingInput(item))
                 .filter((item): item is WebSessionPendingInput => item != null)
             : [],
+          Array.isArray(snapshot.scheduledInputs)
+            ? snapshot.scheduledInputs
+                .map(item => normalizeScheduledInput(item))
+                .filter((item): item is WebSessionScheduledInput => item != null)
+            : [],
           {
             hasMore: Boolean(snapshot.history?.hasMore),
             beforeCursor: String(snapshot.history?.beforeCursor ?? ''),
@@ -3181,6 +3361,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const summary = await webSessionApi.archive(projectId, sessionId);
     removeCurrentSessionRecord(projectId, sessionId);
     setPendingInputs(sessionId, []);
+    setScheduledInputs(sessionId, []);
     upsertArchivedSession(summary, { includeInMatchingScopes: true });
     return summary;
   }
@@ -3212,6 +3393,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
           ? result.pendingInputs
               .map(item => normalizePendingInput(item))
               .filter((item): item is WebSessionPendingInput => item != null)
+          : [],
+        Array.isArray(result.scheduledInputs)
+          ? result.scheduledInputs
+              .map(item => normalizeScheduledInput(item))
+              .filter((item): item is WebSessionScheduledInput => item != null)
           : [],
         {
           hasMore: Boolean(result.history?.hasMore),
@@ -3253,6 +3439,11 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? snapshot.pendingInputs
                 .map(item => normalizePendingInput(item))
                 .filter((item): item is WebSessionPendingInput => item != null)
+            : [],
+          Array.isArray(snapshot.scheduledInputs)
+            ? snapshot.scheduledInputs
+                .map(item => normalizeScheduledInput(item))
+                .filter((item): item is WebSessionScheduledInput => item != null)
             : [],
           {
             hasMore: Boolean(snapshot?.history?.hasMore),
@@ -3369,6 +3560,62 @@ export const useWebSessionStore = defineStore('web-session', () => {
         label: 'pending_del',
         predicate: () => !getPendingInputs(sessionId).some(item => item.id === pendingId),
       }
+    );
+  }
+
+  async function scheduleMessage(
+    sessionId: string,
+    text: string,
+    attachmentIds: string[],
+    scheduledFor: number,
+    mode: 'send' | 'interrupt' | 'queue' = 'send'
+  ) {
+    const session = findSessionById(sessionId);
+    if (session?.archivedAt) {
+      throw new Error('session is archived');
+    }
+    const frame = await sendCommand('schedule_send', sessionId, {
+      txt: text,
+      atts: attachmentIds,
+      mode,
+      at: scheduledFor,
+    });
+    const payload = asRecord(frame.p);
+    const created = normalizeScheduledInput({
+      id: typeof payload?.id === 'string' ? payload.id : '',
+      mode: typeof payload?.m === 'string' ? payload.m : '',
+      status: typeof payload?.st === 'string' ? payload.st : '',
+      text: typeof payload?.txt === 'string' ? payload.txt : text,
+      attachmentIds: Array.isArray(payload?.atts)
+        ? payload.atts.filter((value): value is string => typeof value === 'string')
+        : attachmentIds,
+      scheduledFor: typeof payload?.sf === 'number' ? payload.sf : scheduledFor,
+      createdAt:
+        typeof payload?.ca === 'number' || typeof payload?.ca === 'string' ? payload.ca : null,
+      updatedAt:
+        typeof payload?.ua === 'number' || typeof payload?.ua === 'string' ? payload.ua : null,
+      sentAt:
+        typeof payload?.sa === 'number' || typeof payload?.sa === 'string' ? payload.sa : null,
+      canceledAt:
+        typeof payload?.xa === 'number' || typeof payload?.xa === 'string' ? payload.xa : null,
+    });
+    if (created) {
+      setScheduledInputs(
+        sessionId,
+        sortScheduledInputs([
+          ...getScheduledInputs(sessionId).filter(item => item.id !== created.id),
+          created,
+        ])
+      );
+    }
+    return created;
+  }
+
+  async function removeScheduledInput(sessionId: string, inputId: string) {
+    await sendCommand('scheduled_del', sessionId, { id: inputId });
+    setScheduledInputs(
+      sessionId,
+      getScheduledInputs(sessionId).filter(item => item.id !== inputId)
     );
   }
 
@@ -3732,6 +3979,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getDraftAttachmentUpload,
     setDraftText,
     getPendingInputs,
+    getScheduledInputs,
     getHistoryMeta,
     getBlocks,
     getLatestEventSeq,
@@ -3749,6 +3997,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     syncSession,
     deleteSession,
     sendMessage,
+    scheduleMessage,
     abortSession,
     approveSession,
     rejectSession,
@@ -3768,6 +4017,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     uploadAttachment,
     removeDraftAttachment,
     removePendingInput,
+    removeScheduledInput,
     clearDraft,
     moveDraft,
     openEventStream,
