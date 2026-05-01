@@ -14,7 +14,7 @@
         class="git-changes-search"
         :placeholder="t('gitChanges.searchPlaceholder')"
       />
-      <n-checkbox v-model:checked="ignoreUntracked" :disabled="panelLoading">
+      <n-checkbox v-model:checked="ignoreUntracked">
         {{ t('gitChanges.ignoreUntracked') }}
       </n-checkbox>
       <div class="git-changes-summary">
@@ -726,6 +726,7 @@ watch(
 watch(
   () => ignoreUntracked.value,
   () => {
+    syncSelectionWithFilter();
     emitSummaryChange();
     void ensureLoaded({
       scopeId: activeScopeId.value,
