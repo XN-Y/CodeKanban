@@ -26,12 +26,14 @@ const props = withDefaults(
     placeholder?: string;
     minRows?: number;
     maxRows?: number;
+    compact?: boolean;
     skills?: CodexSkillSummary[];
   }>(),
   {
     placeholder: '',
     minRows: 3,
     maxRows: 10,
+    compact: false,
     skills: () => [],
   }
 );
@@ -53,6 +55,9 @@ let applyingExternalValue = false;
 const editorStyleVars = computed(() => ({
   '--composer-editor-min-rows': String(Math.max(1, props.minRows)),
   '--composer-editor-max-rows': String(Math.max(props.minRows, props.maxRows)),
+  '--composer-editor-padding-top': props.compact ? '8px' : '10px',
+  '--composer-editor-padding-bottom': props.compact ? '8px' : '12px',
+  '--composer-editor-extra-height': props.compact ? '24px' : '28px',
 }));
 
 async function loadCodeMirrorBundle() {
@@ -213,7 +218,7 @@ function createEditorTheme(codeMirror: CodeMirrorBundle) {
       backgroundColor: 'transparent',
       color: 'var(--n-text-color)',
       minHeight:
-        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + 28px)',
+        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + var(--composer-editor-extra-height, 28px))',
     },
     '&.cm-focused': {
       outline: 'none',
@@ -222,11 +227,12 @@ function createEditorTheme(codeMirror: CodeMirrorBundle) {
       overflow: 'auto',
       minHeight: 'inherit',
       maxHeight:
-        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-max-rows) + 28px)',
+        'calc(var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-max-rows) + var(--composer-editor-extra-height, 28px))',
       fontFamily: 'inherit',
     },
     '.cm-content': {
-      padding: '10px 0 12px',
+      padding:
+        'var(--composer-editor-padding-top, 10px) 0 var(--composer-editor-padding-bottom, 12px)',
       fontFamily: 'inherit',
       minHeight: 'inherit',
       boxSizing: 'border-box',
@@ -470,7 +476,8 @@ defineExpose<WebSessionComposerEditorExposed>({
   width: 100%;
   min-width: 0;
   min-height: calc(
-    var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) + 28px
+    var(--composer-editor-font-size, 14px) * 1.68 * var(--composer-editor-min-rows) +
+      var(--composer-editor-extra-height, 28px)
   );
 }
 

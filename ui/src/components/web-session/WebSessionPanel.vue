@@ -893,6 +893,7 @@
             class="composer"
             :class="{
               'is-drag-over': isComposerDragOver,
+              'is-mobile': isMobile,
               'is-mobile-focused': isMobileComposerFocused,
             }"
             @paste.capture="handleComposerPaste"
@@ -1138,6 +1139,7 @@
                   :placeholder="composerPlaceholder"
                   :min-rows="composerMinRows"
                   :max-rows="composerMaxRows"
+                  :compact="isMobile"
                   :skills="codexSkills"
                   @focus="handleComposerFocus"
                   @blur="handleComposerBlur"
@@ -3366,7 +3368,7 @@ const canConfirmScheduledSend = computed(
     !isDraftAttachmentUploading.value &&
     !scheduledSendSubmitting.value
 );
-const composerMinRows = computed(() => (isMobile.value ? 2 : 3));
+const composerMinRows = computed(() => (isMobile.value ? 1 : 3));
 const composerMaxRows = computed(() => (isMobile.value ? 8 : 10));
 const composerPlaceholder = computed(() =>
   isMobile.value
@@ -12714,6 +12716,27 @@ defineExpose({
     transform 0.2s ease;
 }
 
+.composer.is-mobile {
+  padding: 6px 8px;
+}
+
+.composer.is-mobile .composer-mobile-summary {
+  margin-bottom: 0;
+}
+
+.composer.is-mobile .composer-mobile-toggle {
+  padding: 6px 8px;
+}
+
+.composer.is-mobile .composer-footer.is-mobile {
+  margin-top: 2px;
+}
+
+.composer.is-mobile .composer-icon-btn-mobile {
+  width: 36px;
+  height: 36px;
+}
+
 .composer.is-mobile-focused {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-primary-color) 20%, transparent);
 }
@@ -12953,10 +12976,6 @@ defineExpose({
 
 .composer-input-shell {
   position: relative;
-}
-
-.composer-input-shell.is-mobile {
-  min-height: 124px;
 }
 
 .composer-input {
