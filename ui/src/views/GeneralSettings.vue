@@ -556,6 +556,27 @@
                   </n-space>
                 </n-form-item>
                 <n-form-item
+                  :label="t('settings.webSessionActivityDisplayMode')"
+                  data-search-key="webSessionActivityDisplayMode"
+                >
+                  <n-space vertical size="small">
+                    <n-radio-group v-model:value="webSessionActivityDisplayModeValue">
+                      <n-space>
+                        <n-radio value="default">{{ t('common.default') }}</n-radio>
+                        <n-radio value="text">{{
+                          t('settings.webSessionActivityDisplayModeText')
+                        }}</n-radio>
+                        <n-radio value="card">{{
+                          t('settings.webSessionActivityDisplayModeCard')
+                        }}</n-radio>
+                      </n-space>
+                    </n-radio-group>
+                    <span class="form-tip">{{
+                      t('settings.webSessionActivityDisplayModeTip')
+                    }}</span>
+                  </n-space>
+                </n-form-item>
+                <n-form-item
                   :label="t('settings.webSessionStreamingMarkdownThrottle')"
                   data-search-key="webSessionStreamingMarkdownThrottle"
                 >
@@ -1644,6 +1665,7 @@ import {
   DEFAULT_WEB_SESSION_STREAMING_MARKDOWN_THROTTLE_MS,
   type FollowSystemThemeSetting,
 } from '@/stores/settings';
+import type { WebSessionActivityDisplayMode } from '@/constants/webSessionActivityDisplayMode';
 import { DEFAULT_EDITOR, EDITOR_OPTIONS, isEditorPreference } from '@/constants/editor';
 import {
   DEFAULT_TERMINAL_SNAPSHOT_INTERVAL_MS,
@@ -1740,6 +1762,7 @@ const {
   editorSettings,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionActivityDisplayMode,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
   webSessionStreamingMarkdownThrottleMode,
@@ -2906,6 +2929,12 @@ const showWebSessionReasoningValue = computed({
   set: value => settingsStore.updateShowWebSessionReasoning(value),
 });
 
+const webSessionActivityDisplayModeValue = computed({
+  get: () => webSessionActivityDisplayMode.value,
+  set: (value: WebSessionActivityDisplayMode) =>
+    settingsStore.updateWebSessionActivityDisplayMode(value),
+});
+
 const webSessionStreamingMarkdownThrottleModeValue = computed({
   get: () => webSessionStreamingMarkdownThrottleMode.value,
   set: (value: WebSessionStreamingMarkdownThrottleMode) =>
@@ -3268,6 +3297,9 @@ const allSettingsCards = computed<SettingsCardDefinition[]>(() => {
       dirty: webSessionQuickInputPinnedDirty.value || developerSessionDirty.value,
       searchTerms: [
         t('settings.showWebSessionReasoning'),
+        t('settings.webSessionActivityDisplayMode'),
+        t('settings.webSessionActivityDisplayModeText'),
+        t('settings.webSessionActivityDisplayModeCard'),
         t('settings.webSessionStreamingMarkdownThrottle'),
         t('settings.webSessionAutoContinueScope'),
         t('settings.webSessionAutoContinuePreset'),

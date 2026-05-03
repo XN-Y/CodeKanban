@@ -198,6 +198,11 @@
               class="timeline-scroll"
               @click.capture="handleTimelineLinkClick"
               @scroll="handleTimelineScroll"
+              @wheel.passive="handleTimelineWheel"
+              @touchstart.passive="handleTimelineTouchStart"
+              @touchmove.passive="handleTimelineTouchMove"
+              @touchend.passive="handleTimelineTouchEnd"
+              @touchcancel.passive="handleTimelineTouchEnd"
             >
               <div ref="timelineListRef" class="timeline-list">
                 <div v-if="historyMeta.loading" class="history-loading">
@@ -323,6 +328,67 @@
                             </n-button>
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    v-else-if="shouldRenderActivityDisplayRow(item)"
+                    class="timeline-activity-display-shell"
+                    :class="`mode-${effectiveWebSessionActivityDisplayMode}`"
+                  >
+                    <button
+                      type="button"
+                      class="timeline-activity-display-row"
+                      :class="[
+                        `mode-${effectiveWebSessionActivityDisplayMode}`,
+                        item.tool ? `state-${item.tool.status}` : '',
+                      ]"
+                      :title="getActivityDisplayTitle(item)"
+                      @click="handleActivityDisplayClick(item)"
+                    >
+                      <span class="activity-display-main">
+                        <span class="activity-display-label">{{ activityDisplayLabel(item) }}</span>
+                        <span class="activity-display-time" :title="formatDateTime(item.timestamp)">
+                          {{ formatTime(item.timestamp) }}
+                        </span>
+                        <span
+                          v-if="getActivityDisplayCount(item) > 1"
+                          class="activity-display-count"
+                        >
+                          x{{ getActivityDisplayCount(item) }}
+                        </span>
+                        <span class="activity-display-summary">
+                          {{ activityDisplaySummary(item) }}
+                        </span>
+                      </span>
+                      <span
+                        v-if="item.tool && effectiveWebSessionActivityDisplayMode === 'card'"
+                        class="tool-state-badge activity-display-state"
+                        :class="`state-${item.tool.status}`"
+                      >
+                        <span class="tool-state-dot"></span>
+                        {{ toolStateLabel(item.tool) }}
+                      </span>
+                    </button>
+                    <div
+                      v-if="item.tool && !isCompactTool(item.tool) && isToolExpanded(item.tool.id)"
+                      class="activity-display-expanded tool-body"
+                    >
+                      <div v-if="item.tool.input" class="tool-section">
+                        <div class="tool-section-label">{{ t('webSession.toolInput') }}</div>
+                        <pre class="tool-code">{{ stringifyValue(item.tool.input) }}</pre>
+                      </div>
+                      <div v-if="item.tool.output" class="tool-section">
+                        <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
+                        <pre class="tool-code">{{ item.tool.output }}</pre>
+                      </div>
+                      <div
+                        v-else-if="shouldShowToolPendingPlaceholder(item.tool)"
+                        class="tool-section"
+                      >
+                        <div class="tool-section-label">{{ t('webSession.toolOutput') }}</div>
+                        <pre class="tool-code">{{ t('common.loading') }}</pre>
                       </div>
                     </div>
                   </div>
@@ -922,7 +988,7 @@
               >
                 <n-icon
                   class="composer-mobile-panel-toggle-arrow"
-                  :class="{ 'is-open': !isMobileComposerCollapsed }"
+                  :class="{ 'is-collapsed': isMobileComposerCollapsed }"
                 >
                   <ChevronDownOutline />
                 </n-icon>
@@ -1944,6 +2010,12 @@ import {
   hiddenCardTabIndicatorStyle,
 } from '@/utils/cardTabIndicator';
 import { getDefaultTerminalTheme, getTerminalThemeById } from '@/constants/terminalThemes';
+import {
+  isWebSessionActivityDisplayToolKind,
+  normalizeWebSessionActivityToolKind,
+  resolveWebSessionActivityDisplayMode,
+  shouldUseWebSessionActivityDisplayMode,
+} from '@/constants/webSessionActivityDisplayMode';
 import { getAssistantIconByType } from '@/utils/assistantIcon';
 import { hexToRgba, isDarkHex } from '@/utils/color';
 import { renderMarkdown } from '@/utils/markdown';
@@ -1997,8 +2069,12 @@ import { resolveWebSessionAttachmentPreviewMode } from '@/components/web-session
 import { projectWebSessionCompactTimelineBlocks } from '@/components/web-session/webSessionCompactTimeline';
 import { createWebSessionStreamingMarkdownController } from '@/components/web-session/webSessionStreamingMarkdown';
 import {
+  createWebSessionMobileComposerScrollState,
   createWebSessionTimelineFollowState,
+  resolveWebSessionMobileComposerBottomScrollAction,
+  resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
+  type WebSessionMobileComposerScrollState,
   type WebSessionTimelineScrollMetrics,
 } from '@/components/web-session/webSessionTimelineScroll';
 import {
@@ -2283,11 +2359,16 @@ const streamingTimelineMarkdownRenderOptions = computed(() => ({
   enableLinkCopy: true,
   linkCopyLabel: t('common.copyLink'),
 }));
+const effectiveWebSessionActivityDisplayMode = computed(() =>
+  resolveWebSessionActivityDisplayMode(webSessionActivityDisplayMode.value)
+);
+
 const {
   activeTheme,
   currentPresetId,
   confirmBeforeTerminalClose,
   showWebSessionReasoning,
+  webSessionActivityDisplayMode,
   webSessionAutoContinueScope,
   webSessionAutoContinuePreset,
   webSessionStreamingMarkdownThrottleMs,
@@ -2312,6 +2393,7 @@ const tabsContainerRef = ref<HTMLElement | null>(null);
 const mobileTabTriggerRef = ref<HTMLButtonElement | null>(null);
 const timelineScrollRef = ref<HTMLDivElement | null>(null);
 const timelineListRef = ref<HTMLDivElement | null>(null);
+const mobileComposerScrollState = ref<WebSessionMobileComposerScrollState | null>(null);
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const composerInputRef = ref<WebSessionComposerEditorExposed | null>(null);
 const sidebarRootRef = ref<HTMLElement | null>(null);
@@ -2406,6 +2488,7 @@ let webSessionCatchUpTimer: number | null = null;
 let webSessionCatchUpToken = 0;
 let sendConfirmationTimer: number | null = null;
 let lastEmittedMobileComposerChromeHidden = false;
+let mobileTimelineTouchY: number | null = null;
 let scheduledSendLongPressAnchor: HTMLElement | null = null;
 const loadedSidebarProjectIds = new Set<string>();
 const streamingMarkdownController = createWebSessionStreamingMarkdownController({
@@ -2707,6 +2790,22 @@ function hasReasoningContent(block: WebSessionBlock) {
     return false;
   }
   return Boolean(block.tool?.output?.trim());
+}
+
+function isActivityDisplayBlock(block: WebSessionBlock) {
+  if (block.kind !== 'tool' || !block.tool) {
+    return false;
+  }
+  return isWebSessionActivityDisplayToolKind(
+    block.tool.kind || String(block.tool.meta?.kind ?? '')
+  );
+}
+
+function shouldRenderActivityDisplayRow(block: WebSessionBlock) {
+  return (
+    shouldUseWebSessionActivityDisplayMode(webSessionActivityDisplayMode.value) &&
+    isActivityDisplayBlock(block)
+  );
 }
 
 function shouldShowToolPendingPlaceholder(tool: NonNullable<WebSessionBlock['tool']>) {
@@ -3624,19 +3723,41 @@ function ensureMobileComposerVisible() {
   isMobileComposerCollapsed.value = false;
 }
 
+function resetMobileComposerScrollState(container = timelineScrollRef.value) {
+  mobileComposerScrollState.value = container
+    ? createWebSessionMobileComposerScrollState(readTimelineScrollMetrics(container))
+    : null;
+}
+
+function collapseMobileComposerPanel() {
+  if (!isMobile.value) {
+    return;
+  }
+  isMobileComposerCollapsed.value = true;
+  showQuickInputPopover.value = false;
+  isMobileComposerSettingsExpanded.value = false;
+  mobileKeyboard.setFocused(false);
+  setMobileComposerFocusState(false);
+}
+
+function expandMobileComposerPanel() {
+  if (!isMobile.value) {
+    return;
+  }
+  ensureMobileComposerVisible();
+}
+
 function toggleMobileComposerCollapsed() {
   if (!isMobile.value) {
     return;
   }
   const nextCollapsed = !isMobileComposerCollapsed.value;
-  isMobileComposerCollapsed.value = nextCollapsed;
-  if (!nextCollapsed) {
-    return;
+  if (nextCollapsed) {
+    collapseMobileComposerPanel();
+  } else {
+    expandMobileComposerPanel();
   }
-  showQuickInputPopover.value = false;
-  isMobileComposerSettingsExpanded.value = false;
-  mobileKeyboard.setFocused(false);
-  setMobileComposerFocusState(false);
+  resetMobileComposerScrollState();
 }
 
 function toggleMobileComposerSettingsExpanded() {
@@ -6497,23 +6618,7 @@ function handleImageViewPreviewError(toolId: string) {
 }
 
 function normalizeToolKindValue(value: string | undefined) {
-  const normalized = String(value ?? '').trim();
-  if (normalized === 'commandExecution') {
-    return 'command_execution';
-  }
-  if (normalized === 'contextCompaction') {
-    return 'context_compaction';
-  }
-  if (normalized === 'mcpToolCall') {
-    return 'mcp_tool_call';
-  }
-  if (normalized === 'fileChange') {
-    return 'file_change';
-  }
-  if (normalized === 'webSearch') {
-    return 'web_search';
-  }
-  return normalized;
+  return normalizeWebSessionActivityToolKind(value);
 }
 
 function isContextCompactionToolKind(value: string | undefined) {
@@ -6643,6 +6748,60 @@ function getCompactToolDisplaySummary(tool: NonNullable<WebSessionBlock['tool']>
 
 function getCompactToolCount(tool: NonNullable<WebSessionBlock['tool']>) {
   return Math.max(1, Number(tool.commandGroup?.count ?? 1) || 1);
+}
+
+function activityDisplayLabel(block: WebSessionBlock) {
+  if (!block.tool) {
+    return timelineRoleLabel(block);
+  }
+  if (isReasoningBlock(block)) {
+    return t('webSession.toolReasoning');
+  }
+  return compactToolLabel(block.tool);
+}
+
+function activityDisplaySummary(block: WebSessionBlock) {
+  if (!block.tool) {
+    return '';
+  }
+  if (isReasoningBlock(block)) {
+    const output = String(block.tool.output ?? '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (output) {
+      return output.slice(0, 160);
+    }
+  }
+  if (isCompactTool(block.tool)) {
+    return getCompactToolDisplaySummary(block.tool);
+  }
+  return formatToolPreview(block.tool) || t('webSession.compactToolNoSummary');
+}
+
+function getActivityDisplayCount(block: WebSessionBlock) {
+  return block.tool ? getCompactToolCount(block.tool) : 1;
+}
+
+function getActivityDisplayTitle(block: WebSessionBlock) {
+  const parts = [
+    activityDisplayLabel(block),
+    formatTime(block.timestamp),
+    activityDisplaySummary(block),
+  ]
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean);
+  return parts.join(' · ');
+}
+
+function handleActivityDisplayClick(block: WebSessionBlock) {
+  if (!block.tool) {
+    return;
+  }
+  if (isCompactTool(block.tool)) {
+    void openCommandExecutionDetail(block);
+    return;
+  }
+  toggleToolExpanded(block.tool);
 }
 
 function shouldHideTimelineMeta(item: WebSessionBlock) {
@@ -8462,6 +8621,7 @@ function syncScrollToBottom() {
   autoFollowBottom.value = true;
   showJumpToBottom.value = false;
   lastTimelineScrollTop.value = container.scrollTop;
+  resetMobileComposerScrollState(container);
 }
 
 function scheduleScrollToBottom(force = false) {
@@ -8617,6 +8777,66 @@ function handleTimelineLinkClick(event: MouseEvent) {
   });
 }
 
+function handleMobileTimelineScrollForComposer(container: HTMLDivElement) {
+  if (!isMobile.value) {
+    mobileComposerScrollState.value = null;
+    return;
+  }
+
+  const metrics = readTimelineScrollMetrics(container);
+  const previous =
+    mobileComposerScrollState.value ?? createWebSessionMobileComposerScrollState(metrics);
+  const resolved = resolveWebSessionMobileComposerScrollState(previous, metrics);
+  mobileComposerScrollState.value = resolved.state;
+
+  if (resolved.action === 'collapse' && !isMobileComposerCollapsed.value) {
+    collapseMobileComposerPanel();
+  }
+}
+
+function handleMobileTimelineBottomScroll(container: HTMLDivElement, scrollDownDelta: number) {
+  if (!isMobile.value || !isMobileComposerCollapsed.value) {
+    return;
+  }
+  const action = resolveWebSessionMobileComposerBottomScrollAction(
+    readTimelineScrollMetrics(container),
+    scrollDownDelta
+  );
+  if (action !== 'expand') {
+    return;
+  }
+  expandMobileComposerPanel();
+  resetMobileComposerScrollState(container);
+}
+
+function handleTimelineWheel(event: WheelEvent) {
+  const container = event.currentTarget as HTMLDivElement | null;
+  if (!container) {
+    return;
+  }
+  handleMobileTimelineBottomScroll(container, event.deltaY);
+}
+
+function handleTimelineTouchStart(event: TouchEvent) {
+  mobileTimelineTouchY = event.touches[0]?.clientY ?? null;
+}
+
+function handleTimelineTouchMove(event: TouchEvent) {
+  const container = event.currentTarget as HTMLDivElement | null;
+  const touchY = event.touches[0]?.clientY;
+  if (!container || typeof touchY !== 'number' || mobileTimelineTouchY == null) {
+    mobileTimelineTouchY = touchY ?? null;
+    return;
+  }
+  const scrollDownDelta = mobileTimelineTouchY - touchY;
+  mobileTimelineTouchY = touchY;
+  handleMobileTimelineBottomScroll(container, scrollDownDelta);
+}
+
+function handleTimelineTouchEnd() {
+  mobileTimelineTouchY = null;
+}
+
 function handleTimelineScroll(event: Event) {
   const container = event.currentTarget as HTMLDivElement | null;
   if (!container) {
@@ -8624,6 +8844,7 @@ function handleTimelineScroll(event: Event) {
   }
   const nearTop = container.scrollTop < 120;
   updateBottomState(container);
+  handleMobileTimelineScrollForComposer(container);
   if (
     nearTop &&
     !pendingHistoryAnchor.value &&
@@ -9580,6 +9801,7 @@ watch(
   () => currentSession.value?.id,
   () => {
     showQuickInputPopover.value = false;
+    resetMobileComposerScrollState();
     if (isMobile.value) {
       isMobileComposerSettingsExpanded.value = false;
     }
@@ -9590,6 +9812,7 @@ watch(
   () => isMobile.value,
   mobile => {
     isMobileComposerSettingsExpanded.value = false;
+    resetMobileComposerScrollState();
     if (!mobile) {
       mobileKeyboard.reset();
       setMobileComposerFocusState(false);
@@ -11569,6 +11792,110 @@ defineExpose({
   max-width: 100%;
 }
 
+.timeline-activity-display-shell {
+  width: min(860px, 84%);
+  max-width: 100%;
+}
+
+.timeline-activity-display-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: none;
+  background: transparent;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+  cursor: pointer;
+  text-align: left;
+}
+
+.timeline-activity-display-row.mode-text {
+  padding: 3px 0;
+}
+
+.timeline-activity-display-row.mode-card {
+  min-height: 52px;
+  padding: 11px 14px;
+  border: 1px solid rgba(20, 184, 166, 0.28);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--app-surface-color, #fff) 94%, rgba(20, 184, 166, 0.08));
+  box-shadow: 0 8px 20px rgba(15, 118, 110, 0.04);
+}
+
+.timeline-activity-display-row.mode-card.state-running {
+  border-color: rgba(124, 58, 237, 0.24);
+}
+
+.timeline-activity-display-row.mode-card.state-error {
+  border-color: rgba(220, 38, 38, 0.28);
+}
+
+.timeline-activity-display-row:hover {
+  color: var(--n-primary-color);
+}
+
+.timeline-activity-display-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--n-primary-color) 14%, transparent);
+}
+
+.activity-display-main {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.activity-display-label {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--app-text-color, var(--n-text-color-1, #111827));
+}
+
+.activity-display-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--n-text-color-3);
+}
+
+.activity-display-count {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(14, 165, 233, 0.12);
+  color: #0369a1;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.activity-display-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SFMono-Regular', 'JetBrains Mono', 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--n-text-color-3);
+}
+
+.activity-display-state {
+  flex-shrink: 0;
+}
+
+.activity-display-expanded {
+  margin-top: 8px;
+  padding: 10px 12px 12px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--n-primary-color) 6%, transparent);
+}
+
 .tool-list {
   display: flex;
   flex-direction: column;
@@ -12800,7 +13127,7 @@ defineExpose({
   transition: transform 0.2s ease;
 }
 
-.composer-mobile-panel-toggle-arrow.is-open {
+.composer-mobile-panel-toggle-arrow.is-collapsed {
   transform: rotate(180deg);
 }
 

@@ -931,6 +931,7 @@ export default {
     toolKindDefault: '工具',
     toolKindTool: '步骤',
     toolCommandExecution: '命令执行',
+    toolReasoning: '思考',
     toolContextCompaction: '上下文压缩',
     toolFileChange: '文件修改',
     toolMcpToolCall: 'MCP 调用',
@@ -1116,6 +1117,11 @@ export default {
     showWebSessionReasoning: '显示 AI 思考过程',
     showWebSessionReasoningTip:
       '仅影响会话页中的思考条目显示。大部分时候这些内容都是无用信息，只有排查模型行为或调试时才建议开启。',
+    webSessionActivityDisplayMode: '会话活动显示模式',
+    webSessionActivityDisplayModeText: '文本',
+    webSessionActivityDisplayModeCard: '卡片',
+    webSessionActivityDisplayModeTip:
+      '测试选项。控制命令执行、文件修改、MCP 调用、网页搜索和思考条目的时间线外观；默认保持当前样式。',
     webSessionStreamingMarkdownThrottle: '流式 Markdown 渲染节拍',
     webSessionStreamingMarkdownThrottleTip:
       '默认模式使用当前版本内置的渲染节拍，现为 {defaultMs} ms。切换为自定义后，将固定使用你设置的数值，不会随版本更新而自动调整。',

@@ -21,6 +21,11 @@ import {
   type TerminalConnectionPolicy,
 } from '@/constants/terminalConnectionPolicy';
 import { http } from '@/api/http';
+import {
+  DEFAULT_WEB_SESSION_ACTIVITY_DISPLAY_MODE,
+  sanitizeWebSessionActivityDisplayMode,
+  type WebSessionActivityDisplayMode,
+} from '@/constants/webSessionActivityDisplayMode';
 
 /**
  * 终端主题跟随应用主题的特殊值
@@ -217,6 +222,7 @@ interface GeneralSettings {
   editor: EditorSettings;
   confirmBeforeTerminalClose: boolean;
   showWebSessionReasoning: boolean;
+  webSessionActivityDisplayMode: WebSessionActivityDisplayMode;
   webSessionAutoContinueScope: WebSessionAutoContinueScope;
   webSessionAutoContinuePreset: WebSessionAutoContinuePreset;
   webSessionStreamingMarkdownThrottleMode: WebSessionStreamingMarkdownThrottleMode;
@@ -323,6 +329,7 @@ const defaultSettings: GeneralSettings = {
   editor: { ...DEFAULT_EDITOR_SETTINGS },
   confirmBeforeTerminalClose: true,
   showWebSessionReasoning: false,
+  webSessionActivityDisplayMode: DEFAULT_WEB_SESSION_ACTIVITY_DISPLAY_MODE,
   webSessionAutoContinueScope: DEFAULT_WEB_SESSION_AUTO_CONTINUE_SCOPE,
   webSessionAutoContinuePreset: DEFAULT_WEB_SESSION_AUTO_CONTINUE_PRESET,
   webSessionStreamingMarkdownThrottleMode: 'default',
@@ -375,6 +382,9 @@ export const useSettingsStore = defineStore('settings', () => {
   const editorSettings = computed(() => settings.value.editor);
   const confirmBeforeTerminalClose = computed(() => settings.value.confirmBeforeTerminalClose);
   const showWebSessionReasoning = computed(() => settings.value.showWebSessionReasoning);
+  const webSessionActivityDisplayMode = computed(
+    () => settings.value.webSessionActivityDisplayMode
+  );
   const webSessionAutoContinueScope = computed(() => settings.value.webSessionAutoContinueScope);
   const webSessionAutoContinuePreset = computed(() => settings.value.webSessionAutoContinuePreset);
   const webSessionStreamingMarkdownThrottleMode = computed(
@@ -702,6 +712,10 @@ export const useSettingsStore = defineStore('settings', () => {
     settings.value.showWebSessionReasoning = value;
   }
 
+  function updateWebSessionActivityDisplayMode(value: WebSessionActivityDisplayMode) {
+    settings.value.webSessionActivityDisplayMode = sanitizeWebSessionActivityDisplayMode(value);
+  }
+
   function updateWebSessionAutoContinueScope(value: WebSessionAutoContinueScope) {
     settings.value.webSessionAutoContinueScope = sanitizeWebSessionAutoContinueScope(value);
   }
@@ -843,6 +857,7 @@ export const useSettingsStore = defineStore('settings', () => {
     editorSettings,
     confirmBeforeTerminalClose,
     showWebSessionReasoning,
+    webSessionActivityDisplayMode,
     webSessionAutoContinueScope,
     webSessionAutoContinuePreset,
     webSessionStreamingMarkdownThrottleMode,
@@ -878,6 +893,7 @@ export const useSettingsStore = defineStore('settings', () => {
     updateEditorSettings,
     updateConfirmBeforeTerminalClose,
     updateShowWebSessionReasoning,
+    updateWebSessionActivityDisplayMode,
     updateWebSessionAutoContinueScope,
     updateWebSessionAutoContinuePreset,
     updateWebSessionStreamingMarkdownThrottleMode,
@@ -969,6 +985,9 @@ function loadSettings(): LoadSettingsResult {
             parsed.showWebSessionReasoning,
             loadLegacyShowWebSessionReasoning()
           ),
+          webSessionActivityDisplayMode: sanitizeWebSessionActivityDisplayMode(
+            parsed.webSessionActivityDisplayMode
+          ),
           webSessionAutoContinueScope: sanitizeWebSessionAutoContinueScope(
             parsed.webSessionAutoContinueScope
           ),
@@ -1046,6 +1065,7 @@ function cloneDefaultSettings(): GeneralSettings {
     editor: { ...defaultSettings.editor },
     confirmBeforeTerminalClose: defaultSettings.confirmBeforeTerminalClose,
     showWebSessionReasoning: defaultSettings.showWebSessionReasoning,
+    webSessionActivityDisplayMode: defaultSettings.webSessionActivityDisplayMode,
     webSessionAutoContinueScope: defaultSettings.webSessionAutoContinueScope,
     webSessionAutoContinuePreset: defaultSettings.webSessionAutoContinuePreset,
     webSessionStreamingMarkdownThrottleMode:

@@ -962,6 +962,7 @@ export default {
     toolKindDefault: 'Tool',
     toolKindTool: 'Step',
     toolCommandExecution: 'Command',
+    toolReasoning: 'Thinking',
     toolContextCompaction: 'Context Compaction',
     toolFileChange: 'File Change',
     toolMcpToolCall: 'MCP Call',
@@ -1167,6 +1168,11 @@ export default {
     showWebSessionReasoning: 'Show AI reasoning',
     showWebSessionReasoningTip:
       'Only affects reasoning entries in the session view. Most of the time this is low-value noise, so only enable it when debugging agent behavior.',
+    webSessionActivityDisplayMode: 'Session activity display mode',
+    webSessionActivityDisplayModeText: 'Text',
+    webSessionActivityDisplayModeCard: 'Card',
+    webSessionActivityDisplayModeTip:
+      'Test option. Changes the timeline appearance for commands, file changes, MCP calls, web searches, and thinking entries; Default keeps the current style.',
     webSessionStreamingMarkdownThrottle: 'Streaming Markdown render cadence',
     webSessionStreamingMarkdownThrottleTip:
       'Default uses the built-in cadence for this release, currently {defaultMs} ms. Custom keeps the exact value you specify and does not automatically change with future release defaults.',

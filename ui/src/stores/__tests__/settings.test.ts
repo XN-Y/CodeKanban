@@ -203,6 +203,59 @@ describe('settings theme storage', () => {
     expect(persisted.customTheme?.terminalFloatingButtonFg).toBeUndefined();
   });
 
+  it('defaults web session activity display mode to the built-in style', () => {
+    const store = useSettingsStore();
+    const { webSessionActivityDisplayMode } = storeToRefs(store);
+
+    expect(webSessionActivityDisplayMode.value).toBe('default');
+  });
+
+  it('preserves custom web session activity display mode from storage', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 4,
+        webSessionActivityDisplayMode: 'card',
+      })
+    );
+
+    const store = useSettingsStore();
+    const { webSessionActivityDisplayMode } = storeToRefs(store);
+
+    expect(webSessionActivityDisplayMode.value).toBe('card');
+  });
+
+  it('sanitizes invalid web session activity display mode from storage', () => {
+    localStorageMock.setItem(
+      SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        version: 4,
+        webSessionActivityDisplayMode: 'floating',
+      })
+    );
+
+    const store = useSettingsStore();
+    const { webSessionActivityDisplayMode } = storeToRefs(store);
+
+    expect(webSessionActivityDisplayMode.value).toBe('default');
+  });
+
+  it('persists updated web session activity display mode', async () => {
+    const store = useSettingsStore();
+    const { webSessionActivityDisplayMode } = storeToRefs(store);
+
+    store.updateWebSessionActivityDisplayMode('text');
+    await nextTick();
+
+    expect(webSessionActivityDisplayMode.value).toBe('text');
+
+    const persisted = JSON.parse(localStorageMock.getItem(SETTINGS_STORAGE_KEY) ?? '{}') as {
+      webSessionActivityDisplayMode?: string;
+    };
+
+    expect(persisted.webSessionActivityDisplayMode).toBe('text');
+  });
+
   it('defaults web session streaming markdown cadence to the built-in profile', () => {
     const store = useSettingsStore();
     const {
