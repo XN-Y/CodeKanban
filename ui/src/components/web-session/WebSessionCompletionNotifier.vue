@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import { useProjectStore } from '@/stores/project';
 import { useWebSessionStore, type WebSessionAIEvent } from '@/stores/webSession';
-import { buildWebSessionProjectLocation } from '@/utils/webSessionRoute';
+import { openWebSessionNotificationTarget } from '@/components/web-session/webSessionNotificationTarget';
 
 const notification = useNotification();
 const { t } = useI18n();
@@ -48,20 +48,13 @@ function clearNotification(sessionId?: string) {
 }
 
 async function openSessionNotificationTarget(event: WebSessionAIEvent) {
-  const location = buildWebSessionProjectLocation({
-    projectId: event.projectId,
-    sessionId: event.sessionId,
-    query: route.query,
-  });
-  if (!location) {
-    return;
-  }
-
-  webSessionStore.setActiveSession(event.projectId, event.sessionId);
-  projectStore.addRecentProject(event.projectId);
-
   try {
-    await router.push(location);
+    await openWebSessionNotificationTarget({
+      event,
+      query: route.query,
+      addRecentProject: projectStore.addRecentProject,
+      push: location => router.push(location),
+    });
   } catch (error) {
     console.error(`${LOG_PREFIX} Failed to open session notification target`, error);
   }
