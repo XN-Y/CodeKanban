@@ -10,7 +10,15 @@ export interface WebSessionTimelineFollowState {
   lastScrollTop: number;
 }
 
+export interface WebSessionMobileComposerScrollState {
+  lastScrollTop: number;
+  upwardDistance: number;
+}
+
+export type WebSessionMobileComposerScrollAction = 'none' | 'collapse' | 'expand';
+
 export const WEB_SESSION_TIMELINE_AT_BOTTOM_THRESHOLD_PX = 4;
+export const WEB_SESSION_MOBILE_COMPOSER_AUTO_COLLAPSE_DISTANCE_PX = 80;
 const WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX = 1;
 
 function normalizeScrollTop(value: number) {
@@ -76,4 +84,63 @@ export function resolveWebSessionTimelineFollowState(
     showJumpToBottom: !previous.autoFollowBottom,
     lastScrollTop: scrollTop,
   };
+}
+
+export function createWebSessionMobileComposerScrollState(
+  metrics: WebSessionTimelineScrollMetrics
+): WebSessionMobileComposerScrollState {
+  return {
+    lastScrollTop: normalizeScrollTop(metrics.scrollTop),
+    upwardDistance: 0,
+  };
+}
+
+export function resolveWebSessionMobileComposerScrollState(
+  previous: WebSessionMobileComposerScrollState,
+  metrics: WebSessionTimelineScrollMetrics
+): {
+  action: WebSessionMobileComposerScrollAction;
+  state: WebSessionMobileComposerScrollState;
+} {
+  const scrollTop = normalizeScrollTop(metrics.scrollTop);
+  const delta = scrollTop - previous.lastScrollTop;
+
+  if (delta < -WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX) {
+    const upwardDistance = previous.upwardDistance + Math.abs(delta);
+    if (upwardDistance >= WEB_SESSION_MOBILE_COMPOSER_AUTO_COLLAPSE_DISTANCE_PX) {
+      return {
+        action: 'collapse',
+        state: {
+          lastScrollTop: scrollTop,
+          upwardDistance: 0,
+        },
+      };
+    }
+
+    return {
+      action: 'none',
+      state: {
+        lastScrollTop: scrollTop,
+        upwardDistance,
+      },
+    };
+  }
+
+  return {
+    action: 'none',
+    state: {
+      lastScrollTop: scrollTop,
+      upwardDistance: 0,
+    },
+  };
+}
+
+export function resolveWebSessionMobileComposerBottomScrollAction(
+  metrics: WebSessionTimelineScrollMetrics,
+  scrollDownDelta: number
+): WebSessionMobileComposerScrollAction {
+  if (scrollDownDelta <= WEB_SESSION_TIMELINE_SCROLL_UP_EPSILON_PX) {
+    return 'none';
+  }
+  return isWebSessionTimelineAtBottom(metrics) ? 'expand' : 'none';
 }

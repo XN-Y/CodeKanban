@@ -4,7 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  createWebSessionMobileComposerScrollState,
   createWebSessionTimelineFollowState,
+  resolveWebSessionMobileComposerBottomScrollAction,
+  resolveWebSessionMobileComposerScrollState,
   resolveWebSessionTimelineFollowState,
 } from '@/components/web-session/webSessionTimelineScroll';
 
@@ -81,6 +84,98 @@ describe('webSessionTimelineScroll', () => {
       showJumpToBottom: false,
       lastScrollTop: 800,
     });
+  });
+
+  it('waits for enough upward scrolling before collapsing the mobile composer', () => {
+    const initial = createWebSessionMobileComposerScrollState({
+      scrollTop: 800,
+      scrollHeight: 1000,
+      clientHeight: 200,
+    });
+
+    const first = resolveWebSessionMobileComposerScrollState(initial, {
+      scrollTop: 760,
+      scrollHeight: 1000,
+      clientHeight: 200,
+    });
+
+    expect(first).toEqual({
+      action: 'none',
+      state: {
+        lastScrollTop: 760,
+        upwardDistance: 40,
+      },
+    });
+
+    expect(
+      resolveWebSessionMobileComposerScrollState(first.state, {
+        scrollTop: 720,
+        scrollHeight: 1000,
+        clientHeight: 200,
+      })
+    ).toEqual({
+      action: 'collapse',
+      state: {
+        lastScrollTop: 720,
+        upwardDistance: 0,
+      },
+    });
+  });
+
+  it('resets mobile composer upward distance when scrolling downward', () => {
+    const previous = {
+      lastScrollTop: 760,
+      upwardDistance: 40,
+    };
+
+    expect(
+      resolveWebSessionMobileComposerScrollState(previous, {
+        scrollTop: 780,
+        scrollHeight: 1000,
+        clientHeight: 200,
+      })
+    ).toEqual({
+      action: 'none',
+      state: {
+        lastScrollTop: 780,
+        upwardDistance: 0,
+      },
+    });
+  });
+
+  it('only expands the mobile composer after an extra downward scroll at the bottom', () => {
+    expect(
+      resolveWebSessionMobileComposerBottomScrollAction(
+        {
+          scrollTop: 700,
+          scrollHeight: 1000,
+          clientHeight: 200,
+        },
+        24
+      )
+    ).toBe('none');
+
+    expect(
+      resolveWebSessionMobileComposerBottomScrollAction(
+        {
+          scrollTop: 800,
+          scrollHeight: 1000,
+          clientHeight: 200,
+        },
+        0
+      )
+    ).toBe('none');
+
+    expect(
+      resolveWebSessionMobileComposerBottomScrollAction(
+        {
+          scrollTop: 800,
+          scrollHeight: 1000,
+          clientHeight: 200,
+        },
+        24
+      )
+    ).toBe('expand');
   });
 
   it('opts the runtime strip out of browser scroll anchoring', () => {
