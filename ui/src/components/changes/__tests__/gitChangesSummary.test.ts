@@ -223,7 +223,7 @@ describe('gitChangesSummary', () => {
     ).toBe('');
   });
 
-  it('formats pending badge deltas and keeps loading badges visible', () => {
+  it('formats pending badge deltas and hides zero-valued loading badges', () => {
     expect(formatGitChangesBadgeDelta('+', null)).toBe('+?');
     expect(formatGitChangesBadgeDelta('-', 4)).toBe('-4');
 
@@ -232,6 +232,14 @@ describe('gitChangesSummary', () => {
         count: 0,
         additions: 0,
         deletions: 0,
+        pending: true,
+      })
+    ).toBe(false);
+    expect(
+      shouldShowGitChangesBadge({
+        count: 1,
+        additions: null,
+        deletions: null,
         pending: true,
       })
     ).toBe(true);

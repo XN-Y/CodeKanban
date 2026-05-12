@@ -135,5 +135,5 @@ export function shouldShowGitChangesBadge(summary: GitChangesBadgeSummary | null
   if (!summary) {
     return false;
   }
-  return summary.pending || summary.count > 0;
+  return summary.count > 0;
 }
