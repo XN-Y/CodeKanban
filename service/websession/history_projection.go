@@ -167,6 +167,7 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 	projected := make([]Event, 0, len(events))
 	activeTools := make(map[string]toolSnapshot)
 	var currentGroup *commandExecutionProjectionGroup
+	var transparentSinceCompact bool
 
 	flushGroup := func() {
 		if currentGroup == nil {
@@ -174,6 +175,7 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 		}
 		projected = append(projected, currentGroup.toEvent())
 		currentGroup = nil
+		transparentSinceCompact = false
 	}
 
 	for _, event := range events {
@@ -185,7 +187,15 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
-			if groupID == "" {
+			toolAlreadyInGroup := false
+			if currentGroup != nil {
+				_, toolAlreadyInGroup = currentGroup.toolIDs[toolID]
+			}
+			if currentGroup != nil && currentGroup.kind == kind && toolAlreadyInGroup {
+				groupID = currentGroup.groupID
+			} else if currentGroup != nil && currentGroup.kind == kind && transparentSinceCompact {
+				groupID = currentGroup.groupID
+			} else if groupID == "" {
 				if currentGroup != nil && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
@@ -206,6 +216,7 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 			if event.Type == "tool_end" && toolID != "" {
 				delete(activeTools, toolID)
 			}
+			transparentSinceCompact = false
 			continue
 		}
 
@@ -218,6 +229,14 @@ func projectHistoryEvents(events []Event, agent Agent) []Event {
 			}
 			if event.Type == "tool_end" && toolID != "" {
 				delete(activeTools, toolID)
+			}
+			continue
+		}
+
+		if isCommandGroupTransparentEvent(event) {
+			projected = append(projected, event)
+			if currentGroup != nil {
+				transparentSinceCompact = true
 			}
 			continue
 		}
@@ -237,6 +256,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 	groups := make(map[string]*commandExecutionDetailAccumulator)
 	activeTools := make(map[string]toolSnapshot)
 	var currentGroup *commandExecutionDetailAccumulator
+	var transparentSinceCompact bool
 
 	for _, event := range events {
 		toolID := eventToolID(event)
@@ -247,7 +267,15 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 		if isCompactToolEvent(event) {
 			kind := compactToolKind(event)
 			groupID := eventExplicitCommandGroupID(event)
-			if groupID == "" {
+			toolAlreadyInGroup := false
+			if currentGroup != nil {
+				_, toolAlreadyInGroup = currentGroup.itemIndex[toolID]
+			}
+			if currentGroup != nil && currentGroup.kind == kind && toolAlreadyInGroup {
+				groupID = currentGroup.groupID
+			} else if currentGroup != nil && currentGroup.kind == kind && transparentSinceCompact {
+				groupID = currentGroup.groupID
+			} else if groupID == "" {
 				if currentGroup != nil && currentGroup.kind == kind {
 					groupID = currentGroup.groupID
 				} else {
@@ -256,6 +284,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 			}
 			if currentGroup != nil && (currentGroup.groupID != groupID || currentGroup.kind != kind) {
 				currentGroup = nil
+				transparentSinceCompact = false
 			}
 			if currentGroup == nil {
 				currentGroup = &commandExecutionDetailAccumulator{
@@ -269,6 +298,7 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 			if event.Type == "tool_end" && toolID != "" {
 				delete(activeTools, toolID)
 			}
+			transparentSinceCompact = false
 			continue
 		}
 
@@ -282,7 +312,15 @@ func buildCommandExecutionGroupLookup(events []Event, agent Agent) map[string]Co
 			continue
 		}
 
+		if isCommandGroupTransparentEvent(event) {
+			if currentGroup != nil {
+				transparentSinceCompact = true
+			}
+			continue
+		}
+
 		currentGroup = nil
+		transparentSinceCompact = false
 		if event.Type == "tool_end" && toolID != "" {
 			delete(activeTools, toolID)
 		}
@@ -517,6 +555,15 @@ func reasoningEventHasDisplayContent(event Event) bool {
 		return false
 	}
 	return strings.TrimSpace(eventToolOutput(event)) != ""
+}
+
+func isCommandGroupTransparentEvent(event Event) bool {
+	switch strings.TrimSpace(event.Type) {
+	case "usage":
+		return true
+	default:
+		return false
+	}
 }
 
 func compactToolTitle(kind string) string {

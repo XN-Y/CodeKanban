@@ -15,10 +15,20 @@ interface CompactTimelineGroupItem {
 }
 
 const FILE_CHANGE_KIND = 'file_change';
+const COMPACT_TOOL_KINDS = new Set([
+  'command_execution',
+  FILE_CHANGE_KIND,
+  'mcp_tool_call',
+  'web_search',
+]);
 const SYNTHETIC_FILE_CHANGE_GROUP_PREFIX = 'timeline-file-change:';
+const SYNTHETIC_COMPACT_TOOL_GROUP_PREFIX = 'timeline-compact-tool:';
 const PROJECTED_FILE_CHANGE_KEY_PREFIX = 'compact-file-change:';
+const PROJECTED_COMPACT_TOOL_KEY_PREFIX = 'compact-tool:';
 
-export function projectWebSessionCompactTimelineBlocks(blocks: WebSessionBlock[]): WebSessionBlock[] {
+export function projectWebSessionCompactTimelineBlocks(
+  blocks: WebSessionBlock[]
+): WebSessionBlock[] {
   if (blocks.length === 0) {
     return blocks;
   }
@@ -26,28 +36,19 @@ export function projectWebSessionCompactTimelineBlocks(blocks: WebSessionBlock[]
   const projected: WebSessionBlock[] = [];
   for (let index = 0; index < blocks.length; ) {
     const block = blocks[index];
-    if (!isFileChangeBlock(block)) {
+    if (!isCompactToolBlock(block)) {
       projected.push(block);
       index += 1;
       continue;
     }
 
-    const explicitGroupId = getCommandGroupId(block);
+    const kind = getCompactToolKind(block);
     const group = [block];
     let nextIndex = index + 1;
 
     while (nextIndex < blocks.length) {
       const candidate = blocks[nextIndex];
-      if (!isFileChangeBlock(candidate)) {
-        break;
-      }
-
-      const candidateGroupId = getCommandGroupId(candidate);
-      if (explicitGroupId) {
-        if (candidateGroupId !== explicitGroupId) {
-          break;
-        }
-      } else if (candidateGroupId) {
+      if (!isCompactToolBlock(candidate) || getCompactToolKind(candidate) !== kind) {
         break;
       }
 
@@ -61,28 +62,46 @@ export function projectWebSessionCompactTimelineBlocks(blocks: WebSessionBlock[]
       continue;
     }
 
-    const groupId = explicitGroupId || buildSyntheticGroupId(group[0], projected.length);
-    projected.push(buildGroupedFileChangeBlock(group, groupId));
+    const groupId = findGroupId(group) || buildSyntheticGroupId(group[0], projected.length);
+    projected.push(buildGroupedCompactToolBlock(group, groupId));
     index = nextIndex;
   }
 
   return projected;
 }
 
-function isFileChangeBlock(block: WebSessionBlock): boolean {
-  return block.kind === 'tool' && block.tool?.kind === FILE_CHANGE_KIND;
+function isCompactToolBlock(block: WebSessionBlock): boolean {
+  return block.kind === 'tool' && COMPACT_TOOL_KINDS.has(getCompactToolKind(block));
+}
+
+function getCompactToolKind(block: WebSessionBlock): string {
+  return String(block.tool?.kind || '').trim();
 }
 
 function getCommandGroupId(block: WebSessionBlock): string {
   return String(block.tool?.commandGroup?.id || '').trim();
 }
 
-function buildSyntheticGroupId(block: WebSessionBlock, fallbackIndex: number): string {
-  const anchor = String(block.id || block.key || '').trim() || `index-${fallbackIndex}`;
-  return `${SYNTHETIC_FILE_CHANGE_GROUP_PREFIX}${anchor}`;
+function findGroupId(group: WebSessionBlock[]): string {
+  for (const block of group) {
+    const groupId = getCommandGroupId(block);
+    if (groupId) {
+      return groupId;
+    }
+  }
+  return '';
 }
 
-function buildGroupedFileChangeBlock(group: WebSessionBlock[], groupId: string): WebSessionBlock {
+function buildSyntheticGroupId(block: WebSessionBlock, fallbackIndex: number): string {
+  const anchor = String(block.id || block.key || '').trim() || `index-${fallbackIndex}`;
+  const kind = getCompactToolKind(block);
+  if (kind === FILE_CHANGE_KIND) {
+    return `${SYNTHETIC_FILE_CHANGE_GROUP_PREFIX}${anchor}`;
+  }
+  return `${SYNTHETIC_COMPACT_TOOL_GROUP_PREFIX}${kind}:${anchor}`;
+}
+
+function buildGroupedCompactToolBlock(group: WebSessionBlock[], groupId: string): WebSessionBlock {
   const first = group[0];
   const last = group[group.length - 1];
   const projected = cloneBlock(last);
@@ -131,7 +150,7 @@ function buildGroupedFileChangeBlock(group: WebSessionBlock[], groupId: string):
     ...(lastSeq != null ? { lastSeq } : {}),
   };
 
-  projected.key = `${PROJECTED_FILE_CHANGE_KEY_PREFIX}${groupId}`;
+  projected.key = `${projectedKeyPrefix(projected)}${groupId}`;
   projected.payload = {
     ...(projected.payload ?? {}),
     groupItems: mergedGroupItems,
@@ -149,6 +168,13 @@ function buildGroupedFileChangeBlock(group: WebSessionBlock[], groupId: string):
   projected.orderIndex = first.orderIndex;
 
   return projected;
+}
+
+function projectedKeyPrefix(block: WebSessionBlock): string {
+  if (getCompactToolKind(block) === FILE_CHANGE_KIND) {
+    return PROJECTED_FILE_CHANGE_KEY_PREFIX;
+  }
+  return PROJECTED_COMPACT_TOOL_KEY_PREFIX;
 }
 
 function cloneBlock(block: WebSessionBlock): WebSessionBlock {
@@ -176,7 +202,7 @@ function getBlockGroupItems(block: WebSessionBlock): CompactTimelineGroupItem[] 
     return [];
   }
 
-  const summary = resolveFileChangeSummary(block);
+  const summary = resolveCompactToolSummary(block);
   const completedAt =
     block.tool.status === 'running' ? undefined : toISOString(block.observedAt ?? block.timestamp);
 
@@ -249,6 +275,42 @@ function mergeGroupItemsInto(
       ...nextItem,
     });
   }
+}
+
+function resolveCompactToolSummary(block: WebSessionBlock): string {
+  if (!block.tool) {
+    return '';
+  }
+  const kind = getCompactToolKind(block);
+  const input = asRecord(block.tool.input);
+  const meta = asRecord(block.tool.meta);
+  if (kind === FILE_CHANGE_KIND) {
+    return resolveFileChangeSummary(block);
+  }
+  if (kind === 'command_execution') {
+    return firstNonEmpty(
+      stringValue(input?.command),
+      stringValue(meta?.subtitle),
+      stringValue(meta?.command),
+      stringValue(block.tool.output)
+    );
+  }
+  if (kind === 'mcp_tool_call') {
+    return firstNonEmpty(
+      stringValue(input?.tool_name),
+      stringValue(input?.name),
+      stringValue(meta?.subtitle),
+      stringValue(block.tool.output)
+    );
+  }
+  if (kind === 'web_search') {
+    return firstNonEmpty(
+      stringValue(input?.query),
+      stringValue(meta?.subtitle),
+      stringValue(block.tool.output)
+    );
+  }
+  return firstNonEmpty(stringValue(meta?.subtitle), stringValue(block.tool.output));
 }
 
 function resolveFileChangeSummary(block: WebSessionBlock): string {

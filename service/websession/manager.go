@@ -3569,6 +3569,9 @@ func (m *Manager) decorateProjectedEvent(sessionID string, event *Event) {
 		}
 		return
 	}
+	if isCommandGroupTransparentEvent(*event) {
+		return
+	}
 	m.resetCommandExecutionGroup(sessionID)
 }
 

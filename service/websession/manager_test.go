@@ -3621,6 +3621,132 @@ func TestHistoryAggregatesConsecutiveFileChanges(t *testing.T) {
 	}
 }
 
+func TestHistoryUsageDoesNotResetLiveFileChangeGroup(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Usage Between File Changes", 1000)
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+
+	appendHistoryEvent(t, manager, session.ID, testFileChangeEvent("fc1", 1, "tool_st", "ui/src/App.vue", ""))
+	appendHistoryEvent(t, manager, session.ID, testFileChangeEvent("fc1", 2, "tool_end", "ui/src/App.vue", ""))
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_usage",
+		Seq:       3,
+		Type:      "usage",
+		Timestamp: time.UnixMilli(2_500),
+		Payload: map[string]any{
+			"in":  19585,
+			"cin": 5504,
+			"out": 648,
+		},
+	})
+	appendHistoryEvent(t, manager, session.ID, testFileChangeEvent("fc2", 4, "tool_st", "ui/src/components/Panel.vue", ""))
+	appendHistoryEvent(t, manager, session.ID, testFileChangeEvent("fc2", 5, "tool_end", "ui/src/components/Panel.vue", ""))
+
+	events, err := manager.store.readEvents(session.ID)
+	if err != nil {
+		t.Fatalf("readEvents returned error: %v", err)
+	}
+	fc2Start, ok := historyEventByID(events, "evt_fc2_tool_st")
+	if !ok {
+		t.Fatalf("expected fc2 start event in raw history")
+	}
+	if got := eventExplicitCommandGroupID(fc2Start); got != commandExecutionGroupID("fc1") {
+		t.Fatalf("expected usage to preserve live group id %q, got %q", commandExecutionGroupID("fc1"), got)
+	}
+
+	history, err := manager.History(context.Background(), session.ID, 20, nil)
+	if err != nil {
+		t.Fatalf("History returned error: %v", err)
+	}
+	if len(history.Events) != 2 {
+		t.Fatalf("expected usage plus grouped file_change event, got %d", len(history.Events))
+	}
+	if history.Events[0].Type != "usage" {
+		t.Fatalf("expected first projected event usage, got %#v", history.Events[0])
+	}
+	if got := eventToolKind(history.Events[1]); got != "file_change" {
+		t.Fatalf("expected grouped file_change event, got %q", got)
+	}
+	groupMeta := decodeRawObject(decodeRawObject(history.Events[1].Payload["meta"])["commandGroup"])
+	if got := int(numberValue(groupMeta["count"])); got != 2 {
+		t.Fatalf("expected grouped count 2, got %d", got)
+	}
+
+	snapshot, err := manager.Snapshot(context.Background(), session.ID, 20)
+	if err != nil {
+		t.Fatalf("Snapshot returned error: %v", err)
+	}
+	if len(snapshot.History.Items) != 1 {
+		t.Fatalf("expected 1 grouped history item, got %d", len(snapshot.History.Items))
+	}
+	item := snapshot.History.Items[0]
+	if item.Tool == nil || item.Tool.CommandGroup == nil {
+		t.Fatalf("expected grouped file_change history item, got %#v", item)
+	}
+	if item.Tool.CommandGroup.ID != commandExecutionGroupID("fc1") || item.Tool.CommandGroup.Count != 2 {
+		t.Fatalf("expected file_change group %q count 2, got %#v", commandExecutionGroupID("fc1"), item.Tool.CommandGroup)
+	}
+	if got := len(decodeHistoryGroupItems(item.Payload)); got != 2 {
+		t.Fatalf("expected 2 file_change detail items, got %d", got)
+	}
+}
+
+func TestProjectHistoryEventsTreatsUsageAsTransparentBetweenExplicitFileChangeGroups(t *testing.T) {
+	events := []Event{
+		testFileChangeEvent("fc1", 1, "tool_st", "ui/src/App.vue", commandExecutionGroupID("fc1")),
+		testFileChangeEvent("fc1", 2, "tool_end", "ui/src/App.vue", commandExecutionGroupID("fc1")),
+		{
+			ID:        "evt_usage",
+			Seq:       3,
+			Type:      "usage",
+			Timestamp: time.UnixMilli(2_500),
+			Payload: map[string]any{
+				"in":  19585,
+				"cin": 5504,
+				"out": 648,
+			},
+		},
+		testFileChangeEvent("fc2", 4, "tool_st", "ui/src/components/Panel.vue", commandExecutionGroupID("fc2")),
+		testFileChangeEvent("fc2", 5, "tool_end", "ui/src/components/Panel.vue", commandExecutionGroupID("fc2")),
+	}
+
+	projected := projectHistoryEvents(events, AgentCodex)
+	if len(projected) != 2 {
+		t.Fatalf("expected usage plus one grouped file_change event, got %d", len(projected))
+	}
+	if projected[0].Type != "usage" {
+		t.Fatalf("expected usage event to be preserved, got %#v", projected[0])
+	}
+	if got := eventCommandGroupID(projected[1]); got != commandExecutionGroupID("fc1") {
+		t.Fatalf("expected projected group id %q, got %q", commandExecutionGroupID("fc1"), got)
+	}
+	groupMeta := decodeRawObject(decodeRawObject(projected[1].Payload["meta"])["commandGroup"])
+	if got := int(numberValue(groupMeta["count"])); got != 2 {
+		t.Fatalf("expected grouped count 2, got %d", got)
+	}
+
+	groups := buildCommandExecutionGroupLookup(events, AgentCodex)
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 command group detail, got %d", len(groups))
+	}
+	group, ok := groups[commandExecutionGroupID("fc1")]
+	if !ok {
+		t.Fatalf("expected group %q in lookup", commandExecutionGroupID("fc1"))
+	}
+	if group.Count != 2 || len(group.Items) != 2 {
+		t.Fatalf("expected 2 file_change detail items, got count=%d items=%d", group.Count, len(group.Items))
+	}
+	if _, ok := groups[commandExecutionGroupID("fc2")]; ok {
+		t.Fatalf("expected usage-separated stale group id %q to be folded into %q", commandExecutionGroupID("fc2"), commandExecutionGroupID("fc1"))
+	}
+}
+
 func TestFileChangeSnapshotKeepsCurrentFileWhenToolEndOmitsInput(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
@@ -5131,6 +5257,58 @@ func historyToolEventByKind(events []Event, kind string) (Event, bool) {
 		}
 	}
 	return Event{}, false
+}
+
+func historyEventByID(events []Event, id string) (Event, bool) {
+	for _, event := range events {
+		if event.ID == id {
+			return event, true
+		}
+	}
+	return Event{}, false
+}
+
+func testFileChangeEvent(toolID string, seq int64, eventType string, path string, groupID string) Event {
+	meta := map[string]any{
+		"kind":     "file_change",
+		"title":    "FileChange",
+		"subtitle": path,
+	}
+	if groupID != "" {
+		meta["commandGroup"] = map[string]any{
+			"id":           groupID,
+			"count":        1,
+			"firstSeq":     seq,
+			"lastSeq":      seq,
+			"latestToolId": toolID,
+			"compacted":    true,
+		}
+	}
+	payload := map[string]any{
+		"tid":  toolID,
+		"name": "FileChange",
+		"kind": "file_change",
+		"meta": meta,
+	}
+	if eventType == "tool_st" {
+		payload["in"] = map[string]any{
+			"path": path,
+			"changes": []any{
+				map[string]any{"path": path},
+			},
+		}
+	}
+	if eventType == "tool_end" {
+		payload["out"] = "patched"
+		payload["ok"] = true
+	}
+	return Event{
+		ID:        fmt.Sprintf("evt_%s_%s", toolID, eventType),
+		Seq:       seq,
+		Type:      eventType,
+		Timestamp: time.UnixMilli(seq * 1_000),
+		Payload:   payload,
+	}
 }
 
 func testLongPlanText() string {

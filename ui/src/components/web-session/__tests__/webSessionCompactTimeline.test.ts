@@ -59,6 +59,52 @@ function buildFileChangeBlock(
   };
 }
 
+function buildCommandBlock(
+  id: string,
+  options: {
+    orderIndex?: number;
+    command?: string;
+    groupId?: string;
+    count?: number;
+    status?: 'running' | 'done' | 'error';
+    timestamp?: number;
+  } = {}
+): WebSessionBlock {
+  const command = options.command ?? id;
+  const timestamp = options.timestamp ?? Date.UTC(2026, 3, 20, 12, 0, 0);
+  return {
+    key: id,
+    id,
+    orderIndex: options.orderIndex ?? 1,
+    kind: 'tool',
+    itemType: 'command_execution',
+    text: '',
+    timestamp,
+    attachments: [],
+    tool: {
+      id,
+      name: 'CommandExecution',
+      kind: 'command_execution',
+      input: { command },
+      output: `${command} output`,
+      status: options.status ?? 'done',
+      meta: {
+        kind: 'command_execution',
+        title: 'CommandExecution',
+        subtitle: command,
+      },
+      ...(options.groupId
+        ? {
+            commandGroup: {
+              id: options.groupId,
+              count: options.count ?? 1,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 function buildMessageBlock(id: string, orderIndex: number): WebSessionBlock {
   return {
     key: id,
@@ -131,7 +177,53 @@ describe('webSessionCompactTimeline', () => {
     expect(groupItems[1].summary).toBe('ui/src/b.ts');
   });
 
-  it('does not merge file changes across non-file-change blocks or different groups', () => {
+  it('folds consecutive file_change blocks when stale group ids differ', () => {
+    const projected = projectWebSessionCompactTimelineBlocks([
+      buildFileChangeBlock('fc-1', {
+        orderIndex: 1,
+        path: 'ui/src/App.vue',
+        groupId: 'fc-group-1',
+      }),
+      buildFileChangeBlock('fc-2', {
+        orderIndex: 2,
+        path: 'ui/src/components/Panel.vue',
+        groupId: 'fc-group-2',
+      }),
+    ]);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].tool?.commandGroup?.id).toBe('fc-group-1');
+    expect(projected[0].tool?.commandGroup?.count).toBe(2);
+    expect(readGroupItems(projected[0]).map(item => item.summary)).toEqual([
+      'ui/src/App.vue',
+      'ui/src/components/Panel.vue',
+    ]);
+  });
+
+  it('folds consecutive command execution blocks when stale group ids differ', () => {
+    const projected = projectWebSessionCompactTimelineBlocks([
+      buildCommandBlock('cmd-1', {
+        orderIndex: 1,
+        command: 'git status',
+        groupId: 'cmd-group-1',
+      }),
+      buildCommandBlock('cmd-2', {
+        orderIndex: 2,
+        command: 'git diff',
+        groupId: 'cmd-group-2',
+      }),
+    ]);
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0].tool?.commandGroup?.id).toBe('cmd-group-1');
+    expect(projected[0].tool?.commandGroup?.count).toBe(2);
+    expect(readGroupItems(projected[0]).map(item => item.command)).toEqual([
+      'git status',
+      'git diff',
+    ]);
+  });
+
+  it('does not merge compact tool blocks across non-tool blocks or different kinds', () => {
     const projected = projectWebSessionCompactTimelineBlocks([
       buildFileChangeBlock('fc-a', {
         orderIndex: 1,
@@ -147,12 +239,17 @@ describe('webSessionCompactTimeline', () => {
         path: 'ui/src/c.ts',
         groupId: 'fc-group-c',
       }),
+      buildCommandBlock('cmd-a', {
+        orderIndex: 5,
+        command: 'git status',
+      }),
     ]);
 
     expect(projected).toHaveLength(4);
     expect(projected[0].tool?.commandGroup).toBeUndefined();
-    expect(projected[2].tool?.commandGroup).toBeUndefined();
-    expect(projected[3].tool?.commandGroup?.id).toBe('fc-group-c');
+    expect(projected[2].tool?.commandGroup?.id).toBe('fc-group-c');
+    expect(projected[2].tool?.commandGroup?.count).toBe(2);
+    expect(projected[3].tool?.kind).toBe('command_execution');
   });
 
   it('deduplicates merged group detail items by tool id while keeping the latest state', () => {
