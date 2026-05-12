@@ -96,17 +96,19 @@ type ContextEstimate struct {
 type ContextEstimateMode string
 
 const (
-	ContextEstimateModeCumulativeTotal ContextEstimateMode = "cumulative_total"
-	ContextEstimateModeSinceCompaction ContextEstimateMode = "since_compaction"
-	ContextEstimateModeLatestTurnDelta ContextEstimateMode = "latest_turn_delta"
+	ContextEstimateModeCumulativeTotal  ContextEstimateMode = "cumulative_total"
+	ContextEstimateModeSinceCompaction  ContextEstimateMode = "since_compaction"
+	ContextEstimateModeLatestTurnDelta  ContextEstimateMode = "latest_turn_delta"
+	ContextEstimateModeLatestTokenCount ContextEstimateMode = "latest_token_count"
 )
 
 type ContextWindowSource string
 
 const (
-	ContextWindowSourceConfig      ContextWindowSource = "config"
-	ContextWindowSourceDefault     ContextWindowSource = "default"
-	ContextWindowSourceUnavailable ContextWindowSource = "unavailable"
+	ContextWindowSourceConfig       ContextWindowSource = "config"
+	ContextWindowSourceDefault      ContextWindowSource = "default"
+	ContextWindowSourceSessionUsage ContextWindowSource = "session_usage"
+	ContextWindowSourceUnavailable  ContextWindowSource = "unavailable"
 )
 
 type SyncState string

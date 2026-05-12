@@ -4320,6 +4320,18 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		ContextEstimate:         contextEstimate,
 		ContextEstimateMode:     contextEstimateMode,
 		LastContextCompactionAt: record.LastContextCompactionAt,
+		ContextWindowTokens: func() *int64 {
+			if record.SessionContextWindowTokens <= 0 {
+				return nil
+			}
+			return ptr(record.SessionContextWindowTokens)
+		}(),
+		ContextWindowSource: func() ContextWindowSource {
+			if record.SessionContextWindowTokens > 0 {
+				return ContextWindowSourceSessionUsage
+			}
+			return ""
+		}(),
 	}
 }
 
@@ -4376,7 +4388,26 @@ func buildLatestTurnUsage(record tables.WebSessionTable) (ContextEstimate, bool)
 	return buildRecordedLatestTurnUsage(record)
 }
 
+func buildLatestTokenCountUsage(record tables.WebSessionTable) (ContextEstimate, bool) {
+	if record.LatestTokenCountUpdatedAt == nil {
+		return ContextEstimate{}, false
+	}
+	estimate := ContextEstimate{
+		InputTokens:       maxInt64(0, record.LatestTokenCountInputTokens),
+		CachedInputTokens: maxInt64(0, record.LatestTokenCountCachedInputTokens),
+		OutputTokens:      maxInt64(0, record.LatestTokenCountOutputTokens),
+	}
+	estimate.UsedTokens = contextEstimateUsedTokens(estimate.InputTokens, estimate.OutputTokens)
+	if estimate.UsedTokens == 0 && record.LatestTokenCountTotalTokens > 0 {
+		estimate.UsedTokens = record.LatestTokenCountTotalTokens
+	}
+	return estimate, contextEstimateHasValue(estimate)
+}
+
 func buildContextEstimate(record tables.WebSessionTable) (ContextEstimate, ContextEstimateMode) {
+	if latestTokenCount, ok := buildLatestTokenCountUsage(record); ok {
+		return latestTokenCount, ContextEstimateModeLatestTokenCount
+	}
 	if latestTurnUsage, ok := buildLatestTurnUsage(record); ok {
 		return latestTurnUsage, ContextEstimateModeLatestTurnDelta
 	}
@@ -4408,19 +4439,29 @@ func maxInt64(left, right int64) int64 {
 
 func contextEstimateTotalsUpdate(in, cin, out int64) map[string]any {
 	return map[string]any{
-		"total_input_tokens":        in,
-		"total_cached_input_tokens": cin,
-		"total_output_tokens":       out,
-		"updated_at":                time.Now(),
+		"total_input_tokens":                     in,
+		"total_cached_input_tokens":              cin,
+		"total_output_tokens":                    out,
+		"latest_token_count_input_tokens":        0,
+		"latest_token_count_cached_input_tokens": 0,
+		"latest_token_count_output_tokens":       0,
+		"latest_token_count_total_tokens":        0,
+		"latest_token_count_updated_at":          nil,
+		"updated_at":                             time.Now(),
 	}
 }
 
 func contextEstimateIncrementUpdate(in, cin, out int64) map[string]any {
 	return map[string]any{
-		"total_input_tokens":        gorm.Expr("total_input_tokens + ?", in),
-		"total_cached_input_tokens": gorm.Expr("total_cached_input_tokens + ?", cin),
-		"total_output_tokens":       gorm.Expr("total_output_tokens + ?", out),
-		"updated_at":                time.Now(),
+		"total_input_tokens":                     gorm.Expr("total_input_tokens + ?", in),
+		"total_cached_input_tokens":              gorm.Expr("total_cached_input_tokens + ?", cin),
+		"total_output_tokens":                    gorm.Expr("total_output_tokens + ?", out),
+		"latest_token_count_input_tokens":        0,
+		"latest_token_count_cached_input_tokens": 0,
+		"latest_token_count_output_tokens":       0,
+		"latest_token_count_total_tokens":        0,
+		"latest_token_count_updated_at":          nil,
+		"updated_at":                             time.Now(),
 	}
 }
 
@@ -4429,11 +4470,16 @@ func contextEstimateBaselineResetUpdate(record tables.WebSessionTable, timestamp
 		timestamp = time.Now()
 	}
 	return map[string]any{
-		"context_baseline_input_tokens":        record.TotalInputTokens,
-		"context_baseline_cached_input_tokens": record.TotalCachedInputTokens,
-		"context_baseline_output_tokens":       record.TotalOutputTokens,
-		"last_context_compaction_at":           timestamp,
-		"updated_at":                           time.Now(),
+		"context_baseline_input_tokens":          record.TotalInputTokens,
+		"context_baseline_cached_input_tokens":   record.TotalCachedInputTokens,
+		"context_baseline_output_tokens":         record.TotalOutputTokens,
+		"last_context_compaction_at":             timestamp,
+		"latest_token_count_input_tokens":        0,
+		"latest_token_count_cached_input_tokens": 0,
+		"latest_token_count_output_tokens":       0,
+		"latest_token_count_total_tokens":        0,
+		"latest_token_count_updated_at":          nil,
+		"updated_at":                             time.Now(),
 	}
 }
 
@@ -5193,6 +5239,9 @@ func extractContextCompactionText(item map[string]any) string {
 	}
 	if text := strings.TrimSpace(stringValue(item["text"])); text != "" {
 		sections = append(sections, text)
+	}
+	if message := strings.TrimSpace(stringValue(item["message"])); message != "" {
+		sections = append(sections, message)
 	}
 	if content := strings.TrimSpace(strings.Join(collectReasoningFragments(item["content"]), "")); content != "" {
 		sections = append(sections, content)

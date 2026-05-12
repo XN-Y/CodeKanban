@@ -66,6 +66,11 @@ func (m *Manager) decorateSessionSummary(summary *SessionSummary) {
 		summary.ContextWindowSource = ContextWindowSourceUnavailable
 		return
 	}
+	if summary.ContextWindowTokens != nil &&
+		*summary.ContextWindowTokens > 0 &&
+		summary.ContextWindowSource == ContextWindowSourceSessionUsage {
+		return
+	}
 	config := m.GetCodexRuntimeConfig()
 	summary.ContextWindowTokens = ptr(config.ContextWindowTokens)
 	summary.ContextWindowSource = config.Source

@@ -51,24 +51,31 @@ type WebSessionTable struct {
 	LastMessageAt *time.Time `gorm:"type:datetime" json:"lastMessageAt"`
 	LastEventSeq  int64      `gorm:"type:integer;not null;default:0" json:"lastEventSeq"`
 
-	TotalInputTokens                 int64      `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
-	TotalCachedInputTokens           int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
-	TotalOutputTokens                int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
-	TotalCost                        float64    `gorm:"type:real;not null;default:0" json:"totalCost"`
-	LastCompletedInputTokens         int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LastCompletedCachedInputTokens   int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LastCompletedOutputTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LatestTurnInputTokens            int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LatestTurnCachedInputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LatestTurnOutputTokens           int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LatestTurnUsageUpdatedAt         *time.Time `gorm:"type:datetime" json:"-"`
-	ContextBaselineInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	ContextBaselineCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	ContextBaselineOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
-	LastContextCompactionAt          *time.Time `gorm:"type:datetime" json:"-"`
-	AutoRetryAttempt                 int        `gorm:"type:integer;not null;default:0" json:"-"`
-	AutoRetryNextAt                  *time.Time `gorm:"type:datetime" json:"-"`
-	AutoRetryLastErrorCode           *string    `gorm:"type:text" json:"-"`
+	TotalInputTokens                  int64      `gorm:"type:integer;not null;default:0" json:"totalInputTokens"`
+	TotalCachedInputTokens            int64      `gorm:"type:integer;not null;default:0" json:"totalCachedInputTokens"`
+	TotalOutputTokens                 int64      `gorm:"type:integer;not null;default:0" json:"totalOutputTokens"`
+	TotalCost                         float64    `gorm:"type:real;not null;default:0" json:"totalCost"`
+	LastCompletedInputTokens          int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastCompletedCachedInputTokens    int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastCompletedOutputTokens         int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnInputTokens             int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnCachedInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnOutputTokens            int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTurnUsageUpdatedAt          *time.Time `gorm:"type:datetime" json:"-"`
+	LatestTokenCountInputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTokenCountCachedInputTokens int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTokenCountOutputTokens      int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTokenCountTotalTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LatestTokenCountUpdatedAt         *time.Time `gorm:"type:datetime" json:"-"`
+	SessionContextWindowTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	SessionContextWindowObservedAt    *time.Time `gorm:"type:datetime" json:"-"`
+	ContextBaselineInputTokens        int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineCachedInputTokens  int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	ContextBaselineOutputTokens       int64      `gorm:"type:integer;not null;default:0" json:"-"`
+	LastContextCompactionAt           *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryAttempt                  int        `gorm:"type:integer;not null;default:0" json:"-"`
+	AutoRetryNextAt                   *time.Time `gorm:"type:datetime" json:"-"`
+	AutoRetryLastErrorCode            *string    `gorm:"type:text" json:"-"`
 
 	LastError *string `gorm:"type:text" json:"lastError"`
 	SyncError *string `gorm:"type:text" json:"syncError"`

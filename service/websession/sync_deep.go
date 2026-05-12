@@ -20,6 +20,30 @@ type codexLogSource struct {
 	LastMessageAt    *time.Time
 }
 
+type codexTokenUsageSnapshot struct {
+	InputTokens       int64
+	CachedInputTokens int64
+	OutputTokens      int64
+	TotalTokens       int64
+}
+
+type codexDeepHistoryStats struct {
+	HasTotalUsage                  bool
+	TotalUsage                     codexTokenUsageSnapshot
+	LatestTokenCount               codexTokenUsageSnapshot
+	LatestTokenCountUpdatedAt      *time.Time
+	SessionContextWindowTokens     int64
+	SessionContextWindowObservedAt *time.Time
+	LastContextCompactionAt        *time.Time
+	HasContextBaseline             bool
+	ContextBaseline                codexTokenUsageSnapshot
+}
+
+type codexDeepHistoryParseResult struct {
+	Items []HistoryItem
+	Stats codexDeepHistoryStats
+}
+
 func (m *Manager) syncSessionFromLogSource(
 	ctx context.Context,
 	session tables.WebSessionTable,
@@ -31,10 +55,11 @@ func (m *Manager) syncSessionFromLogSource(
 		return SessionSnapshot{}, err
 	}
 
-	items, err := m.parseCodexDeepHistory(source.FilePath)
+	parseResult, err := m.parseCodexDeepHistoryWithStats(source.FilePath)
 	if err != nil {
 		return SessionSnapshot{}, err
 	}
+	items := parseResult.Items
 	items = compactSyncedHistoryItems(items)
 
 	itemRows := make([]tables.WebSessionItemTable, 0, len(items))
@@ -64,18 +89,26 @@ func (m *Manager) syncSessionFromLogSource(
 	}
 
 	updates := map[string]any{
-		"source_kind":       string(defaultSessionBackend(AgentCodex)),
-		"source_created_at": sourceCreatedAt,
-		"source_updated_at": sourceUpdatedAt,
-		"last_synced_at":    time.Now(),
-		"sync_state":        SyncStateFresh,
-		"sync_error":        nil,
-		"last_sync_mode":    string(SyncModeDeep),
-		"turn_count":        0,
-		"item_count":        len(itemRows),
-		"last_event_seq":    0,
-		"updated_at":        time.Now(),
+		"source_kind":                            string(defaultSessionBackend(AgentCodex)),
+		"source_created_at":                      sourceCreatedAt,
+		"source_updated_at":                      sourceUpdatedAt,
+		"last_synced_at":                         time.Now(),
+		"sync_state":                             SyncStateFresh,
+		"sync_error":                             nil,
+		"last_sync_mode":                         string(SyncModeDeep),
+		"turn_count":                             0,
+		"item_count":                             len(itemRows),
+		"last_event_seq":                         0,
+		"updated_at":                             time.Now(),
+		"latest_token_count_input_tokens":        0,
+		"latest_token_count_cached_input_tokens": 0,
+		"latest_token_count_output_tokens":       0,
+		"latest_token_count_total_tokens":        0,
+		"latest_token_count_updated_at":          nil,
+		"session_context_window_tokens":          0,
+		"session_context_window_observed_at":     nil,
 	}
+	applyCodexDeepHistoryStatsUpdates(updates, parseResult.Stats)
 	if force {
 		if latest := latestHistoryItemTimestamp(items); latest != nil {
 			updates["activity_at"] = *latest
@@ -134,9 +167,17 @@ func (m *Manager) resolveCodexLogSource(
 }
 
 func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) {
-	file, err := os.Open(filePath)
+	result, err := m.parseCodexDeepHistoryWithStats(filePath)
 	if err != nil {
 		return nil, err
+	}
+	return result.Items, nil
+}
+
+func (m *Manager) parseCodexDeepHistoryWithStats(filePath string) (codexDeepHistoryParseResult, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return codexDeepHistoryParseResult{}, err
 	}
 	defer file.Close()
 
@@ -144,6 +185,7 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 	pendingTools := make(map[string]int)
 	pendingUserInputs := make(map[string]int)
 	var orderIndex int64
+	var stats codexDeepHistoryStats
 
 	scanner := bufio.NewScanner(file)
 	buf := make([]byte, 0, 64*1024)
@@ -160,6 +202,13 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 	}
 
 	appendIfNotDuplicate := func(item HistoryItem) {
+		if item.ItemType == "context_compaction" && len(items) > 0 {
+			last := items[len(items)-1]
+			if shouldDedupeContextCompactionItems(last, item) {
+				mergeContextCompactionHistoryItem(&items[len(items)-1], item)
+				return
+			}
+		}
 		if item.Tool == nil && len(items) > 0 {
 			last := items[len(items)-1]
 			if last.Kind == item.Kind && last.ItemType == item.ItemType && last.Text == item.Text {
@@ -182,11 +231,15 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 		ts, _ := time.Parse(time.RFC3339, entry.Timestamp)
 
 		switch entry.Type {
+		case "compacted":
+			stats.observeContextCompaction(ts)
+			appendIfNotDuplicate(codexContextCompactionHistoryItem(decodeRawObject(entry.Payload), ts))
 		case "event_msg":
 			payload, ok := entry.Payload.(map[string]any)
 			if !ok {
 				continue
 			}
+			stats.observeEventMessage(payload, ts)
 			for _, item := range m.codexHistoryItemsFromEventMessage(payload, ts) {
 				appendIfNotDuplicate(item)
 			}
@@ -194,6 +247,9 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 			payload, ok := entry.Payload.(map[string]any)
 			if !ok {
 				continue
+			}
+			if normalizeCodexItemType(stringValue(payload["type"])) == "context_compaction" {
+				stats.observeContextCompaction(ts)
 			}
 			m.applyCodexResponseItem(
 				&items,
@@ -206,13 +262,16 @@ func (m *Manager) parseCodexDeepHistory(filePath string) ([]HistoryItem, error) 
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return codexDeepHistoryParseResult{}, err
 	}
 
 	for index := range items {
 		items[index].OrderIndex = int64(index + 1)
 	}
-	return items, nil
+	return codexDeepHistoryParseResult{
+		Items: items,
+		Stats: stats,
+	}, nil
 }
 
 func latestHistoryItemTimestamp(items []HistoryItem) *time.Time {
@@ -231,6 +290,185 @@ func latestHistoryItemTimestamp(items []HistoryItem) *time.Time {
 		}
 	}
 	return latest
+}
+
+func applyCodexDeepHistoryStatsUpdates(updates map[string]any, stats codexDeepHistoryStats) {
+	if updates == nil {
+		return
+	}
+	if stats.HasTotalUsage {
+		updates["total_input_tokens"] = stats.TotalUsage.InputTokens
+		updates["total_cached_input_tokens"] = stats.TotalUsage.CachedInputTokens
+		updates["total_output_tokens"] = stats.TotalUsage.OutputTokens
+	}
+	if stats.LatestTokenCountUpdatedAt != nil {
+		updates["latest_token_count_input_tokens"] = stats.LatestTokenCount.InputTokens
+		updates["latest_token_count_cached_input_tokens"] = stats.LatestTokenCount.CachedInputTokens
+		updates["latest_token_count_output_tokens"] = stats.LatestTokenCount.OutputTokens
+		updates["latest_token_count_total_tokens"] = stats.LatestTokenCount.TotalTokens
+		updates["latest_token_count_updated_at"] = *stats.LatestTokenCountUpdatedAt
+	}
+	if stats.SessionContextWindowTokens > 0 {
+		updates["session_context_window_tokens"] = stats.SessionContextWindowTokens
+		if stats.SessionContextWindowObservedAt != nil {
+			updates["session_context_window_observed_at"] = *stats.SessionContextWindowObservedAt
+		}
+	}
+	if stats.LastContextCompactionAt != nil {
+		updates["last_context_compaction_at"] = *stats.LastContextCompactionAt
+		if stats.HasContextBaseline {
+			updates["context_baseline_input_tokens"] = stats.ContextBaseline.InputTokens
+			updates["context_baseline_cached_input_tokens"] = stats.ContextBaseline.CachedInputTokens
+			updates["context_baseline_output_tokens"] = stats.ContextBaseline.OutputTokens
+		}
+	}
+}
+
+func (stats *codexDeepHistoryStats) observeEventMessage(payload map[string]any, ts time.Time) {
+	if stats == nil {
+		return
+	}
+	stats.observeModelContextWindow(payload["model_context_window"], ts)
+	switch strings.TrimSpace(stringValue(payload["type"])) {
+	case "token_count":
+		stats.observeTokenCount(payload, ts)
+	case "context_compacted":
+		stats.observeContextCompaction(ts)
+	}
+}
+
+func (stats *codexDeepHistoryStats) observeTokenCount(payload map[string]any, ts time.Time) {
+	info := decodeRawObject(payload["info"])
+	if len(info) == 0 {
+		return
+	}
+	stats.observeModelContextWindow(info["model_context_window"], ts)
+	if totalUsage, ok := parseCodexTokenUsageSnapshot(info["total_token_usage"]); ok {
+		stats.HasTotalUsage = true
+		stats.TotalUsage = totalUsage
+	}
+	if lastUsage, ok := parseCodexTokenUsageSnapshot(info["last_token_usage"]); ok {
+		stats.LatestTokenCount = lastUsage
+		stats.LatestTokenCountUpdatedAt = ptr(ts)
+	}
+}
+
+func (stats *codexDeepHistoryStats) observeModelContextWindow(raw any, ts time.Time) {
+	if stats == nil {
+		return
+	}
+	value, ok := codexInt64Field(map[string]any{"value": raw}, "value")
+	if !ok || value <= 0 {
+		return
+	}
+	stats.SessionContextWindowTokens = value
+	stats.SessionContextWindowObservedAt = ptr(ts)
+}
+
+func (stats *codexDeepHistoryStats) observeContextCompaction(ts time.Time) {
+	if stats == nil || ts.IsZero() {
+		return
+	}
+	if stats.LastContextCompactionAt != nil &&
+		absDuration(ts.Sub(*stats.LastContextCompactionAt)) <= 5*time.Second {
+		if ts.After(*stats.LastContextCompactionAt) {
+			stats.LastContextCompactionAt = ptr(ts)
+		}
+		return
+	}
+	stats.LastContextCompactionAt = ptr(ts)
+	if stats.HasTotalUsage {
+		stats.ContextBaseline = stats.TotalUsage
+		stats.HasContextBaseline = true
+	}
+}
+
+func parseCodexTokenUsageSnapshot(raw any) (codexTokenUsageSnapshot, bool) {
+	record := decodeRawObject(raw)
+	if len(record) == 0 {
+		return codexTokenUsageSnapshot{}, false
+	}
+	var snapshot codexTokenUsageSnapshot
+	var seen bool
+	if value, ok := codexInt64Field(record, "input_tokens", "inputTokens"); ok {
+		snapshot.InputTokens = value
+		seen = true
+	}
+	if value, ok := codexInt64Field(record, "cached_input_tokens", "cachedInputTokens"); ok {
+		snapshot.CachedInputTokens = value
+		seen = true
+	}
+	if value, ok := codexInt64Field(record, "output_tokens", "outputTokens"); ok {
+		snapshot.OutputTokens = value
+		seen = true
+	}
+	if value, ok := codexInt64Field(record, "total_tokens", "totalTokens"); ok {
+		snapshot.TotalTokens = value
+		seen = true
+	}
+	return snapshot, seen
+}
+
+func codexInt64Field(record map[string]any, keys ...string) (int64, bool) {
+	for _, key := range keys {
+		value, ok := record[key]
+		if !ok {
+			continue
+		}
+		return maxInt64(0, int64(numberValue(value))), true
+	}
+	return 0, false
+}
+
+func absDuration(value time.Duration) time.Duration {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+func shouldDedupeContextCompactionItems(previous HistoryItem, next HistoryItem) bool {
+	if previous.ItemType != "context_compaction" || next.ItemType != "context_compaction" {
+		return false
+	}
+	previousAt := historyItemObservedTimestamp(previous)
+	nextAt := historyItemObservedTimestamp(next)
+	if previousAt == nil || nextAt == nil {
+		return true
+	}
+	return absDuration(nextAt.Sub(*previousAt)) <= 5*time.Second
+}
+
+func mergeContextCompactionHistoryItem(target *HistoryItem, source HistoryItem) {
+	if target == nil {
+		return
+	}
+	if strings.TrimSpace(target.Text) == "" {
+		target.Text = source.Text
+	}
+	if target.Tool == nil {
+		target.Tool = source.Tool
+	} else if source.Tool != nil {
+		if strings.TrimSpace(target.Tool.Output) == "" || target.Tool.Output == "Context compacted" {
+			target.Tool.Output = source.Tool.Output
+		}
+		if len(target.Tool.Meta) == 0 {
+			target.Tool.Meta = source.Tool.Meta
+		}
+	}
+	if target.Payload == nil {
+		target.Payload = source.Payload
+	}
+	if target.ObservedAt == nil || (source.ObservedAt != nil && source.ObservedAt.After(*target.ObservedAt)) {
+		target.ObservedAt = source.ObservedAt
+	}
+}
+
+func historyItemObservedTimestamp(item HistoryItem) *time.Time {
+	if item.ObservedAt != nil {
+		return item.ObservedAt
+	}
+	return item.Timestamp
 }
 
 func (m *Manager) codexHistoryItemsFromEventMessage(
@@ -281,6 +519,8 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 			Level:      "warn",
 			Payload:    cloneMap(payload),
 		}}
+	case "context_compacted":
+		return []HistoryItem{codexContextCompactionHistoryItem(payload, ts)}
 	case "item_completed":
 		item := decodeRawObject(payload["item"])
 		plan := deepSyncPlanHistoryItem(item, stringValue(payload["turn_id"]), ts, cloneMap(payload))
@@ -291,6 +531,42 @@ func (m *Manager) codexHistoryItemsFromEventMessage(
 	default:
 		return nil
 	}
+}
+
+func codexContextCompactionHistoryItem(payload map[string]any, ts time.Time) HistoryItem {
+	toolID := strings.TrimSpace(stringValue(payload["id"]))
+	if toolID == "" {
+		toolID = utils.NewID()
+	}
+	output := contextCompactionHistoryOutput(payload)
+	return HistoryItem{
+		ID:           toolID,
+		SourceItemID: ptr(toolID),
+		Kind:         "tool",
+		ItemType:     "context_compaction",
+		Timestamp:    ptr(ts),
+		ObservedAt:   ptr(ts),
+		Payload:      cloneMap(payload),
+		Tool: &HistoryTool{
+			ID:     toolID,
+			Name:   "Context Compaction",
+			Kind:   "context_compaction",
+			Output: output,
+			Status: syncedToolStatus(firstNonEmpty(stringValue(payload["status"]), "completed")),
+			Meta: map[string]any{
+				"title":    "Context Compaction",
+				"kind":     "context_compaction",
+				"subtitle": firstNonEmpty(contextCompactionSubtitle(payload), output),
+			},
+		},
+	}
+}
+
+func contextCompactionHistoryOutput(payload map[string]any) string {
+	if strings.TrimSpace(stringValue(payload["type"])) == "context_compacted" {
+		return "Context compacted"
+	}
+	return firstNonEmpty(extractContextCompactionText(payload), "Context compacted")
 }
 
 func deepSyncPlanHistoryItem(

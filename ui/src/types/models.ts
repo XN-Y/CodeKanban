@@ -280,14 +280,15 @@ export interface WebSessionContextEstimate {
 export type WebSessionContextEstimateMode =
   | 'cumulative_total'
   | 'since_compaction'
-  | 'latest_turn_delta';
+  | 'latest_turn_delta'
+  | 'latest_token_count';
 
-export type WebSessionContextWindowSource = 'config' | 'default' | 'unavailable';
+export type WebSessionContextWindowSource = 'config' | 'default' | 'session_usage' | 'unavailable';
 
 export interface WebSessionCodexRuntimeConfig {
   contextWindowTokens: number;
   compactLimitTokens: number;
-  source: Exclude<WebSessionContextWindowSource, 'unavailable'>;
+  source: Exclude<WebSessionContextWindowSource, 'session_usage' | 'unavailable'>;
 }
 
 export type CodexSkillSource = 'user' | 'system' | 'bundled';

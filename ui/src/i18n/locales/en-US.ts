@@ -888,14 +888,18 @@ export default {
     contextUsageTitle: 'Remaining Budget Estimate',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
+    contextUsageDisclaimer:
+      'Note: when available, the latest hidden Codex usage snapshot estimates current context occupancy; cumulative usage is still shown separately.',
     contextUsageWindow: 'Window: {count} tokens',
     contextUsageCompactLimit: 'Compact at: {count} tokens',
     contextUsageRemainingEstimate: 'Remaining to compact limit: {count} tokens',
     contextUsageEstimatedUsed: 'Estimated current occupancy: {count} tokens',
     contextUsageSource: 'Source: {source}',
+    contextUsageSourceSessionUsage: 'hidden Codex session usage',
     contextUsageSourceConfig: 'local Codex config',
     contextUsageSourceDefault: 'default 400000',
     contextUsageMode: 'Mode: {mode}',
+    contextUsageModeLatestTokenCount: 'estimated from the latest hidden Codex usage snapshot',
     contextUsageModeLatestTurnDelta: 'estimated from the latest turn delta',
     contextUsageModeSinceCompaction: 'estimated since the latest context compaction',
     contextUsageModeCumulativeTotal: 'estimated from cumulative session usage',
@@ -904,6 +908,8 @@ export default {
     contextUsageTotalUsed: 'Cumulative session usage: {count} tokens',
     contextUsageTotalBreakdown:
       'Cumulative breakdown: input {input} / cached {cached} / output {output}',
+    contextUsageNoteLatestTokenCount:
+      'Note: this uses the latest Codex token_count request snapshot and is usually closer to current context occupancy than cumulative usage.',
     contextUsageNoteLatestTurnDelta:
       'Note: this is an approximation of current context size derived from the latest turn, not a real-time occupancy value returned by Codex.',
     contextUsageNoteSinceCompaction:

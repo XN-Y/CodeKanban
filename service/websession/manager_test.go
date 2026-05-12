@@ -892,6 +892,7 @@ func TestManagerListSessionsIncludesConfiguredContextWindow(t *testing.T) {
 
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
+	t.Setenv("USERPROFILE", homeDir)
 	configDir := filepath.Join(homeDir, ".codex")
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
 		t.Fatalf("mkdir config dir failed: %v", err)
@@ -4070,6 +4071,32 @@ func TestHandleCodexAppServerUsageDefaultsContextEstimateToCumulativeTotal(t *te
 	}
 	if summary.ContextEstimate.InputTokens != 120 || summary.ContextEstimate.CachedInputTokens != 30 || summary.ContextEstimate.OutputTokens != 10 {
 		t.Fatalf("unexpected context estimate: %#v", summary.ContextEstimate)
+	}
+}
+
+func TestBuildContextEstimateUsesLatestTokenCountSnapshot(t *testing.T) {
+	now := time.Now()
+	record := tables.WebSessionTable{
+		TotalInputTokens:                 999,
+		TotalCachedInputTokens:           111,
+		TotalOutputTokens:                88,
+		LatestTokenCountTotalTokens:      12656,
+		LatestTokenCountUpdatedAt:        &now,
+		LastContextCompactionAt:          &now,
+		ContextBaselineInputTokens:       900,
+		ContextBaselineCachedInputTokens: 100,
+		ContextBaselineOutputTokens:      80,
+	}
+
+	estimate, mode := buildContextEstimate(record)
+	if mode != ContextEstimateModeLatestTokenCount {
+		t.Fatalf("expected context estimate mode %q, got %q", ContextEstimateModeLatestTokenCount, mode)
+	}
+	if estimate.UsedTokens != 12656 {
+		t.Fatalf("expected usedTokens from latest token_count total, got %d", estimate.UsedTokens)
+	}
+	if estimate.InputTokens != 0 || estimate.CachedInputTokens != 0 || estimate.OutputTokens != 0 {
+		t.Fatalf("expected zero token_count breakdown, got %#v", estimate)
 	}
 }
 

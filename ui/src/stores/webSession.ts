@@ -87,7 +87,7 @@ type WireSession = {
     out?: number;
     usd?: number;
   };
-  cem?: 'cumulative_total' | 'since_compaction' | 'latest_turn_delta';
+  cem?: 'cumulative_total' | 'since_compaction' | 'latest_turn_delta' | 'latest_token_count';
   lcca?: number | null;
   cost?: number;
   cwt?: number | null;
@@ -1582,16 +1582,21 @@ export const useWebSessionStore = defineStore('web-session', () => {
           ),
       },
       contextEstimateMode:
-        session.cem === 'latest_turn_delta'
-          ? 'latest_turn_delta'
-          : session.cem === 'since_compaction'
-            ? 'since_compaction'
-            : 'cumulative_total',
+        session.cem === 'latest_token_count'
+          ? 'latest_token_count'
+          : session.cem === 'latest_turn_delta'
+            ? 'latest_turn_delta'
+            : session.cem === 'since_compaction'
+              ? 'since_compaction'
+              : 'cumulative_total',
       lastContextCompactionAt: session.lcca ? new Date(session.lcca).toISOString() : null,
       contextWindowTokens:
         typeof session.cwt === 'number' && Number.isFinite(session.cwt) ? session.cwt : null,
       contextWindowSource:
-        session.cws === 'config' || session.cws === 'default' || session.cws === 'unavailable'
+        session.cws === 'config' ||
+        session.cws === 'default' ||
+        session.cws === 'session_usage' ||
+        session.cws === 'unavailable'
           ? session.cws
           : 'unavailable',
     };

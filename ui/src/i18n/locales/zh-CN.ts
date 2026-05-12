@@ -864,14 +864,18 @@ export default {
     contextUsageTitle: '剩余预算估算',
     contextUsageLabel: '{percent}%',
     contextUsageLabelUnavailable: '--',
+    contextUsageDisclaimer:
+      '说明：可用时使用 Codex 隐藏 usage 的最新快照估算当前上下文占用；累计消耗仍单独展示。',
     contextUsageWindow: '上限：{count} tokens',
     contextUsageCompactLimit: '压缩线：{count} tokens',
     contextUsageRemainingEstimate: '距压缩线剩余：{count} tokens',
     contextUsageEstimatedUsed: '估算当前占用：{count} tokens',
     contextUsageSource: '来源：{source}',
+    contextUsageSourceSessionUsage: 'Codex 会话隐藏 usage',
     contextUsageSourceConfig: 'Codex 本地配置',
     contextUsageSourceDefault: '默认值 400000',
     contextUsageMode: '口径：{mode}',
+    contextUsageModeLatestTokenCount: '按 Codex 隐藏 usage 最新快照估算',
     contextUsageModeLatestTurnDelta: '按最近一轮 turn 增量估算',
     contextUsageModeSinceCompaction: '最近一次上下文压缩后估算',
     contextUsageModeCumulativeTotal: '按累计 session usage 估算',
@@ -879,6 +883,8 @@ export default {
       '当前估算明细：input {input} / cached {cached} / output {output}',
     contextUsageTotalUsed: '本 session 累计消耗：{count} tokens',
     contextUsageTotalBreakdown: '累计明细：input {input} / cached {cached} / output {output}',
+    contextUsageNoteLatestTokenCount:
+      '注意：这是 Codex token_count 事件里的最新请求快照，通常比累计消耗更接近当前上下文占用。',
     contextUsageNoteLatestTurnDelta:
       '注意：这是最近一轮 turn 对当前上下文体积的近似估算，不是 Codex 直接返回的实时上下文占用。',
     contextUsageNoteSinceCompaction:

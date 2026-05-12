@@ -3575,8 +3575,6 @@ const mobileComposerSummaryTokens = computed(() => {
   return tokens;
 });
 const tokenNumberFormatter = new Intl.NumberFormat();
-const contextUsageDisclaimer =
-  '这个数据是我从codex那边读的然后原样显示，数据可能并不准确，但我也不知道为什么他这样给显示，有明白的大佬麻烦告知';
 const contextUsageIndicator = computed(() => {
   const session = currentSession.value;
   if (!session) {
@@ -3589,6 +3587,7 @@ const contextUsageIndicator = computed(() => {
 
   const runtimeConfig = codexRuntimeConfig.value;
   const sessionSource =
+    session.contextWindowSource === 'session_usage' ||
     session.contextWindowSource === 'config' ||
     session.contextWindowSource === 'default' ||
     session.contextWindowSource === 'unavailable'
@@ -3596,10 +3595,19 @@ const contextUsageIndicator = computed(() => {
       : session.agent === 'codex'
         ? ('default' as WebSessionContextWindowSource)
         : ('unavailable' as WebSessionContextWindowSource);
-  const source = runtimeConfig?.source ?? sessionSource;
+  const sessionUsageWindowTokens =
+    sessionSource === 'session_usage' &&
+    typeof session.contextWindowTokens === 'number' &&
+    Number.isFinite(session.contextWindowTokens)
+      ? Math.max(0, session.contextWindowTokens)
+      : null;
+  const source = sessionUsageWindowTokens
+    ? sessionSource
+    : (runtimeConfig?.source ?? sessionSource);
 
   const contextWindowTokens =
-    typeof runtimeConfig?.contextWindowTokens === 'number' &&
+    sessionUsageWindowTokens ??
+    (typeof runtimeConfig?.contextWindowTokens === 'number' &&
     Number.isFinite(runtimeConfig.contextWindowTokens)
       ? Math.max(0, runtimeConfig.contextWindowTokens)
       : typeof session.contextWindowTokens === 'number' &&
@@ -3607,12 +3615,13 @@ const contextUsageIndicator = computed(() => {
         ? Math.max(0, session.contextWindowTokens)
         : session.agent === 'codex' && isDraftSession(session)
           ? DEFAULT_CODEX_CONTEXT_WINDOW_TOKENS
-          : null;
+          : null);
   const compactLimitTokens =
-    typeof runtimeConfig?.compactLimitTokens === 'number' &&
+    sessionUsageWindowTokens ??
+    (typeof runtimeConfig?.compactLimitTokens === 'number' &&
     Number.isFinite(runtimeConfig.compactLimitTokens)
       ? Math.max(0, runtimeConfig.compactLimitTokens)
-      : contextWindowTokens;
+      : contextWindowTokens);
 
   if (session.agent !== 'codex' || !contextWindowTokens || !compactLimitTokens) {
     return {
@@ -3635,27 +3644,35 @@ const contextUsageIndicator = computed(() => {
   const remainingPercent =
     compactLimitTokens > 0 ? Math.round((remainingEstimateTokens / compactLimitTokens) * 100) : 0;
   const sourceLabel =
-    source === 'config'
-      ? t('webSession.contextUsageSourceConfig')
-      : t('webSession.contextUsageSourceDefault');
+    source === 'session_usage'
+      ? t('webSession.contextUsageSourceSessionUsage')
+      : source === 'config'
+        ? t('webSession.contextUsageSourceConfig')
+        : t('webSession.contextUsageSourceDefault');
   const estimateMode =
-    session.contextEstimateMode === 'latest_turn_delta'
-      ? 'latest_turn_delta'
-      : session.contextEstimateMode === 'since_compaction'
-        ? 'since_compaction'
-        : 'cumulative_total';
+    session.contextEstimateMode === 'latest_token_count'
+      ? 'latest_token_count'
+      : session.contextEstimateMode === 'latest_turn_delta'
+        ? 'latest_turn_delta'
+        : session.contextEstimateMode === 'since_compaction'
+          ? 'since_compaction'
+          : 'cumulative_total';
   const estimateModeLabel =
-    estimateMode === 'latest_turn_delta'
-      ? t('webSession.contextUsageModeLatestTurnDelta')
-      : estimateMode === 'since_compaction'
-        ? t('webSession.contextUsageModeSinceCompaction')
-        : t('webSession.contextUsageModeCumulativeTotal');
+    estimateMode === 'latest_token_count'
+      ? t('webSession.contextUsageModeLatestTokenCount')
+      : estimateMode === 'latest_turn_delta'
+        ? t('webSession.contextUsageModeLatestTurnDelta')
+        : estimateMode === 'since_compaction'
+          ? t('webSession.contextUsageModeSinceCompaction')
+          : t('webSession.contextUsageModeCumulativeTotal');
   const estimateNote =
-    estimateMode === 'latest_turn_delta'
-      ? t('webSession.contextUsageNoteLatestTurnDelta')
-      : estimateMode === 'since_compaction'
-        ? t('webSession.contextUsageNoteSinceCompaction')
-        : t('webSession.contextUsageNoteCumulativeTotal');
+    estimateMode === 'latest_token_count'
+      ? t('webSession.contextUsageNoteLatestTokenCount')
+      : estimateMode === 'latest_turn_delta'
+        ? t('webSession.contextUsageNoteLatestTurnDelta')
+        : estimateMode === 'since_compaction'
+          ? t('webSession.contextUsageNoteSinceCompaction')
+          : t('webSession.contextUsageNoteCumulativeTotal');
 
   return {
     state: remainingPercent <= 10 ? 'warning' : remainingPercent <= 25 ? 'active' : 'idle',
@@ -3664,7 +3681,7 @@ const contextUsageIndicator = computed(() => {
     }),
     title: t('webSession.contextUsageTitle'),
     lines: [
-      contextUsageDisclaimer,
+      t('webSession.contextUsageDisclaimer'),
       t('webSession.contextUsageRemainingEstimate', {
         count: tokenNumberFormatter.format(remainingEstimateTokens),
       }),

@@ -273,6 +273,78 @@ func TestSyncSessionFromLogSourceReplacesCacheAndMarksDeepSync(t *testing.T) {
 	}
 }
 
+func TestSyncSessionFromLogSourceUsesHiddenTokenCountUsage(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	project := seedProject(t)
+	session := seedWebSession(t, project.ID, "Hidden Usage Session", 1000)
+	filePath := writeCodexDeepHistoryTempFile(t, []string{
+		`{"timestamp":"2026-04-09T04:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1","model_context_window":258400}}`,
+		`{"timestamp":"2026-04-09T04:00:01Z","type":"event_msg","payload":{"type":"user_message","message":"inspect usage","images":[]}}`,
+		`{"timestamp":"2026-04-09T04:00:02Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14537402,"cached_input_tokens":13527296,"output_tokens":66916,"total_tokens":14604318},"last_token_usage":{"input_tokens":207171,"cached_input_tokens":4352,"output_tokens":1345,"total_tokens":208516},"model_context_window":258400}}}`,
+		`{"timestamp":"2026-04-09T04:00:03Z","type":"compacted","payload":{"message":"Compacted earlier turns into a summary."}}`,
+		`{"timestamp":"2026-04-09T04:00:03Z","type":"event_msg","payload":{"type":"context_compacted"}}`,
+		`{"timestamp":"2026-04-09T04:00:04Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14537402,"cached_input_tokens":13527296,"output_tokens":66916,"total_tokens":14604318},"last_token_usage":{"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"total_tokens":12656},"model_context_window":258400}}}`,
+		`{"timestamp":"2026-04-09T04:00:05Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":14600000,"cached_input_tokens":13550000,"output_tokens":67000,"total_tokens":14667000},"last_token_usage":{"input_tokens":59571,"cached_input_tokens":59000,"output_tokens":199,"total_tokens":59770},"model_context_window":258400}}}`,
+	})
+	if err := model.GetDB().Model(&tables.WebSessionTable{}).
+		Where("id = ?", session.ID).
+		Updates(map[string]any{
+			"thread_path": filePath,
+			"cwd":         project.Path,
+		}).Error; err != nil {
+		t.Fatalf("failed to update web session: %v", err)
+	}
+
+	manager, err := NewManager(Config{DataDir: t.TempDir()}, zap.NewNop())
+	if err != nil {
+		t.Fatalf("NewManager returned error: %v", err)
+	}
+	refreshedSession, err := manager.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+
+	snapshot, err := manager.syncSessionFromLogSource(context.Background(), refreshedSession, true, false)
+	if err != nil {
+		t.Fatalf("syncSessionFromLogSource returned error: %v", err)
+	}
+
+	compactionCount := 0
+	for _, item := range snapshot.History.Items {
+		if item.Tool != nil && item.Tool.Kind == "context_compaction" {
+			compactionCount++
+		}
+	}
+	if compactionCount != 1 {
+		t.Fatalf("expected one context compaction history item, got %d", compactionCount)
+	}
+	if snapshot.Session.LastContextCompactionAt == nil {
+		t.Fatal("expected lastContextCompactionAt to be recorded")
+	}
+	if snapshot.Session.ContextEstimateMode != ContextEstimateModeLatestTokenCount {
+		t.Fatalf("expected estimate mode %q, got %q", ContextEstimateModeLatestTokenCount, snapshot.Session.ContextEstimateMode)
+	}
+	if snapshot.Session.ContextEstimate.InputTokens != 59571 ||
+		snapshot.Session.ContextEstimate.CachedInputTokens != 59000 ||
+		snapshot.Session.ContextEstimate.OutputTokens != 199 ||
+		snapshot.Session.ContextEstimate.UsedTokens != 59770 {
+		t.Fatalf("unexpected context estimate: %#v", snapshot.Session.ContextEstimate)
+	}
+	if snapshot.Session.Usage.InputTokens != 14600000 ||
+		snapshot.Session.Usage.CachedInputTokens != 13550000 ||
+		snapshot.Session.Usage.OutputTokens != 67000 {
+		t.Fatalf("unexpected cumulative usage: %#v", snapshot.Session.Usage)
+	}
+	if snapshot.Session.ContextWindowTokens == nil || *snapshot.Session.ContextWindowTokens != 258400 {
+		t.Fatalf("expected session context window 258400, got %#v", snapshot.Session.ContextWindowTokens)
+	}
+	if snapshot.Session.ContextWindowSource != ContextWindowSourceSessionUsage {
+		t.Fatalf("expected context window source %q, got %q", ContextWindowSourceSessionUsage, snapshot.Session.ContextWindowSource)
+	}
+}
+
 func TestSyncSessionFromLogSourceCachesPlanToolFromCompletedEvent(t *testing.T) {
 	cleanup := initTestDB(t)
 	defer cleanup()
