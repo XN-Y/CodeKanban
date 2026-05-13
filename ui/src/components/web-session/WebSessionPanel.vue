@@ -2100,6 +2100,7 @@ import {
 } from '@/components/web-session/webSessionUserInputSubmit';
 import {
   buildWebSessionUserInputDraftSyncKey,
+  buildWebSessionUserInputDraftStorageKey,
   reconcileWebSessionUserInputLocalState,
 } from '@/components/web-session/webSessionUserInputDraftSync';
 import {
@@ -2449,6 +2450,7 @@ const activeRawTimelineBlockKey = ref('');
 const streamingMarkdownTextByKey = ref<Record<string, string>>({});
 const userInputSelections = ref<Record<string, string[]>>({});
 const userInputDrafts = ref<Record<string, string>>({});
+let activeUserInputDraftStorageKey = '';
 const submitStateBySessionId = ref<WebSessionSubmitState>({});
 const userInputSubmitStateByOwnerId = ref<WebSessionSubmitState>({});
 const userInputSlowStateByOwnerId = ref<WebSessionSubmitState>({});
@@ -3203,6 +3205,9 @@ function showRuntimeSwitchNotice(noticeKey: string) {
 const pendingUserInputSyncKey = computed(() =>
   buildWebSessionUserInputDraftSyncKey(currentRealSession.value?.id, pendingUserInput.value)
 );
+const pendingUserInputDraftStorageKey = computed(() =>
+  buildWebSessionUserInputDraftStorageKey(currentRealSession.value?.id, pendingUserInput.value)
+);
 const currentUserInputSubmitOwnerId = computed(() =>
   currentRealSession.value && pendingUserInput.value
     ? buildWebSessionUserInputSubmitOwnerId(
@@ -3223,6 +3228,27 @@ const isUserInputInteractionDisabled = computed(
 const showUserInputSubmitSlowHint = computed(
   () => isSubmittingUserInput.value && isUserInputSubmitSlow.value
 );
+
+function persistActiveUserInputDraft() {
+  if (!activeUserInputDraftStorageKey) {
+    return;
+  }
+  webSessionStore.setPendingUserInputDraft(activeUserInputDraftStorageKey, {
+    selections: userInputSelections.value,
+    drafts: userInputDrafts.value,
+  });
+}
+
+function clearUserInputDraftStorage(key: string) {
+  const normalizedKey = String(key || '').trim();
+  if (!normalizedKey) {
+    return;
+  }
+  webSessionStore.clearPendingUserInputDraft(normalizedKey);
+  if (activeUserInputDraftStorageKey === normalizedKey) {
+    activeUserInputDraftStorageKey = '';
+  }
+}
 const inlinePlanChoice = computed<InlinePlanChoice | null>(() => {
   const request = pendingUserInput.value;
   if (!request || request.stale || !latestPlanToolId.value) {
@@ -4377,20 +4403,33 @@ const mobileTabDropdownY = computed(() => mobileTabSelectorAnchor.value?.y ?? 0)
 watch(
   pendingUserInputSyncKey,
   syncKey => {
+    persistActiveUserInputDraft();
     const request = pendingUserInput.value;
-    if (!syncKey || !request) {
+    const storageKey = pendingUserInputDraftStorageKey.value;
+    activeUserInputDraftStorageKey = storageKey;
+    if (!syncKey || !request || !storageKey) {
+      activeUserInputDraftStorageKey = '';
       userInputSelections.value = {};
       userInputDrafts.value = {};
       return;
     }
+    const storedState = webSessionStore.getPendingUserInputDraft(storageKey);
     const nextState = reconcileWebSessionUserInputLocalState(request.questions, {
-      selections: userInputSelections.value,
-      drafts: userInputDrafts.value,
+      selections: storedState?.selections ?? {},
+      drafts: storedState?.drafts ?? {},
     });
     userInputSelections.value = nextState.selections;
     userInputDrafts.value = nextState.drafts;
   },
   { immediate: true }
+);
+
+watch(
+  [userInputSelections, userInputDrafts],
+  () => {
+    persistActiveUserInputDraft();
+  },
+  { deep: true }
 );
 
 watch(currentUserInputSubmitOwnerId, (nextOwnerId, previousOwnerId) => {
@@ -8500,6 +8539,7 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
   if (!currentRealSession.value || !pendingUserInput.value || !inlinePlanChoice.value) {
     return false;
   }
+  const draftStorageKey = activeUserInputDraftStorageKey || pendingUserInputDraftStorageKey.value;
   const option = findInlinePlanChoiceOption(mode);
   if (!option || !inlinePlanChoice.value.questionId) {
     return false;
@@ -8511,6 +8551,7 @@ async function answerInlinePlanChoice(mode: 'execute' | 'plan') {
       [inlinePlanChoice.value.questionId]: [option.label],
     }
   );
+  clearUserInputDraftStorage(draftStorageKey);
   userInputSelections.value = {};
   userInputDrafts.value = {};
   return true;
@@ -8585,11 +8626,15 @@ async function handleUserInputSubmit() {
   if (!submitOwnerId) {
     return;
   }
+  const draftStorageKey = activeUserInputDraftStorageKey || pendingUserInputDraftStorageKey.value;
   beginUserInputSubmit(submitOwnerId);
   let answered = false;
   try {
     await webSessionStore.answerUserInput(sessionId, request.itemId, answers);
     answered = true;
+    clearUserInputDraftStorage(draftStorageKey);
+    userInputSelections.value = {};
+    userInputDrafts.value = {};
   } catch (error) {
     message.error(formatSessionInteractionError(error));
   } finally {
@@ -9935,6 +9980,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  persistActiveUserInputDraft();
   realSessionSnapshotLoadController.cancel();
   streamingMarkdownController.clear();
   if (liveStateClockTimer != null) {

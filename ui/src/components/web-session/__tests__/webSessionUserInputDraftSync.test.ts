@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWebSessionUserInputDraftStorageKey,
   buildWebSessionUserInputDraftSyncKey,
   reconcileWebSessionUserInputLocalState,
 } from '@/components/web-session/webSessionUserInputDraftSync';
@@ -65,6 +66,18 @@ describe('webSessionUserInputDraftSync', () => {
 
     expect(changedRequestId).not.toBe(base);
     expect(changedQuestions).not.toBe(base);
+  });
+
+  it('keeps the storage key stable when only question ids change', () => {
+    const base = buildWebSessionUserInputDraftStorageKey('session-1', makeRequest());
+    const changedQuestions = buildWebSessionUserInputDraftStorageKey(
+      'session-1',
+      makeRequest({
+        questions: [{ id: 'timeout' }, { id: 'approval-level' }],
+      })
+    );
+
+    expect(changedQuestions).toBe(base);
   });
 
   it('reconciles local state by preserving current question drafts and dropping removed ones', () => {

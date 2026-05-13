@@ -35,6 +35,18 @@ export function buildWebSessionUserInputDraftSyncKey(
   ]);
 }
 
+export function buildWebSessionUserInputDraftStorageKey(
+  sessionId: string | null | undefined,
+  request: WebSessionUserInputDraftSyncRequest | null | undefined
+) {
+  const normalizedSessionId = String(sessionId ?? '').trim();
+  const normalizedItemId = String(request?.itemId ?? '').trim();
+  if (!normalizedSessionId || !normalizedItemId) {
+    return '';
+  }
+  return JSON.stringify([normalizedSessionId, normalizedItemId]);
+}
+
 export function reconcileWebSessionUserInputLocalState(
   questions: Pick<WebSessionUserInputQuestion, 'id'>[],
   currentState: WebSessionUserInputLocalState

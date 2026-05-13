@@ -360,6 +360,12 @@ export interface WebSessionDraftState {
   updatedAt: number;
 }
 
+export interface WebSessionPendingUserInputDraftState {
+  selections: Record<string, string[]>;
+  drafts: Record<string, string>;
+  updatedAt: number;
+}
+
 export interface WebSessionDraftAttachmentUploadState {
   id: string;
   fileName: string;
@@ -908,6 +914,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
   const historyBySession = ref<Record<string, HistoryMeta>>({});
   const draftStateByProject =
     ref<Record<string, Record<string, WebSessionDraftState>>>(loadStoredSessionDrafts());
+  const userInputDraftStateByKey = ref<Record<string, WebSessionPendingUserInputDraftState>>({});
   const draftAttachmentUploadsByProject = ref<
     Record<string, Record<string, WebSessionDraftAttachmentUploadState>>
   >({});
@@ -1055,6 +1062,68 @@ export const useWebSessionStore = defineStore('web-session', () => {
         updatedAt: 0,
       }
     );
+  }
+
+  function clonePendingUserInputDraftState(
+    state: WebSessionPendingUserInputDraftState
+  ): WebSessionPendingUserInputDraftState {
+    const selections: Record<string, string[]> = {};
+    Object.entries(state.selections ?? {}).forEach(([questionId, values]) => {
+      selections[questionId] = Array.isArray(values)
+        ? values.map(value => String(value ?? ''))
+        : [];
+    });
+
+    const drafts: Record<string, string> = {};
+    Object.entries(state.drafts ?? {}).forEach(([questionId, value]) => {
+      drafts[questionId] = String(value ?? '');
+    });
+
+    return {
+      selections,
+      drafts,
+      updatedAt:
+        typeof state.updatedAt === 'number' && Number.isFinite(state.updatedAt)
+          ? state.updatedAt
+          : Date.now(),
+    };
+  }
+
+  function getPendingUserInputDraft(key: string): WebSessionPendingUserInputDraftState | null {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return null;
+    }
+    const state = userInputDraftStateByKey.value[normalizedKey];
+    return state ? clonePendingUserInputDraftState(state) : null;
+  }
+
+  function setPendingUserInputDraft(
+    key: string,
+    state: Pick<WebSessionPendingUserInputDraftState, 'selections' | 'drafts'>
+  ) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return;
+    }
+    userInputDraftStateByKey.value = {
+      ...userInputDraftStateByKey.value,
+      [normalizedKey]: clonePendingUserInputDraftState({
+        selections: state.selections,
+        drafts: state.drafts,
+        updatedAt: Date.now(),
+      }),
+    };
+  }
+
+  function clearPendingUserInputDraft(key: string) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey || !userInputDraftStateByKey.value[normalizedKey]) {
+      return;
+    }
+    const nextState = { ...userInputDraftStateByKey.value };
+    delete nextState[normalizedKey];
+    userInputDraftStateByKey.value = nextState;
   }
 
   function getDraftAttachments(projectId: string, sessionId: string) {
@@ -1745,6 +1814,25 @@ export const useWebSessionStore = defineStore('web-session', () => {
     const kind = String(record.kd ?? record.kind ?? '').trim();
     const itemType = String(record.tp ?? record.itemType ?? '').trim();
     const detailType = String(rawDetail?.type ?? '').trim();
+    const inferredDetailType =
+      detailType ||
+      (itemType === 'user_input_response'
+        ? 'user_input_response'
+        : itemType === 'user_input_request'
+          ? 'user_input_request'
+          : '');
+    const detailQuestions = Array.isArray(rawDetail?.questions)
+      ? (rawDetail.questions as WebSessionUserInputQuestion[])
+      : undefined;
+    const rawDetailAnswers = Array.isArray(rawDetail?.answers)
+      ? (rawDetail.answers as WebSessionHistoryAnswerEntry[])
+      : undefined;
+    const detailAnswers =
+      rawDetailAnswers && rawDetailAnswers.length > 0
+        ? rawDetailAnswers
+        : inferredDetailType === 'user_input_response'
+          ? buildUserInputAnswerEntries(rawPayload ?? {}, detailQuestions ?? [])
+          : rawDetailAnswers;
 
     return {
       key: `${String(record.id ?? '')}:${Number(record.oi ?? record.orderIndex ?? 0)}`,
@@ -1825,25 +1913,22 @@ export const useWebSessionStore = defineStore('web-session', () => {
             ? record.level
             : undefined,
       done: record.dn === true || record.done === true,
-      detail: rawDetail
-        ? {
-            type:
-              detailType === 'approval_request' ||
-              detailType === 'approval_response' ||
-              detailType === 'user_input_request' ||
-              detailType === 'user_input_response'
-                ? detailType
-                : 'approval_request',
-            prompt: typeof rawDetail.prompt === 'string' ? rawDetail.prompt : undefined,
-            questions: Array.isArray(rawDetail.questions)
-              ? (rawDetail.questions as WebSessionUserInputQuestion[])
-              : undefined,
-            answers: Array.isArray(rawDetail.answers)
-              ? (rawDetail.answers as WebSessionHistoryAnswerEntry[])
-              : undefined,
-            action: typeof rawDetail.action === 'string' ? rawDetail.action : undefined,
-          }
-        : undefined,
+      detail:
+        rawDetail || inferredDetailType
+          ? {
+              type:
+                inferredDetailType === 'approval_request' ||
+                inferredDetailType === 'approval_response' ||
+                inferredDetailType === 'user_input_request' ||
+                inferredDetailType === 'user_input_response'
+                  ? inferredDetailType
+                  : 'approval_request',
+              prompt: typeof rawDetail?.prompt === 'string' ? rawDetail.prompt : undefined,
+              questions: detailQuestions,
+              answers: detailAnswers,
+              action: typeof rawDetail?.action === 'string' ? rawDetail.action : undefined,
+            }
+          : undefined,
       payload: rawPayload,
     };
   }
@@ -3982,6 +4067,9 @@ export const useWebSessionStore = defineStore('web-session', () => {
     getActiveSession,
     getDraftAttachments,
     getDraftAttachmentUpload,
+    getPendingUserInputDraft,
+    setPendingUserInputDraft,
+    clearPendingUserInputDraft,
     setDraftText,
     getPendingInputs,
     getScheduledInputs,

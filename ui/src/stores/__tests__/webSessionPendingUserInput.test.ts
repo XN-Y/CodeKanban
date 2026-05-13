@@ -100,6 +100,36 @@ describe('webSession pending user input', () => {
     vi.unstubAllGlobals();
   });
 
+  it('keeps pending user input drafts in memory and returns defensive copies', () => {
+    const store = useWebSessionStore();
+    const storageKey = JSON.stringify(['session-1', 'request-1']);
+
+    store.setPendingUserInputDraft(storageKey, {
+      selections: {
+        scope: ['Full migration'],
+      },
+      drafts: {
+        notes: 'Keep this while switching sessions',
+      },
+    });
+
+    expect(localStorage.getItem(storageKey)).toBeNull();
+
+    const firstRead = store.getPendingUserInputDraft(storageKey);
+    expect(firstRead?.selections.scope).toEqual(['Full migration']);
+    expect(firstRead?.drafts.notes).toBe('Keep this while switching sessions');
+
+    firstRead?.selections.scope.push('mutated');
+    firstRead!.drafts.notes = 'mutated';
+
+    const secondRead = store.getPendingUserInputDraft(storageKey);
+    expect(secondRead?.selections.scope).toEqual(['Full migration']);
+    expect(secondRead?.drafts.notes).toBe('Keep this while switching sessions');
+
+    store.clearPendingUserInputDraft(storageKey);
+    expect(store.getPendingUserInputDraft(storageKey)).toBeNull();
+  });
+
   it('recovers sourceItemId from payload.iid for older user input history items', async () => {
     const store = useWebSessionStore();
     const session = makeSession();
@@ -156,5 +186,48 @@ describe('webSession pending user input', () => {
     const pending = store.getPendingUserInput(session.id);
     expect(pending?.itemId).toBe(requestID);
     expect(pending?.prompt).toBe('Please choose a scope');
+  });
+
+  it('renders submitted user input answers from legacy payloads', async () => {
+    const store = useWebSessionStore();
+    const session = makeSession({
+      status: 'done',
+      assistantState: null,
+    });
+
+    listMock.mockResolvedValue([session]);
+    syncMock.mockResolvedValue({
+      session,
+      history: {
+        items: [
+          {
+            id: 'history-response-1',
+            oi: 1,
+            kd: 'system',
+            tp: 'user_input_response',
+            txt: 'Submitted requested input',
+            ts2: Date.parse('2026-04-09T10:00:00.000Z'),
+            dt: {
+              type: 'user_input_response',
+            },
+            pl: {
+              iid: 'req_input_123',
+              ans: {
+                scope: ['Full migration'],
+              },
+            },
+          },
+        ],
+        hasMore: false,
+        total: 1,
+      },
+    });
+
+    await store.loadSessions(session.projectId);
+    await store.syncSession(session.projectId, session.id);
+
+    const block = store.getBlocks(session.id)[0];
+    const answer = block?.detail?.answers?.find(item => item.id === 'scope');
+    expect(answer?.values).toEqual(['Full migration']);
   });
 });

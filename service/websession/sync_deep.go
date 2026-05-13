@@ -773,14 +773,15 @@ func (m *Manager) applyCodexResponseItem(
 		if requestIndex, ok := pendingUserInputs[callID]; ok && requestIndex >= 0 && requestIndex < len(*items) {
 			delete(pendingUserInputs, callID)
 			response := HistoryItem{
-				ID:         utils.NewID(),
-				Kind:       "system",
-				ItemType:   "user_input_response",
-				Text:       "Submitted requested input",
-				Timestamp:  ptr(ts),
-				ObservedAt: ptr(ts),
-				Level:      "info",
-				Payload:    cloneMap(payload),
+				ID:           utils.NewID(),
+				SourceItemID: ptr(callID),
+				Kind:         "system",
+				ItemType:     "user_input_response",
+				Text:         "Submitted requested input",
+				Timestamp:    ptr(ts),
+				ObservedAt:   ptr(ts),
+				Level:        "info",
+				Payload:      cloneMap(payload),
 			}
 			var questions []toolRequestQuestion
 			if detail := (*items)[requestIndex].Detail; detail != nil {

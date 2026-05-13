@@ -2544,6 +2544,41 @@ func TestUserInputRequestProjectionPersistsSourceItemID(t *testing.T) {
 			frame.History.Items[0].SourceItemID,
 		)
 	}
+
+	appendHistoryEvent(t, manager, session.ID, Event{
+		ID:        "evt_user_input_response",
+		Seq:       2,
+		Type:      "user_input_res",
+		Timestamp: time.Now(),
+		Payload: map[string]any{
+			"iid": requestID,
+			"ans": map[string]any{
+				"scope": []any{"Full migration"},
+			},
+		},
+	})
+
+	history, err = manager.History(context.Background(), session.ID, 10, nil)
+	if err != nil {
+		t.Fatalf("History returned error after response: %v", err)
+	}
+	if len(history.Items) != 2 {
+		t.Fatalf("expected 2 history items, got %d", len(history.Items))
+	}
+	response := history.Items[1]
+	if response.SourceItemID == nil || *response.SourceItemID != requestID {
+		t.Fatalf("expected response source item id %q, got %v", requestID, response.SourceItemID)
+	}
+	if response.Detail == nil || len(response.Detail.Answers) != 1 {
+		t.Fatalf("expected response answer detail, got %#v", response.Detail)
+	}
+	answer := response.Detail.Answers[0]
+	if answer.Label != "Scope" {
+		t.Fatalf("expected answer label Scope, got %q", answer.Label)
+	}
+	if len(answer.Values) != 1 || answer.Values[0] != "Full migration" {
+		t.Fatalf("expected answer value Full migration, got %#v", answer.Values)
+	}
 }
 
 func TestRespondToApprovalCodexAppServer(t *testing.T) {

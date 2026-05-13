@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"code-kanban/model"
 	"code-kanban/model/tables"
 
 	"go.uber.org/zap"
@@ -253,6 +254,36 @@ func historyAnswerEntries(raw map[string]any, questions []toolRequestQuestion) [
 	return result
 }
 
+func (m *Manager) userInputRequestQuestions(ctx context.Context, sessionID string, itemID string) []toolRequestQuestion {
+	normalizedItemID := strings.TrimSpace(itemID)
+	if normalizedItemID == "" {
+		return nil
+	}
+	db := model.GetDB()
+	if db == nil {
+		return nil
+	}
+
+	var row tables.WebSessionItemTable
+	if err := db.WithContext(ctx).
+		Where(
+			"web_session_id = ? AND item_type = ? AND (source_item_id = ? OR id = ?)",
+			sessionID,
+			"user_input_request",
+			normalizedItemID,
+			normalizedItemID,
+		).
+		Order("order_index DESC").
+		First(&row).Error; err != nil {
+		return nil
+	}
+	item := mapHistoryItemRowWithSession(row, sessionID)
+	if item.Detail == nil {
+		return nil
+	}
+	return cloneToolRequestQuestions(item.Detail.Questions)
+}
+
 func resolveToolHistoryKey(payload map[string]any, fallback string) string {
 	if group := parseHistoryToolCommandGroup(decodeRawObject(payload["meta"])["commandGroup"]); group != nil {
 		return group.ID
@@ -466,6 +497,7 @@ func (m *Manager) applyEventToHistoryCache(
 		}
 		return &item, nil
 	case "user_input_res":
+		itemID := strings.TrimSpace(stringValue(payload["iid"]))
 		answers := make(map[string][]string)
 		for key, value := range decodeRawObject(payload["ans"]) {
 			switch typed := value.(type) {
@@ -481,6 +513,8 @@ func (m *Manager) applyEventToHistoryCache(
 				answers[key] = next
 			}
 		}
+		questions := m.userInputRequestQuestions(ctx, sessionID, itemID)
+		answerEntries := historyAnswerEntries(answersToRawMap(answers), questions)
 		text := "Submitted requested input"
 		level := "info"
 		if errText := strings.TrimSpace(stringValue(payload["err"])); errText != "" {
@@ -488,15 +522,16 @@ func (m *Manager) applyEventToHistoryCache(
 			level = "warn"
 		}
 		item, err := m.appendHistoryItem(ctx, sessionID, HistoryItem{
-			Kind:       "system",
-			ItemType:   "user_input_response",
-			Text:       text,
-			Timestamp:  ptr(event.Timestamp),
-			ObservedAt: ptr(event.Timestamp),
-			Level:      level,
+			SourceItemID: nilIfEmptyHistory(itemID),
+			Kind:         "system",
+			ItemType:     "user_input_response",
+			Text:         text,
+			Timestamp:    ptr(event.Timestamp),
+			ObservedAt:   ptr(event.Timestamp),
+			Level:        level,
 			Detail: &HistoryDetail{
 				Type:    "user_input_response",
-				Answers: historyAnswerEntries(answersToRawMap(answers), nil),
+				Answers: answerEntries,
 			},
 			Payload: payload,
 		})
