@@ -5425,6 +5425,9 @@ function insertTabAfter(
   if (!visibleIds.includes(sessionId)) {
     return;
   }
+  if (afterId === sessionId) {
+    return;
+  }
   const nextOrderIds = normalizeTabOrderIds(
     tabOrderIds.value.filter(id => id !== sessionId),
     visibleIds.filter(id => id !== sessionId)
@@ -7642,11 +7645,13 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
 }
 
 async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
+  const anchorId = underlyingTabSessionId.value;
   const decision = resolveStartDraftSessionDecision(draftSessions.value, {
     activeDraftId: activeDraftSessionId.value,
     mruIds: tabMruIds.value,
   });
   if (decision.kind === 'reuse') {
+    insertTabAfter(decision.draft.id, anchorId);
     await activateTabById(decision.draft.id, { connectReal: false });
     closeMobileSessionSelector();
     contextMenuSession.value = null;
