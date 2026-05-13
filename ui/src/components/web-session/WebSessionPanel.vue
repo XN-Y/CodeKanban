@@ -1031,16 +1031,35 @@
                 :class="{ 'is-mobile': isMobile }"
               >
                 <div class="composer-config-row">
+                  <n-dropdown
+                    trigger="click"
+                    placement="top-start"
+                    :options="agentDropdownOptions"
+                    :render-label="renderAgentDropdownLabel"
+                    :disabled="agentSwitchDisabled"
+                    @select="handleAgentDropdownSelect"
+                  >
+                    <button
+                      type="button"
+                      class="composer-agent-trigger"
+                      :disabled="agentSwitchDisabled"
+                      :title="selectedAgentTitle"
+                      :aria-label="selectedAgentTitle"
+                    >
+                      <span class="composer-agent-trigger-icon" v-html="selectedAgentIcon"></span>
+                      <n-icon class="composer-agent-trigger-arrow">
+                        <ChevronDownOutline />
+                      </n-icon>
+                    </button>
+                  </n-dropdown>
                   <n-select
-                    v-model:value="selectedAgent"
-                    class="composer-select agent-select"
-                    size="small"
-                    :options="agentOptions"
-                    :disabled="Boolean(currentSession?.nativeSessionId)"
-                  />
-                  <n-select
+                    :show="showModelSelector"
                     v-model:value="selectedModel"
+                    @update:show="handleModelSelectorShowChange"
                     class="composer-select model-select"
+                    :style="modelSelectStyle"
+                    :menu-props="modelSelectMenuProps"
+                    :render-option="renderModelOption"
                     size="small"
                     :options="modelOptions"
                   />
@@ -1945,6 +1964,7 @@
 import {
   type Component,
   type CSSProperties,
+  type VNode,
   computed,
   h,
   nextTick,
@@ -2052,8 +2072,11 @@ import {
 } from '@/components/web-session/webSessionCodexSkills';
 import {
   CLAUDE_MODEL_OPTIONS,
+  CODEX_ADDITIONAL_MODEL_OPTIONS,
   CODEX_MODEL_OPTIONS,
+  CODEX_PRIMARY_MODEL_OPTIONS,
   CUSTOM_MODEL_VALUE,
+  MORE_MODELS_VALUE,
   defaultModelForAgent,
 } from '@/components/web-session/webSessionModelOptions';
 import {
@@ -6096,6 +6119,96 @@ const agentOptions = [
   { label: 'Codex', value: 'codex' },
   { label: 'Claude', value: 'claude' },
 ];
+const showAdditionalCodexModels = ref(false);
+const showModelSelector = ref(false);
+const keepAdditionalCodexModelsForNextOpen = ref(false);
+const MODEL_SELECT_MIN_WIDTH = 66;
+const MODEL_SELECT_MAX_WIDTH = 112;
+const MODEL_SELECT_BASE_WIDTH = 46;
+const MODEL_SELECT_CHAR_WIDTH = 6.5;
+const modelSelectMenuProps = {
+  class: 'web-session-model-select-menu',
+  style: { minWidth: '132px', maxWidth: '180px' },
+};
+
+function renderAgentDropdownLabel(option: DropdownOption) {
+  const value = String(option.key ?? option.value ?? '');
+  const label = String(option.label ?? value);
+  return h('span', { class: 'composer-agent-option' }, [
+    h('span', {
+      class: 'composer-agent-option-icon',
+      innerHTML: getAgentIcon(value === 'claude' ? 'claude' : 'codex'),
+    }),
+    h('span', { class: 'composer-agent-option-label' }, label),
+  ]);
+}
+
+const agentDropdownOptions = computed<DropdownOption[]>(() =>
+  agentOptions.map(option => ({
+    label: option.label,
+    key: option.value,
+    value: option.value,
+  }))
+);
+
+const agentSwitchDisabled = computed(() => Boolean(currentSession.value?.nativeSessionId));
+
+function getAgentIcon(agent: 'claude' | 'codex' | string) {
+  return getAssistantIconByType(agent === 'claude' ? 'claude-code' : 'codex');
+}
+
+const selectedAgentTitle = computed(() =>
+  t('webSession.agentSelectorTitle', { agent: selectedAgentLabel.value })
+);
+const selectedAgentIcon = computed(() => getAgentIcon(selectedAgent.value));
+
+function handleAgentDropdownSelect(key: string | number) {
+  if (agentSwitchDisabled.value) {
+    return;
+  }
+  const next = String(key);
+  if (next !== 'claude' && next !== 'codex') {
+    return;
+  }
+  selectedAgent.value = next;
+}
+
+function getKnownModelLabel(value?: string | null) {
+  const normalizedModel = String(value || '').trim();
+  if (!normalizedModel) {
+    return '';
+  }
+  return (
+    [...CLAUDE_MODEL_OPTIONS, ...CODEX_MODEL_OPTIONS].find(
+      option => option.value === normalizedModel
+    )?.label ?? normalizedModel
+  );
+}
+
+function renderModelOption(info: {
+  node: VNode;
+  option: { label?: unknown; menuLabel?: unknown };
+  selected: boolean;
+}) {
+  return h('div', info.node.props ?? {}, [
+    h(
+      'div',
+      {
+        class: 'n-base-select-option__content',
+      },
+      String(info.option.menuLabel ?? info.option.label ?? '')
+    ),
+    info.selected
+      ? h(
+          'div',
+          {
+            class: 'n-base-select-option__check',
+          },
+          '✓'
+        )
+      : null,
+  ]);
+}
 
 function withCurrentModelOption(
   options: Array<{ label: string; value: string }>,
@@ -6111,10 +6224,23 @@ function withCurrentModelOption(
   return [
     ...options,
     {
-      label: `${normalizedModel} (Current)`,
+      label: getKnownModelLabel(normalizedModel),
       value: normalizedModel,
     },
   ];
+}
+
+function getModelLabelVisualLength(label: string) {
+  return Array.from(label).reduce(
+    (total, char) => (/[\u4e00-\u9fff]/.test(char) ? total + 2 : total + 1),
+    0
+  );
+}
+
+function resolveModelSelectWidth(label: string) {
+  const visualLength = Math.max(1, getModelLabelVisualLength(label.trim()));
+  const width = Math.round(MODEL_SELECT_BASE_WIDTH + visualLength * MODEL_SELECT_CHAR_WIDTH);
+  return clamp(MODEL_SELECT_MIN_WIDTH, width, MODEL_SELECT_MAX_WIDTH);
 }
 
 function defaultReasoningEffortForAgent(agent: 'claude' | 'codex') {
@@ -6143,6 +6269,21 @@ function withCurrentReasoningEffortOption(
   ];
 }
 
+function handleModelSelectorShowChange(show: boolean) {
+  if (show && !keepAdditionalCodexModelsForNextOpen.value) {
+    showAdditionalCodexModels.value = false;
+  }
+  if (show) {
+    keepAdditionalCodexModelsForNextOpen.value = false;
+  }
+  showModelSelector.value = show;
+}
+
+const selectedModelDisplayLabel = computed(() => getKnownModelLabel(selectedModel.value));
+const modelSelectStyle = computed<CSSProperties>(() => ({
+  width: `${resolveModelSelectWidth(selectedModelDisplayLabel.value)}px`,
+}));
+
 const modelOptions = computed(() => {
   const activeModel = currentSession.value?.model ?? draftModel.value;
   if (selectedAgent.value === 'claude') {
@@ -6151,9 +6292,21 @@ const modelOptions = computed(() => {
       { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
     ];
   }
+  if (!showAdditionalCodexModels.value) {
+    return [
+      ...withCurrentModelOption(CODEX_PRIMARY_MODEL_OPTIONS, activeModel),
+      { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
+      { label: t('webSession.moreModels'), value: MORE_MODELS_VALUE },
+    ];
+  }
+  const primaryOptions = withCurrentModelOption(CODEX_PRIMARY_MODEL_OPTIONS, activeModel);
+  const additionalOptions = CODEX_ADDITIONAL_MODEL_OPTIONS.filter(
+    option => !primaryOptions.some(primary => primary.value === option.value)
+  );
   return [
-    ...withCurrentModelOption(CODEX_MODEL_OPTIONS, activeModel),
+    ...primaryOptions,
     { label: t('webSession.customModel'), value: CUSTOM_MODEL_VALUE },
+    ...additionalOptions,
   ];
 });
 
@@ -6162,7 +6315,7 @@ const reasoningEffortOptions = computed(() => {
     { label: t('common.default'), value: 'default' },
     { label: 'Off', value: 'none' },
     { label: 'Low', value: 'low' },
-    { label: 'Medium', value: 'medium' },
+    { label: 'Mid', value: 'medium' },
     { label: 'High', value: 'high' },
     { label: 'Xhigh', value: 'xhigh' },
   ];
@@ -6216,6 +6369,14 @@ const selectedModel = computed({
   get: () => currentSession.value?.model ?? draftModel.value,
   set: value => {
     const next = String(value);
+    if (next === MORE_MODELS_VALUE) {
+      showAdditionalCodexModels.value = true;
+      keepAdditionalCodexModelsForNextOpen.value = true;
+      nextTick(() => {
+        handleModelSelectorShowChange(true);
+      });
+      return;
+    }
     if (next === CUSTOM_MODEL_VALUE) {
       openCustomModelDialog();
       return;
@@ -13308,6 +13469,69 @@ defineExpose({
   min-width: 0;
 }
 
+.composer-agent-trigger {
+  width: 38px;
+  height: 28px;
+  padding: 0 6px;
+  border: 1px solid var(--n-border-color);
+  border-radius: 4px;
+  background: var(--n-color);
+  color: var(--n-text-color);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+.composer-agent-trigger:hover,
+.composer-agent-trigger:focus-visible {
+  border-color: var(--n-primary-color);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--n-primary-color) 14%, transparent);
+  outline: none;
+}
+
+.composer-agent-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.composer-agent-trigger-icon,
+:global(.composer-agent-option-icon) {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.composer-agent-trigger-icon :deep(svg),
+:global(.composer-agent-option-icon svg) {
+  width: 14px !important;
+  height: 14px !important;
+}
+
+.composer-agent-trigger-arrow {
+  font-size: 10px;
+  color: var(--n-text-color-3);
+}
+
+:global(.composer-agent-option) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+:global(.composer-agent-option-label) {
+  line-height: 1;
+}
+
 .composer-mode-row {
   display: flex;
   align-items: center;
@@ -13316,12 +13540,28 @@ defineExpose({
 }
 
 .composer-select {
-  width: 138px;
+  width: 104px;
   flex-shrink: 0;
 }
 
+.model-select {
+  width: 82px;
+}
+
+:global(.web-session-model-select-menu) {
+  min-width: 132px !important;
+  max-width: 180px !important;
+}
+
+:global(.web-session-model-select-menu .n-base-select-option__content) {
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .reasoning-select {
-  width: 106px;
+  width: 82px;
 }
 
 .composer-mode-switch {
@@ -13333,7 +13573,7 @@ defineExpose({
 }
 
 .permission-select {
-  width: 144px;
+  width: 132px;
   flex-shrink: 0;
 }
 

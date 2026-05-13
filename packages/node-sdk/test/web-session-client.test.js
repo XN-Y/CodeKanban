@@ -21,7 +21,7 @@ function createWebSessionSnapshot({
       orderIndex: 1000,
       agent: 'codex',
       title: 'Session 1',
-      model: 'gpt-5.4',
+      model: 'gpt-5.5',
       reasoningEffort: 'high',
       workflowMode: 'plan',
       permissionLevel: 'elevated',
@@ -103,7 +103,7 @@ test('CodeKanbanClient web session HTTP methods call the expected endpoints', as
       assert.deepEqual(body, {
         worktreeId: 'w-main',
         agent: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
         workflowMode: 'plan',
         permissionLevel: 'elevated',
@@ -295,7 +295,7 @@ test('CodeKanbanClient createWebSession auto-selects main worktree and required 
       assert.deepEqual(body, {
         worktreeId: 'w-main',
         agent: 'codex',
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
         workflowMode: 'default',
         permissionLevel: 'elevated',

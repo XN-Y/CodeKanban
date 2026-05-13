@@ -878,7 +878,9 @@ export default {
       'Changed; current turn stays the same. Applies to the next message.',
     runtimeSwitchNoticeApproval:
       'Changed; this approval continues the current turn. Applies to the next message.',
+    agentSelectorTitle: 'Current assistant: {agent}',
     customModel: 'Custom...',
+    moreModels: 'More',
     customModelTitle: 'Custom Model',
     customModelPlaceholder: 'Enter a model name, for example gpt-5.5',
     customModelEmpty: 'Model name cannot be empty',

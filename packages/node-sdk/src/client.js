@@ -42,7 +42,7 @@ const DEFAULT_WEB_SESSION_AUTO_RETRY_SCOPE = "network_only";
 const DEFAULT_WEB_SESSION_AUTO_RETRY_PRESET = "gentle_stop";
 
 function defaultWebSessionModel(agent) {
-  return agent === "claude" ? "opus" : "gpt-5.4";
+  return agent === "claude" ? "opus" : "gpt-5.5";
 }
 
 function defaultWebSessionReasoningEffort(agent) {
