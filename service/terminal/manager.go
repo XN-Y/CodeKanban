@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,8 @@ import (
 	"code-kanban/utils/ai_assistant2/log_watcher"
 	"code-kanban/utils/ai_assistant2/types"
 )
+
+const terminalSessionOrderStep = 1000.0
 
 // Config defines runtime constraints for terminal sessions.
 type Config struct {
@@ -32,16 +35,24 @@ type Config struct {
 
 // CreateSessionParams describes API level inputs.
 type CreateSessionParams struct {
-	ID         string
-	ProjectID  string
-	WorktreeID string
-	WorkingDir string
-	Title      string
-	Env        []string
-	Rows       int
-	Cols       int
-	Encoding   string
-	TaskID     string
+	ID                   string
+	ProjectID            string
+	WorktreeID           string
+	WorkingDir           string
+	Title                string
+	Env                  []string
+	Rows                 int
+	Cols                 int
+	Encoding             string
+	TaskID               string
+	InsertAfterSessionID string
+}
+
+// SessionListEvent broadcasts the current project terminal session list.
+type SessionListEvent struct {
+	Type      string            `json:"type"`
+	ProjectID string            `json:"projectId"`
+	Sessions  []SessionSnapshot `json:"sessions"`
 }
 
 // Manager orchestrates PTY sessions.
@@ -54,6 +65,9 @@ type Manager struct {
 	baseCtx       context.Context
 	baseCtxMu     sync.RWMutex
 	recordManager *RecordManager
+
+	sessionEventMu          sync.RWMutex
+	sessionEventSubscribers map[chan SessionListEvent]struct{}
 }
 
 // NewManager builds a manager instance.
@@ -67,11 +81,12 @@ func NewManager(cfg Config, logger *zap.Logger) *Manager {
 	}
 
 	mgr := &Manager{
-		cfg:           cfg,
-		logger:        logger.Named("terminal-manager"),
-		encoding:      cfg.Encoding,
-		baseCtx:       context.Background(),
-		recordManager: NewRecordManager(),
+		cfg:                     cfg,
+		logger:                  logger.Named("terminal-manager"),
+		encoding:                cfg.Encoding,
+		baseCtx:                 context.Background(),
+		recordManager:           NewRecordManager(),
+		sessionEventSubscribers: make(map[chan SessionListEvent]struct{}),
 	}
 	return mgr
 }
@@ -132,7 +147,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 		return nil, err
 	}
 
-	if err := m.addSession(session); err != nil {
+	if err := m.addSession(session, params.InsertAfterSessionID); err != nil {
 		return nil, err
 	}
 
@@ -160,6 +175,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateSessionParams)
 	}
 
 	go m.watchSessionWithStream(session, stream)
+	m.broadcastProjectSessions(session.ProjectID())
 
 	return session, nil
 }
@@ -194,6 +210,35 @@ func (m *Manager) RenameSession(projectID, sessionID, title string) (*Session, e
 	if err := session.UpdateTitle(normalized); err != nil {
 		return nil, err
 	}
+	m.broadcastProjectSessions(session.ProjectID())
+	return session, nil
+}
+
+// MoveSession reorders a terminal session within its project.
+func (m *Manager) MoveSession(projectID, sessionID, prevSessionID, nextSessionID string) (*Session, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, ErrSessionNotFound
+	}
+
+	m.sessionMu.Lock()
+	session, ok := m.sessions.Load(sessionID)
+	if !ok {
+		m.sessionMu.Unlock()
+		return nil, ErrSessionNotFound
+	}
+	resolvedProjectID := session.ProjectID()
+	if projectID != "" && projectID != resolvedProjectID {
+		m.sessionMu.Unlock()
+		return nil, ErrSessionNotFound
+	}
+	if err := m.moveSessionLocked(resolvedProjectID, sessionID, prevSessionID, nextSessionID); err != nil {
+		m.sessionMu.Unlock()
+		return nil, err
+	}
+	m.sessionMu.Unlock()
+
+	m.broadcastProjectSessions(resolvedProjectID)
 	return session, nil
 }
 
@@ -218,6 +263,7 @@ func (m *Manager) LinkTask(sessionID, taskID string) (*Session, error) {
 		return nil, err
 	}
 	session.AssociateTask(taskID)
+	m.broadcastProjectSessions(session.ProjectID())
 	return session, nil
 }
 
@@ -228,20 +274,60 @@ func (m *Manager) UnlinkTask(sessionID string) (*Session, error) {
 		return nil, err
 	}
 	session.ClearTaskAssociation()
+	m.broadcastProjectSessions(session.ProjectID())
 	return session, nil
 }
 
 // ListSessions enumerates sessions, optionally filtering by project.
 func (m *Manager) ListSessions(projectID string) []SessionSnapshot {
-	results := make([]SessionSnapshot, 0)
-	m.sessions.Range(func(_ string, session *Session) bool {
-		if projectID != "" && session.ProjectID() != projectID {
-			return true
-		}
+	m.sessionMu.Lock()
+	ordered := m.orderedProjectSessionsLocked(projectID)
+	m.sessionMu.Unlock()
+
+	results := make([]SessionSnapshot, 0, len(ordered))
+	for _, session := range ordered {
 		results = append(results, session.Snapshot())
-		return true
-	})
+	}
 	return results
+}
+
+// SubscribeSessionListEvents subscribes to terminal project list updates.
+func (m *Manager) SubscribeSessionListEvents() (<-chan SessionListEvent, func()) {
+	ch := make(chan SessionListEvent, 16)
+	m.sessionEventMu.Lock()
+	m.sessionEventSubscribers[ch] = struct{}{}
+	m.sessionEventMu.Unlock()
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			m.sessionEventMu.Lock()
+			delete(m.sessionEventSubscribers, ch)
+			close(ch)
+			m.sessionEventMu.Unlock()
+		})
+	}
+	return ch, cancel
+}
+
+func (m *Manager) broadcastProjectSessions(projectID string) {
+	projectID = strings.TrimSpace(projectID)
+	if projectID == "" {
+		return
+	}
+	event := SessionListEvent{
+		Type:      "sessions",
+		ProjectID: projectID,
+		Sessions:  m.ListSessions(projectID),
+	}
+	m.sessionEventMu.RLock()
+	defer m.sessionEventMu.RUnlock()
+	for ch := range m.sessionEventSubscribers {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
 }
 
 // ListSessionsByTask enumerates sessions associated with a specific task.
@@ -295,30 +381,45 @@ func (m *Manager) watchSession(session *Session) {
 	go m.monitorAssistantRecords(session)
 	<-session.Closed()
 	m.recordManager.ClearSessionRecords(session.ID())
+	projectID := session.ProjectID()
+	m.sessionMu.Lock()
 	m.sessions.Delete(session.ID())
+	m.normalizeProjectOrderLocked(projectID)
+	m.sessionMu.Unlock()
+	m.broadcastProjectSessions(projectID)
 }
 
 func (m *Manager) watchSessionWithStream(session *Session, stream *SessionStream) {
 	go m.monitorAssistantRecordsWithStream(session, stream)
 	<-session.Closed()
 	m.recordManager.ClearSessionRecords(session.ID())
+	projectID := session.ProjectID()
+	m.sessionMu.Lock()
 	m.sessions.Delete(session.ID())
+	m.normalizeProjectOrderLocked(projectID)
+	m.sessionMu.Unlock()
+	m.broadcastProjectSessions(projectID)
 }
 
-func (m *Manager) addSession(session *Session) error {
-	if m.cfg.MaxSessionsPerProject <= 0 {
-		m.sessions.Store(session.ID(), session)
-		return nil
-	}
-
+func (m *Manager) addSession(session *Session, insertAfterSessionID string) error {
 	m.sessionMu.Lock()
 	defer m.sessionMu.Unlock()
 
-	if m.countByProject(session.ProjectID()) >= m.cfg.MaxSessionsPerProject {
+	if m.cfg.MaxSessionsPerProject > 0 && m.countByProject(session.ProjectID()) >= m.cfg.MaxSessionsPerProject {
 		return ErrSessionLimitReached
 	}
 
+	if session.OrderIndex() <= 0 {
+		session.SetOrderIndex(m.nextSessionOrderIndexLocked(session.ProjectID()))
+	}
 	m.sessions.Store(session.ID(), session)
+	if strings.TrimSpace(insertAfterSessionID) != "" {
+		if err := m.moveSessionLocked(session.ProjectID(), session.ID(), insertAfterSessionID, ""); err != nil && !errors.Is(err, ErrInvalidSessionMoveTarget) {
+			m.sessions.Delete(session.ID())
+			return err
+		}
+	}
+	m.normalizeProjectOrderLocked(session.ProjectID())
 	return nil
 }
 
@@ -331,6 +432,136 @@ func (m *Manager) countByProject(projectID string) int {
 		return true
 	})
 	return count
+}
+
+func (m *Manager) orderedProjectSessionsLocked(projectID string) []*Session {
+	items := make([]*Session, 0)
+	m.sessions.Range(func(_ string, session *Session) bool {
+		if projectID == "" || session.ProjectID() == projectID {
+			items = append(items, session)
+		}
+		return true
+	})
+	sort.Slice(items, func(i, j int) bool {
+		left := items[i]
+		right := items[j]
+		leftOrder := left.OrderIndex()
+		rightOrder := right.OrderIndex()
+		if leftOrder > 0 || rightOrder > 0 {
+			if leftOrder != rightOrder {
+				return leftOrder < rightOrder
+			}
+		}
+		if !left.CreatedAt().Equal(right.CreatedAt()) {
+			return left.CreatedAt().Before(right.CreatedAt())
+		}
+		return left.ID() < right.ID()
+	})
+	return items
+}
+
+func (m *Manager) nextSessionOrderIndexLocked(projectID string) float64 {
+	maxOrder := 0.0
+	m.sessions.Range(func(_ string, session *Session) bool {
+		if session.ProjectID() == projectID && session.OrderIndex() > maxOrder {
+			maxOrder = session.OrderIndex()
+		}
+		return true
+	})
+	return maxOrder + terminalSessionOrderStep
+}
+
+func (m *Manager) normalizeProjectOrderLocked(projectID string) {
+	if strings.TrimSpace(projectID) == "" {
+		return
+	}
+	ordered := m.orderedProjectSessionsLocked(projectID)
+	for index, session := range ordered {
+		session.SetOrderIndex(float64(index+1) * terminalSessionOrderStep)
+	}
+}
+
+func resolveTerminalSessionInsertIndex(
+	sessions []*Session,
+	sessionID string,
+	prevSessionID string,
+	nextSessionID string,
+) (int, error) {
+	prevSessionID = strings.TrimSpace(prevSessionID)
+	nextSessionID = strings.TrimSpace(nextSessionID)
+	if prevSessionID != "" && prevSessionID == nextSessionID {
+		return 0, ErrInvalidSessionMoveTarget
+	}
+	if prevSessionID == sessionID || nextSessionID == sessionID {
+		return 0, ErrInvalidSessionMoveTarget
+	}
+
+	findIndex := func(targetID string) int {
+		for index, item := range sessions {
+			if item.ID() == targetID {
+				return index
+			}
+		}
+		return -1
+	}
+
+	if nextSessionID != "" {
+		nextIndex := findIndex(nextSessionID)
+		if nextIndex == -1 {
+			return 0, ErrInvalidSessionMoveTarget
+		}
+		if prevSessionID != "" {
+			prevIndex := findIndex(prevSessionID)
+			if prevIndex == -1 || prevIndex >= nextIndex {
+				return 0, ErrInvalidSessionMoveTarget
+			}
+		}
+		return nextIndex, nil
+	}
+
+	if prevSessionID != "" {
+		prevIndex := findIndex(prevSessionID)
+		if prevIndex == -1 {
+			return 0, ErrInvalidSessionMoveTarget
+		}
+		return prevIndex + 1, nil
+	}
+
+	return 0, nil
+}
+
+func (m *Manager) moveSessionLocked(projectID, sessionID, prevSessionID, nextSessionID string) error {
+	ordered := m.orderedProjectSessionsLocked(projectID)
+	if len(ordered) == 0 {
+		return ErrSessionNotFound
+	}
+
+	filtered := make([]*Session, 0, len(ordered)-1)
+	movingFound := false
+	for _, session := range ordered {
+		if session.ID() == sessionID {
+			movingFound = true
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	if !movingFound {
+		return ErrSessionNotFound
+	}
+
+	insertIndex, err := resolveTerminalSessionInsertIndex(filtered, sessionID, prevSessionID, nextSessionID)
+	if err != nil {
+		return err
+	}
+	moving, _ := m.sessions.Load(sessionID)
+	reordered := make([]*Session, 0, len(ordered))
+	reordered = append(reordered, filtered[:insertIndex]...)
+	reordered = append(reordered, moving)
+	reordered = append(reordered, filtered[insertIndex:]...)
+	for index, session := range reordered {
+		session.SetOrderIndex(float64(index+1) * terminalSessionOrderStep)
+	}
+	return nil
 }
 
 func (m *Manager) reapIdleSessions(ctx context.Context) {

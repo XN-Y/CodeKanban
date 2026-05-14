@@ -20,6 +20,7 @@ type Project struct {
 	WorktreeBasePath *string    `db:"worktree_base_path" json:"worktreeBasePath"`
 	RemoteUrl        *string    `db:"remote_url" json:"remoteUrl"`
 	LastSyncAt       *time.Time `db:"last_sync_at" json:"lastSyncAt"`
+	LastAccessedAt   *time.Time `db:"last_accessed_at" json:"lastAccessedAt"`
 	HidePath         bool       `db:"hide_path" json:"hidePath"`
 	Priority         *int64     `db:"priority" json:"priority"`
 }

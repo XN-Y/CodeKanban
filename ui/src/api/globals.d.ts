@@ -244,6 +244,7 @@ export interface Project {
   description: string | null;
   hidePath: boolean;
   id: string;
+  lastAccessedAt: string | null;
   lastSyncAt: string | null;
   name: string;
   path: string;
@@ -543,6 +544,10 @@ export interface TerminalCreateInputBody {
    */
   rows: number;
   /**
+   * 插入到指定终端会话之后
+   */
+  insertAfterSessionId?: string;
+  /**
    * 要关联的任务ID
    */
   taskId?: string;
@@ -749,6 +754,7 @@ export interface TerminalSessionView {
   };
   taskId?: string;
   title: string;
+  orderIndex: number;
   workingDir: string;
   worktreeId: string;
   wsPath: string;
@@ -812,6 +818,7 @@ export interface ProjectTable {
   description: string;
   hidePath: boolean;
   id: string;
+  lastAccessedAt: string | null;
   lastSyncAt: string | null;
   name: string;
   path: string;

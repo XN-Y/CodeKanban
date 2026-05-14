@@ -65,6 +65,23 @@ export const projectApi = {
     }
     return body.item;
   },
+
+  async markAccess(id: string): Promise<Project> {
+    const body = (await http.Post<ItemResponse<Project>>(`/projects/${id}/access`, {}).send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to record project access');
+    }
+    return body.item;
+  },
+
+  async clearAccess(id: string): Promise<Project> {
+    const body =
+      (await http.Post<ItemResponse<Project>>(`/projects/${id}/access/clear`, {}).send()) ?? {};
+    if (!body.item) {
+      throw new Error('failed to clear project access');
+    }
+    return body.item;
+  },
 };
 
 export const worktreeApi = {

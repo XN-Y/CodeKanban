@@ -30,8 +30,9 @@ import (
 )
 
 const (
-	terminalTag    = "terminal-session-终端会话"
-	terminalWSPath = "/api/v1/terminal/ws"
+	terminalTag          = "terminal-session-终端会话"
+	terminalWSPath       = "/api/v1/terminal/ws"
+	terminalEventsWSPath = "/api/v1/terminals/events"
 )
 
 type terminalController struct {
@@ -170,6 +171,36 @@ func (c *terminalController) registerHTTP(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "terminal-session-rename"
 		op.Summary = "终端标签重命名"
+		op.Tags = []string{terminalTag}
+	})
+
+	huma.Post(group, "/projects/{projectId}/terminals/{sessionId}/move", func(
+		ctx context.Context,
+		input *terminalMoveInput,
+	) (*h.ItemResponse[terminalSessionView], error) {
+		session, err := c.manager.MoveSession(
+			input.ProjectID,
+			input.SessionID,
+			input.Body.PreviousSessionID,
+			input.Body.NextSessionID,
+		)
+		if err != nil {
+			switch {
+			case errors.Is(err, terminal.ErrSessionNotFound):
+				return nil, huma.Error404NotFound(err.Error())
+			case errors.Is(err, terminal.ErrInvalidSessionMoveTarget):
+				return nil, huma.Error400BadRequest(err.Error())
+			default:
+				return nil, huma.Error500InternalServerError("failed to move session", err)
+			}
+		}
+		view := c.viewFromSnapshot(session.Snapshot())
+		resp := h.NewItemResponse(view)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "terminal-session-move"
+		op.Summary = "调整终端标签顺序"
 		op.Tags = []string{terminalTag}
 	})
 
@@ -471,10 +502,59 @@ func (c *terminalController) registerWebsocket(app *fiber.App) {
 	handler := fasthttpadaptor.NewFastHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c.serveWebsocket(w, r)
 	}))
+	eventHandler := fasthttpadaptor.NewFastHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c.serveEventsWebsocket(w, r)
+	}))
 	app.Get(terminalWSPath, func(ctx *fiber.Ctx) error {
 		handler(ctx.Context())
 		return nil
 	})
+	app.Get(terminalEventsWSPath, func(ctx *fiber.Ctx) error {
+		eventHandler(ctx.Context())
+		return nil
+	})
+}
+
+type terminalSessionsEventView struct {
+	Type      string                `json:"type"`
+	ProjectID string                `json:"projectId"`
+	Sessions  []terminalSessionView `json:"sessions"`
+}
+
+func (c *terminalController) serveEventsWebsocket(w http.ResponseWriter, r *http.Request) {
+	conn, err := c.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		c.logger.Warn("upgrade terminal events websocket failed", zap.Error(err))
+		return
+	}
+	defer conn.Close()
+
+	events, unsubscribe := c.manager.SubscribeSessionListEvents()
+	defer unsubscribe()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			views := make([]terminalSessionView, 0, len(event.Sessions))
+			for _, snapshot := range event.Sessions {
+				views = append(views, c.viewFromSnapshot(snapshot))
+			}
+			if err := conn.WriteJSON(terminalSessionsEventView{
+				Type:      event.Type,
+				ProjectID: event.ProjectID,
+				Sessions:  views,
+			}); err != nil {
+				c.logger.Debug("terminal events websocket write failed", zap.Error(err))
+				return
+			}
+		}
+	}
 }
 
 func (c *terminalController) handleCreate(ctx context.Context, input *terminalCreateInput) (*terminalSessionView, error) {
@@ -523,13 +603,14 @@ func (c *terminalController) handleCreate(ctx context.Context, input *terminalCr
 	}
 
 	session, err := c.manager.CreateSession(ctx, terminal.CreateSessionParams{
-		ProjectID:  input.ProjectID,
-		WorktreeID: input.WorktreeID,
-		WorkingDir: workingDir,
-		Title:      title,
-		Rows:       rows,
-		Cols:       cols,
-		TaskID:     taskID,
+		ProjectID:            input.ProjectID,
+		WorktreeID:           input.WorktreeID,
+		WorkingDir:           workingDir,
+		Title:                title,
+		Rows:                 rows,
+		Cols:                 cols,
+		TaskID:               taskID,
+		InsertAfterSessionID: input.Body.InsertAfterSessionID,
 	})
 	if err != nil {
 		switch {
@@ -1034,6 +1115,7 @@ func (c *terminalController) viewFromSnapshot(snapshot terminal.SessionSnapshot)
 		WorktreeID:    snapshot.WorktreeID,
 		WorkingDir:    snapshot.WorkingDir,
 		Title:         snapshot.Title,
+		OrderIndex:    snapshot.OrderIndex,
 		CreatedAt:     snapshot.CreatedAt,
 		LastActive:    snapshot.LastActive,
 		Status:        string(snapshot.Status),
@@ -1105,11 +1187,12 @@ type terminalCreateInput struct {
 	ProjectID  string `path:"projectId"`
 	WorktreeID string `path:"worktreeId"`
 	Body       struct {
-		WorkingDir string `json:"workingDir" doc:"工作目录"`
-		Title      string `json:"title" doc:"终端标题"`
-		Rows       int    `json:"rows" doc:"终端行数"`
-		Cols       int    `json:"cols" doc:"终端列数"`
-		TaskID     string `json:"taskId,omitempty" doc:"要关联的任务ID"`
+		WorkingDir           string `json:"workingDir" doc:"工作目录"`
+		Title                string `json:"title" doc:"终端标题"`
+		Rows                 int    `json:"rows" doc:"终端行数"`
+		Cols                 int    `json:"cols" doc:"终端列数"`
+		TaskID               string `json:"taskId,omitempty" doc:"要关联的任务ID"`
+		InsertAfterSessionID string `json:"insertAfterSessionId,omitempty" doc:"插入到指定终端会话之后"`
 	} `json:"body"`
 }
 
@@ -1118,6 +1201,15 @@ type terminalRenameInput struct {
 	SessionID string `path:"sessionId"`
 	Body      struct {
 		Title string `json:"title" doc:"新的终端标签名"`
+	} `json:"body"`
+}
+
+type terminalMoveInput struct {
+	ProjectID string `path:"projectId"`
+	SessionID string `path:"sessionId"`
+	Body      struct {
+		PreviousSessionID string `json:"previousSessionId" doc:"前一个终端会话ID"`
+		NextSessionID     string `json:"nextSessionId" doc:"后一个终端会话ID"`
 	} `json:"body"`
 }
 
@@ -1140,6 +1232,7 @@ type terminalSessionView struct {
 	WorktreeID    string                          `json:"worktreeId"`
 	WorkingDir    string                          `json:"workingDir"`
 	Title         string                          `json:"title"`
+	OrderIndex    float64                         `json:"orderIndex"`
 	CreatedAt     time.Time                       `json:"createdAt"`
 	LastActive    time.Time                       `json:"lastActive"`
 	Status        string                          `json:"status"`

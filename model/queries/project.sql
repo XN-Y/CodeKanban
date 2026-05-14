@@ -18,6 +18,7 @@ INSERT INTO projects (
   remote_url,
   hide_path,
   last_sync_at,
+  last_accessed_at,
   priority
 ) VALUES (
   @id,
@@ -31,13 +32,17 @@ INSERT INTO projects (
   @remote_url,
   @hide_path,
   @last_sync_at,
+  @last_accessed_at,
   @priority
 ) RETURNING *;
 
 -- name: ProjectList :many
 SELECT * FROM projects
 WHERE deleted_at IS NULL
-ORDER BY created_at DESC;
+ORDER BY
+  CASE WHEN last_accessed_at IS NULL THEN 1 ELSE 0 END ASC,
+  last_accessed_at DESC,
+  created_at DESC;
 
 -- name: ProjectUpdate :one
 UPDATE projects
@@ -54,7 +59,7 @@ RETURNING *;
 UPDATE projects
 SET
   updated_at = @updated_at,
-  worktree_base_path = CAST(@worktree_base_path AS TEXT)
+  worktree_base_path = sqlc.narg(worktree_base_path)
 WHERE id = @id
   AND deleted_at IS NULL
 RETURNING *;
@@ -72,6 +77,22 @@ UPDATE projects
 SET
   updated_at = @updated_at,
   priority = @priority
+WHERE id = @id
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectTouchAccess :one
+UPDATE projects
+SET
+  last_accessed_at = @last_accessed_at
+WHERE id = @id
+  AND deleted_at IS NULL
+RETURNING *;
+
+-- name: ProjectClearAccess :one
+UPDATE projects
+SET
+  last_accessed_at = NULL
 WHERE id = @id
   AND deleted_at IS NULL
 RETURNING *;

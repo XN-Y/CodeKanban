@@ -17,6 +17,7 @@ type ProjectTable struct {
 	WorktreeBasePath string     `gorm:"type:text" json:"worktreeBasePath"`
 	RemoteURL        string     `gorm:"type:text" json:"remoteUrl"`
 	LastSyncAt       *time.Time `gorm:"type:datetime" json:"lastSyncAt"`
+	LastAccessedAt   *time.Time `gorm:"type:datetime;index" json:"lastAccessedAt"`
 	HidePath         bool       `gorm:"type:boolean;not null;default:false" json:"hidePath"`
 	Priority         *int64     `gorm:"type:integer" json:"priority"`
 }

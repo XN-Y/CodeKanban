@@ -2327,7 +2327,7 @@ func (m *Manager) handleMoveCommand(ctx context.Context, client *client, frame w
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
 		return err
 	}
-	m.broadcastSessionSummary(ctx, summary.ID)
+	m.broadcastProjectSessionSummaries(ctx, summary.ProjectID)
 	return nil
 }
 
@@ -4255,6 +4255,19 @@ func (m *Manager) broadcastSessionSummary(ctx context.Context, sessionID string)
 		return
 	}
 	m.broadcast(newSessionFrame(sessionID, *summary))
+}
+
+func (m *Manager) broadcastProjectSessionSummaries(ctx context.Context, projectID string) {
+	items, err := m.ListSessions(ctx, projectID)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Debug("failed to list web sessions for broadcast", zap.String("projectId", projectID), zap.Error(err))
+		}
+		return
+	}
+	for _, item := range items {
+		m.broadcast(newSessionFrame(item.ID, item))
+	}
 }
 
 func (c *client) send(frame wireFrame) error {

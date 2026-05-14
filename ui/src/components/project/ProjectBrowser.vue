@@ -486,10 +486,12 @@ function highlightText(text: string | null | undefined): string {
   return text.replace(regex, '<mark class="search-highlight">$1</mark>');
 }
 
-function getAccessIndex(projectId: string): number {
-  const recentIds = projectStore.recentProjects.map(project => project.id);
-  const index = recentIds.indexOf(projectId);
-  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+function getProjectTimestamp(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
 const filteredAndSortedProjects = computed(() => {
@@ -527,8 +529,12 @@ const filteredAndSortedProjects = computed(() => {
         break;
       case 'accessed':
       default:
-        comparison = getAccessIndex(b.id) - getAccessIndex(a.id);
+        comparison = getProjectTimestamp(a.lastAccessedAt) - getProjectTimestamp(b.lastAccessedAt);
         break;
+    }
+
+    if (comparison === 0) {
+      comparison = getProjectTimestamp(a.createdAt) - getProjectTimestamp(b.createdAt);
     }
 
     return sortOrder.value === 'asc' ? comparison : -comparison;
@@ -690,14 +696,16 @@ function confirmDelete(project: Project) {
 }
 
 async function handleProjectCreated(project?: Project) {
-  await projectStore.fetchProjects();
   if (project) {
+    projectStore.updateProjectInList(project);
     await goToProject(project.id);
   }
 }
 
-async function handleProjectUpdated() {
-  await projectStore.fetchProjects();
+async function handleProjectUpdated(project?: Project) {
+  if (project) {
+    projectStore.updateProjectInList(project);
+  }
   if (isMobileWorkspaceMode.value && props.currentProjectId) {
     await projectStore.fetchProject(props.currentProjectId);
   }
@@ -719,7 +727,9 @@ function getPriorityLabel(priority: number): string {
 }
 
 onMounted(() => {
-  void projectStore.fetchProjects();
+  if (projectStore.projects.length === 0) {
+    void projectStore.fetchProjects({ silent: true });
+  }
   void terminalStore.loadTerminalCounts();
   void webSessionStore.loadSessionCounts();
   setTimeout(checkForUpdates, 2000);

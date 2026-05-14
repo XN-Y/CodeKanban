@@ -11,4 +11,6 @@ var (
 	ErrInvalidSessionTitle = errors.New("terminal session title is invalid")
 	// ErrSessionTitleLocked indicates the session title cannot be changed because it's linked to a task.
 	ErrSessionTitleLocked = errors.New("terminal session title locked by task association")
+	// ErrInvalidSessionMoveTarget indicates a tab reorder target is invalid.
+	ErrInvalidSessionMoveTarget = errors.New("terminal session move target is invalid")
 )

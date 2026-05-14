@@ -49,6 +49,7 @@ type SessionSnapshot struct {
 	WorktreeID    string
 	WorkingDir    string
 	Title         string
+	OrderIndex    float64
 	CreatedAt     time.Time
 	LastActive    time.Time
 	Status        SessionStatus
@@ -179,6 +180,7 @@ type Session struct {
 	env        []string
 	rows       int
 	cols       int
+	orderIndex float64
 
 	createdAt  time.Time
 	lastActive atomic.Int64
@@ -274,6 +276,7 @@ type SessionParams struct {
 	EnableTerminalStateSnapshot bool
 	TaskID                      string
 	RenameTitleEachCommand      bool
+	OrderIndex                  float64
 }
 
 // sessionError provides a non-nil wrapper so atomic.Value never stores nil.
@@ -321,6 +324,7 @@ func NewSession(params SessionParams) (*Session, error) {
 		env:              append([]string{}, params.Env...),
 		rows:             rows,
 		cols:             cols,
+		orderIndex:       params.OrderIndex,
 		createdAt:        time.Now(),
 		closed:           make(chan struct{}),
 		logger:           params.Logger,
@@ -1011,6 +1015,20 @@ func (s *Session) Title() string {
 	return s.title
 }
 
+// OrderIndex returns the project-local tab ordering value.
+func (s *Session) OrderIndex() float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.orderIndex
+}
+
+// SetOrderIndex updates the project-local tab ordering value.
+func (s *Session) SetOrderIndex(orderIndex float64) {
+	s.mu.Lock()
+	s.orderIndex = orderIndex
+	s.mu.Unlock()
+}
+
 // UpdateTitle mutates the tab label in a threadsafe manner.
 func (s *Session) UpdateTitle(title string) error {
 	s.mu.Lock()
@@ -1069,6 +1087,7 @@ func (s *Session) Snapshot() SessionSnapshot {
 		WorktreeID:    s.worktreeID,
 		WorkingDir:    s.workingDir,
 		Title:         s.title,
+		OrderIndex:    s.orderIndex,
 		CreatedAt:     s.createdAt,
 		LastActive:    s.LastActive(),
 		Status:        s.Status(),

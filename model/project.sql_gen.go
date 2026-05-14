@@ -10,6 +10,37 @@ import (
 	"time"
 )
 
+const projectClearAccess = `-- name: ProjectClearAccess :one
+UPDATE projects
+SET
+  last_accessed_at = NULL
+WHERE id = ?1
+  AND deleted_at IS NULL
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
+`
+
+func (q *Queries) ProjectClearAccess(ctx context.Context, id string) (*Project, error) {
+	row := q.queryRow(ctx, q.projectClearAccessStmt, projectClearAccess, id)
+	var i Project
+	err := row.Scan(
+		&i.Id,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Name,
+		&i.Path,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.WorktreeBasePath,
+		&i.RemoteUrl,
+		&i.LastSyncAt,
+		&i.LastAccessedAt,
+		&i.HidePath,
+		&i.Priority,
+	)
+	return &i, err
+}
+
 const projectCreate = `-- name: ProjectCreate :one
 INSERT INTO projects (
   id,
@@ -23,6 +54,7 @@ INSERT INTO projects (
   remote_url,
   hide_path,
   last_sync_at,
+  last_accessed_at,
   priority
 ) VALUES (
   ?1,
@@ -36,8 +68,9 @@ INSERT INTO projects (
   ?9,
   ?10,
   ?11,
-  ?12
-) RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority
+  ?12,
+  ?13
+) RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
 `
 
 type ProjectCreateParams struct {
@@ -52,6 +85,7 @@ type ProjectCreateParams struct {
 	RemoteUrl        *string    `db:"remote_url" json:"remoteUrl"`
 	HidePath         bool       `db:"hide_path" json:"hidePath"`
 	LastSyncAt       *time.Time `db:"last_sync_at" json:"lastSyncAt"`
+	LastAccessedAt   *time.Time `db:"last_accessed_at" json:"lastAccessedAt"`
 	Priority         *int64     `db:"priority" json:"priority"`
 }
 
@@ -68,6 +102,7 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg *ProjectCreateParams) (
 		arg.RemoteUrl,
 		arg.HidePath,
 		arg.LastSyncAt,
+		arg.LastAccessedAt,
 		arg.Priority,
 	)
 	var i Project
@@ -83,6 +118,7 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg *ProjectCreateParams) (
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
 		&i.LastSyncAt,
+		&i.LastAccessedAt,
 		&i.HidePath,
 		&i.Priority,
 	)
@@ -90,7 +126,7 @@ func (q *Queries) ProjectCreate(ctx context.Context, arg *ProjectCreateParams) (
 }
 
 const projectGetByID = `-- name: ProjectGetByID :one
-SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority FROM projects
+SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority FROM projects
 WHERE id = ?1
   AND deleted_at IS NULL
 LIMIT 1
@@ -111,6 +147,7 @@ func (q *Queries) ProjectGetByID(ctx context.Context, id string) (*Project, erro
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
 		&i.LastSyncAt,
+		&i.LastAccessedAt,
 		&i.HidePath,
 		&i.Priority,
 	)
@@ -118,9 +155,12 @@ func (q *Queries) ProjectGetByID(ctx context.Context, id string) (*Project, erro
 }
 
 const projectList = `-- name: ProjectList :many
-SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority FROM projects
+SELECT id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority FROM projects
 WHERE deleted_at IS NULL
-ORDER BY created_at DESC
+ORDER BY
+  CASE WHEN last_accessed_at IS NULL THEN 1 ELSE 0 END ASC,
+  last_accessed_at DESC,
+  created_at DESC
 `
 
 func (q *Queries) ProjectList(ctx context.Context) ([]*Project, error) {
@@ -144,6 +184,7 @@ func (q *Queries) ProjectList(ctx context.Context) ([]*Project, error) {
 			&i.WorktreeBasePath,
 			&i.RemoteUrl,
 			&i.LastSyncAt,
+			&i.LastAccessedAt,
 			&i.HidePath,
 			&i.Priority,
 		); err != nil {
@@ -183,6 +224,42 @@ func (q *Queries) ProjectSoftDelete(ctx context.Context, arg *ProjectSoftDeleteP
 	return result.RowsAffected()
 }
 
+const projectTouchAccess = `-- name: ProjectTouchAccess :one
+UPDATE projects
+SET
+  last_accessed_at = ?1
+WHERE id = ?2
+  AND deleted_at IS NULL
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
+`
+
+type ProjectTouchAccessParams struct {
+	LastAccessedAt *time.Time `db:"last_accessed_at" json:"lastAccessedAt"`
+	Id             string     `db:"id" json:"id"`
+}
+
+func (q *Queries) ProjectTouchAccess(ctx context.Context, arg *ProjectTouchAccessParams) (*Project, error) {
+	row := q.queryRow(ctx, q.projectTouchAccessStmt, projectTouchAccess, arg.LastAccessedAt, arg.Id)
+	var i Project
+	err := row.Scan(
+		&i.Id,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Name,
+		&i.Path,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.WorktreeBasePath,
+		&i.RemoteUrl,
+		&i.LastSyncAt,
+		&i.LastAccessedAt,
+		&i.HidePath,
+		&i.Priority,
+	)
+	return &i, err
+}
+
 const projectUpdate = `-- name: ProjectUpdate :one
 UPDATE projects
 SET
@@ -192,7 +269,7 @@ SET
   hide_path = ?4
 WHERE id = ?5
   AND deleted_at IS NULL
-RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
 `
 
 type ProjectUpdateParams struct {
@@ -224,43 +301,7 @@ func (q *Queries) ProjectUpdate(ctx context.Context, arg *ProjectUpdateParams) (
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
 		&i.LastSyncAt,
-		&i.HidePath,
-		&i.Priority,
-	)
-	return &i, err
-}
-
-const projectUpdateWorktreeBasePath = `-- name: ProjectUpdateWorktreeBasePath :one
-UPDATE projects
-SET
-  updated_at = ?1,
-  worktree_base_path = CAST(?2 AS TEXT)
-WHERE id = ?3
-  AND deleted_at IS NULL
-RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority
-`
-
-type ProjectUpdateWorktreeBasePathParams struct {
-	UpdatedAt        time.Time `db:"updated_at" json:"updatedAt"`
-	WorktreeBasePath *string   `db:"worktree_base_path" json:"worktreeBasePath"`
-	Id               string    `db:"id" json:"id"`
-}
-
-func (q *Queries) ProjectUpdateWorktreeBasePath(ctx context.Context, arg *ProjectUpdateWorktreeBasePathParams) (*Project, error) {
-	row := q.queryRow(ctx, q.projectUpdateWorktreeBasePathStmt, projectUpdateWorktreeBasePath, arg.UpdatedAt, arg.WorktreeBasePath, arg.Id)
-	var i Project
-	err := row.Scan(
-		&i.Id,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.DeletedAt,
-		&i.Name,
-		&i.Path,
-		&i.Description,
-		&i.DefaultBranch,
-		&i.WorktreeBasePath,
-		&i.RemoteUrl,
-		&i.LastSyncAt,
+		&i.LastAccessedAt,
 		&i.HidePath,
 		&i.Priority,
 	)
@@ -274,7 +315,7 @@ SET
   priority = ?2
 WHERE id = ?3
   AND deleted_at IS NULL
-RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, hide_path, priority
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
 `
 
 type ProjectUpdatePriorityParams struct {
@@ -298,6 +339,45 @@ func (q *Queries) ProjectUpdatePriority(ctx context.Context, arg *ProjectUpdateP
 		&i.WorktreeBasePath,
 		&i.RemoteUrl,
 		&i.LastSyncAt,
+		&i.LastAccessedAt,
+		&i.HidePath,
+		&i.Priority,
+	)
+	return &i, err
+}
+
+const projectUpdateWorktreeBasePath = `-- name: ProjectUpdateWorktreeBasePath :one
+UPDATE projects
+SET
+  updated_at = ?1,
+  worktree_base_path = ?2
+WHERE id = ?3
+  AND deleted_at IS NULL
+RETURNING id, created_at, updated_at, deleted_at, name, path, description, default_branch, worktree_base_path, remote_url, last_sync_at, last_accessed_at, hide_path, priority
+`
+
+type ProjectUpdateWorktreeBasePathParams struct {
+	UpdatedAt        time.Time `db:"updated_at" json:"updatedAt"`
+	WorktreeBasePath *string   `db:"worktree_base_path" json:"worktreeBasePath"`
+	Id               string    `db:"id" json:"id"`
+}
+
+func (q *Queries) ProjectUpdateWorktreeBasePath(ctx context.Context, arg *ProjectUpdateWorktreeBasePathParams) (*Project, error) {
+	row := q.queryRow(ctx, q.projectUpdateWorktreeBasePathStmt, projectUpdateWorktreeBasePath, arg.UpdatedAt, arg.WorktreeBasePath, arg.Id)
+	var i Project
+	err := row.Scan(
+		&i.Id,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.Name,
+		&i.Path,
+		&i.Description,
+		&i.DefaultBranch,
+		&i.WorktreeBasePath,
+		&i.RemoteUrl,
+		&i.LastSyncAt,
+		&i.LastAccessedAt,
 		&i.HidePath,
 		&i.Priority,
 	)

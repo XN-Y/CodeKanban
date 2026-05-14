@@ -81,11 +81,7 @@
     <n-scrollbar v-else class="projects-scrollbar">
       <div class="projects-list" :class="{ 'is-compact': isCompact }">
         <TransitionGroup name="project-list" tag="div">
-          <div
-            v-for="project in recentProjects"
-            :key="project.id"
-            class="project-list-row"
-          >
+          <div v-for="project in recentProjects" :key="project.id" class="project-list-row">
             <n-popover
               trigger="hover"
               placement="right-start"
@@ -787,7 +783,7 @@ const handleUnpinProject = async (projectId: string) => {
 
 onMounted(() => {
   if (projectStore.projects.length === 0) {
-    projectStore.fetchProjects();
+    void projectStore.fetchProjects({ silent: true });
   }
   terminalStore.loadTerminalCounts();
   webSessionStore.loadSessionCounts();

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProjectServiceCreateProject(t *testing.T) {
@@ -147,6 +148,71 @@ func TestProjectServiceUpdateProject(t *testing.T) {
 	}
 	if !updated.HidePath {
 		t.Fatalf("expected hidePath to be true")
+	}
+}
+
+func TestProjectServiceAccessOrdering(t *testing.T) {
+	cleanup := initTestDB(t)
+	defer cleanup()
+
+	service := &ProjectService{}
+	ctx := context.Background()
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+
+	firstProject, err := service.CreateProject(ctx, CreateProjectParams{
+		Name: "First",
+		Path: firstDir,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject first returned error: %v", err)
+	}
+	if firstProject.LastAccessedAt != nil {
+		t.Fatalf("expected a new project to have no access timestamp")
+	}
+
+	secondProject, err := service.CreateProject(ctx, CreateProjectParams{
+		Name: "Second",
+		Path: secondDir,
+	})
+	if err != nil {
+		t.Fatalf("CreateProject second returned error: %v", err)
+	}
+
+	if _, err := service.TouchProjectAccess(ctx, firstProject.Id); err != nil {
+		t.Fatalf("TouchProjectAccess first returned error: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	touchedSecond, err := service.TouchProjectAccess(ctx, secondProject.Id)
+	if err != nil {
+		t.Fatalf("TouchProjectAccess second returned error: %v", err)
+	}
+	if touchedSecond.LastAccessedAt == nil {
+		t.Fatalf("expected access timestamp to be recorded")
+	}
+
+	projects, err := service.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects returned error: %v", err)
+	}
+	if len(projects) < 2 || projects[0].Id != secondProject.Id {
+		t.Fatalf("expected most recently accessed project first, got %#v", projects)
+	}
+
+	clearedSecond, err := service.ClearProjectAccess(ctx, secondProject.Id)
+	if err != nil {
+		t.Fatalf("ClearProjectAccess returned error: %v", err)
+	}
+	if clearedSecond.LastAccessedAt != nil {
+		t.Fatalf("expected access timestamp to be cleared")
+	}
+
+	projects, err = service.ListProjects(ctx)
+	if err != nil {
+		t.Fatalf("ListProjects after clear returned error: %v", err)
+	}
+	if len(projects) < 2 || projects[0].Id != firstProject.Id {
+		t.Fatalf("expected remaining accessed project first, got %#v", projects)
 	}
 }
 

@@ -1,7 +1,7 @@
 -- 数据库建表语句
--- 生成时间: 2025-11-30 04:41:04
+-- 生成时间: 2026-05-14 03:54:13
 -- 数据库方言: sqlite
--- 总共 36 条语句
+-- 总共 87 条语句
 
 
 CREATE TABLE "users" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"nickname" text,"avatar" text,"brief" text,"username" text NOT NULL,"password" text NOT NULL,"salt" text NOT NULL,"disabled" numeric NOT NULL DEFAULT false,PRIMARY KEY ("id"));
@@ -14,7 +14,8 @@ CREATE INDEX "idx_access_tokens_user_id" ON "user_access_tokens"("user_id");
 CREATE INDEX "idx_user_access_tokens_deleted_at" ON "user_access_tokens"("deleted_at");
 
 
-CREATE TABLE "projects" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"name" text NOT NULL,"path" text NOT NULL,"description" text,"default_branch" text,"worktree_base_path" text,"remote_url" text,"last_sync_at" datetime,"hide_path" boolean NOT NULL DEFAULT false,"priority" integer,PRIMARY KEY ("id"));
+CREATE TABLE "projects" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"name" text NOT NULL,"path" text NOT NULL,"description" text,"default_branch" text,"worktree_base_path" text,"remote_url" text,"last_sync_at" datetime,"last_accessed_at" datetime,"hide_path" boolean NOT NULL DEFAULT false,"priority" integer,PRIMARY KEY ("id"));
+CREATE INDEX "idx_projects_last_accessed_at" ON "projects"("last_accessed_at");
 CREATE UNIQUE INDEX "idx_projects_path" ON "projects"("path");
 CREATE INDEX "idx_projects_name" ON "projects"("name");
 CREATE INDEX "idx_projects_deleted_at" ON "projects"("deleted_at");
@@ -45,4 +46,60 @@ CREATE TABLE "notepads" ("id" text NOT NULL,"created_at" datetime,"updated_at" d
 CREATE INDEX "idx_notepads_order_index" ON "notepads"("order_index");
 CREATE INDEX "idx_notepads_project_id" ON "notepads"("project_id");
 CREATE INDEX "idx_notepads_deleted_at" ON "notepads"("deleted_at");
+
+
+CREATE TABLE "ai_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"session_id" text NOT NULL,"type" text NOT NULL,"project_path" text NOT NULL,"file_path" text NOT NULL,"model" text,"title" text,"session_started_at" datetime NOT NULL,"last_message_at" datetime,"message_count" integer DEFAULT 0,"assistant_message_count" integer DEFAULT 0,"file_mod_time" datetime NOT NULL,"file_size" integer NOT NULL,PRIMARY KEY ("id"));
+CREATE INDEX "idx_ai_sessions_project_path" ON "ai_sessions"("project_path");
+CREATE UNIQUE INDEX "idx_session_type" ON "ai_sessions"("session_id","type");
+CREATE INDEX "idx_ai_sessions_deleted_at" ON "ai_sessions"("deleted_at");
+
+
+CREATE TABLE "web_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"project_id" text NOT NULL,"worktree_id" text,"order_index" real NOT NULL DEFAULT 0,"agent" text NOT NULL,"backend" text NOT NULL DEFAULT "legacy_exec","title" text NOT NULL,"title_auto" boolean NOT NULL DEFAULT false,"model" text,"reasoning_effort" text,"workflow_mode" text NOT NULL DEFAULT "default","permission_level" text NOT NULL DEFAULT "elevated","auto_retry_enabled" boolean NOT NULL DEFAULT false,"auto_retry_scope" text NOT NULL DEFAULT "network_only","auto_retry_preset" text NOT NULL DEFAULT "gentle_stop","permission_mode" text,"cwd" text NOT NULL,"native_session_id" text,"status" text NOT NULL,"assistant_state" text,"has_unread" boolean NOT NULL DEFAULT false,"archived_at" datetime,"activity_at" datetime,"status_updated_at" datetime,"assistant_state_updated_at" datetime,"source_kind" text NOT NULL DEFAULT "codex_app_server","sync_state" text NOT NULL DEFAULT "missing","last_sync_mode" text,"source_created_at" datetime,"source_updated_at" datetime,"last_synced_at" datetime,"thread_path" text,"thread_preview" text,"turn_count" integer NOT NULL DEFAULT 0,"item_count" integer NOT NULL DEFAULT 0,"last_message_at" datetime,"last_event_seq" integer NOT NULL DEFAULT 0,"total_input_tokens" integer NOT NULL DEFAULT 0,"total_cached_input_tokens" integer NOT NULL DEFAULT 0,"total_output_tokens" integer NOT NULL DEFAULT 0,"total_cost" real NOT NULL DEFAULT 0,"last_completed_input_tokens" integer NOT NULL DEFAULT 0,"last_completed_cached_input_tokens" integer NOT NULL DEFAULT 0,"last_completed_output_tokens" integer NOT NULL DEFAULT 0,"latest_turn_input_tokens" integer NOT NULL DEFAULT 0,"latest_turn_cached_input_tokens" integer NOT NULL DEFAULT 0,"latest_turn_output_tokens" integer NOT NULL DEFAULT 0,"latest_turn_usage_updated_at" datetime,"latest_token_count_input_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_cached_input_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_output_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_total_tokens" integer NOT NULL DEFAULT 0,"latest_token_count_updated_at" datetime,"session_context_window_tokens" integer NOT NULL DEFAULT 0,"session_context_window_observed_at" datetime,"context_baseline_input_tokens" integer NOT NULL DEFAULT 0,"context_baseline_cached_input_tokens" integer NOT NULL DEFAULT 0,"context_baseline_output_tokens" integer NOT NULL DEFAULT 0,"last_context_compaction_at" datetime,"auto_retry_attempt" integer NOT NULL DEFAULT 0,"auto_retry_next_at" datetime,"auto_retry_last_error_code" text,"last_error" text,"sync_error" text,PRIMARY KEY ("id"));
+CREATE INDEX "idx_web_sessions_source_updated_at" ON "web_sessions"("source_updated_at");
+CREATE INDEX "idx_web_sessions_sync_state" ON "web_sessions"("sync_state");
+CREATE INDEX "idx_web_sessions_status_updated_at" ON "web_sessions"("status_updated_at");
+CREATE INDEX "idx_web_sessions_activity_at" ON "web_sessions"("activity_at");
+CREATE INDEX "idx_web_sessions_archived_at" ON "web_sessions"("archived_at");
+CREATE INDEX "idx_web_sessions_assistant_state" ON "web_sessions"("assistant_state");
+CREATE INDEX "idx_web_sessions_status" ON "web_sessions"("status");
+CREATE INDEX "idx_web_sessions_agent" ON "web_sessions"("agent");
+CREATE INDEX "idx_web_sessions_order_index" ON "web_sessions"("order_index");
+CREATE INDEX "idx_web_sessions_worktree_id" ON "web_sessions"("worktree_id");
+CREATE INDEX "idx_web_sessions_project_id" ON "web_sessions"("project_id");
+CREATE INDEX "idx_web_sessions_deleted_at" ON "web_sessions"("deleted_at");
+
+
+CREATE TABLE "web_session_scheduled_inputs" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"mode" text NOT NULL DEFAULT "send","text" text,"attachment_ids_json" text NOT NULL DEFAULT "[]","scheduled_for" datetime NOT NULL,"status" text NOT NULL DEFAULT "scheduled","sent_at" datetime,"canceled_at" datetime,PRIMARY KEY ("id"));
+CREATE INDEX "idx_web_session_scheduled_inputs_status" ON "web_session_scheduled_inputs"("status");
+CREATE INDEX "idx_web_session_scheduled_inputs_scheduled_for" ON "web_session_scheduled_inputs"("scheduled_for");
+CREATE INDEX "idx_web_session_scheduled_inputs_mode" ON "web_session_scheduled_inputs"("mode");
+CREATE INDEX "idx_web_session_scheduled_inputs_web_session_id" ON "web_session_scheduled_inputs"("web_session_id");
+CREATE INDEX "idx_web_session_scheduled_inputs_deleted_at" ON "web_session_scheduled_inputs"("deleted_at");
+
+
+CREATE TABLE "web_session_turns" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"source_turn_id" text,"order_index" integer NOT NULL,"status" text NOT NULL DEFAULT "completed","error_json" text,"source_created" boolean NOT NULL DEFAULT false,PRIMARY KEY ("id"));
+CREATE INDEX "idx_web_session_turns_source_turn_id" ON "web_session_turns"("source_turn_id");
+CREATE INDEX "idx_web_session_turns_web_session_id" ON "web_session_turns"("web_session_id");
+CREATE INDEX "idx_web_session_turn_order" ON "web_session_turns"("web_session_id","order_index");
+CREATE INDEX "idx_web_session_turns_deleted_at" ON "web_session_turns"("deleted_at");
+
+
+CREATE TABLE "web_session_items" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"web_session_id" text NOT NULL,"web_turn_id" text,"source_turn_id" text,"source_item_id" text,"order_index" integer NOT NULL,"item_kind" text NOT NULL,"item_type" text NOT NULL,"role" text,"status" text,"level" text,"text" text,"done" boolean NOT NULL DEFAULT false,"timestamp" datetime,"observed_at" datetime,"attachments_json" text,"tool_json" text,"detail_json" text,"payload_json" text,PRIMARY KEY ("id"));
+CREATE INDEX "idx_web_session_items_observed_at" ON "web_session_items"("observed_at");
+CREATE INDEX "idx_web_session_items_timestamp" ON "web_session_items"("timestamp");
+CREATE INDEX "idx_web_session_items_item_type" ON "web_session_items"("item_type");
+CREATE INDEX "idx_web_session_items_item_kind" ON "web_session_items"("item_kind");
+CREATE INDEX "idx_web_session_items_source_item_id" ON "web_session_items"("source_item_id");
+CREATE INDEX "idx_web_session_items_source_turn_id" ON "web_session_items"("source_turn_id");
+CREATE INDEX "idx_web_session_items_web_turn_id" ON "web_session_items"("web_turn_id");
+CREATE INDEX "idx_web_session_items_web_session_id" ON "web_session_items"("web_session_id");
+CREATE INDEX "idx_web_session_item_order" ON "web_session_items"("web_session_id","order_index");
+CREATE INDEX "idx_web_session_items_deleted_at" ON "web_session_items"("deleted_at");
+
+
+CREATE TABLE "task_ai_sessions" ("id" text NOT NULL,"created_at" datetime,"updated_at" datetime,"deleted_at" datetime,"task_id" text NOT NULL,"ai_session_id" text NOT NULL,PRIMARY KEY ("id"));
+CREATE INDEX "idx_task_ai_sessions_ai_session_id" ON "task_ai_sessions"("ai_session_id");
+CREATE UNIQUE INDEX "idx_task_ai_session" ON "task_ai_sessions"("task_id","ai_session_id");
+CREATE INDEX "idx_task_ai_sessions_task_id" ON "task_ai_sessions"("task_id");
+CREATE INDEX "idx_task_ai_sessions_deleted_at" ON "task_ai_sessions"("deleted_at");
 

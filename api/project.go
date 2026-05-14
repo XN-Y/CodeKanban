@@ -39,6 +39,10 @@ type updateProjectPriorityInput struct {
 	}
 }
 
+type projectAccessInput struct {
+	ID string `path:"id"`
+}
+
 func registerProjectRoutes(group *huma.Group) {
 	service := model.NewProjectService()
 
@@ -173,6 +177,50 @@ func registerProjectRoutes(group *huma.Group) {
 	}, func(op *huma.Operation) {
 		op.OperationID = "project-update-priority"
 		op.Summary = "更新项目优先级"
+		op.Tags = []string{projectTag}
+	})
+
+	huma.Post(group, "/projects/{id}/access", func(ctx context.Context, input *projectAccessInput) (*h.ItemResponse[model.Project], error) {
+		project, err := service.TouchProjectAccess(ctx, input.ID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrDBNotInitialized):
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			default:
+				return nil, huma.Error500InternalServerError("failed to record project access", err)
+			}
+		}
+
+		resp := h.NewItemResponse(*project)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-touch-access"
+		op.Summary = "记录项目访问时间"
+		op.Tags = []string{projectTag}
+	})
+
+	huma.Post(group, "/projects/{id}/access/clear", func(ctx context.Context, input *projectAccessInput) (*h.ItemResponse[model.Project], error) {
+		project, err := service.ClearProjectAccess(ctx, input.ID)
+		if err != nil {
+			switch {
+			case errors.Is(err, model.ErrDBNotInitialized):
+				return nil, huma.Error503ServiceUnavailable("database is not initialized")
+			case errors.Is(err, model.ErrProjectNotFound):
+				return nil, huma.Error404NotFound("project not found")
+			default:
+				return nil, huma.Error500InternalServerError("failed to clear project access", err)
+			}
+		}
+
+		resp := h.NewItemResponse(*project)
+		resp.Status = http.StatusOK
+		return resp, nil
+	}, func(op *huma.Operation) {
+		op.OperationID = "project-clear-access"
+		op.Summary = "移出最近项目"
 		op.Tags = []string{projectTag}
 	})
 

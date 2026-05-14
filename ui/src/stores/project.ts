@@ -6,7 +6,6 @@ import { useSettingsStore } from '@/stores/settings';
 import type { EditorPreference } from '@/stores/settings';
 import { projectSupportsGit } from '@/utils/projectGitCapability';
 
-const RECENT_PROJECTS_KEY = 'recent_projects';
 const DEFAULT_MAX_RECENT_PROJECTS = 10;
 
 // 优先级类型定义：1-5级，数字越大优先级越高
@@ -17,7 +16,6 @@ export const useProjectStore = defineStore('project', () => {
   const currentProject = ref<Project | null>(null);
   const worktrees = ref<Worktree[]>([]);
   const loading = ref(false);
-  const recentProjectIds = ref<string[]>(loadRecentProjectIds());
   const selectedWorktreeId = ref<string | null>(null);
 
   const hasProjects = computed(() => projects.value.length > 0);
@@ -28,14 +26,6 @@ export const useProjectStore = defineStore('project', () => {
     Math.max(recentProjectsLimit.value || DEFAULT_MAX_RECENT_PROJECTS, 1)
   );
 
-  watch(
-    resolvedRecentLimit,
-    limit => {
-      enforceRecentLimit(limit);
-    },
-    { immediate: true }
-  );
-
   const selectedWorktree = computed(() => {
     if (!selectedWorktreeId.value) {
       return null;
@@ -43,37 +33,12 @@ export const useProjectStore = defineStore('project', () => {
     return worktrees.value.find(worktree => worktree.id === selectedWorktreeId.value) ?? null;
   });
 
-  const recentProjects = computed(() => {
-    const projectList = recentProjectIds.value
-      .map(id => projects.value.find(p => p.id === id))
-      .filter((p): p is Project => p !== undefined);
-
-    // 按照优先级排序：优先级高的在前，没有优先级的保持原顺序在后
-    return projectList.sort((a, b) => {
-      const priorityA = a.priority;
-      const priorityB = b.priority;
-
-      // 如果两个都有优先级，按优先级降序排列
-      if (priorityA && priorityB) {
-        return priorityB - priorityA;
-      }
-
-      // 如果只有A有优先级，A排在前面
-      if (priorityA && !priorityB) {
-        return -1;
-      }
-
-      // 如果只有B有优先级，B排在前面
-      if (!priorityA && priorityB) {
-        return 1;
-      }
-
-      // 两个都没有优先级，保持原顺序（通过在原数组中的索引）
-      const indexA = recentProjectIds.value.indexOf(a.id);
-      const indexB = recentProjectIds.value.indexOf(b.id);
-      return indexA - indexB;
-    });
-  });
+  const recentProjects = computed(() =>
+    [...projects.value]
+      .filter(project => Boolean(project.lastAccessedAt))
+      .sort(compareRecentProjects)
+      .slice(0, resolvedRecentLimit.value)
+  );
 
   watch(worktrees, list => {
     if (
@@ -84,13 +49,17 @@ export const useProjectStore = defineStore('project', () => {
     }
   });
 
-  async function fetchProjects() {
-    loading.value = true;
+  async function fetchProjects(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      loading.value = true;
+    }
     try {
       const result = await projectApi.list();
-      projects.value = result.items;
+      replaceProjectList(result.items);
     } finally {
-      loading.value = false;
+      if (!options.silent) {
+        loading.value = false;
+      }
     }
   }
 
@@ -118,7 +87,7 @@ export const useProjectStore = defineStore('project', () => {
     hidePath: boolean;
   }) {
     const project = await projectApi.create(payload);
-    projects.value.push(project);
+    updateProjectInList(project);
     return project;
   }
 
@@ -127,13 +96,7 @@ export const useProjectStore = defineStore('project', () => {
     payload: { name: string; description?: string; hidePath: boolean }
   ) {
     const project = await projectApi.update(id, payload);
-    const index = projects.value.findIndex(item => item.id === id);
-    if (index !== -1) {
-      projects.value.splice(index, 1, project);
-    }
-    if (currentProject.value?.id === id) {
-      currentProject.value = project;
-    }
+    updateProjectInList(project);
     return project;
   }
 
@@ -226,29 +189,27 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function addRecentProject(projectId: string) {
-    const index = recentProjectIds.value.indexOf(projectId);
-    if (index > -1) {
-      recentProjectIds.value.splice(index, 1);
-    }
-    recentProjectIds.value.unshift(projectId);
-    enforceRecentLimit(resolvedRecentLimit.value);
-    saveRecentProjectIds(recentProjectIds.value);
-  }
-
-  function enforceRecentLimit(limit: number) {
-    const normalizedLimit = Math.max(Math.floor(limit ?? DEFAULT_MAX_RECENT_PROJECTS), 1);
-    if (recentProjectIds.value.length > normalizedLimit) {
-      recentProjectIds.value = recentProjectIds.value.slice(0, normalizedLimit);
-      saveRecentProjectIds(recentProjectIds.value);
-    }
+    void projectApi
+      .markAccess(projectId)
+      .then(project => {
+        updateProjectInList(project);
+      })
+      .catch(error => {
+        console.warn('Failed to record project access:', error);
+        void fetchProjects({ silent: true });
+      });
   }
 
   function removeRecentProject(projectId: string) {
-    const index = recentProjectIds.value.indexOf(projectId);
-    if (index > -1) {
-      recentProjectIds.value.splice(index, 1);
-      saveRecentProjectIds(recentProjectIds.value);
-    }
+    void projectApi
+      .clearAccess(projectId)
+      .then(project => {
+        updateProjectInList(project);
+      })
+      .catch(error => {
+        console.warn('Failed to clear project access:', error);
+        void fetchProjects({ silent: true });
+      });
   }
 
   function getProjectPriority(projectId: string): ProjectPriority | null {
@@ -257,15 +218,27 @@ export const useProjectStore = defineStore('project', () => {
   }
 
   function updateProjectInList(updatedProject: Project) {
-    // 更新项目列表中的项目
-    const index = projects.value.findIndex(p => p.id === updatedProject.id);
+    const index = projects.value.findIndex(project => project.id === updatedProject.id);
     if (index !== -1) {
-      projects.value[index] = updatedProject;
+      projects.value.splice(index, 1, updatedProject);
+    } else {
+      projects.value.push(updatedProject);
     }
 
-    // 如果是当前项目，也更新当前项目
     if (currentProject.value?.id === updatedProject.id) {
       currentProject.value = updatedProject;
+    }
+  }
+
+  function replaceProjectList(nextProjects: Project[]) {
+    projects.value = [...nextProjects];
+    if (currentProject.value) {
+      const nextCurrentProject = projects.value.find(
+        project => project.id === currentProject.value?.id
+      );
+      if (nextCurrentProject) {
+        currentProject.value = nextCurrentProject;
+      }
     }
   }
 
@@ -295,23 +268,35 @@ export const useProjectStore = defineStore('project', () => {
     removeRecentProject,
     getProjectPriority,
     updateProjectInList,
+    replaceProjectList,
     setSelectedWorktree,
   };
 });
 
-function loadRecentProjectIds(): string[] {
-  try {
-    const stored = localStorage.getItem(RECENT_PROJECTS_KEY);
-    return stored ? JSON.parse(stored) : [];
-  } catch {
-    return [];
+function compareRecentProjects(left: Project, right: Project) {
+  const priorityComparison = compareProjectPriority(left, right);
+  if (priorityComparison !== 0) {
+    return priorityComparison;
   }
+
+  const accessComparison = getTimestamp(right.lastAccessedAt) - getTimestamp(left.lastAccessedAt);
+  if (accessComparison !== 0) {
+    return accessComparison;
+  }
+
+  return getTimestamp(right.createdAt) - getTimestamp(left.createdAt);
 }
 
-function saveRecentProjectIds(ids: string[]) {
-  try {
-    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(ids));
-  } catch (error) {
-    console.error('Failed to save recent projects:', error);
+function compareProjectPriority(left: Project, right: Project) {
+  const leftPriority = left.priority ?? 0;
+  const rightPriority = right.priority ?? 0;
+  return rightPriority - leftPriority;
+}
+
+function getTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return 0;
   }
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
 }

@@ -146,6 +146,7 @@ func (s *ProjectService) CreateProject(ctx context.Context, params CreateProject
 		RemoteUrl:        remoteURLPtr,
 		HidePath:         params.HidePath,
 		LastSyncAt:       nil,
+		LastAccessedAt:   nil,
 	})
 	if err != nil {
 		if isUniqueConstraintError(err) {
@@ -185,7 +186,7 @@ func (s *ProjectService) GetProject(ctx context.Context, id string) (*Project, e
 	return project, nil
 }
 
-// ListProjects returns all projects ordered by creation timestamp descending.
+// ListProjects returns all projects with recently accessed projects first.
 func (s *ProjectService) ListProjects(ctx context.Context) ([]*Project, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -280,6 +281,54 @@ func (s *ProjectService) UpdateProjectPriority(ctx context.Context, id string, p
 		Priority:  priority,
 		Id:        id,
 	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrProjectNotFound
+		}
+		return nil, err
+	}
+
+	return project, nil
+}
+
+// TouchProjectAccess records that a project was opened by any client.
+func (s *ProjectService) TouchProjectAccess(ctx context.Context, id string) (*Project, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	q, err := resolveQueries(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	project, err := q.ProjectTouchAccess(ctx, &ProjectTouchAccessParams{
+		LastAccessedAt: &now,
+		Id:             id,
+	})
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrProjectNotFound
+		}
+		return nil, err
+	}
+
+	return project, nil
+}
+
+// ClearProjectAccess removes a project from the shared recent-project list.
+func (s *ProjectService) ClearProjectAccess(ctx context.Context, id string) (*Project, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	q, err := resolveQueries(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	project, err := q.ProjectClearAccess(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrProjectNotFound

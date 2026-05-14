@@ -157,94 +157,20 @@ type TerminalRenderPreference = {
   snapshotIntervalMs?: number;
 };
 
-const TAB_ORDER_STORAGE_KEY = 'kanban-terminal-tab-order';
+type TerminalSessionListEvent = {
+  type?: string;
+  projectId?: string;
+  sessions?: TerminalSession[];
+};
+
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'kanban-terminal-last-active';
 const TAB_RENDER_PREFERENCE_STORAGE_KEY = 'kanban-terminal-render-preferences';
+const TERMINAL_EVENTS_WS_PATH = '/api/v1/terminals/events';
+const TERMINAL_EVENT_RECONNECT_BASE_DELAY_MS = 1200;
+const TERMINAL_EVENT_RECONNECT_MAX_DELAY_MS = 15000;
 
-const storedTabOrders = loadStoredTabOrders();
 const storedActiveTabs = loadStoredActiveTabs();
 const storedRenderPreferences = loadStoredRenderPreferences();
-
-function loadStoredTabOrders() {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return new Map<string, string[]>();
-  }
-  try {
-    const raw = window.localStorage.getItem(TAB_ORDER_STORAGE_KEY);
-    if (!raw) {
-      return new Map<string, string[]>();
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const result = new Map<string, string[]>();
-    Object.entries(parsed).forEach(([projectId, value]) => {
-      if (!projectId || !Array.isArray(value)) {
-        return;
-      }
-      const ids = value
-        .map(id => (typeof id === 'string' ? id.trim() : ''))
-        .filter((id): id is string => Boolean(id));
-      if (ids.length) {
-        result.set(projectId, ids);
-      }
-    });
-    return result;
-  } catch (error) {
-    console.warn('[Terminal Store] Failed to parse stored tab order', error);
-    return new Map<string, string[]>();
-  }
-}
-
-function persistStoredTabOrders() {
-  if (typeof window === 'undefined' || !window.localStorage) {
-    return;
-  }
-  if (!storedTabOrders.size) {
-    window.localStorage.removeItem(TAB_ORDER_STORAGE_KEY);
-    return;
-  }
-  const payload: Record<string, string[]> = {};
-  storedTabOrders.forEach((order, projectId) => {
-    if (order.length) {
-      payload[projectId] = order;
-    }
-  });
-  if (Object.keys(payload).length === 0) {
-    window.localStorage.removeItem(TAB_ORDER_STORAGE_KEY);
-    return;
-  }
-  window.localStorage.setItem(TAB_ORDER_STORAGE_KEY, JSON.stringify(payload));
-}
-
-function captureProjectOrder(projectId: string, bucket?: TerminalTabState[]) {
-  if (!projectId) {
-    return;
-  }
-  const nextOrder = bucket?.map(tab => tab.id).filter(Boolean) ?? [];
-  if (!nextOrder.length) {
-    if (storedTabOrders.delete(projectId)) {
-      persistStoredTabOrders();
-    }
-    return;
-  }
-  const currentOrder = storedTabOrders.get(projectId);
-  if (ordersEqual(currentOrder, nextOrder)) {
-    return;
-  }
-  storedTabOrders.set(projectId, nextOrder);
-  persistStoredTabOrders();
-}
-
-function ordersEqual(current: string[] | undefined, next: string[]) {
-  if (!current || current.length !== next.length) {
-    return false;
-  }
-  for (let index = 0; index < current.length; index += 1) {
-    if (current[index] !== next[index]) {
-      return false;
-    }
-  }
-  return true;
-}
 
 function loadStoredActiveTabs() {
   if (typeof window === 'undefined' || !window.localStorage) {
@@ -382,40 +308,23 @@ function buildRenderPreferenceKey(projectId: string, sessionId: string) {
   return `${projectId}:${sessionId}`;
 }
 
-function sortSessionsWithStoredOrder(projectId: string, sessions: TerminalSession[]) {
+function sortableOrderIndex(session: TerminalSession) {
+  const value = Number(session.orderIndex ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function sortSessionsWithServerOrder(_projectId: string, sessions: TerminalSession[]) {
   if (!sessions.length) {
     return sessions;
   }
-  const storedOrder = storedTabOrders.get(projectId);
-  const ordered = [...sessions];
-  if (!storedOrder || storedOrder.length === 0) {
-    ordered.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-    return ordered;
-  }
-  const orderIndex = new Map<string, number>();
-  storedOrder.forEach((id, index) => {
-    if (id) {
-      orderIndex.set(id, index);
-    }
-  });
-  ordered.sort((a, b) => {
-    const indexA = orderIndex.get(a.id);
-    const indexB = orderIndex.get(b.id);
-    if (indexA != null && indexB != null) {
-      if (indexA !== indexB) {
-        return indexA - indexB;
-      }
-      return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
-    }
-    if (indexA != null) {
-      return -1;
-    }
-    if (indexB != null) {
-      return 1;
+  return [...sessions].sort((a, b) => {
+    const orderA = sortableOrderIndex(a);
+    const orderB = sortableOrderIndex(b);
+    if ((orderA > 0 || orderB > 0) && orderA !== orderB) {
+      return orderA - orderB;
     }
     return a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
   });
-  return ordered;
 }
 
 function supportsSnapshotZlibCompression() {
@@ -689,6 +598,137 @@ export const useTerminalStore = defineStore('terminal', () => {
   const latestServerSnapshotSequence = new Map<string, number>();
   const serializedSnapshots = new Map<string, TerminalSerializedSnapshot>();
   let nextBufferedMessageOrder = 0;
+  let eventSocket: WebSocket | null = null;
+  let eventPendingSocket: WebSocket | null = null;
+  let eventConnectPromise: Promise<void> | null = null;
+  let eventReconnectTimer: number | null = null;
+  let eventReconnectAttempt = 0;
+
+  function hasRetainedProjects() {
+    return projectConnectionRefCounts.size > 0;
+  }
+
+  function clearTerminalEventReconnectTimer() {
+    if (eventReconnectTimer != null && typeof window !== 'undefined') {
+      window.clearTimeout(eventReconnectTimer);
+      eventReconnectTimer = null;
+    }
+  }
+
+  function closeTerminalEventStream() {
+    clearTerminalEventReconnectTimer();
+    eventConnectPromise = null;
+    eventReconnectAttempt = 0;
+    const socketsToClose = [eventSocket, eventPendingSocket].filter(
+      (socket): socket is WebSocket => Boolean(socket)
+    );
+    eventSocket = null;
+    eventPendingSocket = null;
+    socketsToClose.forEach(socket => {
+      try {
+        socket.close();
+      } catch (error) {
+        console.warn('[Terminal Store] Failed to close terminal event stream', error);
+      }
+    });
+  }
+
+  function scheduleTerminalEventReconnect() {
+    clearTerminalEventReconnectTimer();
+    if (!hasRetainedProjects() || typeof window === 'undefined') {
+      return;
+    }
+    const delayMs = Math.min(
+      TERMINAL_EVENT_RECONNECT_BASE_DELAY_MS * 2 ** eventReconnectAttempt,
+      TERMINAL_EVENT_RECONNECT_MAX_DELAY_MS
+    );
+    eventReconnectAttempt += 1;
+    eventReconnectTimer = window.setTimeout(() => {
+      eventReconnectTimer = null;
+      void openTerminalEventStream().catch(() => undefined);
+    }, delayMs);
+  }
+
+  function applySessionListEvent(frame: TerminalSessionListEvent) {
+    const projectId = String(frame.projectId || '').trim();
+    if (!projectId || frame.type !== 'sessions') {
+      return;
+    }
+    const sessions = Array.isArray(frame.sessions)
+      ? frame.sessions.map(session => ({
+          ...session,
+          projectId: session.projectId || projectId,
+        }))
+      : [];
+    cachedCounts.set(projectId, sessions.length);
+    if (!projectConnectionRefCounts.has(projectId) && !tabStore.has(projectId)) {
+      return;
+    }
+    reconcileSessions(projectId, sessions);
+  }
+
+  function openTerminalEventStream(): Promise<void> {
+    if (eventSocket && eventSocket.readyState === WebSocket.OPEN) {
+      return Promise.resolve();
+    }
+    if (eventConnectPromise) {
+      return eventConnectPromise;
+    }
+    if (!hasRetainedProjects()) {
+      return Promise.resolve();
+    }
+    clearTerminalEventReconnectTimer();
+    const connectPromise = new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let socket: WebSocket;
+      try {
+        socket = new WebSocket(resolveWsUrl(TERMINAL_EVENTS_WS_PATH));
+        eventPendingSocket = socket;
+      } catch (error) {
+        scheduleTerminalEventReconnect();
+        reject(error);
+        return;
+      }
+      socket.onopen = () => {
+        settled = true;
+        eventPendingSocket = null;
+        eventConnectPromise = null;
+        if (!hasRetainedProjects()) {
+          socket.close();
+          resolve();
+          return;
+        }
+        eventSocket = socket;
+        eventReconnectAttempt = 0;
+        resolve();
+      };
+      socket.onmessage = event => {
+        try {
+          applySessionListEvent(JSON.parse(event.data) as TerminalSessionListEvent);
+        } catch (error) {
+          console.error('[Terminal Store] Failed to parse terminal event frame', error);
+        }
+      };
+      socket.onerror = event => {
+        console.error('[Terminal Store] terminal event websocket error', event);
+      };
+      socket.onclose = () => {
+        if (eventSocket === socket) {
+          eventSocket = null;
+        }
+        if (eventPendingSocket === socket) {
+          eventPendingSocket = null;
+        }
+        eventConnectPromise = null;
+        scheduleTerminalEventReconnect();
+        if (!settled) {
+          reject(new Error('terminal event stream closed before opening'));
+        }
+      };
+    });
+    eventConnectPromise = connectPromise;
+    return connectPromise;
+  }
 
   function getGlobalRenderMode() {
     return sanitizeTerminalRenderMode(
@@ -1046,7 +1086,7 @@ export const useTerminalStore = defineStore('terminal', () => {
       worktreeId = mainWorktree ? mainWorktree.id : worktrees[0].id;
     }
 
-    const payload: TerminalCreateInputBody = {
+    const payload: TerminalCreateInputBody & { insertAfterSessionId?: string } = {
       workingDir: options.workingDir ?? '',
       title: options.title ?? '',
       rows: options.rows ?? 0,
@@ -1054,6 +1094,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     };
     if (options.taskId) {
       payload.taskId = options.taskId;
+    }
+    if (options.insertAfterSessionId) {
+      payload.insertAfterSessionId = options.insertAfterSessionId;
     }
     const response = await Apis.terminalSession
       .create({
@@ -1266,7 +1309,6 @@ export const useTerminalStore = defineStore('terminal', () => {
           const currentCount = cachedCounts.get(record.projectId) ?? 0;
           cachedCounts.set(record.projectId, Math.max(0, currentCount - 1));
         }
-        captureProjectOrder(record.projectId, bucket);
         if (bucket.length === 0) {
           tabStore.delete(record.projectId);
         }
@@ -1485,6 +1527,59 @@ export const useTerminalStore = defineStore('terminal', () => {
     setActiveTab(projectId, bucket[0].id);
   }
 
+  function applyLocalTabOrder(projectId: string, bucket: TerminalTabState[]) {
+    bucket.forEach((tab, index) => {
+      const nextTab = {
+        ...tab,
+        orderIndex: (index + 1) * 1000,
+      };
+      bucket.splice(index, 1, nextTab);
+      const record = sessionIndex.get(nextTab.id);
+      if (record) {
+        record.tab = nextTab;
+      }
+    });
+    applyConnectionPolicy(projectId);
+  }
+
+  function restoreProjectTabs(projectId: string, previousTabs: TerminalTabState[]) {
+    const bucket = ensureBucket(projectId);
+    bucket.splice(0, bucket.length, ...previousTabs);
+    previousTabs.forEach(tab => {
+      sessionIndex.set(tab.id, { projectId, tab });
+    });
+    ensureActiveTab(projectId);
+    applyConnectionPolicy(projectId);
+  }
+
+  async function persistTerminalTabMove(
+    projectId: string,
+    sessionId: string,
+    previousSessionId: string,
+    nextSessionId: string,
+    previousTabs: TerminalTabState[]
+  ) {
+    try {
+      const response = await alovaInstance
+        .Post(
+          `/api/v1/projects/${projectId}/terminals/${sessionId}/move`,
+          {
+            previousSessionId,
+            nextSessionId,
+          },
+          { cacheFor: 0 }
+        )
+        .send();
+      const session = extractItem(response) as unknown as TerminalSession | undefined;
+      if (session) {
+        attachOrUpdateSession(session, { projectIdOverride: projectId });
+      }
+    } catch (error) {
+      restoreProjectTabs(projectId, previousTabs);
+      console.error('[Terminal Store] Failed to persist terminal tab order', error);
+    }
+  }
+
   function reorderTabs(projectId: string | undefined, fromIndex: number, toIndex: number) {
     if (!projectId) {
       return;
@@ -1500,12 +1595,17 @@ export const useTerminalStore = defineStore('terminal', () => {
       return;
     }
     const clampedToIndex = Math.max(0, Math.min(bucket.length - 1, toIndex));
+    const previousTabs = bucket.map(tab => ({ ...tab }));
     const [tab] = bucket.splice(fromIndex, 1);
     if (!tab) {
       return;
     }
     bucket.splice(clampedToIndex, 0, tab);
-    captureProjectOrder(projectId, bucket);
+    applyLocalTabOrder(projectId, bucket);
+    const movedIndex = bucket.findIndex(item => item.id === tab.id);
+    const previousSessionId = bucket[movedIndex - 1]?.id ?? '';
+    const nextSessionId = bucket[movedIndex + 1]?.id ?? '';
+    void persistTerminalTabMove(projectId, tab.id, previousSessionId, nextSessionId, previousTabs);
   }
 
   function attachOrUpdateSession(
@@ -1586,7 +1686,6 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
     sessionIndex.set(tab.id, { projectId: resolvedProjectId, tab });
     updateSessionTaskMapping(tab.id, tab.taskId ?? undefined);
-    captureProjectOrder(resolvedProjectId, bucket);
     if (options?.activate) {
       setActiveTab(resolvedProjectId, tab.id);
     } else if (!activeTabByProject.get(resolvedProjectId)) {
@@ -1826,17 +1925,27 @@ export const useTerminalStore = defineStore('terminal', () => {
         disconnectTab(tab.id, true);
       }
     }
-    const orderedSessions = sortSessionsWithStoredOrder(projectId, sessions);
+    const orderedSessions = sortSessionsWithServerOrder(projectId, sessions);
     for (const session of orderedSessions) {
       attachOrUpdateSession(session, { projectIdOverride: projectId });
     }
+    const orderById = new Map(orderedSessions.map((session, index) => [session.id, index]));
     const finalBucket = tabStore.get(projectId);
+    if (finalBucket) {
+      finalBucket.sort((left, right) => {
+        const leftIndex = orderById.get(left.id) ?? Number.MAX_SAFE_INTEGER;
+        const rightIndex = orderById.get(right.id) ?? Number.MAX_SAFE_INTEGER;
+        if (leftIndex !== rightIndex) {
+          return leftIndex - rightIndex;
+        }
+        return left.id.localeCompare(right.id);
+      });
+    }
     if (!finalBucket || finalBucket.length === 0) {
       setActiveTab(projectId, undefined);
     } else {
       ensureActiveTab(projectId);
     }
-    captureProjectOrder(projectId, finalBucket);
   }
 
   function ensureProjectSelected(projectId?: string) {
@@ -1928,6 +2037,9 @@ export const useTerminalStore = defineStore('terminal', () => {
     }
     const nextCount = (projectConnectionRefCounts.get(projectId) ?? 0) + 1;
     projectConnectionRefCounts.set(projectId, nextCount);
+    void openTerminalEventStream().catch(error => {
+      console.error('[Terminal Store] Failed to open terminal event stream', error);
+    });
     if (nextCount !== 1) {
       return;
     }
@@ -1943,12 +2055,18 @@ export const useTerminalStore = defineStore('terminal', () => {
       projectConnectionRefCounts.delete(projectId);
       const bucket = tabStore.get(projectId);
       if (!bucket) {
+        if (!hasRetainedProjects()) {
+          closeTerminalEventStream();
+        }
         return;
       }
       bucket.forEach(tab => {
         updateConnectionRole(tab.id, 'detached');
         pauseSocket(tab.id);
       });
+      if (!hasRetainedProjects()) {
+        closeTerminalEventStream();
+      }
       return;
     }
     projectConnectionRefCounts.set(projectId, currentCount - 1);

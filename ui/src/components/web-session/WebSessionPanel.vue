@@ -2575,8 +2575,14 @@ const visibleSessionById = computed(() => {
   });
   return map;
 });
-const sessions = computed<SessionTab[]>(() =>
-  buildOrderedTabSessions(tabOrderIds.value, nonArchivedVisibleSessions.value)
+const sessions = computed<SessionTab[]>((): SessionTab[] =>
+  buildOrderedTabSessions(
+    normalizeTabOrderIds(
+      tabOrderIds.value,
+      nonArchivedVisibleSessions.value.map((session: SessionTab) => session.id)
+    ),
+    nonArchivedVisibleSessions.value
+  )
 );
 const currentSession = computed<SessionTab | null>(() => {
   if (
@@ -5296,11 +5302,11 @@ function loadPersistedTabMruIds(projectId: string) {
   return normalizeSessionIdList(persistedTabMruByProject.value[projectId]);
 }
 
-function getVisibleTabIds() {
-  return sessions.value.map(session => session.id);
+function getVisibleTabIds(): string[] {
+  return nonArchivedVisibleSessions.value.map((session: SessionTab) => session.id);
 }
 
-function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
+function getDefaultTabOrderIds(visibleIds: string[] = getVisibleTabIds()): string[] {
   const visibleSet = new Set(visibleIds);
   const ids = [
     ...realSessions.value.map(session => session.id).filter(sessionId => visibleSet.has(sessionId)),
@@ -5311,32 +5317,55 @@ function getDefaultTabOrderIds(visibleIds = getVisibleTabIds()) {
   return ids;
 }
 
-function normalizeTabOrderIds(orderIds: string[], visibleIds = getVisibleTabIds()) {
-  const defaultIds = getDefaultTabOrderIds(visibleIds);
-  const visibleSet = new Set(defaultIds);
-  const next: string[] = [];
+function normalizeTabOrderIds(
+  orderIds: string[],
+  visibleIds: string[] = getVisibleTabIds()
+): string[] {
+  const visibleSet = new Set(visibleIds);
+  const realIds = realSessions.value
+    .map(session => session.id)
+    .filter(sessionId => visibleSet.has(sessionId));
+  const draftIds = draftSessions.value
+    .map(session => session.id)
+    .filter(sessionId => visibleSet.has(sessionId));
+  const realIndexById = new Map(realIds.map((sessionId, index) => [sessionId, index]));
+  const draftSet = new Set(draftIds);
+  const draftSlots = Array.from({ length: realIds.length + 1 }, () => [] as string[]);
+  const seenDraftIds = new Set<string>();
+  let currentSlot = 0;
 
   normalizeSessionIdList(orderIds).forEach(sessionId => {
-    if (!visibleSet.has(sessionId) || next.includes(sessionId)) {
+    const realIndex = realIndexById.get(sessionId);
+    if (realIndex != null) {
+      currentSlot = realIndex + 1;
       return;
     }
-    next.push(sessionId);
+    if (!draftSet.has(sessionId) || seenDraftIds.has(sessionId)) {
+      return;
+    }
+    draftSlots[currentSlot].push(sessionId);
+    seenDraftIds.add(sessionId);
   });
 
-  defaultIds.forEach(sessionId => {
-    if (!next.includes(sessionId)) {
-      next.push(sessionId);
+  draftIds.forEach(sessionId => {
+    if (!seenDraftIds.has(sessionId)) {
+      draftSlots[realIds.length].push(sessionId);
+      seenDraftIds.add(sessionId);
     }
   });
 
+  const next = [...draftSlots[0]];
+  realIds.forEach((sessionId, index) => {
+    next.push(sessionId, ...draftSlots[index + 1]);
+  });
   return next;
 }
 
 function normalizeTabMruIds(
   mruIds: string[],
-  visibleIds = getVisibleTabIds(),
-  orderIds = normalizeTabOrderIds(tabOrderIds.value, visibleIds)
-) {
+  visibleIds: string[] = getVisibleTabIds(),
+  orderIds: string[] = normalizeTabOrderIds(tabOrderIds.value, visibleIds)
+): string[] {
   const visibleSet = new Set(visibleIds);
   const next: string[] = [];
 
@@ -5368,10 +5397,16 @@ function persistTabNavigationState(
 
   const normalizedOrderIds = normalizeTabOrderIds(nextOrderIds, visibleIds);
   const normalizedMruIds = normalizeTabMruIds(nextMruIds, visibleIds, normalizedOrderIds);
-  const persistableIds = normalizedOrderIds.filter(sessionId => {
+  const hasPersistableDraft = normalizedOrderIds.some(sessionId => {
     const session = visibleSessionById.value.get(sessionId);
-    return session && !isArchivedPreviewSession(session);
+    return session && isDraftSession(session);
   });
+  const persistableIds = hasPersistableDraft
+    ? normalizedOrderIds.filter(sessionId => {
+        const session = visibleSessionById.value.get(sessionId);
+        return session && !isArchivedPreviewSession(session);
+      })
+    : [];
   const persistableMruIds = normalizedMruIds.filter(sessionId => {
     const session = visibleSessionById.value.get(sessionId);
     return session && !isArchivedPreviewSession(session);
@@ -10125,7 +10160,7 @@ onMounted(() => {
   void loadCodexRuntimeConfig();
   void ensureCodexSkillsLoaded();
   if (projectStore.projects.length === 0) {
-    void projectStore.fetchProjects().catch(error => {
+    void projectStore.fetchProjects({ silent: true }).catch(error => {
       console.error('[Web Session] Failed to preload projects', error);
     });
   }

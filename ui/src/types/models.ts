@@ -8,6 +8,8 @@ export interface Project {
   remoteUrl: string | null;
   hidePath: boolean;
   priority: number | null;
+  lastSyncAt?: string | null;
+  lastAccessedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -63,6 +65,7 @@ export interface TerminalSession {
   worktreeId: string;
   workingDir: string;
   title: string;
+  orderIndex?: number;
   createdAt: string;
   lastActive: string;
   status: 'starting' | 'running' | 'closed' | 'error';

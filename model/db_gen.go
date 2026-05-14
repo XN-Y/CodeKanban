@@ -39,6 +39,9 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.getOneStmt, err = db.PrepareContext(ctx, getOne); err != nil {
 		return nil, fmt.Errorf("error preparing query GetOne: %w", err)
 	}
+	if q.projectClearAccessStmt, err = db.PrepareContext(ctx, projectClearAccess); err != nil {
+		return nil, fmt.Errorf("error preparing query ProjectClearAccess: %w", err)
+	}
 	if q.projectCreateStmt, err = db.PrepareContext(ctx, projectCreate); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectCreate: %w", err)
 	}
@@ -51,14 +54,17 @@ func Prepare(ctx context.Context, db DBTX) (*Queries, error) {
 	if q.projectSoftDeleteStmt, err = db.PrepareContext(ctx, projectSoftDelete); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectSoftDelete: %w", err)
 	}
+	if q.projectTouchAccessStmt, err = db.PrepareContext(ctx, projectTouchAccess); err != nil {
+		return nil, fmt.Errorf("error preparing query ProjectTouchAccess: %w", err)
+	}
 	if q.projectUpdateStmt, err = db.PrepareContext(ctx, projectUpdate); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectUpdate: %w", err)
 	}
-	if q.projectUpdateWorktreeBasePathStmt, err = db.PrepareContext(ctx, projectUpdateWorktreeBasePath); err != nil {
-		return nil, fmt.Errorf("error preparing query ProjectUpdateWorktreeBasePath: %w", err)
-	}
 	if q.projectUpdatePriorityStmt, err = db.PrepareContext(ctx, projectUpdatePriority); err != nil {
 		return nil, fmt.Errorf("error preparing query ProjectUpdatePriority: %w", err)
+	}
+	if q.projectUpdateWorktreeBasePathStmt, err = db.PrepareContext(ctx, projectUpdateWorktreeBasePath); err != nil {
+		return nil, fmt.Errorf("error preparing query ProjectUpdateWorktreeBasePath: %w", err)
 	}
 	if q.taskCountByWorktreeStmt, err = db.PrepareContext(ctx, taskCountByWorktree); err != nil {
 		return nil, fmt.Errorf("error preparing query TaskCountByWorktree: %w", err)
@@ -138,6 +144,11 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing getOneStmt: %w", cerr)
 		}
 	}
+	if q.projectClearAccessStmt != nil {
+		if cerr := q.projectClearAccessStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing projectClearAccessStmt: %w", cerr)
+		}
+	}
 	if q.projectCreateStmt != nil {
 		if cerr := q.projectCreateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing projectCreateStmt: %w", cerr)
@@ -158,19 +169,24 @@ func (q *Queries) Close() error {
 			err = fmt.Errorf("error closing projectSoftDeleteStmt: %w", cerr)
 		}
 	}
+	if q.projectTouchAccessStmt != nil {
+		if cerr := q.projectTouchAccessStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing projectTouchAccessStmt: %w", cerr)
+		}
+	}
 	if q.projectUpdateStmt != nil {
 		if cerr := q.projectUpdateStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing projectUpdateStmt: %w", cerr)
 		}
 	}
-	if q.projectUpdateWorktreeBasePathStmt != nil {
-		if cerr := q.projectUpdateWorktreeBasePathStmt.Close(); cerr != nil {
-			err = fmt.Errorf("error closing projectUpdateWorktreeBasePathStmt: %w", cerr)
-		}
-	}
 	if q.projectUpdatePriorityStmt != nil {
 		if cerr := q.projectUpdatePriorityStmt.Close(); cerr != nil {
 			err = fmt.Errorf("error closing projectUpdatePriorityStmt: %w", cerr)
+		}
+	}
+	if q.projectUpdateWorktreeBasePathStmt != nil {
+		if cerr := q.projectUpdateWorktreeBasePathStmt.Close(); cerr != nil {
+			err = fmt.Errorf("error closing projectUpdateWorktreeBasePathStmt: %w", cerr)
 		}
 	}
 	if q.taskCountByWorktreeStmt != nil {
@@ -297,13 +313,15 @@ type Queries struct {
 	accessTokenGetByIdStmt            *sql.Stmt
 	accessTokenRefreshStmt            *sql.Stmt
 	getOneStmt                        *sql.Stmt
+	projectClearAccessStmt            *sql.Stmt
 	projectCreateStmt                 *sql.Stmt
 	projectGetByIDStmt                *sql.Stmt
 	projectListStmt                   *sql.Stmt
 	projectSoftDeleteStmt             *sql.Stmt
+	projectTouchAccessStmt            *sql.Stmt
 	projectUpdateStmt                 *sql.Stmt
-	projectUpdateWorktreeBasePathStmt *sql.Stmt
 	projectUpdatePriorityStmt         *sql.Stmt
+	projectUpdateWorktreeBasePathStmt *sql.Stmt
 	taskCountByWorktreeStmt           *sql.Stmt
 	userCreateStmt                    *sql.Stmt
 	userDeleteStmt                    *sql.Stmt
@@ -331,13 +349,15 @@ func (q *Queries) WithTx(tx *sql.Tx) *Queries {
 		accessTokenGetByIdStmt:            q.accessTokenGetByIdStmt,
 		accessTokenRefreshStmt:            q.accessTokenRefreshStmt,
 		getOneStmt:                        q.getOneStmt,
+		projectClearAccessStmt:            q.projectClearAccessStmt,
 		projectCreateStmt:                 q.projectCreateStmt,
 		projectGetByIDStmt:                q.projectGetByIDStmt,
 		projectListStmt:                   q.projectListStmt,
 		projectSoftDeleteStmt:             q.projectSoftDeleteStmt,
+		projectTouchAccessStmt:            q.projectTouchAccessStmt,
 		projectUpdateStmt:                 q.projectUpdateStmt,
-		projectUpdateWorktreeBasePathStmt: q.projectUpdateWorktreeBasePathStmt,
 		projectUpdatePriorityStmt:         q.projectUpdatePriorityStmt,
+		projectUpdateWorktreeBasePathStmt: q.projectUpdateWorktreeBasePathStmt,
 		taskCountByWorktreeStmt:           q.taskCountByWorktreeStmt,
 		userCreateStmt:                    q.userCreateStmt,
 		userDeleteStmt:                    q.userDeleteStmt,
