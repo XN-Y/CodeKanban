@@ -57,6 +57,21 @@ func TestDetectFromCommand(t *testing.T) {
 			want:    types.AssistantTypeClaudeCode,
 		},
 		{
+			name:    "claude code router direct command",
+			command: "ccr code --model sonnet",
+			want:    types.AssistantTypeClaudeCode,
+		},
+		{
+			name:    "claude code router node cli command",
+			command: "node /usr/local/lib/node_modules/@musistudio/claude-code-router/dist/cli.js code --model sonnet",
+			want:    types.AssistantTypeClaudeCode,
+		},
+		{
+			name:    "claude code router status is not assistant",
+			command: "ccr status",
+			want:    types.AssistantTypeUnknown,
+		},
+		{
 			name:    "regular shell command is not ai assistant",
 			command: `bash -lc "echo codex"`,
 			want:    types.AssistantTypeUnknown,

@@ -149,17 +149,24 @@ func claudeUserMessagePayload(text string, attachments []Attachment, workflowMod
 }
 
 func (m *Manager) buildClaudeResumeCommand(ctx context.Context, session tables.WebSessionTable) (*exec.Cmd, error) {
-	settingsPath, err := m.ensureClaudeHookServer()
-	if err != nil {
-		return nil, err
-	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--replay-user-messages",
 		"--verbose",
-		"--settings", settingsPath,
+	}
+	claudeRuntime := effectiveClaudeRuntime(session)
+	if claudeRuntime == ClaudeRuntimeCCR {
+		if err := m.ensureCCRClaudeHookSettings(); err != nil {
+			return nil, err
+		}
+	} else {
+		settingsPath, err := m.ensureClaudeHookServer()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--settings", settingsPath)
 	}
 	workflowMode := effectiveWorkflowMode(session)
 	permissionLevel := effectivePermissionLevel(session)
@@ -186,7 +193,7 @@ func (m *Manager) buildClaudeResumeCommand(ctx context.Context, session tables.W
 	if effort := claudeReasoningEffortArg(ReasoningEffort(session.ReasoningEffort)); effort != "" {
 		args = append(args, "--effort", effort)
 	}
-	cmd := exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
+	cmd := m.buildClaudeCommand(ctx, claudeRuntime, args)
 	cmd.Dir = session.Cwd
 	cmd.Env = os.Environ()
 	return cmd, nil

@@ -303,6 +303,14 @@ export const DEFAULT_TERMINAL_QUICK_ACTIONS: TerminalQuickAction[] = [
     stacked: false,
   },
   {
+    id: 'ccr',
+    name: 'Claude Code Router',
+    command: 'ccr code',
+    icon: 'claude',
+    enabled: true,
+    stacked: false,
+  },
+  {
     id: 'codex',
     name: 'Codex',
     command: 'codex',
@@ -1435,6 +1443,16 @@ function sanitizeTerminalQuickActions(value?: unknown): TerminalQuickAction[] {
 
   if (sanitized.length === 0) {
     return DEFAULT_TERMINAL_QUICK_ACTIONS.map(action => ({ ...action }));
+  }
+
+  for (const defaultAction of DEFAULT_TERMINAL_QUICK_ACTIONS) {
+    if (sanitized.length >= 12) {
+      break;
+    }
+    if (!usedIds.has(defaultAction.id)) {
+      sanitized.push({ ...defaultAction });
+      usedIds.add(defaultAction.id);
+    }
   }
 
   return sanitized.slice(0, 12);

@@ -264,6 +264,7 @@ export function normalizeWebSessionSummaryFromWire(value) {
     worktreeId: trimmedString(value?.wid) || null,
     orderIndex: numberValue(value?.oi, 0),
     agent: trimmedString(value?.ag) || "codex",
+    claudeRuntime: trimmedString(value?.cr) === "ccr" ? "ccr" : "claude",
     title: trimmedString(value?.ttl),
     model: trimmedString(value?.md),
     reasoningEffort: trimmedString(value?.re) || "default",

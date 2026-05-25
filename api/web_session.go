@@ -200,6 +200,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			Body      struct {
 				WorktreeID       string `json:"worktreeId"`
 				Agent            string `json:"agent"`
+				ClaudeRuntime    string `json:"claudeRuntime"`
 				Model            string `json:"model"`
 				ReasoningEffort  string `json:"reasoningEffort"`
 				WorkflowMode     string `json:"workflowMode"`
@@ -243,6 +244,7 @@ func (c *webSessionController) registerHTTP(app *fiber.App, group *huma.Group) {
 			ProjectID:        input.ProjectID,
 			WorktreeID:       input.Body.WorktreeID,
 			Agent:            websession.Agent(input.Body.Agent),
+			ClaudeRuntime:    websession.ClaudeRuntime(input.Body.ClaudeRuntime),
 			Model:            input.Body.Model,
 			ReasoningEffort:  websession.ReasoningEffort(input.Body.ReasoningEffort),
 			WorkflowMode:     workflowMode,

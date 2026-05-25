@@ -109,6 +109,7 @@ export const webSessionApi = {
     data: {
       worktreeId?: string;
       agent: 'claude' | 'codex';
+      claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
@@ -125,6 +126,7 @@ export const webSessionApi = {
         .Post<ItemResponse<WebSessionSummary>>(`/projects/${projectId}/web-sessions`, {
           worktreeId: data.worktreeId ?? '',
           agent: data.agent,
+          claudeRuntime: data.claudeRuntime ?? 'claude',
           model: data.model ?? '',
           reasoningEffort: data.reasoningEffort ?? 'default',
           workflowMode: data.workflowMode ?? 'default',

@@ -12,6 +12,14 @@ function readFlagValue(argv, index, flag) {
   return value;
 }
 
+function readRawFlagValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (value == null) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
 function parseIntegerFlag(value, fieldName) {
   if (value == null || value === '') {
     return undefined;
@@ -83,6 +91,10 @@ function parseCliArgs(argv) {
         flags.agent = readFlagValue(argv, index, token);
         index += 1;
         break;
+      case '--claude-runtime':
+        flags.claudeRuntime = readFlagValue(argv, index, token);
+        index += 1;
+        break;
       case '--model':
         flags.model = readFlagValue(argv, index, token);
         index += 1;
@@ -108,7 +120,7 @@ function parseCliArgs(argv) {
         index += 1;
         break;
       case '--extra-arg':
-        flags.extraArgs.push(readFlagValue(argv, index, token));
+        flags.extraArgs.push(readRawFlagValue(argv, index, token));
         index += 1;
         break;
       case '--title':
@@ -282,6 +294,7 @@ Common options:
   --project-id <id>     Project identifier
   --path <path>         Local project path
   --session-id <id>     Session identifier
+  --claude-runtime <rt> Claude launcher for workflow terminal mode: claude or ccr
   --help                Show this help text
 
 Examples:
@@ -620,6 +633,7 @@ export async function runCli(argv, options = {}) {
     if (scope === 'workflow' && action === 'command') {
       const result = buildAgentLaunchSpec({
         agent: flags.agent,
+        claudeRuntime: flags.claudeRuntime,
         profile: flags.profile,
         permissions: buildPermissions(flags),
         extraArgs: flags.extraArgs,
@@ -652,6 +666,7 @@ export async function runCli(argv, options = {}) {
         worktreeId: flags.worktreeId,
         prompt: flags.prompt,
         agent: flags.agent,
+        claudeRuntime: flags.claudeRuntime,
         profile: flags.profile,
         permissions: buildPermissions(flags),
         extraArgs: flags.extraArgs,

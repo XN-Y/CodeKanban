@@ -5,6 +5,7 @@ export const SANDBOX_MODES = ['read-only', 'workspace-write', 'danger-full-acces
 export const APPROVAL_POLICIES = ['untrusted', 'on-request', 'never'];
 export const WORKFLOW_PROFILES = ['plan', 'standard', 'yolo'];
 export const AGENTS = ['codex', 'claude'];
+export const CLAUDE_RUNTIMES = ['claude', 'ccr'];
 
 const KNOWN_STRUCTURED_FLAGS = new Set([
   '-s',
@@ -60,15 +61,18 @@ export function buildAgentLaunchSpec(options = {}) {
   const extraArgs = ensureArrayOfStrings(options.extraArgs, 'extraArgs');
 
   if (agent === 'claude') {
+    const claudeRuntime =
+      validateEnum(options.claudeRuntime || 'claude', CLAUDE_RUNTIMES, 'claudeRuntime') || 'claude';
     if (profile !== 'standard') {
       throw new CodeKanbanValidationError('claude only supports the standard profile in v1');
     }
     if (options.permissions) {
       throw new CodeKanbanValidationError('structured permissions are only supported for codex in v1');
     }
-    const argv = ['claude', ...extraArgs];
+    const argv = claudeRuntime === 'ccr' ? ['ccr', 'code', ...extraArgs] : ['claude', ...extraArgs];
     return {
       agent,
+      claudeRuntime,
       profile,
       argv,
       command: toCommandString(argv),

@@ -54,6 +54,7 @@ type wireSess struct {
 	WorktreeID              *string     `json:"wid,omitempty"`
 	OrderIndex              float64     `json:"oi"`
 	Agent                   string      `json:"ag"`
+	ClaudeRuntime           string      `json:"cr,omitempty"`
 	Model                   string      `json:"md"`
 	ReasoningEffort         string      `json:"re"`
 	WorkflowMode            string      `json:"wm"`
@@ -371,6 +372,7 @@ func mapWireSession(session SessionSummary) *wireSess {
 		WorktreeID:              session.WorktreeID,
 		OrderIndex:              session.OrderIndex,
 		Agent:                   string(session.Agent),
+		ClaudeRuntime:           string(session.ClaudeRuntime),
 		Model:                   session.Model,
 		ReasoningEffort:         string(session.ReasoningEffort),
 		WorkflowMode:            string(session.WorkflowMode),

@@ -72,3 +72,27 @@ test('claude only supports standard profile', () => {
     /claude only supports the standard profile/i,
   );
 });
+
+test('buildAgentLaunchSpec builds Claude CCR terminal command', () => {
+  const result = buildAgentLaunchSpec({
+    agent: 'claude',
+    claudeRuntime: 'ccr',
+    prompt: 'Hello',
+    extraArgs: ['--model', 'sonnet'],
+  });
+
+  assert.equal(result.command, 'ccr code --model sonnet');
+  assert.equal(result.claudeRuntime, 'ccr');
+});
+
+test('buildAgentLaunchSpec rejects invalid Claude runtime', () => {
+  assert.throws(
+    () =>
+      buildAgentLaunchSpec({
+        agent: 'claude',
+        claudeRuntime: 'bad',
+        prompt: 'Hello',
+      }),
+    /claudeRuntime must be one of/i,
+  );
+});

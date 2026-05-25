@@ -445,6 +445,7 @@
     v-if="projectIdRef"
     v-model:show="showAISessionHistory"
     :project-id="projectIdRef"
+    :claude-command="resolveAgentCommand('claude')"
     @resume="handleResumeSession"
   />
   <ConversationViewerDialog
@@ -2349,6 +2350,20 @@ function normalizeTerminalEnter(value: string) {
   return trimmed + '\r';
 }
 
+function resolveQuickActionCommand(id: string) {
+  return (
+    terminalQuickActions.value.find(action => action.id === id && action.enabled)?.command?.trim() ??
+    ''
+  );
+}
+
+function resolveAgentCommand(agent: 'claude' | 'codex') {
+  if (agent === 'claude') {
+    return resolveQuickActionCommand('claude') || resolveQuickActionCommand('ccr') || 'claude';
+  }
+  return resolveQuickActionCommand('codex') || 'codex';
+}
+
 async function handleRunQuickAction(action: TerminalQuickAction) {
   if (!props.projectId) {
     message.warning(t('terminal.pleaseSelectProject'));
@@ -2463,8 +2478,8 @@ async function handleResumeSession(claudeSessionId: string, sessionType: string)
       return;
     }
 
-    // Build the resume command
-    const resumeCommand = `claude --resume ${claudeSessionId}`;
+    // Build the resume command using the configured Claude terminal launcher.
+    const resumeCommand = `${resolveAgentCommand('claude')} --resume ${claudeSessionId}`;
 
     // Listen for the terminal ready event, then send the command
     const handleReady = (payload: ServerMessage) => {

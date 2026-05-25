@@ -310,6 +310,7 @@ export interface WebSessionSummary {
   worktreeId?: string | null;
   orderIndex: number;
   agent: 'claude' | 'codex';
+  claudeRuntime?: 'claude' | 'ccr';
   title: string;
   model: string;
   reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';

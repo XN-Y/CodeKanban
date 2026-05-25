@@ -39,6 +39,7 @@ type WireSession = {
   wid?: string | null;
   oi?: number;
   ag: 'claude' | 'codex';
+  cr?: 'claude' | 'ccr';
   md: string;
   re?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
   wm: 'default' | 'plan';
@@ -1585,6 +1586,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
       worktreeId: session.wid ?? null,
       orderIndex: Number(session.oi ?? 0),
       agent: session.ag,
+      claudeRuntime: session.cr === 'ccr' ? 'ccr' : 'claude',
       title: session.ttl,
       model: session.md,
       reasoningEffort: session.re ?? 'default',
@@ -3856,6 +3858,10 @@ export const useWebSessionStore = defineStore('web-session', () => {
     await sendCommand('set_md', sessionId, { md: model });
   }
 
+  async function updateClaudeRuntime(sessionId: string, claudeRuntime: 'claude' | 'ccr') {
+    await sendCommand('set_cr', sessionId, { cr: claudeRuntime });
+  }
+
   async function updateReasoningEffort(
     sessionId: string,
     reasoningEffort: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'
@@ -4030,6 +4036,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     payload: {
       worktreeId?: string;
       agent: 'claude' | 'codex';
+      claudeRuntime?: 'claude' | 'ccr';
       model?: string;
       reasoningEffort?: 'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh';
       workflowMode?: 'default' | 'plan';
@@ -4097,6 +4104,7 @@ export const useWebSessionStore = defineStore('web-session', () => {
     answerUserInput,
     loadMoreHistory,
     updateModel,
+    updateClaudeRuntime,
     updateReasoningEffort,
     updateWorkflowMode,
     updatePermissionLevel,

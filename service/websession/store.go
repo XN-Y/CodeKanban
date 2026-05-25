@@ -14,7 +14,10 @@ type store struct {
 }
 
 func newStore(dataDir string) (*store, error) {
-	rootDir := filepath.Join(dataDir, "web-sessions")
+	rootDir, err := filepath.Abs(filepath.Join(dataDir, "web-sessions"))
+	if err != nil {
+		return nil, err
+	}
 	attachmentsDir := filepath.Join(rootDir, "_attachments")
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
 		return nil, err

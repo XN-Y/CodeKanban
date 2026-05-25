@@ -1064,6 +1064,14 @@
                     :options="modelOptions"
                   />
                   <n-select
+                    v-if="selectedAgent === 'claude'"
+                    v-model:value="selectedClaudeRuntime"
+                    class="composer-select claude-runtime-select"
+                    size="small"
+                    :menu-props="claudeRuntimeSelectMenuProps"
+                    :options="claudeRuntimeOptions"
+                  />
+                  <n-select
                     v-if="selectedAgent === 'codex'"
                     v-model:value="selectedReasoningEffort"
                     class="composer-select reasoning-select"
@@ -2071,6 +2079,7 @@ import {
   replaceTextSelection,
 } from '@/components/web-session/webSessionCodexSkills';
 import {
+  CLAUDE_RUNTIME_OPTIONS,
   CLAUDE_MODEL_OPTIONS,
   CODEX_ADDITIONAL_MODEL_OPTIONS,
   CODEX_MODEL_OPTIONS,
@@ -2078,6 +2087,7 @@ import {
   CUSTOM_MODEL_VALUE,
   MORE_MODELS_VALUE,
   defaultModelForAgent,
+  type WebSessionClaudeRuntimeOption,
 } from '@/components/web-session/webSessionModelOptions';
 import {
   buildTimelineRawModeKey,
@@ -2543,6 +2553,7 @@ const realSessionSnapshotLoadController = createWebSessionSnapshotLoadController
 const IMAGE_ATTACHMENT_NAME_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg|tiff?)$/i;
 
 const draftAgent = ref<'claude' | 'codex'>('codex');
+const draftClaudeRuntime = ref<WebSessionClaudeRuntimeOption>('claude');
 const draftModel = ref(defaultModelForAgent('codex'));
 const draftReasoningEffort = ref<'default' | 'none' | 'low' | 'medium' | 'high' | 'xhigh'>('xhigh');
 const draftWorkflowMode = ref<'default' | 'plan'>('default');
@@ -3617,6 +3628,9 @@ const mobileComposerSummaryTokens = computed(() => {
     { key: 'agent', label: selectedAgentLabel.value },
     { key: 'model', label: selectedModelLabel.value },
   ];
+  if (selectedAgent.value === 'claude') {
+    tokens.push({ key: 'claude-runtime', label: selectedClaudeRuntimeLabel.value });
+  }
   if (selectedAgent.value === 'codex') {
     tokens.push({ key: 'reasoning', label: selectedReasoningEffortLabel.value });
   }
@@ -5179,6 +5193,7 @@ function normalizeDraftSession(
     worktreeId: typeof session.worktreeId === 'string' ? session.worktreeId || null : null,
     orderIndex: Number.MAX_SAFE_INTEGER - index,
     agent,
+    claudeRuntime: session.claudeRuntime === 'ccr' ? 'ccr' : 'claude',
     title:
       typeof session.title === 'string' && session.title.trim()
         ? session.title.trim()
@@ -5611,6 +5626,7 @@ function createDraftSession(forceAgent?: 'claude' | 'codex') {
     worktreeId: context.worktreeId,
     orderIndex: Number.MAX_SAFE_INTEGER - draftSessions.value.length,
     agent: nextAgent,
+    claudeRuntime: source?.claudeRuntime === 'ccr' ? 'ccr' : draftClaudeRuntime.value,
     title: buildDraftTitle(nextAgent),
     model: source?.model || draftModel.value || defaultModelForAgent(nextAgent),
     reasoningEffort:
@@ -6165,6 +6181,10 @@ const modelSelectMenuProps = {
   class: 'web-session-model-select-menu',
   style: { minWidth: '132px', maxWidth: '180px' },
 };
+const claudeRuntimeSelectMenuProps = {
+  class: 'web-session-claude-runtime-select-menu',
+  style: { minWidth: '172px' },
+};
 
 function renderAgentDropdownLabel(option: DropdownOption) {
   const value = String(option.key ?? option.value ?? '');
@@ -6318,6 +6338,16 @@ const selectedModelDisplayLabel = computed(() => getKnownModelLabel(selectedMode
 const modelSelectStyle = computed<CSSProperties>(() => ({
   width: `${resolveModelSelectWidth(selectedModelDisplayLabel.value)}px`,
 }));
+const claudeRuntimeOptions = computed(() =>
+  CLAUDE_RUNTIME_OPTIONS.map(option => ({
+    ...option,
+    label: option.menuLabel ?? option.label,
+  }))
+);
+const selectedClaudeRuntimeLabel = computed(() => {
+  const runtime = selectedClaudeRuntime.value;
+  return CLAUDE_RUNTIME_OPTIONS.find(option => option.value === runtime)?.label ?? 'Claude Code';
+});
 
 const modelOptions = computed(() => {
   const activeModel = currentSession.value?.model ?? draftModel.value;
@@ -6363,6 +6393,9 @@ const selectedAgent = computed({
   set: value => {
     const next = value as 'claude' | 'codex';
     draftAgent.value = next;
+    if (next === 'codex') {
+      draftClaudeRuntime.value = 'claude';
+    }
     if (next === 'claude' && draftModel.value.startsWith('gpt-')) {
       draftModel.value = defaultModelForAgent(next);
     }
@@ -6377,6 +6410,12 @@ const selectedAgent = computed({
       updateActiveDraftSession(current => ({
         ...current,
         agent: next,
+        claudeRuntime:
+          next === 'claude'
+            ? current.claudeRuntime === 'ccr'
+              ? 'ccr'
+              : draftClaudeRuntime.value
+            : 'claude',
         model:
           next === 'claude' && current.model.startsWith('gpt-')
             ? defaultModelForAgent(next)
@@ -6429,6 +6468,31 @@ const selectedModel = computed({
       const noticeKey = getRuntimeSwitchNoticeKey();
       void webSessionStore
         .updateModel(currentRealSession.value.id, next)
+        .then(() => showRuntimeSwitchNotice(noticeKey))
+        .catch(error => {
+          message.error(error instanceof Error ? error.message : t('common.error'));
+        });
+    }
+  },
+});
+
+const selectedClaudeRuntime = computed<WebSessionClaudeRuntimeOption>({
+  get: () => currentSession.value?.claudeRuntime ?? draftClaudeRuntime.value,
+  set: value => {
+    const next: WebSessionClaudeRuntimeOption = value === 'ccr' ? 'ccr' : 'claude';
+    draftClaudeRuntime.value = next;
+    if (isDraftSession(currentSession.value)) {
+      updateActiveDraftSession(current => ({
+        ...current,
+        claudeRuntime: next,
+        updatedAt: new Date().toISOString(),
+      }));
+      return;
+    }
+    if (currentRealSession.value) {
+      const noticeKey = getRuntimeSwitchNoticeKey();
+      void webSessionStore
+        .updateClaudeRuntime(currentRealSession.value.id, next)
         .then(() => showRuntimeSwitchNotice(noticeKey))
         .catch(error => {
           message.error(error instanceof Error ? error.message : t('common.error'));
@@ -7799,6 +7863,12 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
     const session = await webSessionStore.createSession(props.projectId, {
       worktreeId,
       agent,
+      claudeRuntime:
+        agent === 'claude'
+          ? source?.claudeRuntime === 'ccr'
+            ? 'ccr'
+            : draftClaudeRuntime.value
+          : 'claude',
       model: source?.model || draftModel.value || defaultModelForAgent(agent),
       reasoningEffort:
         source?.reasoningEffort ||
@@ -7826,6 +7896,7 @@ async function handleCreateSession(forceAgent?: 'claude' | 'codex') {
       });
     }
     draftAgent.value = session.agent;
+    draftClaudeRuntime.value = session.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
     draftModel.value = session.model;
     draftReasoningEffort.value =
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
@@ -7863,6 +7934,7 @@ async function handleStartDraftSession(forceAgent?: 'claude' | 'codex') {
   }
   const draft = createDraftSession(forceAgent);
   draftAgent.value = draft.agent;
+  draftClaudeRuntime.value = draft.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
   draftModel.value = draft.model || defaultModelForAgent(draft.agent);
   draftReasoningEffort.value = draft.reasoningEffort || defaultReasoningEffortForAgent(draft.agent);
   draftWorkflowMode.value = draft.workflowMode;
@@ -9835,6 +9907,7 @@ watch(
       return;
     }
     draftAgent.value = session.agent;
+    draftClaudeRuntime.value = session.claudeRuntime === 'ccr' ? 'ccr' : 'claude';
     draftModel.value = session.model || defaultModelForAgent(session.agent);
     draftReasoningEffort.value =
       session.reasoningEffort || defaultReasoningEffortForAgent(session.agent);
@@ -13583,9 +13656,17 @@ defineExpose({
   width: 82px;
 }
 
+.claude-runtime-select {
+  width: 172px;
+}
+
 :global(.web-session-model-select-menu) {
   min-width: 132px !important;
   max-width: 180px !important;
+}
+
+:global(.web-session-claude-runtime-select-menu) {
+  min-width: 172px !important;
 }
 
 :global(.web-session-model-select-menu .n-base-select-option__content) {
@@ -14328,6 +14409,10 @@ defineExpose({
 
   .composer-select {
     width: calc(50% - 4px);
+  }
+
+  .claude-runtime-select {
+    width: 172px;
   }
 
   .composer-mode-switch {

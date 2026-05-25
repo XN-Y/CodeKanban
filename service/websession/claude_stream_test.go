@@ -68,6 +68,126 @@ func TestBuildExecCommandClaudeUsesStreamJSONInput(t *testing.T) {
 	}
 }
 
+func TestBuildExecCommandClaudeRouterUsesCCRCodeAndInjectsHookSettings(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	ccrConfigPath := filepath.Join(t.TempDir(), "config.json")
+	initialConfig := `{
+  "Router": {"default": "provider,model"},
+  "claudeCodeSettings": {
+    "allowedHttpHookUrls": ["https://example.com/custom"],
+    "hooks": {
+      "PreToolUse": [
+        {
+          "matcher": "AskUserQuestion",
+          "hooks": [
+            {"type": "http", "url": "https://example.com/custom-ask"}
+          ]
+        },
+        {
+          "matcher": "ExitPlanMode",
+          "hooks": [
+            {"type": "http", "url": "http://127.0.0.1:1/claude-hooks/pre-tool-use"}
+          ]
+        }
+      ]
+    }
+  }
+}`
+	if err := os.WriteFile(ccrConfigPath, []byte(initialConfig), 0o644); err != nil {
+		t.Fatalf("failed to write CCR config: %v", err)
+	}
+	manager := &Manager{
+		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr", CCRConfigPath: ccrConfigPath},
+		store:   store,
+		logger:  zap.NewNop(),
+		runs:    map[string]*activeRun{},
+		clients: map[*client]struct{}{},
+	}
+	session := tables.WebSessionTable{
+		Agent:           string(AgentClaude),
+		ClaudeRuntime:   string(ClaudeRuntimeCCR),
+		Model:           "sonnet",
+		WorkflowMode:    string(WorkflowModeDefault),
+		PermissionLevel: string(PermissionLevelElevated),
+		Cwd:             "/tmp/project",
+	}
+
+	cmd, _, _, err := manager.buildExecCommand(context.Background(), session, "hi", nil)
+	if err != nil {
+		t.Fatalf("buildExecCommand returned error: %v", err)
+	}
+	if len(cmd.Args) < 2 || cmd.Args[0] != "ccr" || cmd.Args[1] != "code" {
+		t.Fatalf("expected CCR runtime to launch ccr code, got %v", cmd.Args)
+	}
+	joinedArgs := strings.Join(cmd.Args, " ")
+	for _, expected := range []string{
+		"--input-format stream-json",
+		"--output-format stream-json",
+		"--model sonnet",
+	} {
+		if !strings.Contains(joinedArgs, expected) {
+			t.Fatalf("expected args to contain %q, got %v", expected, cmd.Args)
+		}
+	}
+	if strings.Contains(joinedArgs, "--settings") {
+		t.Fatalf("expected CCR runtime to let ccr generate one merged settings file, got %v", cmd.Args)
+	}
+	data, err := os.ReadFile(ccrConfigPath)
+	if err != nil {
+		t.Fatalf("failed to read CCR config: %v", err)
+	}
+	if !strings.Contains(string(data), "claudeCodeSettings") ||
+		!strings.Contains(string(data), "AskUserQuestion") ||
+		!strings.Contains(string(data), "ExitPlanMode") ||
+		!strings.Contains(string(data), "allowedHttpHookUrls") {
+		t.Fatalf("expected CCR config to include injected CodeKanban hooks, got %s", string(data))
+	}
+	if !strings.Contains(string(data), "https://example.com/custom-ask") {
+		t.Fatalf("expected existing user hook to be preserved, got %s", string(data))
+	}
+	if strings.Contains(string(data), "http://127.0.0.1:1/claude-hooks/pre-tool-use") {
+		t.Fatalf("expected stale CodeKanban hook to be replaced, got %s", string(data))
+	}
+}
+
+func TestEnsureCCRClaudeHookSettingsRetriesAfterFailure(t *testing.T) {
+	store, err := newStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("newStore returned error: %v", err)
+	}
+	ccrConfigPath := filepath.Join(t.TempDir(), "missing", "config.json")
+	manager := &Manager{
+		cfg:     Config{DataDir: t.TempDir(), ClaudePath: "claude", CCRPath: "ccr", CCRConfigPath: ccrConfigPath},
+		store:   store,
+		logger:  zap.NewNop(),
+		runs:    map[string]*activeRun{},
+		clients: map[*client]struct{}{},
+	}
+
+	if err := manager.ensureCCRClaudeHookSettings(); err == nil {
+		t.Fatal("expected first CCR hook settings write to fail")
+	}
+	if err := os.MkdirAll(filepath.Dir(ccrConfigPath), 0o755); err != nil {
+		t.Fatalf("failed to create CCR config dir: %v", err)
+	}
+	if err := os.WriteFile(ccrConfigPath, []byte(`{"Router":{"default":"provider,model"}}`), 0o644); err != nil {
+		t.Fatalf("failed to write CCR config: %v", err)
+	}
+	if err := manager.ensureCCRClaudeHookSettings(); err != nil {
+		t.Fatalf("expected second CCR hook settings write to retry and succeed, got %v", err)
+	}
+	data, err := os.ReadFile(ccrConfigPath)
+	if err != nil {
+		t.Fatalf("failed to read CCR config: %v", err)
+	}
+	if !strings.Contains(string(data), "claudeCodeSettings") {
+		t.Fatalf("expected CCR config to include injected settings after retry, got %s", string(data))
+	}
+}
+
 func TestBuildExecCommandClaudeRejectsDefaultPermissionLevel(t *testing.T) {
 	store, err := newStore(t.TempDir())
 	if err != nil {
@@ -453,6 +573,9 @@ func TestClaudeHookServerDefersAndAllowsAskUserQuestion(t *testing.T) {
 	}
 	if !strings.HasSuffix(settingsPath, "claude-hook-settings.json") {
 		t.Fatalf("unexpected settings path %q", settingsPath)
+	}
+	if !filepath.IsAbs(settingsPath) {
+		t.Fatalf("expected absolute settings path, got %q", settingsPath)
 	}
 
 	requestBody := map[string]any{
