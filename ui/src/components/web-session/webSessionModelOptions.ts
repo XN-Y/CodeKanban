@@ -1,4 +1,5 @@
 export type WebSessionAgentOption = 'claude' | 'codex';
+export type WebSessionClaudeRuntimeOption = 'claude' | 'ccr';
 
 export type WebSessionModelOption = {
   label: string;
@@ -13,6 +14,11 @@ export const CLAUDE_MODEL_OPTIONS: WebSessionModelOption[] = [
   { label: 'Opus', value: 'opus' },
   { label: 'Sonnet', value: 'sonnet' },
   { label: 'Haiku', value: 'haiku' },
+];
+
+export const CLAUDE_RUNTIME_OPTIONS: WebSessionModelOption[] = [
+  { label: 'Claude Code', value: 'claude' },
+  { label: 'CCR', value: 'ccr', menuLabel: 'Claude Code Router' },
 ];
 
 export const CODEX_PRIMARY_MODEL_OPTIONS: WebSessionModelOption[] = [

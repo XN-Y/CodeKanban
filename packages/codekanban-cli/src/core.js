@@ -20,6 +20,7 @@ const VALUE_FLAGS = new Set([
   '--prompt',
   '--text',
   '--agent',
+  '--claude-runtime',
   '--model',
   '--profile',
   '--sandbox',

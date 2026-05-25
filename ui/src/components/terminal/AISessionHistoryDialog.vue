@@ -352,6 +352,7 @@ interface ItemResponse<T> {
 
 const props = defineProps<{
   projectId: string;
+  claudeCommand?: string;
 }>();
 
 const showModal = defineModel<boolean>('show', { default: false });
@@ -570,7 +571,8 @@ async function copyPath(path: string) {
 }
 
 function getResumeCommand(session: AISessionSummary) {
-  return `claude --resume ${session.sessionId}`;
+  const command = props.claudeCommand?.trim() || 'claude';
+  return `${command} --resume ${session.sessionId}`;
 }
 
 async function copyResumeCommand(session: AISessionSummary) {

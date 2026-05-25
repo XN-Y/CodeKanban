@@ -22,6 +22,11 @@ var defaultRules = []DetectionRule{
 			"@anthropic-ai/claude-code",
 			"claude-code/cli.js",
 			"claude-code/bin/",
+			"ccr code",
+			"ccr.cmd code",
+			"ccr.ps1 code",
+			"claude-code-router/dist/cli.js code",
+			"@musistudio/claude-code-router/dist/cli.js code",
 		},
 		ExecutableNames: []string{
 			"claude",

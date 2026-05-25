@@ -1003,6 +1003,7 @@ export class CodeKanbanClient {
         body: {
           worktreeId: ensureString(worktree?.id, "worktreeId"),
           agent,
+          claudeRuntime: ensureOptionalString(input.claudeRuntime) || "claude",
           model:
             ensureOptionalString(input.model) || defaultWebSessionModel(agent),
           reasoningEffort:
@@ -1878,6 +1879,7 @@ export class CodeKanbanClient {
       worktree,
       terminalSession: terminal,
       agent: launch.agent,
+      claudeRuntime: launch.claudeRuntime,
       profile: launch.profile,
       command: launch.command,
       prompt: launch.prompt,

@@ -119,6 +119,7 @@ export class WebSessionCommandChannel {
         pid: ensureString(input.projectId, "projectId"),
         wid: ensureOptionalString(input.worktreeId),
         ag: ensureString(input.agent, "agent"),
+        cr: ensureOptionalString(input.claudeRuntime),
         md: ensureOptionalString(input.model),
         re: ensureOptionalString(input.reasoningEffort),
         wm: ensureOptionalString(input.workflowMode),
@@ -226,6 +227,16 @@ export class WebSessionCommandChannel {
       sessionId,
       payload: {
         md: ensureString(input.model, "model"),
+      },
+    });
+  }
+
+  async updateClaudeRuntime(sessionId, input = {}) {
+    return await this._executeCommand({
+      operation: "set_cr",
+      sessionId,
+      payload: {
+        cr: ensureString(input.claudeRuntime, "claudeRuntime"),
       },
     });
   }

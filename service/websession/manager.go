@@ -49,6 +49,8 @@ type Config struct {
 	DataDir                 string
 	AttachmentSizeLimit     int64
 	ClaudePath              string
+	CCRPath                 string
+	CCRConfigPath           string
 	CodexPath               string
 	DefaultCodexSyncMode    func() SyncMode
 	ActiveCallTimeoutConfig func() utils.WebSessionActiveCallTimeoutConfig
@@ -78,6 +80,9 @@ type Manager struct {
 	claudeHookSettingsPath      string
 	claudeHookErr               error
 	claudeHookServer            *http.Server
+	ccrHookMu                   sync.Mutex
+	ccrHookReady                bool
+	ccrHookErr                  error
 }
 
 type clientKind string
@@ -273,6 +278,12 @@ func NewManager(cfg Config, logger *zap.Logger) (*Manager, error) {
 	}
 	if cfg.ClaudePath == "" {
 		cfg.ClaudePath = getenvDefault("CLAUDE_PATH", "claude")
+	}
+	if cfg.CCRPath == "" {
+		cfg.CCRPath = getenvDefault("CCR_PATH", "ccr")
+	}
+	if cfg.CCRConfigPath == "" {
+		cfg.CCRConfigPath = getenvDefault("CCR_CONFIG_PATH", defaultCCRConfigPath())
 	}
 	if cfg.CodexPath == "" {
 		cfg.CodexPath = getenvDefault("CODEX_PATH", "codex")
@@ -663,6 +674,7 @@ func (m *Manager) CreateSession(ctx context.Context, params CreateParams) (Sessi
 		WorktreeID:              nilIfEmpty(worktreeID),
 		OrderIndex:              orderIndex,
 		Agent:                   string(normalizeAgent(params.Agent)),
+		ClaudeRuntime:           string(normalizeClaudeRuntime(params.ClaudeRuntime)),
 		Backend:                 string(normalizeSessionBackend(params.Backend, normalizeAgent(params.Agent))),
 		Title:                   title,
 		TitleAuto:               strings.TrimSpace(params.Title) == "",
@@ -1405,6 +1417,24 @@ func (m *Manager) UpdateModel(ctx context.Context, sessionID, modelName string) 
 	})
 }
 
+func (m *Manager) UpdateClaudeRuntime(
+	ctx context.Context,
+	sessionID string,
+	runtime ClaudeRuntime,
+) (SessionSummary, error) {
+	record, err := m.GetSession(ctx, sessionID)
+	if err != nil {
+		return SessionSummary{}, err
+	}
+	if normalizeAgent(Agent(record.Agent)) != AgentClaude {
+		return SessionSummary{}, fmt.Errorf("claude runtime is only supported for claude sessions")
+	}
+	return m.updateFields(ctx, sessionID, map[string]any{
+		"claude_runtime": string(normalizeClaudeRuntime(runtime)),
+		"updated_at":     time.Now(),
+	})
+}
+
 func (m *Manager) UpdateReasoningEffort(
 	ctx context.Context,
 	sessionID string,
@@ -1482,6 +1512,7 @@ func (m *Manager) UpdateAgent(ctx context.Context, sessionID string, agent Agent
 	}
 	return m.updateFields(ctx, sessionID, map[string]any{
 		"agent":             string(normalized),
+		"claude_runtime":    string(defaultClaudeRuntime(normalized)),
 		"backend":           string(defaultSessionBackend(normalized)),
 		"model":             defaultModel(normalized, ""),
 		"reasoning_effort":  string(defaultReasoningEffort(normalized, "")),
@@ -1857,6 +1888,8 @@ func (m *Manager) HandleCommand(ctx context.Context, client *client, payload []b
 		return m.handleRenameCommand(ctx, client, frame)
 	case "set_md":
 		return m.handleSetModelCommand(ctx, client, frame)
+	case "set_cr":
+		return m.handleSetClaudeRuntimeCommand(ctx, client, frame)
 	case "set_re":
 		return m.handleSetReasoningEffortCommand(ctx, client, frame)
 	case "set_wm":
@@ -2005,6 +2038,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		ProjectID        string `json:"pid"`
 		WorktreeID       string `json:"wid"`
 		Agent            string `json:"ag"`
+		ClaudeRuntime    string `json:"cr"`
 		Model            string `json:"md"`
 		ReasoningEffort  string `json:"re"`
 		WorkflowMode     string `json:"wm"`
@@ -2035,6 +2069,7 @@ func (m *Manager) handleCreateCommand(ctx context.Context, client *client, frame
 		ProjectID:        payload.ProjectID,
 		WorktreeID:       payload.WorktreeID,
 		Agent:            Agent(payload.Agent),
+		ClaudeRuntime:    ClaudeRuntime(payload.ClaudeRuntime),
 		Model:            payload.Model,
 		ReasoningEffort:  ReasoningEffort(payload.ReasoningEffort),
 		WorkflowMode:     workflowMode,
@@ -2181,6 +2216,23 @@ func (m *Manager) handleSetModelCommand(ctx context.Context, client *client, fra
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid model payload", false))
 	}
 	if _, err := m.UpdateModel(ctx, frame.SessionID, payload.Model); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
+	}
+	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
+		return err
+	}
+	m.broadcastSessionSummary(ctx, frame.SessionID)
+	return nil
+}
+
+func (m *Manager) handleSetClaudeRuntimeCommand(ctx context.Context, client *client, frame wireCommandFrame) error {
+	var payload struct {
+		ClaudeRuntime string `json:"cr"`
+	}
+	if err := json.Unmarshal(frame.Payload, &payload); err != nil {
+		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", "invalid claude runtime payload", false))
+	}
+	if _, err := m.UpdateClaudeRuntime(ctx, frame.SessionID, ClaudeRuntime(payload.ClaudeRuntime)); err != nil {
 		return client.send(newErrorFrame(frame.RequestID, frame.SessionID, "bad_req", err.Error(), false))
 	}
 	if err := client.send(newAckFrame(frame.RequestID, frame.Operation, frame.SessionID, nil)); err != nil {
@@ -3858,17 +3910,24 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 
 	switch normalizeAgent(Agent(session.Agent)) {
 	case AgentClaude:
-		settingsPath, err := m.ensureClaudeHookServer()
-		if err != nil {
-			return nil, nil, false, err
-		}
 		args := []string{
 			"-p",
 			"--output-format", "stream-json",
 			"--input-format", "stream-json",
 			"--replay-user-messages",
 			"--verbose",
-			"--settings", settingsPath,
+		}
+		claudeRuntime := effectiveClaudeRuntime(session)
+		if claudeRuntime == ClaudeRuntimeCCR {
+			if err := m.ensureCCRClaudeHookSettings(); err != nil {
+				return nil, nil, false, err
+			}
+		} else {
+			settingsPath, err := m.ensureClaudeHookServer()
+			if err != nil {
+				return nil, nil, false, err
+			}
+			args = append(args, "--settings", settingsPath)
 		}
 		if err := validateWebSessionPermissionLevel(AgentClaude, permissionLevel); err != nil {
 			return nil, nil, false, err
@@ -3897,7 +3956,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		if err != nil {
 			return nil, nil, false, err
 		}
-		cmd := exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
+		cmd := m.buildClaudeCommand(ctx, claudeRuntime, args)
 		cmd.Dir = session.Cwd
 		cmd.Env = os.Environ()
 		return cmd, stdin, true, nil
@@ -3952,6 +4011,14 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 	default:
 		return nil, nil, false, fmt.Errorf("unsupported agent %q", session.Agent)
 	}
+}
+
+func (m *Manager) buildClaudeCommand(ctx context.Context, runtime ClaudeRuntime, args []string) *exec.Cmd {
+	if normalizeClaudeRuntime(runtime) == ClaudeRuntimeCCR {
+		ccrArgs := append([]string{"code"}, args...)
+		return exec.CommandContext(ctx, m.cfg.CCRPath, ccrArgs...)
+	}
+	return exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
 }
 
 func (m *Manager) respondToApproval(sessionID, action string) error {
@@ -4292,6 +4359,7 @@ func mapSessionRecord(record tables.WebSessionTable) SessionSummary {
 		WorktreeID:              record.WorktreeID,
 		OrderIndex:              record.OrderIndex,
 		Agent:                   Agent(record.Agent),
+		ClaudeRuntime:           effectiveClaudeRuntime(record),
 		Title:                   record.Title,
 		Model:                   record.Model,
 		ReasoningEffort:         ReasoningEffort(record.ReasoningEffort),
@@ -4615,6 +4683,29 @@ func normalizeAgent(agent Agent) Agent {
 	default:
 		return AgentClaude
 	}
+}
+
+func normalizeClaudeRuntime(runtime ClaudeRuntime) ClaudeRuntime {
+	switch strings.ToLower(strings.TrimSpace(string(runtime))) {
+	case string(ClaudeRuntimeCCR):
+		return ClaudeRuntimeCCR
+	default:
+		return ClaudeRuntimeNative
+	}
+}
+
+func defaultClaudeRuntime(agent Agent) ClaudeRuntime {
+	if normalizeAgent(agent) != AgentClaude {
+		return ClaudeRuntimeNative
+	}
+	return ClaudeRuntimeNative
+}
+
+func effectiveClaudeRuntime(record tables.WebSessionTable) ClaudeRuntime {
+	if normalizeAgent(Agent(record.Agent)) != AgentClaude {
+		return ClaudeRuntimeNative
+	}
+	return normalizeClaudeRuntime(ClaudeRuntime(record.ClaudeRuntime))
 }
 
 func normalizeReasoningEffort(effort ReasoningEffort) ReasoningEffort {
@@ -5057,6 +5148,14 @@ func getenvDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func defaultCCRConfigPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(homeDir) == "" {
+		return filepath.Join(".claude-code-router", "config.json")
+	}
+	return filepath.Join(homeDir, ".claude-code-router", "config.json")
 }
 
 func truncateString(value string, limit int) string {

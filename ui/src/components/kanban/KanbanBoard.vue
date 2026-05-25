@@ -450,13 +450,13 @@ function normalizeTerminalEnter(value: string) {
 }
 
 function resolveAgentCommand(agent: Exclude<StartWorkAction, 'terminal'>): string {
-  const configured = terminalQuickActions.value
-    .find(action => action.id === agent)
-    ?.command?.trim();
-  if (configured) {
-    return configured;
+  const commandFor = (id: string) =>
+    terminalQuickActions.value.find(action => action.id === id && action.enabled)?.command?.trim() ??
+    '';
+  if (agent === 'claude') {
+    return commandFor('claude') || commandFor('ccr') || 'claude';
   }
-  return agent === 'claude' ? 'claude' : 'codex';
+  return commandFor('codex') || 'codex';
 }
 
 function sendWithRetry(sessionId: string, input: string): Promise<boolean> {

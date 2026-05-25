@@ -9,6 +9,13 @@ const (
 	AgentCodex  Agent = "codex"
 )
 
+type ClaudeRuntime string
+
+const (
+	ClaudeRuntimeNative ClaudeRuntime = "claude"
+	ClaudeRuntimeCCR    ClaudeRuntime = "ccr"
+)
+
 type SessionBackend string
 
 const (
@@ -159,6 +166,7 @@ type SessionSummary struct {
 	WorktreeID              *string             `json:"worktreeId,omitempty"`
 	OrderIndex              float64             `json:"orderIndex"`
 	Agent                   Agent               `json:"agent"`
+	ClaudeRuntime           ClaudeRuntime       `json:"claudeRuntime"`
 	Title                   string              `json:"title"`
 	Model                   string              `json:"model"`
 	ReasoningEffort         ReasoningEffort     `json:"reasoningEffort"`
@@ -390,6 +398,7 @@ type CreateParams struct {
 	ProjectID        string
 	WorktreeID       string
 	Agent            Agent
+	ClaudeRuntime    ClaudeRuntime
 	Backend          SessionBackend
 	Model            string
 	ReasoningEffort  ReasoningEffort

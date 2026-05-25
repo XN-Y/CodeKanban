@@ -79,6 +79,59 @@ test('CLI --help prints usage text', { concurrency: false }, async () => {
   assert.equal(result.stderr, '');
 });
 
+test('CLI workflow command supports Claude Code Router runtime', { concurrency: false }, async () => {
+  const result = await runCliCaptured([
+    'workflow',
+    'command',
+    '--agent',
+    'claude',
+    '--claude-runtime',
+    'ccr',
+    '--extra-arg',
+    '--model',
+    '--extra-arg',
+    'sonnet',
+    '--prompt',
+    'Hello',
+  ]);
+
+  assert.equal(result.exitCode, 0);
+  const payload = JSON.parse(result.stdout);
+  assert.equal(payload.agent, 'claude');
+  assert.equal(payload.claudeRuntime, 'ccr');
+  assert.equal(payload.command, 'ccr code --model sonnet');
+  assert.deepEqual(payload.argv, ['ccr', 'code', '--model', 'sonnet']);
+});
+
+test('CLI workflow start forwards Claude runtime to the SDK client', { concurrency: false }, async () => {
+  const calls = [];
+  const result = await runCliCaptured([
+    'workflow',
+    'start',
+    '--base-url',
+    'http://127.0.0.1:3000',
+    '--project-id',
+    'p1',
+    '--agent',
+    'claude',
+    '--claude-runtime',
+    'ccr',
+    '--prompt',
+    'Hello',
+  ], {
+    clientFactory: () => ({
+      async startWorkflow(input) {
+        calls.push(input);
+        return { command: 'ccr code', claudeRuntime: input.claudeRuntime };
+      },
+    }),
+  });
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(calls[0].claudeRuntime, 'ccr');
+  assert.equal(JSON.parse(result.stdout).claudeRuntime, 'ccr');
+});
+
 
 test('CLI web-session create prints the created session JSON', { concurrency: false }, async () => {
   const handlers = new Map([

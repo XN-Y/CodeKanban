@@ -143,6 +143,33 @@ test('startWorkflow creates a terminal and sends command plus prompt', async () 
   assert.match(FakeWebSocket.instances[0].sent[1].data, /planning mode/i);
 });
 
+test('startWorkflow launches Claude through CCR when requested', async () => {
+  FakeWebSocket.instances.length = 0;
+  const handlers = new Map([
+    ['GET /api/v1/projects', () => createJsonResponse({ items: [{ id: 'p1', path: 'D:/repo/demo', name: 'demo' }] })],
+    ['GET /api/v1/projects/p1/worktrees', () => createJsonResponse({ items: [{ id: 'w1', path: 'D:/repo/demo', isMain: true }] })],
+    ['POST /api/v1/projects/p1/worktrees/w1/terminals', () => createJsonResponse({ item: { id: 't1', wsPath: '/api/v1/terminal/ws?sessionId=t1', wsUrl: '/api/v1/terminal/ws?sessionId=t1', title: 'demo', projectId: 'p1', worktreeId: 'w1', workingDir: 'D:/repo/demo' } }, 201)],
+  ]);
+
+  const client = new CodeKanbanClient({
+    baseURL: 'http://127.0.0.1:3000',
+    fetchImpl: createFetchMock(handlers),
+    WebSocketImpl: FakeWebSocket,
+  });
+
+  const result = await client.startWorkflow({
+    path: 'D:/repo/demo',
+    agent: 'claude',
+    claudeRuntime: 'ccr',
+    prompt: 'Inspect',
+  });
+
+  assert.equal(result.claudeRuntime, 'ccr');
+  assert.equal(FakeWebSocket.instances.length, 1);
+  assert.match(FakeWebSocket.instances[0].sent[0].data, /^ccr code\r$/);
+  assert.match(FakeWebSocket.instances[0].sent[1].data, /^Inspect\r$/);
+});
+
 test('listSessions returns terminal and ai summaries', async () => {
   const handlers = new Map([
     ['GET /api/v1/projects/p1', () => createJsonResponse({ item: { id: 'p1', path: 'D:/repo/demo', name: 'demo' } })],
