@@ -83,6 +83,7 @@ type Manager struct {
 	ccrHookMu                   sync.Mutex
 	ccrHookReady                bool
 	ccrHookErr                  error
+	ccrHookClaudePath           string
 }
 
 type clientKind string
@@ -2714,7 +2715,7 @@ func (m *Manager) runSession(ctx context.Context, run *activeRun, session tables
 	)
 	if run.deferredUserInput {
 		if pending, ok := run.pendingUserInputRequest(); ok {
-			m.deleteClaudeHookAnswer(session.ID, pending.ItemID)
+			m.deleteClaudeHookAnswerForSession(session, pending.ItemID)
 		}
 	}
 	m.cancelAutoRetryTimer(session.ID)
@@ -2833,7 +2834,7 @@ func (m *Manager) runClaudeResumeSession(ctx context.Context, run *activeRun, se
 	)
 	if run.deferredUserInput {
 		if pending, ok := run.pendingUserInputRequest(); ok {
-			m.deleteClaudeHookAnswer(session.ID, pending.ItemID)
+			m.deleteClaudeHookAnswerForSession(session, pending.ItemID)
 		}
 	}
 	m.broadcastSessionSummary(context.Background(), session.ID)
@@ -3100,9 +3101,6 @@ func (m *Manager) handleClaudeEvent(session tables.WebSessionTable, run *activeR
 					toolID = utils.NewID()
 				}
 				toolName := strings.TrimSpace(stringValue(block["name"]))
-				if toolName == "AskUserQuestion" {
-					continue
-				}
 				if toolName == "ExitPlanMode" {
 					run.markCompletedPlanTool()
 					input := decodeRawObject(block["input"])
@@ -3309,11 +3307,11 @@ func (m *Manager) handleClaudeUserEvent(session tables.WebSessionTable, run *act
 			continue
 		}
 		if pending, ok := run.pendingUserInputRequest(); ok && strings.TrimSpace(pending.ItemID) == toolUseID {
-			run.clearPendingServerRequest()
 			contentText := strings.TrimSpace(claudeToolResultContentText(block["content"]))
 			if contentText == "" {
 				contentText = claudeToolUseResultSummary(raw["toolUseResult"])
 			}
+			run.clearPendingServerRequest()
 			payload := map[string]any{
 				"iid": toolUseID,
 			}
@@ -3958,7 +3956,7 @@ func (m *Manager) buildExecCommand(ctx context.Context, session tables.WebSessio
 		}
 		cmd := m.buildClaudeCommand(ctx, claudeRuntime, args)
 		cmd.Dir = session.Cwd
-		cmd.Env = os.Environ()
+		cmd.Env = m.claudeCommandEnv(claudeRuntime)
 		return cmd, stdin, true, nil
 	case AgentCodex:
 		args := []string{"exec", "--json", "--skip-git-repo-check"}
@@ -4021,6 +4019,25 @@ func (m *Manager) buildClaudeCommand(ctx context.Context, runtime ClaudeRuntime,
 	return exec.CommandContext(ctx, m.cfg.ClaudePath, args...)
 }
 
+func (m *Manager) claudeCommandEnv(runtime ClaudeRuntime) []string {
+	env := os.Environ()
+	if normalizeClaudeRuntime(runtime) != ClaudeRuntimeCCR || strings.TrimSpace(m.ccrHookClaudePath) == "" {
+		return env
+	}
+	return upsertEnv(env, "CLAUDE_PATH", m.ccrHookClaudePath)
+}
+
+func upsertEnv(env []string, key, value string) []string {
+	prefix := key + "="
+	for i, item := range env {
+		if strings.HasPrefix(item, prefix) {
+			env[i] = prefix + value
+			return env
+		}
+	}
+	return append(env, prefix+value)
+}
+
 func (m *Manager) respondToApproval(sessionID, action string) error {
 	m.mu.RLock()
 	run, ok := m.runs[sessionID]
@@ -4047,7 +4064,7 @@ func (m *Manager) respondToApproval(sessionID, action string) error {
 		if action != "reject" {
 			decision = "allow"
 		}
-		if err := m.writeClaudeHookAnswer(sessionID, pending.ItemID, claudeHookAnswerFile{
+		if err := m.writeClaudeHookAnswerForSession(record, pending.ItemID, claudeHookAnswerFile{
 			PermissionDecision: decision,
 		}); err != nil {
 			return err
@@ -4174,7 +4191,7 @@ func (m *Manager) respondToUserInput(sessionID, itemID string, answers map[strin
 		if len(answerFile.Answers) == 0 {
 			return fmt.Errorf("no answers were provided")
 		}
-		if err := m.writeClaudeHookAnswer(sessionID, pending.ItemID, answerFile); err != nil {
+		if err := m.writeClaudeHookAnswerForSession(record, pending.ItemID, answerFile); err != nil {
 			return err
 		}
 		if err := m.startClaudeDeferredResume(context.Background(), record, pending); err != nil {
